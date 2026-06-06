@@ -124,6 +124,11 @@ function Invoke-LspMessage([string]$body) {
     }
     if ($hasMethod) {
         $method = [string](Get-Prop $msg 'method')
+        if ($method -eq 'window/logMessage') {
+            $lp = Get-Prop $msg 'params'
+            $lm = [string](Get-Prop $lp 'message')
+            if ($null -ne $lm) { Write-DLog ('[dbg-trackA] PSES>> ' + ($lm -replace "[`r`n`t]", ' ').Substring(0, [Math]::Min(300, ($lm -replace "[`r`n`t]", ' ').Length))) }
+        }
         if ($method -eq 'textDocument/publishDiagnostics') {
             $params = Get-Prop $msg 'params'
             $uri = [string](Get-Prop $params 'uri')
