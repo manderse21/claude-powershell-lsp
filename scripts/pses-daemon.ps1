@@ -238,21 +238,19 @@ function Start-Pses {
     # initialize handshake (declares rename -> avoids PSES v4.6.0 NRE; see lib).
     $rootUri = ConvertTo-FileUri (Get-Location).Path
     $initId = 1
-    # [trackA] On Linux an initialize written before PSES's stdio transport begins
-    # reading stdin is silently lost: PSES comes up, emits its startup
-    # window/logMessage notifications, then never sees the request (Windows buffers
-    # it fine across the gap). Wait for PSES's first frame -- proof the LSP transport
-    # is live and draining stdin -- plus a short settle, THEN send initialize.
-    Invoke-LspPump -Until { $script:framesIn -ge 1 } -MaxMs 8000 | Out-Null
-    Invoke-LspPump -Until { $false } -MaxMs 300 | Out-Null
-    Write-DLog ('[dbg-trackA] pre-initialize frames seen=' + $script:framesIn + '; sending initialize')
+    # [trackA] PSES v4.6.0 throws a NullReferenceException inside its own OnInitialize
+    # handler (PsesLanguageServer.cs:150, the workspaceFolders add path) on Linux when
+    # the initialize carries workspaceFolders -- Windows is unaffected, which is why the
+    # Windows CI legs always passed this handshake. Omit workspaceFolders and rely on
+    # rootUri alone; the warm path opens each file explicitly via didOpen/didChange, so
+    # multi-root workspace folders are not needed for diagnostics.
+    Write-DLog '[dbg-trackA] sending initialize (no workspaceFolders)'
     Send-Lsp @{
         jsonrpc = '2.0'; id = $initId; method = 'initialize'
         params = @{
             processId = $PID
             clientInfo = @{ name = 'cc-pses-daemon'; version = '1.1.0' }
             rootUri = $rootUri
-            workspaceFolders = @(@{ uri = $rootUri; name = 'workspace' })
             capabilities = (New-InitializeCapabilities)
         }
     }
