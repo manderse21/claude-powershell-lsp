@@ -29,6 +29,20 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
 
+# v1.1.1: the SessionStart hook no longer passes userConfig as -Args -- the
+# ${user_config.*} substitution refused to launch the hook on CC v2.1.167 when any
+# option was unset. Self-source each knob from the exported CLAUDE_PLUGIN_OPTION_*
+# env var, falling back to the param default above. An explicit arg (e.g. the test
+# harness's -PreferredHost) still wins, since it sets the value we fall back to.
+$PreferredHost     = Get-PluginOption    'ps_host'           $PreferredHost
+$SeverityThreshold = Get-PluginOption    'severityThreshold' $SeverityThreshold
+$RuleInclude       = Get-PluginOption    'ruleInclude'       $RuleInclude
+$RuleExclude       = Get-PluginOption    'ruleExclude'       $RuleExclude
+$KeepLastN         = Get-PluginOptionInt 'keepLastN'         $KeepLastN
+$DebounceMs        = Get-PluginOptionInt 'debounceMs'        $DebounceMs
+$IdleTtlMin        = Get-PluginOptionInt 'idleTtlMin'        $IdleTtlMin
+$PerFileCap        = Get-PluginOptionInt 'perFileCap'        $PerFileCap
+
 $logDir = Get-LogDir
 $sessionDir = Get-SessionDir
 try {

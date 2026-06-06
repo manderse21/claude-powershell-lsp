@@ -29,6 +29,39 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.1.1] - 2026-06-06
+
+### Fixed
+
+- **First-run failure on Claude Code v2.1.167.** On a clean install with no saved
+  config, all three hooks (SessionStart, PostToolUse, SessionEnd) errored before
+  running -- `Failed to run: Plugin option 'ps_host' isn't set` -- so a stranger got
+  zero diagnostics and three red errors. Root cause: Claude Code did not apply the
+  `userConfig` schema defaults to `${user_config.*}` substitution in hook commands,
+  and the hooks used `${user_config.ps_host}` as the **interpreter**, so the very
+  first reference was unset and the command could not launch.
+
+### Changed
+
+- **Hook commands no longer use `${user_config.*}` substitution.** The interpreter is
+  now a literal `pwsh`, and every knob is self-sourced inside the scripts from the
+  `CLAUDE_PLUGIN_OPTION_<key>` environment variables Claude Code exports, each with a
+  fallback to its prior default (`Get-PluginOption` / `Get-PluginOptionInt`). This is
+  immune to the substitution/persistence behavior above: zero saved config yields
+  working defaults, and saved config still applies. The inline `lspServers` block and
+  `docs/lsp.json.template` were moved to a literal `pwsh` command for the same reason.
+- **`pwsh` (PowerShell 7) is now required to launch the hooks.** Windows PowerShell
+  5.1 alone can no longer bootstrap them; it remains supported as the PSES *child*
+  host via `ps_host`. See README "Requirements" and "Troubleshooting".
+
+### Deviation from 1.1.0 (forced, field-evidence-backed)
+
+This breaks byte-identity with the mande-tooling 1.1.0 source for `plugin.json`,
+`scripts/session-start.ps1`, `scripts/lsp-client.ps1`, and `scripts/lib/lsp-common.ps1`.
+The change is mandatory -- 1.1.0 is unusable on a clean install on CC v2.1.167
+(evidence: the 000005 fresh-install proof, 2026-06-06). Same class of forced,
+field-evidence deviation as the v4.6.0 rename-capability inversion in 1.1.0.
+
 ## [1.1.0] - 2026-06-05
 
 ### Added

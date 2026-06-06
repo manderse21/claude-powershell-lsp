@@ -12,10 +12,12 @@ edit pays a pipe round-trip (~2 s) instead of a cold start (~6 s).
 
 ## Requirements
 
-- **PowerShell 7+ (`pwsh`) recommended.** This is the default and tested host.
-  Install it from <https://aka.ms/powershell> or via `winget install Microsoft.PowerShell`.
-- Windows PowerShell 5.1 (`powershell`) works as a fallback via the `ps_host`
-  config, but `pwsh` is recommended.
+- **PowerShell 7+ (`pwsh`) is required.** As of 1.1.1 the plugin's hooks launch under
+  `pwsh`; Windows PowerShell 5.1 alone cannot bootstrap them. Install pwsh from
+  <https://aka.ms/powershell> or via `winget install Microsoft.PowerShell`.
+- Windows PowerShell 5.1 (`powershell`) is still supported as the **PSES child host**:
+  set `ps_host` to `powershell` to run the language server under 5.1 (the hooks
+  themselves still require `pwsh`).
 - Internet access on first run: PSES is downloaded on first use (not vendored).
 
 ## Install
@@ -175,9 +177,17 @@ marker). See [CHANGELOG](./CHANGELOG.md#versioning) for how a bump maps to SemVe
 
 ## Platform support
 
+As of 1.1.1 the **hooks require `pwsh` (PowerShell 7)** -- they launch the bootstrap
+under it on every platform. Windows PowerShell 5.1 is supported as the **PSES child
+host** (set `ps_host` to `powershell`), not as the hook interpreter.
+
 CI runs the Pester suite on a three-leg matrix: **Windows `pwsh` 7**, **Windows
-PowerShell 5.1**, and **Ubuntu `pwsh`**. The integration tests (which spawn a real
-PSES daemon over named pipes) are Windows-only and self-skip on Ubuntu, so the
+PowerShell 5.1**, and **Ubuntu `pwsh`**. The integration tests spawn the daemon under
+`pwsh` on every leg, so the Windows-PowerShell-5.1 leg's distinct value is exercising
+the **shared-library unit surface under 5.1** -- file-URI casing, BOM-tolerant stdin,
+the `ArgumentList`-vs-quoted-`.Arguments` split, and the config-env fallback -- the
+code that must keep working when PSES runs as a 5.1 child. The integration tests
+self-skip on Ubuntu (named pipes and a real PSES daemon are Windows-only here), so the
 Ubuntu leg verifies the cross-platform unit surface.
 
 The scripts are **authored** for cross-platform use -- all paths go through
@@ -190,6 +200,15 @@ integration leg.
 
 ## Troubleshooting
 
+- **Hooks fail with `'pwsh' is not recognized` / pwsh not found:** as of 1.1.1 the
+  hooks launch under PowerShell 7. Install it (`winget install Microsoft.PowerShell`)
+  -- Windows PowerShell 5.1 alone cannot launch the hooks. (`ps_host` only selects the
+  PSES *child* host, not the hook interpreter.)
+- **A leftover user-level PSES hook fires alongside the plugin (duplicate or
+  conflicting diagnostics):** if you previously wired a PowerShell diagnostics hook
+  directly in `~/.claude/settings.json` (a pre-plugin setup), remove it -- the plugin
+  owns the SessionStart / PostToolUse / SessionEnd hooks now, and a stray user-level
+  hook will double up or conflict with them.
 - **`/plugin` Errors tab shows `Executable not found in $PATH`** for the
   `powershell` server: `ps_host` points at an executable that is not on PATH.
   Install PowerShell 7 (`pwsh`) or set `ps_host` to `powershell`.

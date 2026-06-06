@@ -58,6 +58,47 @@ Describe 'Resolve-PsHost -- shared host detection' {
     }
 }
 
+Describe 'Get-PluginOption / Get-PluginOptionInt -- userConfig env fallback (v1.1.1 first-run fix)' {
+    # v1.1.1: hooks stopped passing ${user_config.*} (CC v2.1.167 refused to launch a
+    # hook when any referenced option was unset). Config now comes from the exported
+    # CLAUDE_PLUGIN_OPTION_* env vars with a fallback default, so a stranger with zero
+    # saved config never gets a hard error. These guard that fallback.
+    BeforeEach {
+        Get-ChildItem Env: | Where-Object { $_.Name -like 'CLAUDE_PLUGIN_OPTION_*' } |
+            ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) -ErrorAction SilentlyContinue }
+    }
+    AfterEach {
+        Get-ChildItem Env: | Where-Object { $_.Name -like 'CLAUDE_PLUGIN_OPTION_*' } |
+            ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) -ErrorAction SilentlyContinue }
+    }
+    It 'returns the default when the option is unset' {
+        Get-PluginOption 'ps_host' 'pwsh' | Should -Be 'pwsh'
+    }
+    It 'returns the default when the value is blank' {
+        $env:CLAUDE_PLUGIN_OPTION_ps_host = '   '
+        Get-PluginOption 'ps_host' 'pwsh' | Should -Be 'pwsh'
+    }
+    It 'reads a set value' {
+        $env:CLAUDE_PLUGIN_OPTION_ps_host = 'powershell'
+        Get-PluginOption 'ps_host' 'pwsh' | Should -Be 'powershell'
+    }
+    It 'matches regardless of exported-name casing (UPPER_SNAKE)' {
+        $env:CLAUDE_PLUGIN_OPTION_PS_HOST = 'powershell'
+        Get-PluginOption 'ps_host' 'pwsh' | Should -Be 'powershell'
+    }
+    It 'Get-PluginOptionInt parses a numeric value' {
+        $env:CLAUDE_PLUGIN_OPTION_timeoutMs = '8000'
+        Get-PluginOptionInt 'timeoutMs' 5000 | Should -Be 8000
+    }
+    It 'Get-PluginOptionInt falls back on an unexpanded token' {
+        $env:CLAUDE_PLUGIN_OPTION_timeoutMs = '${user_config.timeoutMs}'
+        Get-PluginOptionInt 'timeoutMs' 5000 | Should -Be 5000
+    }
+    It 'Get-PluginOptionInt falls back when unset' {
+        Get-PluginOptionInt 'perFileCap' 20 | Should -Be 20
+    }
+}
+
 Describe 'Diagnostics ordering and dedupe (Select-OrderedDiagnostics)' {
     It 'sorts by severity then line and dedupes identical findings' {
         $recs = @(

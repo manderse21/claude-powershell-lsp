@@ -1,6 +1,6 @@
 {
   "powershell": {
-    "command": "${user_config.ps_host}",
+    "command": "pwsh",
     "args": [
       "-NoLogo",
       "-NoProfile",

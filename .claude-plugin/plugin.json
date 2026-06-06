@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "powershell-lsp",
   "displayName": "PowerShell LSP",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "PowerShell code intelligence via PowerShell Editor Services (diagnostics, hover, go-to-definition, find-references) for .ps1/.psm1/.psd1.",
   "author": { "name": "Mike Andersen" },
   "license": "MIT",
@@ -66,7 +66,7 @@
   },
   "lspServers": {
     "powershell": {
-      "command": "${user_config.ps_host}",
+      "command": "pwsh",
       "args": [
         "-NoLogo",
         "-NoProfile",
@@ -94,7 +94,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${user_config.ps_host}\" -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.ps1\" -PreferredHost \"${user_config.ps_host}\" -KeepLastN \"${user_config.keepLastN}\" -SeverityThreshold \"${user_config.severityThreshold}\" -RuleInclude \"${user_config.ruleInclude}\" -RuleExclude \"${user_config.ruleExclude}\" -DebounceMs \"${user_config.debounceMs}\" -IdleTtlMin \"${user_config.idleTtlMin}\" -PerFileCap \"${user_config.perFileCap}\""
+            "command": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.ps1\""
           }
         ]
       }
@@ -105,7 +105,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${user_config.ps_host}\" -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/lsp-client.ps1\" -TimeoutMs \"${user_config.timeoutMs}\""
+            "command": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/lsp-client.ps1\""
           }
         ]
       }
@@ -115,7 +115,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${user_config.ps_host}\" -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/session-end.ps1\""
+            "command": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/session-end.ps1\""
           }
         ]
       }

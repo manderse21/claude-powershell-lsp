@@ -66,6 +66,43 @@ function Resolve-PsHost {
     return $null
 }
 
+# --- userConfig env fallback (v1.1.1 first-run fix) ------------------------
+# Hook commands no longer pass ${user_config.*} (CC v2.1.167 refuses to launch a
+# hook when any referenced option is unset -- the schema default is not applied to
+# the substitution -- which errored every hook on a clean install). Scripts read
+# each knob from the CLAUDE_PLUGIN_OPTION_<key> env vars CC exports to plugin
+# subprocesses, each with a fallback default.
+
+function Get-PluginOption {
+    # Return the CLAUDE_PLUGIN_OPTION_<key> value, or $Default if absent/blank. The
+    # exported name's casing is normalized away (underscores stripped, lower-cased)
+    # so 'ps_host' matches CLAUDE_PLUGIN_OPTION_PS_HOST / _ps_host / _psHost alike.
+    param([string]$Key, [string]$Default = '')
+    $target = ($Key -replace '_', '').ToLowerInvariant()
+    $prefix = 'CLAUDE_PLUGIN_OPTION_'
+    foreach ($entry in [System.Environment]::GetEnvironmentVariables().GetEnumerator()) {
+        $name = [string]$entry.Key
+        if ($name.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $k = ($name.Substring($prefix.Length) -replace '_', '').ToLowerInvariant()
+            if ($k -eq $target) {
+                $val = [string]$entry.Value
+                if (-not [string]::IsNullOrWhiteSpace($val)) { return $val }
+            }
+        }
+    }
+    return $Default
+}
+
+function Get-PluginOptionInt {
+    # Integer Get-PluginOption: fall back to $Default on absent / blank / non-numeric
+    # (e.g. an unexpanded '${user_config...}' token).
+    param([string]$Key, [int]$Default)
+    $raw = Get-PluginOption $Key ''
+    $n = 0
+    if ([int]::TryParse($raw, [ref]$n)) { return $n }
+    return $Default
+}
+
 # --- platform helpers (cross-platform forward-compat) ----------------------
 # Non-Windows branches below are AUTHORED but CI-verified later (this build runs
 # Windows only). They exist so the Windows-only calls are isolated and guarded.

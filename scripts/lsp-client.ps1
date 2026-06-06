@@ -21,13 +21,18 @@ param(
     [int] $TimeoutMs = 5000,
     [int] $ConnectTimeoutMs = 2000
 )
-$HardCapMs = $TimeoutMs
-if ($ConnectTimeoutMs -gt $HardCapMs) { $ConnectTimeoutMs = $HardCapMs }
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
+
+# v1.1.1: the PostToolUse hook no longer passes -TimeoutMs (the ${user_config.*}
+# substitution broke first-run on CC v2.1.167). Self-source it from the exported
+# env var, falling back to the param default.
+$TimeoutMs = Get-PluginOptionInt 'timeoutMs' $TimeoutMs
+$HardCapMs = $TimeoutMs
+if ($ConnectTimeoutMs -gt $HardCapMs) { $ConnectTimeoutMs = $HardCapMs }
 
 $logDir = Get-LogDir
 try { New-Item -ItemType Directory -Force -Path $logDir | Out-Null } catch { }
