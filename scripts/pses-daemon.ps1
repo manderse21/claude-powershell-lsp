@@ -73,8 +73,6 @@ $script:chunk     = New-Object byte[] 16384
 $script:pending   = $null
 $script:nextId    = 100
 $script:initDone  = $false
-$script:dbgReads  = 0     # [dbg-trackA] cap raw-stdout logging to the first few reads
-$script:framesIn  = 0     # count of LSP frames received from PSES (transport-ready signal)
 # Per-URI: latest diagnostics records, last-publish time, a sequence stamp, and
 # the content hash that produced them (for coalescing) and open/version state.
 $script:diag      = @{}   # uri -> @{ records=@(); at=DateTime; seq=int }
@@ -102,7 +100,6 @@ function Send-LspResponse($id, [string]$resultJson) {
 function Invoke-LspMessage([string]$body) {
     $msg = $null
     try { $msg = $body | ConvertFrom-Json } catch { Write-DLog ('bad json frame: ' + $_.Exception.Message); return }
-    $script:framesIn++
     $hasId = Test-Prop $msg 'id'
     $hasMethod = Test-Prop $msg 'method'
 
@@ -124,18 +121,6 @@ function Invoke-LspMessage([string]$body) {
     }
     if ($hasMethod) {
         $method = [string](Get-Prop $msg 'method')
-        if ($method -eq 'window/logMessage') {
-            $lp = Get-Prop $msg 'params'
-            $lm = [string](Get-Prop $lp 'message')
-            if ($null -ne $lm) {
-                $flat = ($lm -replace "[`r`n`t]", ' ')
-                if ($flat -match 'Exception|Failed to handle|   at ') {
-                    Write-DLog ('[dbg-trackA] PSES-ERR>> ' + $flat)
-                } else {
-                    Write-DLog ('[dbg-trackA] PSES>> ' + $flat.Substring(0, [Math]::Min(200, $flat.Length)))
-                }
-            }
-        }
         if ($method -eq 'textDocument/publishDiagnostics') {
             $params = Get-Prop $msg 'params'
             $uri = [string](Get-Prop $params 'uri')
@@ -177,13 +162,6 @@ function Invoke-LspPump {
             $sub = New-Object byte[] $count
             [Array]::Copy($script:chunk, 0, $sub, 0, $count)
             $script:buf.AddRange($sub)
-            if ($script:dbgReads -lt 4) {
-                $script:dbgReads++
-                $h3 = (($sub[0..([Math]::Min(2, $sub.Length - 1))]) | ForEach-Object { $_.ToString('x2') }) -join ' '
-                $pn = [Math]::Min(80, $sub.Length)
-                $pv = -join ($sub[0..($pn - 1)] | ForEach-Object { if ($_ -ge 32 -and $_ -le 126) { [char]$_ } elseif ($_ -eq 13) { '<CR>' } elseif ($_ -eq 10) { '<LF>' } else { '.' } })
-                Write-DLog ('[dbg-trackA] PSES stdout +' + $count + ' bytes; first3=' + $h3 + '; preview=' + $pv)
-            }
         }
     }
 }
@@ -216,7 +194,7 @@ function Start-Pses {
         '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startScript,
         '-HostName', 'Claude Code PSES Daemon', '-HostProfileId', 'cc-pses-daemon', '-HostVersion', '1.1.0',
         '-BundledModulesPath', $bundleRoot,
-        '-LogPath', $pseLog, '-LogLevel', 'Trace',
+        '-LogPath', $pseLog, '-LogLevel', 'Information',
         '-SessionDetailsPath', $sess,
         '-Stdio')
     # Make the vendored PSScriptAnalyzer visible to PSES so the analyzer pass runs.
@@ -244,7 +222,6 @@ function Start-Pses {
     # Windows CI legs always passed this handshake. Omit workspaceFolders and rely on
     # rootUri alone; the warm path opens each file explicitly via didOpen/didChange, so
     # multi-root workspace folders are not needed for diagnostics.
-    Write-DLog '[dbg-trackA] sending initialize (no workspaceFolders)'
     Send-Lsp @{
         jsonrpc = '2.0'; id = $initId; method = 'initialize'
         params = @{
@@ -254,9 +231,8 @@ function Start-Pses {
             capabilities = (New-InitializeCapabilities)
         }
     }
-    Write-DLog '[dbg-trackA] initialize frame sent; pumping up to 20s for the response'
     if (-not (Invoke-LspPump -Until { $script:respSeen.ContainsKey('1') } -MaxMs 20000)) {
-        Write-DLog ('initialize response not received before deadline (raw stdout reads seen=' + $script:dbgReads + ')')
+        Write-DLog 'initialize response not received before deadline'
         return $false
     }
     Send-Lsp @{ jsonrpc = '2.0'; method = 'initialized'; params = @{} }
@@ -284,7 +260,6 @@ function Get-Diagnostics([string]$filePath) {
     if (-not (Test-Path -LiteralPath $full)) { return @{ ok = $false; error = 'file not found' } }
     $uri = ConvertTo-FileUri $full
     $key = $uri.ToLowerInvariant()
-    Write-DLog ('[dbg-trackA] diag uri=' + $uri)
 
     $text = [System.IO.File]::ReadAllText($full)
     $hash = Get-ContentHash $text
