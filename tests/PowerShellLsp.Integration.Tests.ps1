@@ -5,10 +5,13 @@
 # and named pipes, so it is Windows-only for now (cross-platform is authored but
 # CI-verified later). Skipped on non-Windows.
 
-# Discovery-time platform gate for -Skip (StrictMode-safe; PS 5.1 has no $IsWindows).
+# Discovery-time platform gate for -Skip (StrictMode-safe; PS 5.1 has no $IsWindows/$IsLinux).
+# Integration runs on Windows and Linux; macOS stays authored-but-unverified (skipped).
 $script:OnWindows = if (Test-Path 'Variable:\IsWindows') { [bool]$IsWindows } else { $true }
+$script:OnLinux = (Test-Path 'Variable:\IsLinux') -and [bool]$IsLinux
+$script:SkipIntegration = -not ($script:OnWindows -or $script:OnLinux)
 
-Describe 'Integration: warm-start daemon (Windows)' -Skip:(-not $script:OnWindows) {
+Describe 'Integration: warm-start daemon (Windows + Linux)' -Skip:$script:SkipIntegration {
 
     BeforeAll {
         # Shared helpers (Add-ProcessArguments is cross-version: ArgumentList on
