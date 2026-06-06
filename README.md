@@ -165,9 +165,13 @@ recipe -- a clean top-level-map `.lsp.json` carrying **literal** commands (no
 **freshly started** Claude Code process (`--plugin-dir`, a full restart, not
 `/reload-plugins`) -- and the builtin `LSP` tool still returns `No LSP server
 available for file type: .ps1` for a `goToDefinition` on a `.ps1`. So the inertness is
-not a reload-vs-restart or template-variable artifact: plugin-provided `.lsp.json`
-registration is genuinely not wired on 2.1.167. That is exactly why diagnostics ride
-the PostToolUse hook instead -- it is the path that works today.
+not a reload-vs-restart or template-variable artifact. (One path was *not* tested: a
+`.lsp.json` **file** placed inside an already-installed plugin's cache directory -- the
+exact setup some users report working -- because that means writing into the
+installer-owned plugin cache; the re-test used `--plugin-dir` session-load instead. So
+this narrows the gap rather than closing it.) Either way, native registration is not
+something this plugin can rely on today -- which is why diagnostics ride the PostToolUse
+hook, the path that works on every host now.
 
 The template ships as `docs/lsp.json.template` (not live at the root) on purpose: a
 root `.lsp.json` adds nothing while registration is broken, and would risk duplicate

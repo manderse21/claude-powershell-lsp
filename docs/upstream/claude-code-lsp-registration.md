@@ -1,4 +1,4 @@
-# Upstream draft -- Claude Code: plugin LSP registration (negative datapoint)
+# Upstream draft -- Claude Code: plugin LSP registration (narrowed-gap datapoint)
 
 **Target:** a comment on an open registration thread -- best fits
 [`anthropics/claude-code#15168`](https://github.com/anthropics/claude-code/issues/15168)
@@ -8,10 +8,15 @@
 `.lsp.json` packaging gap is tracked (open) at
 [`anthropics/claude-plugins-official#379`](https://github.com/anthropics/claude-plugins-official/issues/379).
 
-**Status:** DRAFT for Mike's review. **Not posted.** This is the *narrowed gap report*
-variant: the clean re-test came back INERT, so the contribution is a confirming
-negative datapoint, not an "it works for me" report. Post (or use to close-confirm the
-thread) only on Mike's say-so.
+**Status:** DRAFT for Mike's review. **Not posted.** The clean re-test came back INERT
+in every configuration tested -- but one configuration (a `.lsp.json` **file** inside an
+already-installed plugin's cache directory, the exact setup phpmac reports working on
+#15148) was deliberately NOT tested, to avoid writing into the installer-owned plugin
+cache; the re-test used `--plugin-dir` session-load instead. So this **narrows** the gap
+and strengthens the earlier finding, but does **not** cleanly refute the installed-plugin
+"it works" reports. Treat it as a partial datapoint plus an open question, not a verdict.
+Post only on Mike's say-so -- and only after the installed-cache path is tested, or with
+the post framed to acknowledge it.
 
 ---
 
@@ -49,8 +54,17 @@ No LSP server available for file type: .ps1
 (`LSP` tool input: `{"operation":"goToDefinition","filePath":"./test.ps1","line":6,"character":6}`;
 Claude Code 2.1.167; 2026-06-06; the tool call was confirmed real via
 `--output-format stream-json`, not an echo of the prompt.) So the inertness is **not** a
-reload-vs-restart artifact and **not** a template-variable-expansion artifact: a
-present, clean, literal plugin `.lsp.json` does not register a server.
+reload-vs-restart artifact and **not** a template-variable-expansion artifact -- at
+least not for a plugin loaded via `--plugin-dir`.
+
+**Caveat -- what was NOT tested.** The `--plugin-dir` load path is not identical to an
+installed plugin. The setup phpmac reports working on #15148 is a `.lsp.json` **file**
+inside an already-*installed* plugin's cache directory; I did not test that, because it
+means writing into the installer-owned plugin cache. Plugin load *timing* relative to
+`LspServerManager` init (the #15168 / #14803 race) could differ between session-load and
+cache-install, so a `--plugin-dir` null does not by itself disprove the installed-plugin
+reports. The cleanest next test is a `.lsp.json` file dropped into an installed plugin's
+cache directory followed by a full restart.
 
 **Relationship to the packaging gap (#379).** #379 documents that installing a
 marketplace LSP plugin copies only the source directory into the cache, so an
@@ -58,12 +72,10 @@ marketplace LSP plugin copies only the source directory into the cache, so an
 plugin ships with nothing but `README.md` (0 servers). The proposed fix,
 [PR #378](https://github.com/anthropics/claude-plugins-official/pull/378) (add a real
 `.lsp.json` to each official plugin directory), was **closed unmerged (2026-02-11)**, so
-#379 is still open and unaddressed. But the `--plugin-dir` re-test makes the `.lsp.json`
-physically present in a loaded plugin directory and registration *still* fails -- so the
-packaging gap is **necessary but not sufficient**: even with the file present,
-plugin-provided LSP servers are not registered on 2.1.167. That points past the
-packaging gap to the registration path itself (the `LspServerManager` init-ordering /
-"0 servers" symptom described in #15168 / #15148).
+#379 is still open and unaddressed. The `--plugin-dir` re-test puts the `.lsp.json`
+physically in a loaded plugin directory and registration *still* fails there -- which,
+modulo the load-path caveat above, points past the packaging gap toward the registration
+path itself (the `LspServerManager` init-ordering / "0 servers" symptom in #15168 / #15148).
 
 **Open sub-question (not tested here):** whether `${CLAUDE_PLUGIN_ROOT}` /
 `${user_config.*}` template variables expand inside `.lsp.json` `command`/`args`/`env`.

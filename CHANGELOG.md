@@ -43,8 +43,9 @@ correction was ripe to ship.
   `${user_config.*}` template variables), loaded into a **freshly started** process
   (`--plugin-dir`, a full restart, not `/reload-plugins`). The builtin `LSP` tool
   still returned `No LSP server available for file type: .ps1`, so the inertness is
-  not a reload-vs-restart or template-variable artifact -- plugin-provided `.lsp.json`
-  registration is genuinely not wired on 2.1.167.
+  not a reload-vs-restart or template-variable artifact. (One path was not tested -- a
+  `.lsp.json` file inside an installed plugin's cache dir, to avoid writing the
+  installer-owned cache -- so this narrows the gap rather than closing it.)
 - **Corrected the upstream citation.** claude-plugins-official PR #378 (the proposed
   `.lsp.json` packaging fix) was **closed unmerged** (2026-02-11); issue #379 remains
   open and unaddressed. README and the held `docs/upstream/` draft updated to match.
