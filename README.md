@@ -132,14 +132,19 @@ Claude Code declares plugin language servers through a per-plugin
 carries). That is the intended path. In practice it has been unreliable for
 plugin-provided servers, for two independent reasons:
 
-1. **Marketplace plugins can install without their `.lsp.json`.** Claude Code
-   copies a plugin's source directory into its cache; an `lspServers` block that
-   lives only in `marketplace.json` is not written out, so the installed plugin
-   registers **0 servers**. Tracked (open) at
-   [claude-plugins-official#379](https://github.com/anthropics/claude-plugins-official/issues/379).
-   A proposed fix, [PR #378](https://github.com/anthropics/claude-plugins-official/pull/378)
-   (add a real `.lsp.json` to each official LSP plugin), was **closed unmerged**
-   (2026-02-11), so #379 remains open and unaddressed.
+1. **A plugin-shipped `.lsp.json` file does not register.** On 2.1.167 a `.lsp.json`
+   placed in a plugin (its installed cache, or loaded via `--plugin-dir`) does not
+   register a server -- verified across every configuration in dispatch 000008 (detail
+   under "Native registration" below). What *does* register is `lspServers` declared in
+   a **marketplace manifest** and harvested into Claude Code's plugin catalog -- how the
+   official `pyright`/`typescript` plugins register. This plugin's server lives in
+   `plugin.json` + a `.lsp.json` file, not the cataloged manifest, so it stays inert.
+   (Related packaging gap -- installing copies only a plugin's source into the cache --
+   tracked at
+   [claude-plugins-official#379](https://github.com/anthropics/claude-plugins-official/issues/379);
+   [PR #378](https://github.com/anthropics/claude-plugins-official/pull/378) to add
+   `.lsp.json` files to the official plugins was **closed unmerged** (2026-02-11), #379
+   still open.)
 2. **A registration race.** `LspServerManager` can initialize before plugins
    finish loading, registering 0 servers even when a `.lsp.json` is present.
    First reported in
@@ -154,24 +159,34 @@ So rather than depend on native registration, this plugin delivers diagnostics
 through a **warm PostToolUse hook** that always works, on every supported host,
 today. The hook is the product; native registration is a bonus you can opt into.
 
-### Native registration (`.lsp.json`) -- not active upstream yet
+### Native registration (`.lsp.json`) -- not active for this plugin on 2.1.167
 
-The plugin already declares its server (the `lspServers` block in `plugin.json`), and
-a standalone copy ships at [`docs/lsp.json.template`](docs/lsp.json.template). Both are
-the *intended* native path -- but **as of Claude Code 2.1.167 neither activates**.
-Re-tested 2026-06-06 with the strict methodology the community reports as the working
-recipe -- a clean top-level-map `.lsp.json` carrying **literal** commands (no
-`${CLAUDE_PLUGIN_ROOT}` / `${user_config.*}` template variables), loaded into a
-**freshly started** Claude Code process (`--plugin-dir`, a full restart, not
-`/reload-plugins`) -- and the builtin `LSP` tool still returns `No LSP server
-available for file type: .ps1` for a `goToDefinition` on a `.ps1`. So the inertness is
-not a reload-vs-restart or template-variable artifact. (One path was *not* tested: a
-`.lsp.json` **file** placed inside an already-installed plugin's cache directory -- the
-exact setup some users report working -- because that means writing into the
-installer-owned plugin cache; the re-test used `--plugin-dir` session-load instead. So
-this narrows the gap rather than closing it.) Either way, native registration is not
-something this plugin can rely on today -- which is why diagnostics ride the PostToolUse
-hook, the path that works on every host now.
+The plugin declares its server two ways -- an `lspServers` block in `plugin.json` and a
+standalone [`docs/lsp.json.template`](docs/lsp.json.template) -- and **neither activates
+on Claude Code 2.1.167**. This was pinned down on 2026-06-06 (dispatch 000008) across
+every configuration, including the one a prior test had left open:
+
+- a clean top-level-map `.lsp.json` with **literal** commands (no `${CLAUDE_PLUGIN_ROOT}`
+  / `${user_config.*}` variables), loaded via `--plugin-dir` into a freshly started
+  process -> `No LSP server available for file type: .ps1`;
+- that same literal `.lsp.json` shipped in a throwaway plugin and **installed through the
+  real `/plugin` flow**, so the installer placed it in the plugin cache (the exact
+  installed-cache setup some users report working) -> still `No LSP server available`,
+  after a full restart;
+- the installed real plugin, whose cache already carries a template-var `.lsp.json` ->
+  inert the same way.
+
+So a `.lsp.json` **file** is inert here regardless of literal-vs-template commands or
+`--plugin-dir`-vs-installed-cache. **What does register is `lspServers` declared in a
+marketplace manifest:** the official `pyright`/`typescript` plugins -- whose `lspServers`
+lives in `marketplace.json` (harvested into Claude Code's plugin catalog), with no
+`.lsp.json` in their installed caches at all -- register fine (the `LSP` tool finds the
+server and tries to spawn it). This plugin ships its server in `plugin.json` + a
+`.lsp.json` file, not in the cataloged marketplace manifest, so it does not register.
+That is why diagnostics ride the **PostToolUse hook** -- the path that works on every
+supported host today. (Methodology and evidence in
+[`docs/upstream/claude-code-lsp-registration.md`](docs/upstream/claude-code-lsp-registration.md),
+held for review.)
 
 The template ships as `docs/lsp.json.template` (not live at the root) on purpose: a
 root `.lsp.json` adds nothing while registration is broken, and would risk duplicate
@@ -207,21 +222,20 @@ under it on every platform. Windows PowerShell 5.1 is supported as the **PSES ch
 host** (set `ps_host` to `powershell`), not as the hook interpreter.
 
 CI runs the Pester suite on a three-leg matrix: **Windows `pwsh` 7**, **Windows
-PowerShell 5.1**, and **Ubuntu `pwsh`**. The integration tests spawn the daemon under
+PowerShell 5.1**, and **Ubuntu `pwsh`**. As of 1.2.0 the full warm-daemon
+**integration suite** (one-daemon bring-up, the settled PSScriptAnalyzer pass, clean
+SessionEnd) runs and is **green on all three legs** -- so the **Linux daemon path is
+CI-verified**, not merely authored. The integration tests drive the daemon under
 `pwsh` on every leg, so the Windows-PowerShell-5.1 leg's distinct value is exercising
-the **shared-library unit surface under 5.1** -- file-URI casing, BOM-tolerant stdin,
-the `ArgumentList`-vs-quoted-`.Arguments` split, and the config-env fallback -- the
-code that must keep working when PSES runs as a 5.1 child. The integration tests
-self-skip on Ubuntu (named pipes and a real PSES daemon are Windows-only here), so the
-Ubuntu leg verifies the cross-platform unit surface.
+the **shared-library surface under 5.1** -- file-URI casing, BOM-tolerant stdin, the
+`ArgumentList`-vs-quoted-`.Arguments` split, and the config-env fallback -- the code
+that must keep working when PSES runs as a 5.1 child.
 
-The scripts are **authored** for cross-platform use -- all paths go through
-`Join-Path`, host detection is shared, the single Windows-only call (process
-command-line lookup, used to verify a pid is ours before any kill) is guarded
-behind `Test-OnWindows` with Linux `/proc` and macOS `ps` fallbacks, and the
-client/daemon transport is `System.IO.Pipes` (Unix domain socket semantics on
-*nix). The macOS/Linux *daemon* path is authored but not yet exercised by the
-integration leg.
+The scripts are cross-platform: all paths go through `Join-Path`, host detection is
+shared, the single Windows-only call (process command-line lookup, used to verify a
+pid is ours before any kill) is guarded behind `Test-OnWindows` with Linux `/proc`
+and macOS `ps` fallbacks, and the client/daemon transport is `System.IO.Pipes` (Unix
+domain socket semantics on *nix). **macOS** stays authored but not yet CI-verified.
 
 ## Troubleshooting
 

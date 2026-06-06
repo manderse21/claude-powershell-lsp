@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "powershell-lsp",
   "displayName": "PowerShell LSP",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "PowerShell code intelligence via PowerShell Editor Services (diagnostics, hover, go-to-definition, find-references) for .ps1/.psm1/.psd1.",
   "author": { "name": "Mike Andersen" },
   "license": "MIT",
