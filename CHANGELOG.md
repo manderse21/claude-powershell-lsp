@@ -29,6 +29,36 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.1.2] - 2026-06-06
+
+PATCH: a documentation correction (no code change). Survey-then-ship dispatch
+(powershell-lsp/000007) across three maintenance tracks -- only the Track A docs
+correction was ripe to ship.
+
+### Docs
+
+- **Corrected the native `.lsp.json` / registration framing.** Re-tested plugin LSP
+  registration on Claude Code 2.1.167 with the strict methodology -- a clean
+  top-level-map `.lsp.json` carrying **literal** commands (no `${CLAUDE_PLUGIN_ROOT}` /
+  `${user_config.*}` template variables), loaded into a **freshly started** process
+  (`--plugin-dir`, a full restart, not `/reload-plugins`). The builtin `LSP` tool
+  still returned `No LSP server available for file type: .ps1`, so the inertness is
+  not a reload-vs-restart or template-variable artifact -- plugin-provided `.lsp.json`
+  registration is genuinely not wired on 2.1.167.
+- **Corrected the upstream citation.** claude-plugins-official PR #378 (the proposed
+  `.lsp.json` packaging fix) was **closed unmerged** (2026-02-11); issue #379 remains
+  open and unaddressed. README and the held `docs/upstream/` draft updated to match.
+
+### Notes (surveyed, nothing else shipped)
+
+- **Pins already current.** PSES `v4.6.0` and PSScriptAnalyzer `1.25.0` are the newest
+  published releases -- no bump available; the PSES `PrepareRenameHandler` NRE remains
+  unfixed upstream.
+- **Cross-platform still unverified.** Enabling the warm-daemon integration tests on
+  the ubuntu-pwsh CI leg showed the daemon does not reach `ready` on Linux (bring-up
+  fails; both Windows legs stayed green). The non-Windows path stays
+  authored-but-unverified; no platform claim changed.
+
 ## [1.1.1] - 2026-06-06
 
 ### Fixed
