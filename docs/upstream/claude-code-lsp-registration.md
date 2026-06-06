@@ -32,13 +32,19 @@ is a workaround for this bug, not a replacement for a fix.
 
 ### `.lsp.json` test result
 
-<!-- TODO(live-test): fill from a clean-session test of a root .lsp.json on the
-     installed plugin:
-       - Did adding `.lsp.json` at the plugin root activate native registration
-         (does the LSP tool now answer on a .ps1 file)?
-       - If yes, did diagnostics then arrive twice (native + the hook)?
-       - Claude Code version under test.
-     Replace this block with the observed result. -->
+Tested on **Claude Code 2.1.167** (2026-06-06): from a clean install of the plugin via
+its own marketplace, I copied the server declaration to the installed plugin root as
+`.lsp.json` and `/reload-plugins`. **Native registration did not activate** -- the
+builtin `LSP` tool, asked to `goToDefinition` on a `.ps1`, returned verbatim:
+
+```
+No LSP server available for file type: .ps1
+```
+
+So a plugin-root `.lsp.json` is **inert** on 2.1.167 -- the registration path is still
+not wired for plugin-provided servers, matching this thread. Throughout, the plugin's
+diagnostics kept arriving via the PostToolUse hook; a doubling check after the flip
+showed the diagnostic exactly **once**, i.e. no native path fired alongside the hook.
 
 ### Environment
 

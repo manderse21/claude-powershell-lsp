@@ -59,6 +59,12 @@ Set these via the `/plugin` config UI for `powershell-lsp`, or leave the default
 Diagnostics are returned in a stable order (severity, then line, then column),
 deduped, threshold- and rule-filtered, then capped per file.
 
+These filters apply on top of whatever **PSES** publishes. PSES runs its own default
+PSScriptAnalyzer rule set for live analysis, which is narrower than the
+`Invoke-ScriptAnalyzer` CLI default -- for example `PSAvoidUsingWriteHost` is not
+surfaced on the fly even though the CLI flags it. The knobs here can *suppress or
+narrow* what PSES reports; they cannot add a rule PSES does not run.
+
 ## Performance
 
 **Warm-path daemon (v1.1.0), `pwsh` 7.6.2, Windows 11.** Measured warm-path
@@ -147,22 +153,29 @@ So rather than depend on native registration, this plugin delivers diagnostics
 through a **warm PostToolUse hook** that always works, on every supported host,
 today. The hook is the product; native registration is a bonus you can opt into.
 
-### Opting into native registration (`.lsp.json`)
+### Native registration (`.lsp.json`) -- not active upstream yet
 
-A ready-to-use server declaration ships at
-[`docs/lsp.json.template`](docs/lsp.json.template). To register the server with
-Claude Code's builtin `LSP` tool natively, copy it to the plugin root:
+The plugin already declares its server (the `lspServers` block in `plugin.json`), and
+a standalone copy ships at [`docs/lsp.json.template`](docs/lsp.json.template). Both are
+the *intended* native path -- but **as of Claude Code 2.1.167 neither activates**:
+dropping the declaration at the plugin root as `.lsp.json` leaves the builtin `LSP`
+tool still reporting `No LSP server available for file type: .ps1` (verified
+2026-06-06; the upstream registration bug above is still live). That is exactly why
+diagnostics ride the PostToolUse hook instead -- it is the path that works today.
+
+The template ships as `docs/lsp.json.template` (not live at the root) on purpose: a
+root `.lsp.json` adds nothing while registration is broken, and would risk duplicate
+diagnostics the moment a future release fixes it. When that release lands, copy it in
+to opt into the native path:
 
 ```
-cp docs/lsp.json.template .lsp.json    # or copy it into your installed plugin cache dir
+cp docs/lsp.json.template .lsp.json
 /reload-plugins
 ```
 
-> **Heads-up -- duplicate diagnostics.** If native registration activates *and* the
-> PostToolUse hook is still enabled, you will see each diagnostic twice. Use one
-> path or the other: keep the hook (recommended, reliable) **or** flip on
-> `.lsp.json` and disable the hook. Native plugin-LSP registration behavior varies
-> by Claude Code version (see the issues above); test in your environment.
+> **Heads-up once it does activate -- duplicate diagnostics.** If native registration
+> ever turns on while the PostToolUse hook is also enabled, each diagnostic arrives
+> twice. Use one path or the other.
 
 ## Pinned versions
 
