@@ -284,6 +284,7 @@ function Get-Diagnostics([string]$filePath) {
     if (-not (Test-Path -LiteralPath $full)) { return @{ ok = $false; error = 'file not found' } }
     $uri = ConvertTo-FileUri $full
     $key = $uri.ToLowerInvariant()
+    Write-DLog ('[dbg-trackA] diag uri=' + $uri)
 
     $text = [System.IO.File]::ReadAllText($full)
     $hash = Get-ContentHash $text
