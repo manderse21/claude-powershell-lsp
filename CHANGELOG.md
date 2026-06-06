@@ -76,14 +76,10 @@ powershell-lsp/000008).
   hand-writes), then the builtin `LSP` tool was probed after a full restart:
   `No LSP server available`. The installed real plugin (template-var `.lsp.json` in its
   cache) is inert the same way. So the `.lsp.json`-**file** path is **inert on Claude
-  Code 2.1.167**, with literal commands and template variables alike.
-- **Refined the framing: native registration is not globally broken.** A control probe
-  found the official `pyright`/`typescript` plugins **do** register -- their
-  `lspServers` is declared in the **marketplace manifest** (harvested into the plugin
-  catalog) and the `LSP` tool found and tried to spawn the server. So Claude Code
-  2.1.167 honors `lspServers` declared in a marketplace manifest, not a `.lsp.json` file
-  shipped in a plugin. README and the held `docs/upstream/` draft were updated to match;
-  the draft stays a DRAFT (not posted).
+  Code 2.1.167**, with literal commands and template variables alike -- a definitive
+  refutation of the installed-cache "it works" reports (most likely a CC version
+  difference). README and the held `docs/upstream/` draft updated to the definitive INERT
+  framing; the draft stays a DRAFT (not posted).
 
 ## [1.1.2] - 2026-06-06
 
