@@ -1,0 +1,425 @@
+#Requires -Version 5.1
+
+# pses-daemon.ps1 -- long-lived, per-session process that owns ONE warm PSES
+# child (over stdio) and serves diagnostics requests over a named pipe
+# (powershell-lsp-<sessionid>). Keeping PSES warm removes the per-edit cold-start
+# that dominated the loose-hook latency.
+#
+# Transport: named pipe (client<->daemon) + stdio (daemon<->PSES). The stdio side
+# is fixed by contract and never changes.
+#
+# stdout of THIS process is reserved: the daemon writes nothing to stdout. All
+# output goes to files under CLAUDE_PLUGIN_DATA/logs. -NoLogo -NoProfile is set on
+# the PSES child launch. State/pids/logs live under CLAUDE_PLUGIN_DATA only.
+#
+# Author: Mike Andersen / powershell-lsp plugin.
+
+param(
+    [Parameter(Mandatory = $true)][string] $SessionId,
+    [string] $PsHost = 'pwsh',
+    # Explicit data root (set by session-start). Decouples the daemon from env
+    # inheritance, which is unreliable across a detached launch.
+    [string] $DataRoot = '',
+    # Quiet window (ms) with no new publish before a diagnostics pass is "settled".
+    # Bridges the early parser publish to the slower PSScriptAnalyzer publish. The
+    # settle is adaptive (it resets on each publish), so this is the trailing
+    # quiet window, not a fixed wait; 600ms keeps warm-path latency near 2s while
+    # still clearing the early publish.
+    [int] $SettleMs = 600,
+    # Coalesce window (ms): edits landing within this window fold into one pass.
+    # (Identical-content requests also coalesce via the content-hash cache.)
+    [int] $DebounceMs = 150,
+    # Hard cap (ms) on waiting for any single settled publish.
+    [int] $MaxWaitMs = 5000,
+    # Idle TTL (min): self-terminate after this long with no client request.
+    [int] $IdleTtlMin = 30,
+    # Diagnostics filtering (Stage 4 userConfig knobs).
+    [string] $SeverityThreshold = 'Hint',   # least-severe level to report
+    [string] $RuleInclude = '',              # comma-separated; empty = all
+    [string] $RuleExclude = '',              # comma-separated rule codes to drop
+    [int] $PerFileCap = 20                    # max diagnostics per file (0 = no cap)
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
+
+# Pin the data root explicitly (a detached launch may not inherit the env var).
+if (-not [string]::IsNullOrWhiteSpace($DataRoot)) { $env:CLAUDE_PLUGIN_DATA = $DataRoot }
+
+# Parse rule include/exclude lists once.
+$script:RuleIncludeArr = Split-RuleList $RuleInclude
+$script:RuleExcludeArr = Split-RuleList $RuleExclude
+
+# --- paths / logging -------------------------------------------------------
+$logDir    = Get-LogDir
+$sessionDir = Get-SessionDir
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null
+$daemonLog = Join-Path $logDir 'pses-daemon.log'
+$sessionFile = Join-Path $sessionDir ($SessionId + '.json')
+
+function Write-DLog([string]$m) {
+    try { ('[' + (Get-Date -Format 'o') + '] [' + $PID + '] ' + $m) | Out-File -FilePath $daemonLog -Append -Encoding ascii } catch { }
+}
+
+# --- shared LSP state ------------------------------------------------------
+$script:proc      = $null
+$script:stdin     = $null
+$script:stdout    = $null
+$script:buf       = New-Object System.Collections.Generic.List[byte]
+$script:chunk     = New-Object byte[] 16384
+$script:pending   = $null
+$script:nextId    = 100
+$script:initDone  = $false
+# Per-URI: latest diagnostics records, last-publish time, a sequence stamp, and
+# the content hash that produced them (for coalescing) and open/version state.
+$script:diag      = @{}   # uri -> @{ records=@(); at=DateTime; seq=int }
+$script:openDocs  = @{}   # uri -> version int
+$script:lastHash  = @{}   # uri -> content hash string
+$script:respSeen  = @{}   # request id -> $true once a response arrives
+
+function Get-ContentHash([string]$text) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+        return [System.BitConverter]::ToString($sha.ComputeHash($bytes))
+    } finally { $sha.Dispose() }
+}
+
+# --- LSP send/handle/pump --------------------------------------------------
+function Send-Lsp([object]$obj) {
+    Write-LspFrame -Stream $script:stdin -Json ($obj | ConvertTo-Json -Depth 20 -Compress)
+}
+function Send-LspResponse($id, [string]$resultJson) {
+    $idJson = if ($id -is [string]) { ConvertTo-Json $id -Compress } else { [string]$id }
+    Write-LspFrame -Stream $script:stdin -Json ('{"jsonrpc":"2.0","id":' + $idJson + ',"result":' + $resultJson + '}')
+}
+
+function Invoke-LspMessage([string]$body) {
+    $msg = $null
+    try { $msg = $body | ConvertFrom-Json } catch { Write-DLog ('bad json frame: ' + $_.Exception.Message); return }
+    $hasId = Test-Prop $msg 'id'
+    $hasMethod = Test-Prop $msg 'method'
+
+    if ($hasId -and $hasMethod) {
+        # server -> client request: must respond or PSES stalls.
+        $method = [string](Get-Prop $msg 'method')
+        $id = Get-Prop $msg 'id'
+        if ($method -eq 'workspace/configuration') {
+            $params = Get-Prop $msg 'params'
+            $items = @(Get-Prop $params 'items')
+            $parts = @()
+            foreach ($it in $items) { $parts += '{"scriptAnalysis":{"enable":true}}' }
+            $arr = if ($parts.Count -gt 0) { '[' + ($parts -join ',') + ']' } else { '[]' }
+            Send-LspResponse $id $arr
+        } else {
+            Send-LspResponse $id 'null'
+        }
+        return
+    }
+    if ($hasMethod) {
+        $method = [string](Get-Prop $msg 'method')
+        if ($method -eq 'textDocument/publishDiagnostics') {
+            $params = Get-Prop $msg 'params'
+            $uri = [string](Get-Prop $params 'uri')
+            $key = $uri.ToLowerInvariant()
+            $records = @()
+            foreach ($d in @(Get-Prop $params 'diagnostics')) { $records += (ConvertTo-DiagRecord $d) }
+            $script:diag[$key] = @{ records = $records; at = (Get-Date); seq = ($script:nextId) }
+            Write-DLog ('publishDiagnostics ' + $uri + ' count=' + $records.Count)
+        }
+        return
+    }
+    if ($hasId) {
+        $id = Get-Prop $msg 'id'
+        $script:respSeen[[string]$id] = $true
+    }
+}
+
+function Invoke-LspPump {
+    # Pump available PSES output through the handler. Returns once $Until is true
+    # or $MaxMs elapses. Keeps a single outstanding async read so a poll timeout
+    # never starts a second concurrent read.
+    param([scriptblock]$Until, [int]$MaxMs = 250, [int]$PollMs = 60)
+    $deadline = (Get-Date).AddMilliseconds($MaxMs)
+    while ($true) {
+        $f = Read-LspFrame -Buffer $script:buf
+        while ($null -ne $f) { Invoke-LspMessage $f; $f = Read-LspFrame -Buffer $script:buf }
+        if (& $Until) { return $true }
+        $remMs = [int][Math]::Max(0, ($deadline - (Get-Date)).TotalMilliseconds)
+        if ($remMs -le 0) { return (& $Until) }
+        if ($script:proc.HasExited) { Write-DLog 'PSES child exited during pump'; return (& $Until) }
+        if ($null -eq $script:pending) {
+            $script:pending = $script:stdout.ReadAsync($script:chunk, 0, $script:chunk.Length)
+        }
+        $wait = [Math]::Min($remMs, $PollMs)
+        if ($script:pending.Wait($wait)) {
+            $count = $script:pending.Result
+            $script:pending = $null
+            if ($count -le 0) { Write-DLog 'PSES stdout closed'; return (& $Until) }
+            $sub = New-Object byte[] $count
+            [Array]::Copy($script:chunk, 0, $sub, 0, $count)
+            $script:buf.AddRange($sub)
+        }
+    }
+}
+
+# --- PSES child lifecycle --------------------------------------------------
+function Start-Pses {
+    $startScript = Get-PsesStartScript
+    if (-not (Test-Path -LiteralPath $startScript)) {
+        Write-DLog ('PSES start script missing: ' + $startScript); return $false
+    }
+    $bundleRoot = Get-PsesBundleRoot
+    $hostExe = Resolve-PsHost $PsHost
+    if ($null -eq $hostExe) { Write-DLog 'no PowerShell host found (pwsh/powershell)'; return $false }
+    if ($hostExe -ne $PsHost) { Write-DLog ('requested host ' + $PsHost + ' unavailable; using ' + $hostExe) }
+
+    $stamp = [DateTime]::Now.ToString('yyyyMMdd-HHmmss-fff')
+    $pseLog = Join-Path $logDir ('pses-server-' + $stamp + '.log')
+    $sess = Join-Path $logDir ('pses-server-' + $stamp + '.json')
+    $errLog = Join-Path $logDir ('pses-stderr-' + $stamp + '.log')
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $hostExe
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.WorkingDirectory = $logDir
+    Add-ProcessArguments $psi @(
+        '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startScript,
+        '-HostName', 'Claude Code PSES Daemon', '-HostProfileId', 'cc-pses-daemon', '-HostVersion', '1.1.0',
+        '-BundledModulesPath', $bundleRoot,
+        '-LogPath', $pseLog, '-LogLevel', 'Information',
+        '-SessionDetailsPath', $sess,
+        '-Stdio')
+    # Make the vendored PSScriptAnalyzer visible to PSES so the analyzer pass runs.
+    $pssaDir = Get-PssaModuleDir
+    if (Test-Path -LiteralPath $pssaDir) {
+        $psi.EnvironmentVariables['PSModulePath'] = $pssaDir + [System.IO.Path]::PathSeparator + $env:PSModulePath
+        Write-DLog ('prepended vendored PSSA to child PSModulePath: ' + $pssaDir)
+    } else {
+        Write-DLog ('vendored PSSA dir absent (' + $pssaDir + '); analyzer pass may be parser-only')
+    }
+
+    Write-DLog ('launching PSES via ' + $hostExe)
+    $script:proc = [System.Diagnostics.Process]::Start($psi)
+    $script:stdin = $script:proc.StandardInput.BaseStream
+    $script:stdout = $script:proc.StandardOutput.BaseStream
+    $errFs = [System.IO.File]::Open($errLog, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+    $null = $script:proc.StandardError.BaseStream.CopyToAsync($errFs)
+
+    # initialize handshake (declares rename -> avoids PSES v4.6.0 NRE; see lib).
+    $rootUri = ConvertTo-FileUri (Get-Location).Path
+    $initId = 1
+    Send-Lsp @{
+        jsonrpc = '2.0'; id = $initId; method = 'initialize'
+        params = @{
+            processId = $PID
+            clientInfo = @{ name = 'cc-pses-daemon'; version = '1.1.0' }
+            rootUri = $rootUri
+            workspaceFolders = @(@{ uri = $rootUri; name = 'workspace' })
+            capabilities = (New-InitializeCapabilities)
+        }
+    }
+    if (-not (Invoke-LspPump -Until { $script:respSeen.ContainsKey('1') } -MaxMs 20000)) {
+        Write-DLog 'initialize response not received before deadline'
+        return $false
+    }
+    Send-Lsp @{ jsonrpc = '2.0'; method = 'initialized'; params = @{} }
+    Send-Lsp @{ jsonrpc = '2.0'; method = 'workspace/didChangeConfiguration'; params = @{ settings = @{ powershell = @{ scriptAnalysis = @{ enable = $true } } } } }
+    $script:initDone = $true
+    Write-DLog 'PSES initialized'
+    return $true
+}
+
+function Stop-Pses {
+    if ($null -eq $script:proc) { return }
+    try { Send-Lsp @{ jsonrpc = '2.0'; id = 999; method = 'shutdown' } } catch { }
+    Start-Sleep -Milliseconds 120
+    try { Send-Lsp @{ jsonrpc = '2.0'; method = 'exit' } } catch { }
+    Start-Sleep -Milliseconds 120
+    try { if (-not $script:proc.HasExited) { $script:proc.Kill($true) } } catch {
+        try { if (-not $script:proc.HasExited) { $script:proc.Kill() } } catch { }
+    }
+    Write-DLog 'PSES stopped'
+}
+
+# --- diagnostics request (didOpen/didChange + settle) ----------------------
+function Get-Diagnostics([string]$filePath) {
+    $full = [System.IO.Path]::GetFullPath($filePath)
+    if (-not (Test-Path -LiteralPath $full)) { return @{ ok = $false; error = 'file not found' } }
+    $uri = ConvertTo-FileUri $full
+    $key = $uri.ToLowerInvariant()
+
+    $text = [System.IO.File]::ReadAllText($full)
+    $hash = Get-ContentHash $text
+
+    # Coalesce: identical content already analyzed -> return cached set.
+    if ($script:lastHash.ContainsKey($key) -and $script:lastHash[$key] -eq $hash -and $script:diag.ContainsKey($key)) {
+        Write-DLog ('cache-hit ' + $uri)
+        return @{ ok = $true; cached = $true; records = $script:diag[$key].records }
+    }
+
+    # Debounce: let edits landing within the window fold into one pass, then
+    # re-read so we analyze the freshest content exactly once.
+    if ($DebounceMs -gt 0) {
+        Invoke-LspPump -Until { $false } -MaxMs $DebounceMs | Out-Null
+        $text2 = [System.IO.File]::ReadAllText($full)
+        if ($text2 -ne $text) { $text = $text2; $hash = Get-ContentHash $text }
+    }
+
+    # Clear the prior publish for this uri so the settle waits for a NEW one.
+    if ($script:diag.ContainsKey($key)) { $script:diag.Remove($key) | Out-Null }
+
+    if ($script:openDocs.ContainsKey($key)) {
+        $ver = [int]$script:openDocs[$key] + 1
+        $script:openDocs[$key] = $ver
+        Send-Lsp @{ jsonrpc = '2.0'; method = 'textDocument/didChange'
+            params = @{ textDocument = @{ uri = $uri; version = $ver }
+                contentChanges = @(@{ text = $text }) } }
+    } else {
+        $script:openDocs[$key] = 0
+        Send-Lsp @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'
+            params = @{ textDocument = @{ uri = $uri; languageId = 'powershell'; version = 0; text = $text } } }
+    }
+
+    # Settle: wait for a publish, then for SettleMs of quiet after the LAST one,
+    # capped at MaxWaitMs. This skips the early (often empty) parser publish in
+    # favor of the settled PSScriptAnalyzer pass.
+    Invoke-LspPump -Until {
+        if (-not $script:diag.ContainsKey($key)) { return $false }
+        $age = ((Get-Date) - $script:diag[$key].at).TotalMilliseconds
+        return ($age -ge $SettleMs)
+    } -MaxMs $MaxWaitMs | Out-Null
+
+    $records = if ($script:diag.ContainsKey($key)) { $script:diag[$key].records } else { @() }
+    $script:lastHash[$key] = $hash
+    if (-not $script:diag.ContainsKey($key)) { $script:diag[$key] = @{ records = @(); at = (Get-Date); seq = 0 } }
+    Write-DLog ('analyzed ' + $uri + ' -> ' + @($records).Count + ' record(s)')
+    return @{ ok = $true; cached = $false; records = @($records) }
+}
+
+# --- session file / heartbeat ----------------------------------------------
+function Write-SessionFile([string]$pipeName, [string]$state) {
+    $obj = [ordered]@{
+        sessionId = $SessionId
+        pid = $PID
+        pipe = $pipeName
+        host = $PsHost
+        state = $state
+        started = $script:startedIso
+        heartbeat = (Get-Date -Format 'o')
+        psesPid = if ($null -ne $script:proc) { $script:proc.Id } else { $null }
+    }
+    try { ($obj | ConvertTo-Json -Depth 5) | Out-File -FilePath $sessionFile -Encoding ascii -Force } catch { }
+}
+
+# ===========================================================================
+$script:startedIso = (Get-Date -Format 'o')
+$pipeName = 'powershell-lsp-' + $SessionId
+Write-DLog ('--- daemon start: session=' + $SessionId + ' pipe=' + $pipeName + ' host=' + $PsHost + ' ---')
+
+if (-not (Start-Pses)) {
+    Write-DLog 'PSES launch failed; daemon exiting'
+    Write-SessionFile $pipeName 'failed'
+    exit 1
+}
+
+$server = New-Object System.IO.Pipes.NamedPipeServerStream(
+    $pipeName, [System.IO.Pipes.PipeDirection]::InOut, 1,
+    [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)
+
+Write-SessionFile $pipeName 'ready'
+Write-DLog 'pipe server ready'
+
+$lastActivity = Get-Date
+$lastHeartbeat = [DateTime]::MinValue
+$connectTask = $null
+$running = $true
+
+try {
+    while ($running) {
+        $now = Get-Date
+        if (($now - $lastHeartbeat).TotalSeconds -ge 10) {
+            Write-SessionFile $pipeName 'ready'
+            $lastHeartbeat = $now
+        }
+        if (($now - $lastActivity).TotalMinutes -ge $IdleTtlMin) {
+            Write-DLog ('idle TTL (' + $IdleTtlMin + ' min) reached; shutting down')
+            break
+        }
+        if ($script:proc.HasExited) { Write-DLog 'PSES child gone; shutting down'; break }
+
+        # brief idle drain so PSES server requests get answered between clients
+        Invoke-LspPump -Until { $false } -MaxMs 40 | Out-Null
+
+        if ($null -eq $connectTask) { $connectTask = $server.WaitForConnectionAsync() }
+        if (-not $connectTask.Wait(500)) { continue }
+        $connectTask = $null
+        $lastActivity = Get-Date
+
+        try {
+            $reader = New-Object System.IO.StreamReader($server, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+            $writer = New-Object System.IO.StreamWriter($server, (New-Object System.Text.UTF8Encoding($false)), 4096, $true)
+            $writer.NewLine = "`n"; $writer.AutoFlush = $true
+            $line = $reader.ReadLine()
+            if ([string]::IsNullOrWhiteSpace($line)) { Write-DLog 'empty request'; }
+            else {
+                $req = $null
+                try { $req = $line | ConvertFrom-Json } catch { }
+                $action = [string](Get-Prop $req 'action')
+                Write-DLog ('request action=' + $action)
+                switch ($action) {
+                    'diagnostics' {
+                        $file = [string](Get-Prop $req 'file')
+                        $res = Get-Diagnostics $file
+                        if ($res.ok) {
+                            # Stable order + dedupe, then apply the configured
+                            # severity threshold + rule include/exclude, then cap
+                            # per file (surfacing an "omitted" count for the client).
+                            $ordered = Select-OrderedDiagnostics @($res.records)
+                            $filtered = @(Select-FilteredDiagnostics $ordered $SeverityThreshold $script:RuleIncludeArr $script:RuleExcludeArr)
+                            $total = $filtered.Count
+                            if ($PerFileCap -gt 0 -and $total -gt $PerFileCap) {
+                                $shown = @($filtered[0..($PerFileCap - 1)]); $omitted = $total - $PerFileCap
+                            } else {
+                                $shown = $filtered; $omitted = 0
+                            }
+                            $payload = [ordered]@{ ok = $true; action = 'diagnostics'; file = $file
+                                cached = [bool]$res.cached; count = @($shown).Count; omitted = $omitted; diagnostics = @($shown) }
+                        } else {
+                            $payload = [ordered]@{ ok = $false; action = 'diagnostics'; error = $res.error }
+                        }
+                        $writer.WriteLine(($payload | ConvertTo-Json -Depth 8 -Compress))
+                    }
+                    'ping' {
+                        $writer.WriteLine(([ordered]@{ ok = $true; action = 'ping'; pid = $PID; psesPid = $script:proc.Id } | ConvertTo-Json -Compress))
+                    }
+                    'shutdown' {
+                        $writer.WriteLine(([ordered]@{ ok = $true; action = 'shutdown' } | ConvertTo-Json -Compress))
+                        $running = $false
+                    }
+                    default {
+                        $writer.WriteLine(([ordered]@{ ok = $false; error = ('unknown action: ' + $action) } | ConvertTo-Json -Compress))
+                    }
+                }
+            }
+            try { $writer.Flush() } catch { }
+        } catch {
+            Write-DLog ('request handling error: ' + $_.Exception.Message)
+        } finally {
+            try { if ($server.IsConnected) { $server.Disconnect() } } catch { }
+        }
+    }
+} finally {
+    Write-DLog 'main loop ended; cleanup'
+    try { $server.Dispose() } catch { }
+    Stop-Pses
+    try { if (Test-Path -LiteralPath $sessionFile) { Remove-Item -LiteralPath $sessionFile -Force } } catch { }
+    Write-DLog '--- daemon exit ---'
+}

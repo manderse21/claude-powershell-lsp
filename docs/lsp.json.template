@@ -1,0 +1,24 @@
+{
+  "powershell": {
+    "command": "${user_config.ps_host}",
+    "args": [
+      "-NoLogo",
+      "-NoProfile",
+      "-ExecutionPolicy", "Bypass",
+      "-File", "${CLAUDE_PLUGIN_ROOT}/scripts/pses-stdio.ps1"
+    ],
+    "extensionToLanguage": {
+      ".ps1": "powershell",
+      ".psm1": "powershell",
+      ".psd1": "powershell"
+    },
+    "transport": "stdio",
+    "startupTimeout": 30000,
+    "shutdownTimeout": 5000,
+    "restartOnCrash": true,
+    "maxRestarts": 3,
+    "env": {
+      "PSES_BUNDLE_PATH": "${CLAUDE_PLUGIN_DATA}/PowerShellEditorServices"
+    }
+  }
+}

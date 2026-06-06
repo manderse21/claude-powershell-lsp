@@ -1,0 +1,50 @@
+name: powershell-lsp CI
+
+# Runs the Pester suite for the powershell-lsp plugin on every push / PR to main.
+# Matrix: Windows (pwsh 7 + Windows PowerShell 5.1) and Ubuntu (pwsh). Integration
+# tests are Windows-only (they spawn a PSES daemon over named pipes); on Ubuntu they
+# self-skip, so the Ubuntu leg verifies the cross-platform unit surface only -- the
+# cross-platform daemon path is "authored, CI-verified later" and this is the harness
+# that will verify it. (This repo IS the plugin, so CI runs on every push -- no path
+# filter, unlike the mande-tooling monorepo it was extracted from.)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pester:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows-pwsh
+            os: windows-latest
+            interpreter: pwsh
+          - label: windows-powershell
+            os: windows-latest
+            interpreter: powershell
+          - label: ubuntu-pwsh
+            os: ubuntu-latest
+            interpreter: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Pester suite
+        run: ${{ matrix.interpreter }} -NoProfile -ExecutionPolicy Bypass -File ./tests/run-tests.ps1 -CI
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pester-results-${{ matrix.label }}
+          path: tests/testResults.xml
+          if-no-files-found: ignore

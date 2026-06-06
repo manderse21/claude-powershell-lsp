@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "powershell-lsp",
+  "displayName": "PowerShell LSP",
+  "version": "1.1.0",
+  "description": "PowerShell code intelligence via PowerShell Editor Services (diagnostics, hover, go-to-definition, find-references) for .ps1/.psm1/.psd1.",
+  "author": { "name": "Mike Andersen" },
+  "license": "MIT",
+  "keywords": ["powershell", "lsp", "editor-services", "diagnostics"],
+  "defaultEnabled": false,
+  "userConfig": {
+    "ps_host": {
+      "type": "string",
+      "title": "PowerShell host executable",
+      "description": "Executable used to host PowerShell Editor Services. Use 'pwsh' (PowerShell 7+, recommended and tested) or 'powershell' (Windows PowerShell 5.1).",
+      "default": "pwsh"
+    },
+    "severityThreshold": {
+      "type": "string",
+      "title": "Severity threshold",
+      "description": "Least-severe level to report: Error, Warning, Information, or Hint. 'Warning' reports Errors and Warnings only.",
+      "default": "Hint"
+    },
+    "ruleInclude": {
+      "type": "string",
+      "title": "Include rules (comma-separated)",
+      "description": "If set, report ONLY these PSScriptAnalyzer rule codes (e.g. 'PSUseApprovedVerbs,PSAvoidUsingCmdletAliases'). Empty = all.",
+      "default": ""
+    },
+    "ruleExclude": {
+      "type": "string",
+      "title": "Exclude rules (comma-separated)",
+      "description": "PSScriptAnalyzer rule codes to suppress (e.g. 'PSAvoidUsingWriteHost'). Empty = none.",
+      "default": ""
+    },
+    "timeoutMs": {
+      "type": "string",
+      "title": "Client hard cap (ms)",
+      "description": "Total time the PostToolUse client waits before degrading to log-only.",
+      "default": "5000"
+    },
+    "debounceMs": {
+      "type": "string",
+      "title": "Debounce window (ms)",
+      "description": "Edits landing within this window fold into one analysis pass.",
+      "default": "150"
+    },
+    "keepLastN": {
+      "type": "string",
+      "title": "Log files kept per family",
+      "description": "SessionStart sweeps each rolling log family down to this many newest files.",
+      "default": "10"
+    },
+    "idleTtlMin": {
+      "type": "string",
+      "title": "Daemon idle TTL (minutes)",
+      "description": "The daemon self-terminates after this long with no diagnostics request.",
+      "default": "30"
+    },
+    "perFileCap": {
+      "type": "string",
+      "title": "Max diagnostics per file",
+      "description": "Cap the diagnostics reported per file; the rest collapse into an 'and N more' line. '0' = no cap.",
+      "default": "20"
+    }
+  },
+  "lspServers": {
+    "powershell": {
+      "command": "${user_config.ps_host}",
+      "args": [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "${CLAUDE_PLUGIN_ROOT}/scripts/pses-stdio.ps1"
+      ],
+      "extensionToLanguage": {
+        ".ps1": "powershell",
+        ".psm1": "powershell",
+        ".psd1": "powershell"
+      },
+      "transport": "stdio",
+      "startupTimeout": 30000,
+      "shutdownTimeout": 5000,
+      "restartOnCrash": true,
+      "maxRestarts": 3,
+      "env": {
+        "PSES_BUNDLE_PATH": "${CLAUDE_PLUGIN_DATA}/PowerShellEditorServices"
+      }
+    }
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${user_config.ps_host}\" -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.ps1\" -PreferredHost \"${user_config.ps_host}\" -KeepLastN \"${user_config.keepLastN}\" -SeverityThreshold \"${user_config.severityThreshold}\" -RuleInclude \"${user_config.ruleInclude}\" -RuleExclude \"${user_config.ruleExclude}\" -DebounceMs \"${user_config.debounceMs}\" -IdleTtlMin \"${user_config.idleTtlMin}\" -PerFileCap \"${user_config.perFileCap}\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${user_config.ps_host}\" -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/lsp-client.ps1\" -TimeoutMs \"${user_config.timeoutMs}\""
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${user_config.ps_host}\" -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/session-end.ps1\""
+          }
+        ]
+      }
+    ]
+  }
+}

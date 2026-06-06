@@ -1,0 +1,215 @@
+# PowerShell LSP
+
+PowerShell code intelligence for [Claude Code](https://claude.com/claude-code),
+powered by [PowerShell Editor Services](https://github.com/PowerShell/PowerShellEditorServices)
+(PSES). Real-time diagnostics, hover, go-to-definition, and find-references while
+editing `.ps1`, `.psm1`, and `.psd1` files.
+
+This is language tooling, not project tooling: a standalone plugin that carries
+~0 always-on model-context token cost. It only spawns a language server when you
+open a PowerShell file, and a single warm PSES serves the whole session so each
+edit pays a pipe round-trip (~2 s) instead of a cold start (~6 s).
+
+## Requirements
+
+- **PowerShell 7+ (`pwsh`) recommended.** This is the default and tested host.
+  Install it from <https://aka.ms/powershell> or via `winget install Microsoft.PowerShell`.
+- Windows PowerShell 5.1 (`powershell`) works as a fallback via the `ps_host`
+  config, but `pwsh` is recommended.
+- Internet access on first run: PSES is downloaded on first use (not vendored).
+
+## Install
+
+Add this repository as a marketplace, then install the plugin:
+
+```
+/plugin marketplace add manderse21/claude-powershell-lsp
+/plugin install powershell-lsp@claude-powershell-lsp
+```
+
+The plugin ships **disabled by default** (`defaultEnabled: false`) because it
+downloads a bundle and spawns a language server. Enable it explicitly:
+
+```
+/plugin enable powershell-lsp
+```
+
+Then start a new session (or `/reload-plugins`). On the first session with the
+plugin enabled, the `SessionStart` hook bootstraps PSES into your plugin data
+directory. Open a `.ps1` file to bring the language server up.
+
+## Configuration
+
+Set these via the `/plugin` config UI for `powershell-lsp`, or leave the defaults.
+
+| Key                | Default  | Meaning                                                                              |
+|--------------------|----------|--------------------------------------------------------------------------------------|
+| `ps_host`          | `pwsh`   | Host executable: `pwsh` (PowerShell 7+, recommended/tested) or `powershell` (Win 5.1) |
+| `severityThreshold`| `Hint`   | Least-severe level to report: `Error` > `Warning` > `Information` > `Hint`            |
+| `ruleInclude`      | _(empty)_| Comma-separated PSScriptAnalyzer rule codes to report exclusively; empty = all        |
+| `ruleExclude`      | _(empty)_| Comma-separated rule codes to suppress (e.g. `PSAvoidUsingWriteHost`)                  |
+| `timeoutMs`        | `5000`   | Total hard cap (ms) before the PostToolUse client degrades to log-only                 |
+| `debounceMs`       | `150`    | Edits landing within this window (ms) fold into one analysis pass                      |
+| `keepLastN`        | `10`     | Newest rolling log files kept per family (swept at SessionStart)                       |
+| `idleTtlMin`       | `30`     | Daemon self-terminates after this many minutes with no diagnostics request            |
+| `perFileCap`       | `20`     | Max diagnostics reported per file; the rest collapse into an `... and N more` line; `0` = no cap |
+
+Diagnostics are returned in a stable order (severity, then line, then column),
+deduped, threshold- and rule-filtered, then capped per file.
+
+## Performance
+
+**Warm-path daemon (v1.1.0), `pwsh` 7.6.2, Windows 11.** Measured warm-path
+latency (median of 5 successive edits): **~2.0 s wall clock** per edit
+(`~1998 ms`), versus the ~6 s cold start of a per-edit-spawn predecessor. Roughly
+0.7 s of that is the per-hook `pwsh` process spawn that Claude Code pays
+regardless of plugin code.
+
+The acceptance suite confirms: cold-session bring-up launches exactly one daemon;
+a deliberate diagnostic returns over the warm path; the settled PSScriptAnalyzer
+pass (not the early parser publish) is reported; file URIs carry uppercase drive
+letters; three rapid edits coalesce into one analysis pass; SessionEnd leaves no
+daemon/PSES processes; and killing the daemon mid-session degrades gracefully
+(no stdout, under the hard cap) while the next SessionStart reaps the stale
+session and its orphaned PSES.
+
+## How it works (warm-start daemon)
+
+Diagnostics are delivered through a **PostToolUse hook backed by a warm,
+per-session daemon** -- one PSES stays hot for the whole session, so each edit
+pays a pipe round-trip instead of a cold PSES start.
+
+```text
+SessionStart  -> scripts/session-start.ps1
+                   ensure-pses.ps1   (idempotent PSES bootstrap, pinned tag)
+                   ensure-pssa.ps1   (idempotent PSScriptAnalyzer vendor, pinned)
+                   log sweep (keep-last-10 per family)
+                   reap OUR stale daemons (recorded pids only, verified)
+                   launch scripts/pses-daemon.ps1  (one warm PSES via -Stdio;
+                     named pipe powershell-lsp-<sessionid>; pid/heartbeat in
+                     CLAUDE_PLUGIN_DATA/session/<sessionid>.json)
+
+PostToolUse   -> scripts/lsp-client.ps1
+                   read hook JSON (session_id, file_path) from stdin
+                   connect to the pipe, request diagnostics for the edited file
+                   daemon: didOpen/didChange -> wait for the SETTLED PScriptAnalyzer
+                     publish (not the early parser publish) -> debounce
+                   return deduped, severity-sorted diagnostics to Claude via
+                     hookSpecificOutput.additionalContext
+
+SessionEnd    -> scripts/session-end.ps1
+                   pipe {shutdown} -> daemon sends LSP shutdown/exit to PSES,
+                   removes its session file, exits
+```
+
+- **`scripts/lib/lsp-common.ps1`**: shared helpers (host detection, file-URI with
+  uppercase drive, LSP framing, diagnostics ordering/dedupe), dot-sourced by the
+  daemon, client, hooks, and tests.
+- **`scripts/ensure-pses.ps1`**: idempotent PSES bootstrap into
+  `${CLAUDE_PLUGIN_DATA}/PowerShellEditorServices`; no-op once present.
+- **`scripts/ensure-pssa.ps1`**: idempotent vendor of pinned PSScriptAnalyzer into
+  `${CLAUDE_PLUGIN_DATA}/modules`, prepended to the PSES child's `PSModulePath` so
+  the analyzer pass runs (PSES emits only parser errors without it).
+- **`scripts/pses-stdio.ps1`**: the cold-start `-Stdio` launcher -- the destination
+  for native `.lsp.json` registration (see below).
+
+All scripts run `-NoLogo -NoProfile`, write nothing to stdout on the daemon/LSP
+path, and keep all state, logs, and pids under `CLAUDE_PLUGIN_DATA` only.
+
+## Why a hook, not native `.lsp.json` registration
+
+Claude Code declares plugin language servers through a per-plugin
+[`.lsp.json`](https://code.claude.com/docs/en/plugins-reference#lsp-servers) file
+(or an equivalent inline `lspServers` block, which this plugin's `plugin.json`
+carries). That is the intended path. In practice it has been unreliable for
+plugin-provided servers, for two independent reasons:
+
+1. **Marketplace plugins can install without their `.lsp.json`.** Claude Code
+   copies a plugin's source directory into its cache; an `lspServers` block that
+   lives only in `marketplace.json` is not written out, so the installed plugin
+   registers **0 servers**. Tracked (open) at
+   [claude-plugins-official#379](https://github.com/anthropics/claude-plugins-official/issues/379)
+   -- the fix, [PR #378](https://github.com/anthropics/claude-plugins-official/pull/378),
+   adds a real `.lsp.json` to each official LSP plugin.
+2. **A registration race.** `LspServerManager` can initialize before plugins
+   finish loading, registering 0 servers even when a `.lsp.json` is present.
+   First reported in
+   [claude-code#14803](https://github.com/anthropics/claude-code/issues/14803)
+   (fixed) and analyzed in detail in
+   [claude-code#29858](https://github.com/anthropics/claude-code/issues/29858);
+   the symptom remains open at
+   [#15168](https://github.com/anthropics/claude-code/issues/15168) and
+   [#15148](https://github.com/anthropics/claude-code/issues/15148).
+
+So rather than depend on native registration, this plugin delivers diagnostics
+through a **warm PostToolUse hook** that always works, on every supported host,
+today. The hook is the product; native registration is a bonus you can opt into.
+
+### Opting into native registration (`.lsp.json`)
+
+A ready-to-use server declaration ships at
+[`docs/lsp.json.template`](docs/lsp.json.template). To register the server with
+Claude Code's builtin `LSP` tool natively, copy it to the plugin root:
+
+```
+cp docs/lsp.json.template .lsp.json    # or copy it into your installed plugin cache dir
+/reload-plugins
+```
+
+> **Heads-up -- duplicate diagnostics.** If native registration activates *and* the
+> PostToolUse hook is still enabled, you will see each diagnostic twice. Use one
+> path or the other: keep the hook (recommended, reliable) **or** flip on
+> `.lsp.json` and disable the hook. Native plugin-LSP registration behavior varies
+> by Claude Code version (see the issues above); test in your environment.
+
+## Pinned versions
+
+| Component         | Version  | Pinned in                 | Source                                  |
+|-------------------|----------|---------------------------|-----------------------------------------|
+| PSES              | `v4.6.0` | `scripts/ensure-pses.ps1` (`$PsesTag`)     | GitHub release `PowerShellEditorServices.zip` |
+| PSScriptAnalyzer  | `1.25.0` | `scripts/ensure-pssa.ps1` (`$PssaVersion`) | PowerShell Gallery                      |
+
+To bump either, change the single pin variable named above and start a fresh
+session (the ensure-step re-vendors at the new version, keyed by a per-version
+marker). See [CHANGELOG](./CHANGELOG.md#versioning) for how a bump maps to SemVer.
+
+## Platform support
+
+CI runs the Pester suite on a three-leg matrix: **Windows `pwsh` 7**, **Windows
+PowerShell 5.1**, and **Ubuntu `pwsh`**. The integration tests (which spawn a real
+PSES daemon over named pipes) are Windows-only and self-skip on Ubuntu, so the
+Ubuntu leg verifies the cross-platform unit surface.
+
+The scripts are **authored** for cross-platform use -- all paths go through
+`Join-Path`, host detection is shared, the single Windows-only call (process
+command-line lookup, used to verify a pid is ours before any kill) is guarded
+behind `Test-OnWindows` with Linux `/proc` and macOS `ps` fallbacks, and the
+client/daemon transport is `System.IO.Pipes` (Unix domain socket semantics on
+*nix). The macOS/Linux *daemon* path is authored but not yet exercised by the
+integration leg.
+
+## Troubleshooting
+
+- **`/plugin` Errors tab shows `Executable not found in $PATH`** for the
+  `powershell` server: `ps_host` points at an executable that is not on PATH.
+  Install PowerShell 7 (`pwsh`) or set `ps_host` to `powershell`.
+- **No diagnostics / server never starts:** confirm the bootstrap ran by checking
+  that
+  `${CLAUDE_PLUGIN_DATA}/PowerShellEditorServices/PowerShellEditorServices/Start-EditorServices.ps1`
+  exists. If not, start a fresh session so the `SessionStart` hook can run, and
+  inspect `${CLAUDE_PLUGIN_DATA}/logs/ensure-pses.log`.
+- **Server starts but handshake fails:** inspect the PSES log under
+  `${CLAUDE_PLUGIN_DATA}/logs/pses-lsp.log/StartEditorServices-<pid>.log` for the
+  PSES-side error.
+- **`PrepareRenameHandler` `NullReferenceException` on initialize:** a PSES
+  `v4.6.0` bug -- its rename handler dereferences a null `RenameCapability` when an
+  LSP client's `textDocument` capabilities **omit** `rename`. This plugin's daemon
+  **declares a minimal `rename` capability on purpose**, which is what *avoids* the
+  NRE, so the warm path is unaffected. You would only hit this by driving PSES from
+  a client that omits rename (e.g. a hand-rolled minimal client against the cold
+  `-Stdio` launcher); if so, pin PSES `v4.5.0` in `scripts/ensure-pses.ps1`
+  (`$PsesTag`), which predates the rename handler.
+
+## License
+
+MIT. See [LICENSE](./LICENSE).

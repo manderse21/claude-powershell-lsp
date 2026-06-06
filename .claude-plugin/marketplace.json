@@ -1,0 +1,19 @@
+{
+  "name": "claude-powershell-lsp",
+  "owner": {
+    "name": "Mike Andersen"
+  },
+  "metadata": {
+    "description": "PowerShell code intelligence (PowerShell Editor Services) for Claude Code -- standalone distribution of the powershell-lsp plugin.",
+    "version": "1.1.0"
+  },
+  "plugins": [
+    {
+      "name": "powershell-lsp",
+      "source": "./",
+      "description": "PowerShell code intelligence via PowerShell Editor Services (diagnostics, hover, go-to-definition, find-references) for .ps1/.psm1/.psd1.",
+      "category": "development",
+      "tags": ["powershell", "lsp", "editor-services", "diagnostics"]
+    }
+  ]
+}
