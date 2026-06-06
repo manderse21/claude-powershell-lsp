@@ -127,7 +127,14 @@ function Invoke-LspMessage([string]$body) {
         if ($method -eq 'window/logMessage') {
             $lp = Get-Prop $msg 'params'
             $lm = [string](Get-Prop $lp 'message')
-            if ($null -ne $lm) { Write-DLog ('[dbg-trackA] PSES>> ' + ($lm -replace "[`r`n`t]", ' ').Substring(0, [Math]::Min(300, ($lm -replace "[`r`n`t]", ' ').Length))) }
+            if ($null -ne $lm) {
+                $flat = ($lm -replace "[`r`n`t]", ' ')
+                if ($flat -match 'Exception|Failed to handle|   at ') {
+                    Write-DLog ('[dbg-trackA] PSES-ERR>> ' + $flat)
+                } else {
+                    Write-DLog ('[dbg-trackA] PSES>> ' + $flat.Substring(0, [Math]::Min(200, $flat.Length)))
+                }
+            }
         }
         if ($method -eq 'textDocument/publishDiagnostics') {
             $params = Get-Prop $msg 'params'
