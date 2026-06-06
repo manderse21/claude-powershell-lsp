@@ -74,6 +74,7 @@ $script:pending   = $null
 $script:nextId    = 100
 $script:initDone  = $false
 $script:dbgReads  = 0     # [dbg-trackA] cap raw-stdout logging to the first few reads
+$script:framesIn  = 0     # count of LSP frames received from PSES (transport-ready signal)
 # Per-URI: latest diagnostics records, last-publish time, a sequence stamp, and
 # the content hash that produced them (for coalescing) and open/version state.
 $script:diag      = @{}   # uri -> @{ records=@(); at=DateTime; seq=int }
@@ -101,6 +102,7 @@ function Send-LspResponse($id, [string]$resultJson) {
 function Invoke-LspMessage([string]$body) {
     $msg = $null
     try { $msg = $body | ConvertFrom-Json } catch { Write-DLog ('bad json frame: ' + $_.Exception.Message); return }
+    $script:framesIn++
     $hasId = Test-Prop $msg 'id'
     $hasMethod = Test-Prop $msg 'method'
 
@@ -224,6 +226,14 @@ function Start-Pses {
     # initialize handshake (declares rename -> avoids PSES v4.6.0 NRE; see lib).
     $rootUri = ConvertTo-FileUri (Get-Location).Path
     $initId = 1
+    # [trackA] On Linux an initialize written before PSES's stdio transport begins
+    # reading stdin is silently lost: PSES comes up, emits its startup
+    # window/logMessage notifications, then never sees the request (Windows buffers
+    # it fine across the gap). Wait for PSES's first frame -- proof the LSP transport
+    # is live and draining stdin -- plus a short settle, THEN send initialize.
+    Invoke-LspPump -Until { $script:framesIn -ge 1 } -MaxMs 8000 | Out-Null
+    Invoke-LspPump -Until { $false } -MaxMs 300 | Out-Null
+    Write-DLog ('[dbg-trackA] pre-initialize frames seen=' + $script:framesIn + '; sending initialize')
     Send-Lsp @{
         jsonrpc = '2.0'; id = $initId; method = 'initialize'
         params = @{
