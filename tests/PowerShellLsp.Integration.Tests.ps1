@@ -39,7 +39,15 @@ Describe 'Integration: warm-start daemon (Windows)' -Skip:(-not $script:OnWindow
         }
 
         $script:ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
-        $script:DataDir = Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data'
+        # DataDir is a throwaway scratch root. Default: a temp subdir (local runs
+        # unchanged). CI sets PSLS_TEST_DATA_DIR to a workspace path so the warm
+        # daemon's logs land somewhere the workflow can upload as a diagnostic
+        # artifact (essential for debugging the cross-platform bring-up).
+        $script:DataDir = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $env:PSLS_TEST_DATA_DIR
+        } else {
+            Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data'
+        }
         $script:Sid = 'pester-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Force -Path $script:DataDir | Out-Null
         $env:CLAUDE_PLUGIN_DATA = $script:DataDir
