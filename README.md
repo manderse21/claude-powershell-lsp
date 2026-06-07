@@ -214,11 +214,11 @@ As of 1.1.1 the **hooks require `pwsh` (PowerShell 7)** -- they launch the boots
 under it on every platform. Windows PowerShell 5.1 is supported as the **PSES child
 host** (set `ps_host` to `powershell`), not as the hook interpreter.
 
-CI runs the Pester suite on a three-leg matrix: **Windows `pwsh` 7**, **Windows
-PowerShell 5.1**, and **Ubuntu `pwsh`**. As of 1.2.0 the full warm-daemon
-**integration suite** (one-daemon bring-up, the settled PSScriptAnalyzer pass, clean
-SessionEnd) runs and is **green on all three legs** -- so the **Linux daemon path is
-CI-verified**, not merely authored. The integration tests drive the daemon under
+CI runs the Pester suite on a four-leg matrix: **Windows `pwsh` 7**, **Windows
+PowerShell 5.1**, **Ubuntu `pwsh`**, and (as of 1.3.0) **macOS `pwsh`**. The full
+warm-daemon **integration suite** (one-daemon bring-up, the settled PSScriptAnalyzer
+pass, clean SessionEnd) runs and is **green on all four legs** -- so the **Linux and
+macOS daemon paths are CI-verified**, not merely authored. The integration tests drive the daemon under
 `pwsh` on every leg, so the Windows-PowerShell-5.1 leg's distinct value is exercising
 the **shared-library surface under 5.1** -- file-URI casing, BOM-tolerant stdin, the
 `ArgumentList`-vs-quoted-`.Arguments` split, and the config-env fallback -- the code
@@ -228,7 +228,8 @@ The scripts are cross-platform: all paths go through `Join-Path`, host detection
 shared, the single Windows-only call (process command-line lookup, used to verify a
 pid is ours before any kill) is guarded behind `Test-OnWindows` with Linux `/proc`
 and macOS `ps` fallbacks, and the client/daemon transport is `System.IO.Pipes` (Unix
-domain socket semantics on *nix). **macOS** stays authored but not yet CI-verified.
+domain socket semantics on *nix). As of 1.3.0 that macOS `ps` fallback is exercised by
+the macOS CI integration leg, so **macOS is CI-verified** alongside Linux.
 
 ## Troubleshooting
 

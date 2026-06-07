@@ -17,6 +17,14 @@ definitive refutation, for Claude Code 2.1.167, of the reports that a plugin `.l
 registers a server -- including the installed-cache configuration. Post only on Mike's
 say-so.
 
+**Currency note (2026-06-07, dispatch 000009 Track C):** re-checked against Claude Code
+**2.1.168** (now the latest installed). Its changelog lists only "bug fixes and
+reliability improvements" -- no plugin-LSP-registration entry (the most recent
+registration-related changelog line is 2.1.142, "show LSP servers a plugin provides").
+claude-code#15168 / #15148 and claude-plugins-official#379 remain open with no activity
+since the 2.1.167 test; PR #378 is still closed-unmerged. So the 2.1.167 datapoint below
+stands as of 2.1.168; the version-specific framing is intentional and current.
+
 ---
 
 ## Comment body (draft)
