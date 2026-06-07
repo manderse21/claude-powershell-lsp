@@ -39,6 +39,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Pester suite
+        env:
+          # Pin the integration test's data root to a workspace path so the warm
+          # daemon's own logs (pses-daemon.log, pses-server-*.log, pses-stderr-*.log)
+          # are uploadable as a diagnostic artifact below -- without this the hosted
+          # CI harness never surfaces them, which is exactly what blocked debugging
+          # the ubuntu-pwsh bring-up failure.
+          PSLS_TEST_DATA_DIR: ${{ github.workspace }}/psls-test-data
         run: ${{ matrix.interpreter }} -NoProfile -ExecutionPolicy Bypass -File ./tests/run-tests.ps1 -CI
 
       - name: Upload test results
@@ -47,4 +54,14 @@ jobs:
         with:
           name: pester-results-${{ matrix.label }}
           path: tests/testResults.xml
+          if-no-files-found: ignore
+
+      - name: Upload daemon logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon-logs-${{ matrix.label }}
+          path: |
+            psls-test-data/logs/**
+            psls-test-data/session/**
           if-no-files-found: ignore

@@ -216,13 +216,18 @@ function Start-Pses {
     # initialize handshake (declares rename -> avoids PSES v4.6.0 NRE; see lib).
     $rootUri = ConvertTo-FileUri (Get-Location).Path
     $initId = 1
+    # [trackA] PSES v4.6.0 throws a NullReferenceException inside its own OnInitialize
+    # handler (PsesLanguageServer.cs:150, the workspaceFolders add path) on Linux when
+    # the initialize carries workspaceFolders -- Windows is unaffected, which is why the
+    # Windows CI legs always passed this handshake. Omit workspaceFolders and rely on
+    # rootUri alone; the warm path opens each file explicitly via didOpen/didChange, so
+    # multi-root workspace folders are not needed for diagnostics.
     Send-Lsp @{
         jsonrpc = '2.0'; id = $initId; method = 'initialize'
         params = @{
             processId = $PID
             clientInfo = @{ name = 'cc-pses-daemon'; version = '1.1.0' }
             rootUri = $rootUri
-            workspaceFolders = @(@{ uri = $rootUri; name = 'workspace' })
             capabilities = (New-InitializeCapabilities)
         }
     }

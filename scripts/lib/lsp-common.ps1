@@ -153,17 +153,30 @@ function Get-ProcessCommandLine {
 # --- file URIs (landmine 1: uppercase Windows drive letters) ---------------
 
 function ConvertTo-FileUri {
-    # Build a file:/// URI with an UPPERCASE drive letter. [System.Uri].AbsoluteUri
-    # lowercases the drive on .NET, which the dispatch flags as a document-match
-    # hazard, so we fix the drive letter after letting .NET handle escaping.
+    # Build a file:// URI from a filesystem path, cross-platform.
+    # Windows: let .NET convert (handles drive + UNC), then force an UPPERCASE drive
+    # letter ([System.Uri].AbsoluteUri lowercases it, a document-match hazard).
+    # POSIX: the [System.Uri] STRING CAST yields a null/relative URI for an absolute
+    # path like /home/x (no drive, no scheme); .AbsoluteUri on that is null, which
+    # then breaks every downstream .ToLowerInvariant()/didOpen call. So build
+    # file://<path> explicitly, percent-escaping each segment.
     param([Parameter(Mandatory = $true)][string]$Path)
 
     $full = [System.IO.Path]::GetFullPath($Path)
-    $uri = ([System.Uri]$full).AbsoluteUri
-    if ($uri -match '^file:///[a-z]:') {
-        $uri = $uri.Substring(0, 8) + $uri.Substring(8, 1).ToUpperInvariant() + $uri.Substring(9)
+    if (Test-OnWindows) {
+        $uri = ([System.Uri]$full).AbsoluteUri
+        if ($uri -match '^file:///[a-z]:') {
+            $uri = $uri.Substring(0, 8) + $uri.Substring(8, 1).ToUpperInvariant() + $uri.Substring(9)
+        }
+        return $uri
     }
-    return $uri
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($seg in ($full -split '/')) {
+        if ($seg -eq '') { continue }
+        [void]$sb.Append('/')
+        [void]$sb.Append([System.Uri]::EscapeDataString($seg))
+    }
+    return ('file://' + $sb.ToString())
 }
 
 function ConvertFrom-FileUri {

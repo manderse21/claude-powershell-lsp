@@ -5,10 +5,13 @@
 # and named pipes, so it is Windows-only for now (cross-platform is authored but
 # CI-verified later). Skipped on non-Windows.
 
-# Discovery-time platform gate for -Skip (StrictMode-safe; PS 5.1 has no $IsWindows).
+# Discovery-time platform gate for -Skip (StrictMode-safe; PS 5.1 has no $IsWindows/$IsLinux).
+# Integration runs on Windows and Linux; macOS stays authored-but-unverified (skipped).
 $script:OnWindows = if (Test-Path 'Variable:\IsWindows') { [bool]$IsWindows } else { $true }
+$script:OnLinux = (Test-Path 'Variable:\IsLinux') -and [bool]$IsLinux
+$script:SkipIntegration = -not ($script:OnWindows -or $script:OnLinux)
 
-Describe 'Integration: warm-start daemon (Windows)' -Skip:(-not $script:OnWindows) {
+Describe 'Integration: warm-start daemon (Windows + Linux)' -Skip:$script:SkipIntegration {
 
     BeforeAll {
         # Shared helpers (Add-ProcessArguments is cross-version: ArgumentList on
@@ -39,7 +42,15 @@ Describe 'Integration: warm-start daemon (Windows)' -Skip:(-not $script:OnWindow
         }
 
         $script:ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
-        $script:DataDir = Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data'
+        # DataDir is a throwaway scratch root. Default: a temp subdir (local runs
+        # unchanged). CI sets PSLS_TEST_DATA_DIR to a workspace path so the warm
+        # daemon's logs land somewhere the workflow can upload as a diagnostic
+        # artifact (essential for debugging the cross-platform bring-up).
+        $script:DataDir = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $env:PSLS_TEST_DATA_DIR
+        } else {
+            Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data'
+        }
         $script:Sid = 'pester-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Force -Path $script:DataDir | Out-Null
         $env:CLAUDE_PLUGIN_DATA = $script:DataDir

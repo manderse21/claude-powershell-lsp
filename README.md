@@ -158,20 +158,28 @@ today. The hook is the product; native registration is a bonus you can opt into.
 
 The plugin already declares its server (the `lspServers` block in `plugin.json`), and
 a standalone copy ships at [`docs/lsp.json.template`](docs/lsp.json.template). Both are
-the *intended* native path -- but **as of Claude Code 2.1.167 neither activates**.
-Re-tested 2026-06-06 with the strict methodology the community reports as the working
-recipe -- a clean top-level-map `.lsp.json` carrying **literal** commands (no
-`${CLAUDE_PLUGIN_ROOT}` / `${user_config.*}` template variables), loaded into a
-**freshly started** Claude Code process (`--plugin-dir`, a full restart, not
-`/reload-plugins`) -- and the builtin `LSP` tool still returns `No LSP server
-available for file type: .ps1` for a `goToDefinition` on a `.ps1`. So the inertness is
-not a reload-vs-restart or template-variable artifact. (One path was *not* tested: a
-`.lsp.json` **file** placed inside an already-installed plugin's cache directory -- the
-exact setup some users report working -- because that means writing into the
-installer-owned plugin cache; the re-test used `--plugin-dir` session-load instead. So
-this narrows the gap rather than closing it.) Either way, native registration is not
+the *intended* native path -- but **as of Claude Code 2.1.167 neither activates**. This
+was confirmed across every configuration on 2026-06-06 (dispatch 000008):
+
+- a clean top-level-map `.lsp.json` with **literal** commands (no `${CLAUDE_PLUGIN_ROOT}`
+  / `${user_config.*}` template variables), loaded into a **freshly started** process
+  (`--plugin-dir`, a full restart, not `/reload-plugins`) -> `No LSP server available
+  for file type: .ps1`;
+- that same literal `.lsp.json` shipped inside a throwaway plugin and **installed through
+  the real `/plugin` flow**, so the installer placed the file in the plugin cache (the
+  exact installed-cache setup some users report working, reached without hand-writing the
+  cache) -> still `No LSP server available`, after a full restart;
+- the installed real plugin, whose cache already carries a template-var `.lsp.json` ->
+  inert the same way.
+
+So the inertness is not a reload-vs-restart, template-variable, or
+`--plugin-dir`-vs-installed-cache artifact -- a plugin `.lsp.json` simply does not
+register on 2.1.167. This finally tests the installed-cache path a prior re-test had to
+leave open, **closing** that caveat rather than narrowing it. Native registration is not
 something this plugin can rely on today -- which is why diagnostics ride the PostToolUse
-hook, the path that works on every host now.
+hook, the path that works on every host now. (Methodology and evidence in
+[`docs/upstream/claude-code-lsp-registration.md`](docs/upstream/claude-code-lsp-registration.md),
+held for review.)
 
 The template ships as `docs/lsp.json.template` (not live at the root) on purpose: a
 root `.lsp.json` adds nothing while registration is broken, and would risk duplicate
@@ -207,21 +215,20 @@ under it on every platform. Windows PowerShell 5.1 is supported as the **PSES ch
 host** (set `ps_host` to `powershell`), not as the hook interpreter.
 
 CI runs the Pester suite on a three-leg matrix: **Windows `pwsh` 7**, **Windows
-PowerShell 5.1**, and **Ubuntu `pwsh`**. The integration tests spawn the daemon under
+PowerShell 5.1**, and **Ubuntu `pwsh`**. As of 1.2.0 the full warm-daemon
+**integration suite** (one-daemon bring-up, the settled PSScriptAnalyzer pass, clean
+SessionEnd) runs and is **green on all three legs** -- so the **Linux daemon path is
+CI-verified**, not merely authored. The integration tests drive the daemon under
 `pwsh` on every leg, so the Windows-PowerShell-5.1 leg's distinct value is exercising
-the **shared-library unit surface under 5.1** -- file-URI casing, BOM-tolerant stdin,
-the `ArgumentList`-vs-quoted-`.Arguments` split, and the config-env fallback -- the
-code that must keep working when PSES runs as a 5.1 child. The integration tests
-self-skip on Ubuntu (named pipes and a real PSES daemon are Windows-only here), so the
-Ubuntu leg verifies the cross-platform unit surface.
+the **shared-library surface under 5.1** -- file-URI casing, BOM-tolerant stdin, the
+`ArgumentList`-vs-quoted-`.Arguments` split, and the config-env fallback -- the code
+that must keep working when PSES runs as a 5.1 child.
 
-The scripts are **authored** for cross-platform use -- all paths go through
-`Join-Path`, host detection is shared, the single Windows-only call (process
-command-line lookup, used to verify a pid is ours before any kill) is guarded
-behind `Test-OnWindows` with Linux `/proc` and macOS `ps` fallbacks, and the
-client/daemon transport is `System.IO.Pipes` (Unix domain socket semantics on
-*nix). The macOS/Linux *daemon* path is authored but not yet exercised by the
-integration leg.
+The scripts are cross-platform: all paths go through `Join-Path`, host detection is
+shared, the single Windows-only call (process command-line lookup, used to verify a
+pid is ours before any kill) is guarded behind `Test-OnWindows` with Linux `/proc`
+and macOS `ps` fallbacks, and the client/daemon transport is `System.IO.Pipes` (Unix
+domain socket semantics on *nix). **macOS** stays authored but not yet CI-verified.
 
 ## Troubleshooting
 

@@ -29,6 +29,58 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.2.0] - 2026-06-06
+
+MINOR: the Linux (`ubuntu-pwsh`) warm-daemon path is now CI-verified -- a newly
+verified platform. Closes both open unknowns from 000007 (dispatch
+powershell-lsp/000008).
+
+### Added
+
+- **Linux warm-daemon path is now CI-verified.** The `ubuntu-pwsh` CI leg now runs the
+  full warm-daemon integration suite (one-daemon bring-up, the settled
+  PSScriptAnalyzer pass, and clean SessionEnd) and is green alongside both Windows
+  legs. README "Platform support" now claims Linux to exactly what CI proves; macOS
+  stays authored but unverified.
+
+### Fixed
+
+- **PSES v4.6.0 `NullReferenceException` on `initialize` (Linux only).** PSES throws an
+  NRE inside its own `OnInitialize` handler (`PsesLanguageServer.cs:150`, the
+  workspace-folder add path) when the client's `initialize` carries `workspaceFolders`
+  -- on Linux; Windows is unaffected, which is why the Windows legs always passed this
+  handshake. The daemon now omits `workspaceFolders` and relies on `rootUri` alone (the
+  warm path opens each file explicitly via `didOpen`/`didChange`, so multi-root folders
+  are not needed for diagnostics).
+- **`ConvertTo-FileUri` returned a null URI on POSIX.** The `[System.Uri]` string cast
+  yields a null/relative URI for a POSIX absolute path (`/home/x` -- no drive, no
+  scheme); `.AbsoluteUri` on that is null, so the first diagnostics request broke at
+  `$uri.ToLowerInvariant()`. The builder now constructs `file://<path>` explicitly on
+  POSIX (percent-escaping each segment); the Windows branch (uppercase drive letter) is
+  unchanged.
+
+### CI / diagnostics
+
+- **Daemon logs are uploaded as a per-leg CI artifact.** The integration test's data
+  root is overridable via `PSLS_TEST_DATA_DIR` (default unchanged locally); CI pins it
+  to a workspace path and always-uploads `pses-daemon.log` / `pses-server-*.log` /
+  `pses-stderr-*.log` as `daemon-logs-<leg>`, so a bring-up failure is diagnosable
+  instead of opaque. This is what made the two Linux fixes above findable.
+
+### Docs (installed-cache `.lsp.json` registration: tested, still inert)
+
+- **Closed the 000007 "installed-cache `.lsp.json`" caveat.** A throwaway plugin whose
+  source ships a clean top-level-map `.lsp.json` with **literal** commands was installed
+  through the real `/plugin` flow (the installer copies it into the cache -- the exact
+  installed-cache configuration the caveat had left untested, reached with zero
+  hand-writes), then the builtin `LSP` tool was probed after a full restart:
+  `No LSP server available`. The installed real plugin (template-var `.lsp.json` in its
+  cache) is inert the same way. So the `.lsp.json`-**file** path is **inert on Claude
+  Code 2.1.167**, with literal commands and template variables alike -- a definitive
+  refutation of the installed-cache "it works" reports (most likely a CC version
+  difference). README and the held `docs/upstream/` draft updated to the definitive INERT
+  framing; the draft stays a DRAFT (not posted).
+
 ## [1.1.2] - 2026-06-06
 
 PATCH: a documentation correction (no code change). Survey-then-ship dispatch
