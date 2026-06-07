@@ -29,6 +29,39 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.3.0] - 2026-06-07
+
+MINOR: the macOS (`macos-pwsh`) warm-daemon path is now CI-verified -- a newly
+verified platform (dispatch powershell-lsp/000009, Track A).
+
+### Added
+
+- **macOS warm-daemon path is now CI-verified.** A `macos-pwsh` (`macos-latest`,
+  `pwsh`) leg was added to the CI matrix with the same daemon-log artifact capture as
+  the other legs, and the warm-daemon integration suite (one-daemon bring-up, the
+  settled PSScriptAnalyzer pass, clean SessionEnd) is **un-skipped on macOS and green**
+  alongside the two Windows legs and Linux. README "Platform support" now claims macOS
+  to exactly what CI proves. macOS needed no code changes: the 1.2.0 generic-POSIX
+  fixes (omit `workspaceFolders`, POSIX `ConvertTo-FileUri`) and the already-authored
+  `ps`-based process-probe fallback (no `/proc` on BSD) carried over as-is, so the
+  integration suite passed on the first CI attempt.
+
+### Docs
+
+- **Registration watch: no upstream movement (Track C).** Re-checked since 1.2.0 --
+  Claude Code 2.1.168 shipped (changelog: bug-fixes / reliability only, no plugin-LSP
+  registration change); claude-code#15168 / #15148 and claude-plugins-official#379
+  remain open and untouched; PR #378 stays closed-unmerged. The held
+  `docs/upstream/claude-code-lsp-registration.md` refutation is unchanged in substance
+  and verified postable, with a dated note that the 2.1.167 datapoint still stands as
+  of 2.1.168.
+- **Hook-surface expansion proposal (Track D).** Added `docs/hook-surface-proposal.md`
+  -- a survey of whether PSES capabilities beyond diagnostics (rename, code actions,
+  formatting, workspace symbols, hover) should ride the hook architecture. Conclusion:
+  decline all; those are pull/positional features that belong to Claude Code's native
+  `LSP` tool (blocked only by the registration bug above), not the event-driven hook
+  surface. Diagnostics stays the one capability whose shape fits.
+
 ## [1.2.0] - 2026-06-06
 
 MINOR: the Linux (`ubuntu-pwsh`) warm-daemon path is now CI-verified -- a newly

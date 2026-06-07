@@ -17,6 +17,25 @@ definitive refutation, for Claude Code 2.1.167, of the reports that a plugin `.l
 registers a server -- including the installed-cache configuration. Post only on Mike's
 say-so.
 
+**Currency note (2026-06-07, dispatch 000009 Track C) -- re-confirmed inert on 2.1.168.**
+Re-tested on Claude Code **2.1.168** (now current). A hard re-probe of configuration (1)
+above -- a clean top-level-map `.lsp.json` with **literal** commands, loaded via
+`--plugin-dir` into a fresh `claude -p` (`--allowedTools LSP --strict-mcp-config
+--output-format stream-json --verbose`) -- emitted a real `LSP` `tool_use` and returned its
+`tool_result` (not a prompt echo):
+
+```
+tool_use   : {"operation":"goToDefinition","filePath":"./test.ps1","line":5,"character":6}
+tool_result: No LSP server available for file type: .ps1
+```
+
+So the `.lsp.json`-**file** path is **empirically inert on 2.1.168**, not merely
+changelog-inferred. This is consistent with 2.1.168's changelog (bug-fixes / reliability
+only; no registration entry -- the most recent registration-related line is 2.1.142, "show
+LSP servers a plugin provides"). `claude-code#15168` / `#15148` and
+`claude-plugins-official#379` remain open and untouched since the 2.1.167 test, and PR #378
+is still closed-unmerged. The refutation now holds across **2.1.167 and 2.1.168**.
+
 ---
 
 ## Comment body (draft)
