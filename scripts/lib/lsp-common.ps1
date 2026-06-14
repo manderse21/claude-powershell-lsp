@@ -185,6 +185,18 @@ function ConvertFrom-FileUri {
     catch { return $Uri }
 }
 
+function ConvertTo-UriKey {
+    # Normalize a file URI to a case-insensitive lookup key (landmine 1, match side).
+    # ConvertTo-FileUri emits the Windows drive letter UPPERCASED, but PSES echoes
+    # it back LOWERCASED in publishDiagnostics. The daemon keys both the stored
+    # publish and the request lookup through here so the two still correlate;
+    # without the fold the drive-letter case mismatches and diagnostics are
+    # silently dropped. Lower-casing the whole URI (not just the drive) preserves
+    # the daemon's long-standing keying behavior verbatim.
+    param([string]$Uri)
+    return $Uri.ToLowerInvariant()
+}
+
 # --- stdin (BOM-tolerant) --------------------------------------------------
 
 function Get-StdinText {
@@ -230,6 +242,29 @@ function New-InitializeCapabilities {
             definition = @{ linkSupport = $true }
             completion = @{ completionItem = @{ snippetSupport = $false } }
         }
+    }
+}
+
+function New-InitializeParams {
+    # Build the LSP `initialize` params. CRITICAL (landmine 3): this OMITS the
+    # top-level `workspaceFolders` member. PSES v4.6.0 throws a NullReferenceException
+    # inside its own OnInitialize handler (PsesLanguageServer.cs:150, the
+    # workspaceFolders add path) on Linux when initialize carries workspaceFolders
+    # (upstream #2300) -- so the daemon relies on rootUri alone and opens each file
+    # explicitly via didOpen/didChange (multi-root folders are not needed for
+    # diagnostics). Re-adding a workspaceFolders member here reintroduces the Linux
+    # hang. NOTE: the boolean capability workspace.workspaceFolders declared in
+    # New-InitializeCapabilities is a DIFFERENT thing -- it only advertises support
+    # and is safe; it is the params-level folder list that trips the NRE.
+    param(
+        [Parameter(Mandatory = $true)][string]$RootUri,
+        [Parameter(Mandatory = $true)][int]$ProcessId
+    )
+    return @{
+        processId = $ProcessId
+        clientInfo = @{ name = 'cc-pses-daemon'; version = '1.1.0' }
+        rootUri = $RootUri
+        capabilities = (New-InitializeCapabilities)
     }
 }
 

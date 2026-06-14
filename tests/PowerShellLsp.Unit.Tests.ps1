@@ -28,6 +28,33 @@ Describe 'ConvertTo-FileUri -- URI drive-letter casing (regression: lowercased d
     }
 }
 
+Describe 'ConvertTo-UriKey -- case-insensitive URI matching (regression: PSES lowercases the Windows drive)' {
+    # Guard 2b -- the MATCH side of landmine 1 (the construction side is the
+    # ConvertTo-FileUri block above). ConvertTo-FileUri emits an UPPERCASE drive,
+    # but PSES echoes the drive back LOWERCASED in publishDiagnostics. The daemon
+    # keys both the stored publish (Invoke-LspMessage) and the request lookup
+    # (Get-Diagnostics) through ConvertTo-UriKey so a lowercased-drive publish still
+    # matches the document we opened -- otherwise diagnostics are silently dropped.
+    # Adversarial control: make ConvertTo-UriKey return $Uri unchanged and the
+    # 'maps ... to the same key' assertion goes RED.
+    # NOTE: assertions use -BeExactly (case-SENSITIVE). Pester's plain -Be folds
+    # case, which would mask the very mismatch this guards -- with -Be the key
+    # equality would pass even if ConvertTo-UriKey did nothing, making the test
+    # decorative. -BeExactly is what gives the adversarial control teeth.
+    It 'maps an uppercase-drive and a lowercase-drive URI to the same key' {
+        $upper = 'file:///C:/temp/foo.ps1'    # what ConvertTo-FileUri emits
+        $lower = 'file:///c:/temp/foo.ps1'    # what PSES echoes back
+        $upper | Should -Not -BeExactly $lower                # they differ before keying
+        (ConvertTo-UriKey $upper) | Should -BeExactly (ConvertTo-UriKey $lower)
+    }
+    It 'round-trips a real ConvertTo-FileUri result against a lowercased-drive publish' -Skip:(-not $script:OnWindows) {
+        $ours = ConvertTo-FileUri 'C:\temp\foo.ps1'           # file:///C:/temp/foo.ps1
+        $psesEcho = $ours.Substring(0, 8) + $ours.Substring(8, 1).ToLowerInvariant() + $ours.Substring(9)
+        $ours | Should -Not -BeExactly $psesEcho              # raw URIs mismatch on drive case
+        (ConvertTo-UriKey $ours) | Should -BeExactly (ConvertTo-UriKey $psesEcho)
+    }
+}
+
 Describe 'New-InitializeCapabilities -- rename capability (INVERTED from the dispatch text)' {
     # The dispatch frontmatter and the build brief both said "do not advertise
     # rename capability". That is EMPIRICALLY BACKWARDS for PSES v4.6.0: omitting
@@ -45,6 +72,35 @@ Describe 'New-InitializeCapabilities -- rename capability (INVERTED from the dis
         $caps = New-InitializeCapabilities
         $caps.textDocument.synchronization.didOpen | Should -BeTrue
         $caps.textDocument.publishDiagnostics | Should -Not -BeNullOrEmpty
+    }
+}
+
+Describe 'New-InitializeParams -- omits workspaceFolders (regression: PSES #2300 OnInitialize NRE on Linux)' {
+    # Guard 3 -- landmine 3. PSES v4.6.0 throws a NullReferenceException in its own
+    # OnInitialize handler (the workspaceFolders add path) on Linux when initialize
+    # carries a top-level workspaceFolders member (upstream #2300). The daemon dodges
+    # it by OMITTING that member and relying on rootUri alone. This is the client-side
+    # workaround being pinned; it does NOT fix the upstream bug. Adversarial control:
+    # add a workspaceFolders key to New-InitializeParams and the 'does NOT include'
+    # assertion goes RED.
+    BeforeAll {
+        $script:InitParams = New-InitializeParams -RootUri 'file:///C:/proj' -ProcessId 4242
+    }
+    It 'does NOT include a top-level workspaceFolders member (the #2300 dodge)' {
+        $script:InitParams.ContainsKey('workspaceFolders') | Should -BeFalse
+    }
+    It 'still carries rootUri, processId, clientInfo, and capabilities' {
+        $script:InitParams.rootUri | Should -Be 'file:///C:/proj'
+        $script:InitParams.processId | Should -Be 4242
+        $script:InitParams.clientInfo | Should -Not -BeNullOrEmpty
+        $script:InitParams.capabilities | Should -Not -BeNullOrEmpty
+    }
+    It 'still declares the workspaceFolders CAPABILITY boolean -- distinct from the params member that trips the NRE' {
+        # capabilities.workspace.workspaceFolders = $true is SAFE (it only advertises
+        # support); it is the params-level folder list that is omitted. This guards
+        # that a future edit does not "fix" #2300 by dropping the capability (which
+        # would not help) instead of keeping the params member omitted.
+        $script:InitParams.capabilities.workspace.workspaceFolders | Should -BeTrue
     }
 }
 
