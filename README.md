@@ -2,8 +2,10 @@
 
 PowerShell code intelligence for [Claude Code](https://claude.com/claude-code),
 powered by [PowerShell Editor Services](https://github.com/PowerShell/PowerShellEditorServices)
-(PSES). Real-time diagnostics, hover, go-to-definition, and find-references while
-editing `.ps1`, `.psm1`, and `.psd1` files.
+(PSES). Real-time PowerShell diagnostics and PSScriptAnalyzer fix suggestions
+while editing `.ps1`, `.psm1`, and `.psd1` files. Hover, go-to-definition, and
+find-references are on the roadmap, pending upstream plugin LSP-server
+registration (Claude Code #66987).
 
 This is language tooling, not project tooling: a standalone plugin that carries
 ~0 always-on model-context token cost. It only spawns a language server when you
