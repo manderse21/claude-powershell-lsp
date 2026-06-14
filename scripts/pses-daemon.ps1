@@ -79,6 +79,8 @@ $script:diag      = @{}   # uri -> @{ records=@(); at=DateTime; seq=int }
 $script:openDocs  = @{}   # uri -> version int
 $script:lastHash  = @{}   # uri -> content hash string
 $script:respSeen  = @{}   # request id -> $true once a response arrives
+$script:respResult = @{}  # request id -> response result body (for codeAction)
+$script:reqId     = 1000  # monotonic id for daemon-initiated requests (codeAction)
 
 function Get-ContentHash([string]$text) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -125,9 +127,12 @@ function Invoke-LspMessage([string]$body) {
             $params = Get-Prop $msg 'params'
             $uri = [string](Get-Prop $params 'uri')
             $key = $uri.ToLowerInvariant()
+            $rawDiags = @(Get-Prop $params 'diagnostics')
             $records = @()
-            foreach ($d in @(Get-Prop $params 'diagnostics')) { $records += (ConvertTo-DiagRecord $d) }
-            $script:diag[$key] = @{ records = $records; at = (Get-Date); seq = ($script:nextId) }
+            foreach ($d in $rawDiags) { $records += (ConvertTo-DiagRecord $d) }
+            # Keep the raw diagnostics too: the codeAction enrichment pass replays
+            # them as request context to fetch PSSA suggested corrections.
+            $script:diag[$key] = @{ records = $records; raw = $rawDiags; at = (Get-Date); seq = ($script:nextId) }
             Write-DLog ('publishDiagnostics ' + $uri + ' count=' + $records.Count)
         }
         return
@@ -135,6 +140,9 @@ function Invoke-LspMessage([string]$body) {
     if ($hasId) {
         $id = Get-Prop $msg 'id'
         $script:respSeen[[string]$id] = $true
+        # Capture the result body so request/response calls (codeAction) can read
+        # it; previously a response was acknowledged but its payload discarded.
+        $script:respResult[[string]$id] = (Get-Prop $msg 'result')
     }
 }
 
@@ -254,6 +262,83 @@ function Stop-Pses {
     Write-DLog 'PSES stopped'
 }
 
+# --- code-action correction enrichment (Track C) ---------------------------
+function Add-CodeActionCorrections {
+    # Best-effort: ask PSES for quickfix code actions covering every current
+    # diagnostic in ONE textDocument/codeAction request, then thread each
+    # suggested correction (replacement text) onto the matching diag record by
+    # range-start. Reuses the warm PSES's already-computed markers (no second
+    # analyzer pass). Surface-only -- never writes files. Any failure or timeout
+    # leaves records unchanged (corrections simply absent), so diagnostics still
+    # return: this is purely additive to the warm path.
+    param([string]$Uri, [object[]]$RawDiags, [object[]]$Records, [int]$WaitMs = 1500)
+    if (@($Records).Count -eq 0 -or @($RawDiags).Count -eq 0) { return }
+    try {
+        # Full-document range covering every diagnostic (LSP line is 0-based).
+        $maxLine = 0
+        foreach ($d in $RawDiags) {
+            $endLine = [int](Get-Prop (Get-Prop (Get-Prop $d 'range') 'end') 'line')
+            if ($endLine -gt $maxLine) { $maxLine = $endLine }
+        }
+        $docRange = @{ start = @{ line = 0; character = 0 }; end = @{ line = ($maxLine + 1); character = 0 } }
+
+        $script:reqId++
+        $id = $script:reqId
+        $idKey = [string]$id
+        if ($script:respResult.ContainsKey($idKey)) { $script:respResult.Remove($idKey) | Out-Null }
+        Send-Lsp @{ jsonrpc = '2.0'; id = $id; method = 'textDocument/codeAction'
+            params = @{ textDocument = @{ uri = $Uri }; range = $docRange
+                context = @{ diagnostics = @($RawDiags) } } }
+
+        Invoke-LspPump -Until { $script:respResult.ContainsKey($idKey) } -MaxMs $WaitMs | Out-Null
+        if (-not $script:respResult.ContainsKey($idKey)) { Write-DLog ('codeAction: no response (id=' + $idKey + ')'); return }
+        $result = $script:respResult[$idKey]
+        $script:respResult.Remove($idKey) | Out-Null
+        if ($null -eq $result) { return }
+
+        # Group correction text by 0-based "line,character" start position. A
+        # diagnostic offering several alternative fixes yields several edits at the
+        # same start -> primary (first) + count (Q3: primary plus a count).
+        $byPos = @{}
+        foreach ($action in @($result)) {
+            $edit = Get-Prop $action 'edit'
+            if ($null -eq $edit) { continue }   # command-only action (e.g. show docs)
+            $textEdits = @()
+            $docChanges = Get-Prop $edit 'documentChanges'
+            if ($null -ne $docChanges) {
+                foreach ($dc in @($docChanges)) { $textEdits += @(Get-Prop $dc 'edits') }
+            } else {
+                $changes = Get-Prop $edit 'changes'
+                if ($null -ne $changes) {
+                    foreach ($p in $changes.PSObject.Properties) { $textEdits += @($p.Value) }
+                }
+            }
+            foreach ($te in $textEdits) {
+                if ($null -eq $te) { continue }
+                $start = Get-Prop (Get-Prop $te 'range') 'start'
+                $posKey = ([int](Get-Prop $start 'line')).ToString() + ',' + ([int](Get-Prop $start 'character')).ToString()
+                if (-not $byPos.ContainsKey($posKey)) { $byPos[$posKey] = New-Object System.Collections.Generic.List[string] }
+                [void]$byPos[$posKey].Add([string](Get-Prop $te 'newText'))
+            }
+        }
+        if ($byPos.Count -eq 0) { return }
+
+        $enriched = 0
+        foreach ($rec in $Records) {
+            $posKey = ([int]$rec.line - 1).ToString() + ',' + ([int]$rec.col - 1).ToString()
+            if ($byPos.ContainsKey($posKey)) {
+                $list = $byPos[$posKey]
+                $rec.correction = [string]$list[0]
+                $rec.correctionCount = $list.Count
+                $enriched++
+            }
+        }
+        Write-DLog ('codeAction: enriched ' + $enriched + ' of ' + @($Records).Count + ' record(s) for ' + $Uri)
+    } catch {
+        Write-DLog ('codeAction enrich error (ignored): ' + $_.Exception.Message)
+    }
+}
+
 # --- diagnostics request (didOpen/didChange + settle) ----------------------
 function Get-Diagnostics([string]$filePath) {
     $full = [System.IO.Path]::GetFullPath($filePath)
@@ -302,9 +387,16 @@ function Get-Diagnostics([string]$filePath) {
         return ($age -ge $SettleMs)
     } -MaxMs $MaxWaitMs | Out-Null
 
-    $records = if ($script:diag.ContainsKey($key)) { $script:diag[$key].records } else { @() }
+    $entry = if ($script:diag.ContainsKey($key)) { $script:diag[$key] } else { $null }
+    $records = if ($null -ne $entry) { $entry.records } else { @() }
+    $rawDiags = if ($null -ne $entry -and $entry.Contains('raw')) { @($entry.raw) } else { @() }
+    # Track C: thread PSSA suggested corrections onto the records (in place) via a
+    # single codeAction pass -- only when there are findings, so a clean file does
+    # no codeAction work and the warm fast path (and the cache-hit path above)
+    # stay untouched.
+    if (@($records).Count -gt 0) { Add-CodeActionCorrections $uri $rawDiags $records }
     $script:lastHash[$key] = $hash
-    if (-not $script:diag.ContainsKey($key)) { $script:diag[$key] = @{ records = @(); at = (Get-Date); seq = 0 } }
+    if (-not $script:diag.ContainsKey($key)) { $script:diag[$key] = @{ records = @(); raw = @(); at = (Get-Date); seq = 0 } }
     Write-DLog ('analyzed ' + $uri + ' -> ' + @($records).Count + ' record(s)')
     return @{ ok = $true; cached = $false; records = @($records) }
 }
