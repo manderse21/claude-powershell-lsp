@@ -41,6 +41,14 @@ function Write-CLog([string]$m) {
     try { ('[' + (Get-Date -Format 'o') + '] ' + $m) | Out-File -FilePath $clientLog -Append -Encoding ascii } catch { }
 }
 
+function Write-HookContext([string]$Context) {
+    # PostToolUse output contract (D3): non-blocking feedback via
+    # hookSpecificOutput.additionalContext on exit 0. Used by both the parser
+    # pre-pass (Track B) and the daemon path so the emit shape stays identical.
+    $out = @{ hookSpecificOutput = @{ hookEventName = 'PostToolUse'; additionalContext = $Context } }
+    $out | ConvertTo-Json -Depth 6 -Compress
+}
+
 function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, [int]$hardCapMs) {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $client = $null
@@ -108,6 +116,40 @@ try {
     if (@('.ps1', '.psm1', '.psd1') -notcontains $ext) { Write-CLog ('skip non-PS file: ' + $path); exit 0 }
     if (-not (Test-Path -LiteralPath $path)) { Write-CLog ('file gone: ' + $path); exit 0 }
 
+    # Track B -- in-process parser pre-pass. A syntax error means PSScriptAnalyzer
+    # cannot run anyway (the file does not parse), so PSES would only return parser
+    # errors too: emit them straight from the in-process parser and SKIP the warm
+    # pipe round-trip. The saving is the ~2s warm-daemon latency -- NOT ~6s, which
+    # was the old cold loose hook. A clean parse falls through to the daemon as
+    # before (lint-always). Wrapped so any failure degrades to the pipe path and
+    # never blocks the edit.
+    $parseErrors = $null
+    try {
+        $ptoks = $null; $perrs = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$ptoks, [ref]$perrs)
+        $parseErrors = @($perrs)
+    } catch {
+        Write-CLog ('parser pre-pass threw (falling through to daemon): ' + $_.Exception.Message)
+        $parseErrors = $null
+    }
+    if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
+        $cap = Get-PluginOptionInt 'perFileCap' 20
+        $total = $parseErrors.Count
+        $shown = if ($cap -gt 0 -and $total -gt $cap) { @($parseErrors[0..($cap - 1)]) } else { @($parseErrors) }
+        $sb = New-Object System.Text.StringBuilder
+        [void]$sb.AppendLine('PowerShell diagnostics (' + @($shown).Count + ') for ' + $path + ':')
+        foreach ($pe in $shown) {
+            $ln = [string]$pe.Extent.StartLineNumber
+            $cl = [string]$pe.Extent.StartColumnNumber
+            $m = ($pe.Message -replace "[`r`n`t]", ' ').Trim()
+            [void]$sb.AppendLine('  [Error] line ' + $ln + ', col ' + $cl + ' -- ' + $m + ' (parser)')
+        }
+        if ($cap -gt 0 -and $total -gt $cap) { [void]$sb.AppendLine('  ... and ' + ($total - $cap) + ' more (per-file cap)') }
+        Write-HookContext ($sb.ToString().TrimEnd())
+        Write-CLog ('parse error -> emitted ' + @($shown).Count + ' parse diagnostic(s); skipped daemon round-trip')
+        exit 0
+    }
+
     $pipeName = 'powershell-lsp-' + $sessionId
     Write-CLog ('requesting diagnostics for ' + $path + ' via ' + $pipeName)
 
@@ -131,17 +173,21 @@ try {
         $hasCode = $code -and ($code -ne '0')
         $label = if ($hasCode -and $src) { $src + '/' + $code } elseif ($src) { $src } else { 'parser' }
         [void]$sb.AppendLine('  [' + $sev + '] line ' + $line + ', col ' + $col + ' -- ' + $msg + ' (' + $label + ')')
+        # Track C: surface the PSSA suggested fix (replacement text) when present.
+        # Surface-only -- the model applies it; the hook never writes files. Q3:
+        # primary correction plus a count of any further alternatives.
+        $corr = [string](Get-Prop $d 'correction')
+        if (-not [string]::IsNullOrWhiteSpace($corr)) {
+            $corrCount = [int](Get-Prop $d 'correctionCount')
+            $corrLine = ($corr -replace "[`r`n`t]", ' ').Trim()
+            $more = if ($corrCount -gt 1) { ' (and ' + ($corrCount - 1) + ' more)' } else { '' }
+            [void]$sb.AppendLine('      fix: ' + $corrLine + $more)
+        }
     }
     if ($omitted -gt 0) { [void]$sb.AppendLine('  ... and ' + $omitted + ' more (per-file cap)') }
     $context = $sb.ToString().TrimEnd()
 
-    $out = @{
-        hookSpecificOutput = @{
-            hookEventName = 'PostToolUse'
-            additionalContext = $context
-        }
-    }
-    $out | ConvertTo-Json -Depth 6 -Compress
+    Write-HookContext $context
     Write-CLog ('emitted ' + $diags.Count + ' diagnostic(s)')
     exit 0
 }

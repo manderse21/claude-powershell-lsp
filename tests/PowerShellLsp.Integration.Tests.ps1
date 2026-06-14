@@ -98,6 +98,35 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
         $out | Should -Match 'PSUseApprovedVerbs'
     }
 
+    It 'surfaces the PSSA suggested fix text for a fixable finding (Track C)' {
+        # An alias use trips PSAvoidUsingCmdletAliases, which carries a
+        # SuggestedCorrection. The daemon's codeAction pass should thread the fix
+        # ('Get-ChildItem') into the feedback block as a 'fix:' line.
+        $fix = Join-Path $script:DataDir 'pester-alias-fixture.ps1'
+        'gci' | Set-Content -LiteralPath $fix -Encoding ascii
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:Sid; tool_input = @{ file_path = $fix }; cwd = $script:DataDir } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
+        $out | Should -Match 'PSAvoidUsingCmdletAliases'
+        $out | Should -Match 'fix: Get-ChildItem'
+    }
+
+    It 'surfaces a syntax error via the in-process parser with zero pipe call (Track B)' {
+        # Broken file written to scratch (NOT the repo tree -- the repo ASCII/parse
+        # unit test would fail on a deliberately broken .ps1). Use a session id with
+        # NO daemon: if a result still appears it came from the in-process parser
+        # pre-pass, proving the daemon round-trip was skipped (no daemon could have
+        # answered).
+        $broken = Join-Path $script:DataDir 'pester-broken-fixture.ps1'
+        "function Test-Broken {`n    Get-Process" | Set-Content -LiteralPath $broken -Encoding ascii   # unclosed brace
+        $noDaemonSid = 'no-daemon-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $noDaemonSid; tool_input = @{ file_path = $broken }; cwd = $script:DataDir } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
+        $out | Should -Match 'PowerShell diagnostics'
+        $out | Should -Match '\(parser\)'
+    }
+
     It 'shuts down cleanly on SessionEnd with no orphaned daemon or PSES' {
         $daemonPid = $script:DaemonInfo.pid
         $psesPid = $script:DaemonInfo.psesPid

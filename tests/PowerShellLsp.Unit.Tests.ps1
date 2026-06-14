@@ -112,6 +112,42 @@ Describe 'Diagnostics ordering and dedupe (Select-OrderedDiagnostics)' {
     }
 }
 
+Describe 'ConvertTo-DiagRecord -- correction threading (Track C; the prior drop is fixed)' {
+    # ConvertTo-DiagRecord used to drop PSScriptAnalyzer SuggestedCorrection text.
+    # It now emits 'correction' + 'correctionCount' so the fix can be carried end
+    # to end (publishDiagnostics has no fix, so they default empty; the daemon's
+    # codeAction pass enriches them afterward). These guard that contract.
+    BeforeAll {
+        $script:Diag = [pscustomobject]@{
+            range = [pscustomobject]@{
+                start = [pscustomobject]@{ line = 4; character = 0 }
+                end   = [pscustomobject]@{ line = 4; character = 3 }
+            }
+            severity = 2
+            source = 'PSScriptAnalyzer'
+            code = 'PSAvoidUsingCmdletAliases'
+            message = "'gci' is an alias of 'Get-ChildItem'."
+        }
+    }
+    It 'emits correction and correctionCount fields' {
+        $r = ConvertTo-DiagRecord $script:Diag
+        $r.Contains('correction') | Should -BeTrue
+        $r.Contains('correctionCount') | Should -BeTrue
+    }
+    It 'defaults to empty fix and zero count at publish time' {
+        $r = ConvertTo-DiagRecord $script:Diag
+        $r.correction | Should -Be ''
+        $r.correctionCount | Should -Be 0
+    }
+    It 'carries a supplied correction through (the prior drop is fixed)' {
+        $r = ConvertTo-DiagRecord $script:Diag 'Get-ChildItem' 1
+        $r.correction | Should -Be 'Get-ChildItem'
+        $r.correctionCount | Should -Be 1
+        $r.line | Should -Be 5            # 0-based 4 -> 1-based 5
+        $r.code | Should -Be 'PSAvoidUsingCmdletAliases'
+    }
+}
+
 Describe 'Configurability -- rule-list parsing and diagnostics filtering (Stage 4 knobs)' {
     BeforeAll {
         $script:Sample = @(
