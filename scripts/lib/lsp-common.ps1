@@ -279,7 +279,18 @@ function Read-LspFrame {
 
 function ConvertTo-DiagRecord {
     # Map an LSP diagnostic object to a flat ordered hashtable. Line/Col 1-based.
-    param($Diagnostic)
+    #
+    # Correction text is THREADED THROUGH here (it used to be dropped). LSP
+    # publishDiagnostics does not carry PSScriptAnalyzer SuggestedCorrections, so
+    # at publish time there is no fix yet: 'correction' defaults to '' and
+    # 'correctionCount' to 0, and the daemon enriches the record afterward from a
+    # textDocument/codeAction pass (see Add-CodeActionCorrections in the daemon).
+    # A caller that already has the fix (e.g. a test) may pass it in directly.
+    param(
+        $Diagnostic,
+        [string]$Correction = '',
+        [int]$CorrectionCount = 0
+    )
     $range = Get-Prop $Diagnostic 'range'
     $startPos = Get-Prop $range 'start'
     $line = 1; $col = 1
@@ -295,6 +306,7 @@ function ConvertTo-DiagRecord {
     return [ordered]@{
         severity = $sev; severityNum = [int]$sevNum
         line = $line; col = $col; source = $src; code = $code; message = $msg
+        correction = [string]$Correction; correctionCount = [int]$CorrectionCount
     }
 }
 
