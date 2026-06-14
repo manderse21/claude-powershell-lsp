@@ -11,7 +11,7 @@
     {
       "name": "powershell-lsp",
       "source": "./",
-      "description": "PowerShell code intelligence via PowerShell Editor Services (diagnostics, hover, go-to-definition, find-references) for .ps1/.psm1/.psd1.",
+      "description": "PowerShell diagnostics and PSScriptAnalyzer fix suggestions as Claude edits .ps1/.psm1/.psd1 files, via PowerShell Editor Services. Hover, go-to-definition, and find-references are on the roadmap, pending Claude Code plugin LSP-server registration (#66987).",
       "category": "development",
       "tags": ["powershell", "lsp", "editor-services", "diagnostics"]
     }
