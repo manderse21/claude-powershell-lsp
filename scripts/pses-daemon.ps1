@@ -126,7 +126,7 @@ function Invoke-LspMessage([string]$body) {
         if ($method -eq 'textDocument/publishDiagnostics') {
             $params = Get-Prop $msg 'params'
             $uri = [string](Get-Prop $params 'uri')
-            $key = $uri.ToLowerInvariant()
+            $key = ConvertTo-UriKey $uri
             $rawDiags = @(Get-Prop $params 'diagnostics')
             $records = @()
             foreach ($d in $rawDiags) { $records += (ConvertTo-DiagRecord $d) }
@@ -224,20 +224,12 @@ function Start-Pses {
     # initialize handshake (declares rename -> avoids PSES v4.6.0 NRE; see lib).
     $rootUri = ConvertTo-FileUri (Get-Location).Path
     $initId = 1
-    # [trackA] PSES v4.6.0 throws a NullReferenceException inside its own OnInitialize
-    # handler (PsesLanguageServer.cs:150, the workspaceFolders add path) on Linux when
-    # the initialize carries workspaceFolders -- Windows is unaffected, which is why the
-    # Windows CI legs always passed this handshake. Omit workspaceFolders and rely on
-    # rootUri alone; the warm path opens each file explicitly via didOpen/didChange, so
-    # multi-root workspace folders are not needed for diagnostics.
+    # [trackA] initialize OMITS workspaceFolders to dodge the PSES v4.6.0 Linux
+    # OnInitialize NRE (#2300); the omission and its full rationale live in
+    # New-InitializeParams (lib/lsp-common.ps1) and are guarded by the unit suite.
     Send-Lsp @{
         jsonrpc = '2.0'; id = $initId; method = 'initialize'
-        params = @{
-            processId = $PID
-            clientInfo = @{ name = 'cc-pses-daemon'; version = '1.1.0' }
-            rootUri = $rootUri
-            capabilities = (New-InitializeCapabilities)
-        }
+        params = (New-InitializeParams -RootUri $rootUri -ProcessId $PID)
     }
     if (-not (Invoke-LspPump -Until { $script:respSeen.ContainsKey('1') } -MaxMs 20000)) {
         Write-DLog 'initialize response not received before deadline'
@@ -344,7 +336,7 @@ function Get-Diagnostics([string]$filePath) {
     $full = [System.IO.Path]::GetFullPath($filePath)
     if (-not (Test-Path -LiteralPath $full)) { return @{ ok = $false; error = 'file not found' } }
     $uri = ConvertTo-FileUri $full
-    $key = $uri.ToLowerInvariant()
+    $key = ConvertTo-UriKey $uri
 
     $text = [System.IO.File]::ReadAllText($full)
     $hash = Get-ContentHash $text
