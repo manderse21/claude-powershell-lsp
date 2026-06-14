@@ -55,7 +55,7 @@ function Write-HookContext([string]$Context) {
     $out | ConvertTo-Json -Depth 6 -Compress
 }
 
-function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, [int]$hardCapMs) {
+function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, [int]$hardCapMs, [string]$cwd = '') {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $client = $null
     try {
@@ -85,7 +85,7 @@ function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, 
         $writer.NewLine = "`n"; $writer.AutoFlush = $true
         $reader = New-Object System.IO.StreamReader($client, [System.Text.Encoding]::UTF8, $false, 4096, $true)
 
-        $reqObj = [ordered]@{ action = 'diagnostics'; file = $filePath }
+        $reqObj = [ordered]@{ action = 'diagnostics'; file = $filePath; cwd = $cwd }
         $writer.WriteLine(($reqObj | ConvertTo-Json -Compress))
         $writer.Flush()
 
@@ -116,8 +116,11 @@ try {
     $path = [string](Get-Prop $toolInput 'file_path')
     if ([string]::IsNullOrWhiteSpace($path)) { Write-CLog 'no tool_input.file_path'; exit 0 }
 
+    # cwd = the Claude Code session working dir (project root). Captured here for both
+    # relative-path resolution AND forwarding to the daemon, which bounds the
+    # PSScriptAnalyzerSettings.psd1 walk-up at it (000018).
+    $cwd = [string](Get-Prop $payload 'cwd')
     if (-not [System.IO.Path]::IsPathRooted($path)) {
-        $cwd = [string](Get-Prop $payload 'cwd')
         if (-not [string]::IsNullOrWhiteSpace($cwd)) { $path = Join-Path $cwd $path }
     }
     $path = [System.IO.Path]::GetFullPath($path)
@@ -171,7 +174,7 @@ try {
     $pipeName = 'powershell-lsp-' + $sessionId
     Write-CLog ('requesting diagnostics for ' + $path + ' via ' + $pipeName)
 
-    $resp = Get-Diagnostics $pipeName $path $ConnectTimeoutMs $HardCapMs
+    $resp = Get-Diagnostics $pipeName $path $ConnectTimeoutMs $HardCapMs $cwd
     # $resp also carries optional telemetry fields the emit ignores (daemon-side
     # path/analysisMs/codeActionMs/recordCount/correctionCount). A null/!ok response
     # means the edit was never analyzed (unreachable/timeout) -> no stats line.

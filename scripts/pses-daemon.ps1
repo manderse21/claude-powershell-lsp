@@ -37,7 +37,11 @@ param(
     [string] $SeverityThreshold = 'Hint',   # least-severe level to report
     [string] $RuleInclude = '',              # comma-separated; empty = all
     [string] $RuleExclude = '',              # comma-separated rule codes to drop
-    [int] $PerFileCap = 20                    # max diagnostics per file (0 = no cap)
+    [int] $PerFileCap = 20,                   # max diagnostics per file (0 = no cap)
+    # Explicit PSScriptAnalyzerSettings.psd1 override (absolute). Empty = auto-discover
+    # the nearest settings file walked up from the edited file, bounded at the project
+    # root (dispatch 000018). Absolute only -- see Resolve-PssaSettingsPath in lib.
+    [string] $SettingsPath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -81,6 +85,12 @@ $script:lastHash  = @{}   # uri -> content hash string
 $script:respSeen  = @{}   # request id -> $true once a response arrives
 $script:respResult = @{}  # request id -> response result body (for codeAction)
 $script:reqId     = 1000  # monotonic id for daemon-initiated requests (codeAction)
+# PSScriptAnalyzerSettings honoring (000018): lazy-from-first-file. Resolve the
+# settings path ONCE on the first analyzed file, then lock -- PSES applies it
+# per-session (one analysis engine, rebuilt on a config change), so re-resolving per
+# file would force an engine rebuild on the hot path.
+$script:settingsResolved  = $false   # have we run the one-time resolve+push yet?
+$script:settingsPathInUse = ''        # the absolute settings file honored this session ('' = default rules)
 
 function Get-ContentHash([string]$text) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -112,8 +122,14 @@ function Invoke-LspMessage([string]$body) {
         if ($method -eq 'workspace/configuration') {
             $params = Get-Prop $msg 'params'
             $items = @(Get-Prop $params 'items')
+            # Answer each requested item with the scriptAnalysis settings, carrying the
+            # resolved settingsPath once known (000018). The push via
+            # didChangeConfiguration is the load-bearing channel (PSES's
+            # ConfigurationHandler consumes it); this pull response is kept in lockstep
+            # so the two never disagree. ConvertTo-Json escapes the (Windows) path.
+            $saJson = (New-ScriptAnalysisSettings $script:settingsPathInUse | ConvertTo-Json -Compress -Depth 5)
             $parts = @()
-            foreach ($it in $items) { $parts += '{"scriptAnalysis":{"enable":true}}' }
+            foreach ($it in $items) { $parts += ('{"scriptAnalysis":' + $saJson + '}') }
             $arr = if ($parts.Count -gt 0) { '[' + ($parts -join ',') + ']' } else { '[]' }
             Send-LspResponse $id $arr
         } else {
@@ -340,11 +356,41 @@ function Measure-CorrectionCount([object[]]$Records) {
     return $n
 }
 
-function Get-Diagnostics([string]$filePath) {
+function Initialize-PssaSettings {
+    # Resolve the PSScriptAnalyzerSettings.psd1 to honor and push it to PSES via
+    # workspace/didChangeConfiguration -- ONCE, on the first analyzed file
+    # (lazy-from-first-file, 000018). PSES applies it per-session (rebuilds its single
+    # analysis engine), so this is a one-time configure, not a per-file cost. An
+    # ABSOLUTE path is mandatory (Track 1): PSES returns a rooted SettingsPath as-is
+    # before its WorkspaceFolders loop, which the daemon leaves empty for the #2300
+    # dodge -- so absolute sidesteps the collision with no workspace-root field.
+    # Best-effort: any resolve failure leaves the session on PSES default rules.
+    param([string]$FilePath, [string]$ProjectRoot)
+    if ($script:settingsResolved) { return }
+    $script:settingsResolved = $true
+    $root = if (-not [string]::IsNullOrWhiteSpace($ProjectRoot)) { $ProjectRoot } else { (Get-Location).Path }
+    $resolved = ''
+    try {
+        $resolved = Resolve-PssaSettingsPath -EditedFilePath $FilePath -ProjectRoot $root -Override $SettingsPath
+    } catch {
+        Write-DLog ('PSSA settings resolve error (ignored, default rules): ' + $_.Exception.Message); return
+    }
+    if ([string]::IsNullOrWhiteSpace($resolved)) { Write-DLog 'PSSA settings: none resolved (default rules)'; return }
+    $script:settingsPathInUse = $resolved
+    Send-Lsp @{ jsonrpc = '2.0'; method = 'workspace/didChangeConfiguration'
+        params = @{ settings = @{ powershell = @{ scriptAnalysis = (New-ScriptAnalysisSettings $resolved) } } } }
+    Write-DLog ('PSSA settings: honoring ' + $resolved)
+}
+
+function Get-Diagnostics([string]$filePath, [string]$cwd = '') {
     $full = [System.IO.Path]::GetFullPath($filePath)
     if (-not (Test-Path -LiteralPath $full)) { return @{ ok = $false; error = 'file not found' } }
     $uri = ConvertTo-FileUri $full
     $key = ConvertTo-UriKey $uri
+
+    # 000018: resolve + push the settings path once, before the first didOpen, bounded
+    # at the client-forwarded project root (cwd). Gated -- a no-op after the first file.
+    Initialize-PssaSettings -FilePath $full -ProjectRoot $cwd
 
     $text = [System.IO.File]::ReadAllText($full)
     $hash = Get-ContentHash $text
@@ -488,7 +534,8 @@ try {
                 switch ($action) {
                     'diagnostics' {
                         $file = [string](Get-Prop $req 'file')
-                        $res = Get-Diagnostics $file
+                        $reqCwd = [string](Get-Prop $req 'cwd')   # project root for settings bound (000018)
+                        $res = Get-Diagnostics $file $reqCwd
                         if ($res.ok) {
                             # Stable order + dedupe, then apply the configured
                             # severity threshold + rule include/exclude, then cap

@@ -125,6 +125,92 @@ function Get-PluginOptionBool {
     }
 }
 
+# --- PSScriptAnalyzer settings resolution (dispatch 000018) ----------------
+# Honor a repo-local PSScriptAnalyzerSettings.psd1 by resolving its ABSOLUTE path
+# and letting PSES READ it (we never parse or execute the user's .psd1 ourselves --
+# it is PowerShell data, an arbitrary-code risk; PSES is the trusted consumer).
+# Track 1 (cited from PSES v4.6.0 source) pinned the mechanism and the bound:
+#   - PSES takes the path via workspace/didChangeConfiguration as
+#     Powershell.ScriptAnalysis.SettingsPath (camelCased on the wire) and hands it
+#     straight to PSScriptAnalyzer (WithSettingsFile). Granularity is per-SESSION
+#     (one analysis engine, rebuilt on a config change) -- not per-file.
+#   - WorkspaceService.FindFileInWorkspace returns a ROOTED path AS-IS, BEFORE the
+#     WorkspaceFolders loop -- and the daemon deliberately leaves workspaceFolders
+#     EMPTY (the #2300 Linux OnInitialize NRE dodge). So an ABSOLUTE path sidesteps
+#     that loop entirely (no workspace-root field, no collision); a RELATIVE path
+#     would resolve against PSES's process CWD (the daemon's log dir) and miss.
+#     Hence: absolute only.
+
+function New-ScriptAnalysisSettings {
+    # The PSES `scriptAnalysis` settings object: `enable` always, plus `settingsPath`
+    # ONLY when one is resolved. Omitting settingsPath is the no-config path -- PSES
+    # then loads its default rules (byte-unchanged from before honoring). Used for
+    # BOTH the didChangeConfiguration push and the workspace/configuration pull
+    # response so the two config channels never disagree.
+    param([string]$SettingsPath = '')
+    $sa = @{ enable = $true }
+    if (-not [string]::IsNullOrWhiteSpace($SettingsPath)) { $sa['settingsPath'] = $SettingsPath }
+    return $sa
+}
+
+function Resolve-PssaSettingsPath {
+    # Resolve the ABSOLUTE PSScriptAnalyzerSettings.psd1 to honor, or '' if none.
+    # Precedence: explicit absolute override > nearest PSScriptAnalyzerSettings.psd1
+    # walked up from the edited file's directory, bounded at (and including) the
+    # project root > '' (PSES loads default rules). Best-effort and cheap: a path
+    # walk-up is a chain of stats, off the hot path (resolved once per session).
+    #
+    # Adversarial control: drop the `$rootFull` bound (walk to the filesystem root)
+    # and the 'settings file ABOVE the project root is not honored' unit test goes
+    # RED; return $Override unconditionally and the 'relative override is ignored'
+    # test goes RED.
+    param(
+        [string]$EditedFilePath,
+        [string]$ProjectRoot,
+        [string]$Override = ''
+    )
+    # Explicit override -- ABSOLUTE only (Mike's gate; a relative override cannot
+    # resolve safely through PSES, so it is ignored and we fall through to
+    # discovery). Existence is left to PSES (it logs + loads defaults if the file is
+    # missing); we resolve only the path, never read it.
+    if (-not [string]::IsNullOrWhiteSpace($Override)) {
+        if ([System.IO.Path]::IsPathRooted($Override)) {
+            return [System.IO.Path]::GetFullPath($Override)
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($EditedFilePath)) { return '' }
+    $fileFull = [System.IO.Path]::GetFullPath($EditedFilePath)
+    $dir = [System.IO.Path]::GetDirectoryName($fileFull)
+    if ([string]::IsNullOrWhiteSpace($dir)) { return '' }
+
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $alt = [System.IO.Path]::AltDirectorySeparatorChar
+    $rootFull = ''
+    if (-not [string]::IsNullOrWhiteSpace($ProjectRoot)) {
+        try { $rootFull = [System.IO.Path]::GetFullPath($ProjectRoot).TrimEnd($sep, $alt) } catch { $rootFull = '' }
+    }
+
+    $cur = $dir
+    while (-not [string]::IsNullOrWhiteSpace($cur)) {
+        $candidate = Join-Path $cur 'PSScriptAnalyzerSettings.psd1'
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return [System.IO.Path]::GetFullPath($candidate)
+        }
+        $curTrim = $cur.TrimEnd($sep, $alt)
+        if ($rootFull -ne '' -and $curTrim -eq $rootFull) { break }   # reached the project root: stop (the bound)
+        $parent = [System.IO.Path]::GetDirectoryName($cur)
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $cur) { break }   # filesystem root
+        if ($rootFull -ne '') {
+            # If the edited file lives OUTSIDE the project root, do not walk above its
+            # own directory -- never escape an out-of-workspace file upward.
+            $under = ($curTrim -eq $rootFull) -or $curTrim.StartsWith($rootFull + $sep, [System.StringComparison]::OrdinalIgnoreCase)
+            if (-not $under) { break }
+        }
+        $cur = $parent
+    }
+    return ''
+}
+
 # --- telemetry / stats (Track A) -------------------------------------------
 # Observe-only per-edit timing. The writer is best-effort and FAIL-SAFE by
 # contract: any failure (locked file, a directory squatting the path, disk full)

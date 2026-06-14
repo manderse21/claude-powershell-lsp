@@ -68,6 +68,12 @@
       "title": "Enable telemetry/stats",
       "description": "When 'true', append one JSONL timing line per analyzed edit to logs/stats.jsonl (rotating, ~5 MB). Observe-only: never changes diagnostics output. View with scripts/show-stats.ps1. '0'/'false'/'off' disable.",
       "default": "false"
+    },
+    "settingsPath": {
+      "type": "string",
+      "title": "PSScriptAnalyzerSettings.psd1 path (override)",
+      "description": "Absolute path to a PSScriptAnalyzerSettings.psd1 the analyzer should honor. Overrides auto-discovery (the nearest PSScriptAnalyzerSettings.psd1 walked up from the edited file, bounded at the project root). Must be ABSOLUTE; a relative value is ignored. Empty = auto-discover.",
+      "default": ""
     }
   },
   "lspServers": {
