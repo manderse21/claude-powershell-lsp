@@ -21,7 +21,8 @@ param(
     [string] $RuleExclude = '',
     [int] $DebounceMs = 150,
     [int] $IdleTtlMin = 30,
-    [int] $PerFileCap = 20
+    [int] $PerFileCap = 20,
+    [string] $SettingsPath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -42,6 +43,7 @@ $KeepLastN         = Get-PluginOptionInt 'keepLastN'         $KeepLastN
 $DebounceMs        = Get-PluginOptionInt 'debounceMs'        $DebounceMs
 $IdleTtlMin        = Get-PluginOptionInt 'idleTtlMin'        $IdleTtlMin
 $PerFileCap        = Get-PluginOptionInt 'perFileCap'        $PerFileCap
+$SettingsPath      = Get-PluginOption    'settingsPath'       $SettingsPath
 
 $logDir = Get-LogDir
 $sessionDir = Get-SessionDir
@@ -193,6 +195,9 @@ try {
     # element would misalign the daemon's positional binding).
     if (-not [string]::IsNullOrWhiteSpace($RuleInclude)) { $daemonArgs += @('-RuleInclude', $RuleInclude) }
     if (-not [string]::IsNullOrWhiteSpace($RuleExclude)) { $daemonArgs += @('-RuleExclude', $RuleExclude) }
+    # PSScriptAnalyzerSettings.psd1 override (absolute); only pass when set, else the
+    # daemon auto-discovers the nearest settings file from the edited file (000018).
+    if (-not [string]::IsNullOrWhiteSpace($SettingsPath)) { $daemonArgs += @('-SettingsPath', $SettingsPath) }
     # Launch DETACHED. Must NOT inherit this hook's stdout/stderr handles: if it
     # did, Claude Code's SessionStart hook would block on its own output pipe
     # until the daemon exits (the whole session). On Windows, Start-Process with

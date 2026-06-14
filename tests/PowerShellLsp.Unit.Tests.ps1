@@ -333,6 +333,95 @@ Describe 'Configurability -- rule-list parsing and diagnostics filtering (Stage 
     }
 }
 
+Describe 'Resolve-PssaSettingsPath -- honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' {
+    # Track 1 (PSES v4.6.0 source) proved PSES needs an ABSOLUTE settings path: its
+    # WorkspaceService.FindFileInWorkspace returns a rooted path AS-IS, before the
+    # WorkspaceFolders loop the daemon leaves EMPTY (#2300 dodge); a relative path
+    # would resolve against PSES's process CWD and miss. These guard the resolver:
+    # absolute override wins, a RELATIVE override is ignored, discovery walks up to
+    # the nearest file, and the project-root bound stops the walk.
+    BeforeAll {
+        $script:Root = Join-Path $TestDrive 'proj'
+        $script:Sub = Join-Path $script:Root 'src'
+        New-Item -ItemType Directory -Force -Path $script:Sub | Out-Null
+        $script:RootCfg = Join-Path $script:Root 'PSScriptAnalyzerSettings.psd1'
+        $script:SubCfg = Join-Path $script:Sub 'PSScriptAnalyzerSettings.psd1'
+        $script:EditFile = Join-Path $script:Sub 'edited.ps1'
+        Set-Content -LiteralPath $script:EditFile -Value 'Get-Process' -Encoding ascii
+    }
+    AfterEach {
+        Remove-Item -LiteralPath $script:RootCfg -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $script:SubCfg -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'returns an absolute override as-is (resolved to a full path); existence is left to PSES' {
+        $override = Join-Path (Join-Path $TestDrive 'elsewhere') 'custom.psd1'
+        Resolve-PssaSettingsPath -EditedFilePath $script:EditFile -ProjectRoot $script:Root -Override $override |
+            Should -BeExactly ([System.IO.Path]::GetFullPath($override))
+    }
+    It 'ignores a RELATIVE override and falls through to discovery (absolute only)' {
+        Set-Content -LiteralPath $script:RootCfg -Value '@{}' -Encoding ascii
+        Resolve-PssaSettingsPath -EditedFilePath $script:EditFile -ProjectRoot $script:Root -Override 'relative-custom.psd1' |
+            Should -BeExactly ([System.IO.Path]::GetFullPath($script:RootCfg))
+    }
+    It 'discovers a settings file at the project root by walking up from a subdir' {
+        Set-Content -LiteralPath $script:RootCfg -Value '@{}' -Encoding ascii
+        Resolve-PssaSettingsPath -EditedFilePath $script:EditFile -ProjectRoot $script:Root |
+            Should -BeExactly ([System.IO.Path]::GetFullPath($script:RootCfg))
+    }
+    It 'prefers the NEAREST settings file (subdir over root)' {
+        Set-Content -LiteralPath $script:RootCfg -Value '@{}' -Encoding ascii
+        Set-Content -LiteralPath $script:SubCfg -Value '@{}' -Encoding ascii
+        Resolve-PssaSettingsPath -EditedFilePath $script:EditFile -ProjectRoot $script:Root |
+            Should -BeExactly ([System.IO.Path]::GetFullPath($script:SubCfg))
+    }
+    It 'does NOT honor a settings file ABOVE the project root (the bound)' {
+        # Settings ONLY in the root's parent; the walk must stop at the root and find
+        # nothing. Adversarial control: drop the bound and this returns the parent
+        # file -> RED.
+        $parentCfg = Join-Path $TestDrive 'PSScriptAnalyzerSettings.psd1'
+        Set-Content -LiteralPath $parentCfg -Value '@{}' -Encoding ascii
+        try {
+            Resolve-PssaSettingsPath -EditedFilePath $script:EditFile -ProjectRoot $script:Root | Should -BeExactly ''
+        } finally { Remove-Item -LiteralPath $parentCfg -Force -ErrorAction SilentlyContinue }
+    }
+    It 'returns empty when no settings file exists and no override is given (no-config path)' {
+        Resolve-PssaSettingsPath -EditedFilePath $script:EditFile -ProjectRoot $script:Root | Should -BeExactly ''
+    }
+    It 'checks the edited file own directory but does not escape upward when the file is outside the project root' {
+        $outsideSub = Join-Path (Join-Path $TestDrive 'outside') 'deep'
+        New-Item -ItemType Directory -Force -Path $outsideSub | Out-Null
+        $ownCfg = Join-Path $outsideSub 'PSScriptAnalyzerSettings.psd1'
+        $parentCfg = Join-Path (Join-Path $TestDrive 'outside') 'PSScriptAnalyzerSettings.psd1'
+        $f = Join-Path $outsideSub 'x.ps1'; Set-Content -LiteralPath $f -Value 'Get-Process' -Encoding ascii
+        Set-Content -LiteralPath $parentCfg -Value '@{}' -Encoding ascii
+        try {
+            # parent-only settings, file outside the root -> not honored (no upward escape)
+            Resolve-PssaSettingsPath -EditedFilePath $f -ProjectRoot $script:Root | Should -BeExactly ''
+            # own-dir settings -> honored
+            Set-Content -LiteralPath $ownCfg -Value '@{}' -Encoding ascii
+            Resolve-PssaSettingsPath -EditedFilePath $f -ProjectRoot $script:Root |
+                Should -BeExactly ([System.IO.Path]::GetFullPath($ownCfg))
+        } finally { Remove-Item -LiteralPath $ownCfg, $parentCfg -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+Describe 'New-ScriptAnalysisSettings -- the PSES scriptAnalysis settings object (dispatch 000018)' {
+    It 'always enables analysis (with or without a settings path)' {
+        (New-ScriptAnalysisSettings).enable | Should -BeTrue
+        (New-ScriptAnalysisSettings 'C:\proj\PSScriptAnalyzerSettings.psd1').enable | Should -BeTrue
+    }
+    It 'omits settingsPath when none is given (no-config -> PSES default rules)' {
+        (New-ScriptAnalysisSettings).ContainsKey('settingsPath') | Should -BeFalse
+        ((New-ScriptAnalysisSettings '') | ConvertTo-Json -Compress) | Should -Not -Match 'settingsPath'
+    }
+    It 'includes settingsPath when resolved (the camelCase wire key PSES consumes)' {
+        $obj = New-ScriptAnalysisSettings 'C:\proj\PSScriptAnalyzerSettings.psd1'
+        $obj.settingsPath | Should -BeExactly 'C:\proj\PSScriptAnalyzerSettings.psd1'
+        ($obj | ConvertTo-Json -Compress) | Should -Match '"settingsPath"'
+    }
+}
+
 # (d) ASCII-clean + parse over every shipped .ps1 (scripts AND tests).
 $script:AllPs1 = Get-ChildItem (Split-Path -Parent $PSScriptRoot) -Recurse -Filter *.ps1 -File
 

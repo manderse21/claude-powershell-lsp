@@ -215,3 +215,170 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
         $script:DaemonInfo = $null   # mark handled so AfterAll does not double-reap
     }
 }
+
+Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -Skip:$script:SkipIntegration {
+    # The load-bearing adversarial pair (mirrors 000014's RED/GREEN control): a file
+    # violating ONLY a rule the repo settings exclude must produce NO diagnostic for
+    # that rule (GREEN) -- and the SAME file with NO settings honored must show it
+    # (RED). Plus: a non-excluded rule still fires (we did not silence everything), an
+    # explicit ABSOLUTE settingsPath override is applied, and the no-settings case is
+    # unchanged from default. Each scenario gets its OWN warm daemon: settings resolve
+    # lazily-from-first-file and lock per session (Track 1: PSES applies them
+    # per-session, one analysis engine), so honoring cannot be toggled within one daemon.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+
+        function Invoke-PluginHook {
+            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+            if ($StdinJson) {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
+                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
+            }
+            $p.StandardInput.Close()
+            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            [void]$stdoutTask.Wait(1500)
+            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+        }
+
+        $script:H_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        # Share the warm-start block's data root so PSES/PSSA bootstrap is a no-op here
+        # (no second download per CI leg). Fixtures live in a dedicated subtree and
+        # session ids are unique, so daemons never collide; we never delete this root.
+        $script:H_Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $env:PSLS_TEST_DATA_DIR
+        } else {
+            Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data'
+        }
+        New-Item -ItemType Directory -Force -Path $script:H_Data | Out-Null
+        $env:CLAUDE_PLUGIN_DATA = $script:H_Data
+        $script:H_Fixtures = Join-Path $script:H_Data 'honor-000018'
+        if (Test-Path -LiteralPath $script:H_Fixtures) { Remove-Item -LiteralPath $script:H_Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Force -Path $script:H_Fixtures | Out-Null
+
+        # Idempotent bootstrap of PSES + pinned PSSA (no-op if the other block did it).
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:H_ScriptsDir 'ensure-pses.ps1') 2>&1 | Out-Null
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:H_ScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+
+        # Shared fixture content (identical bytes for GREEN and RED -- the ONLY
+        # difference is whether settings are honored): gci -> PSAvoidUsingCmdletAliases
+        # (the EXCLUDED rule -- it reliably fires in the PSES default ruleset, unlike
+        # PSAvoidUsingWriteHost which PSES's own default already drops); Frobnicate- ->
+        # PSUseApprovedVerbs (the non-excluded sentinel that proves analysis ran).
+        $script:DualContent = "function Frobnicate-Thing {`n    gci`n}"
+        $excludeAliases = "@{ ExcludeRules = @('PSAvoidUsingCmdletAliases') }"
+
+        # GREEN project: a settings file that excludes PSAvoidUsingCmdletAliases.
+        $script:GreenDir = Join-Path $script:H_Fixtures 'proj-green'
+        New-Item -ItemType Directory -Force -Path $script:GreenDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:GreenDir 'PSScriptAnalyzerSettings.psd1') -Value $excludeAliases -Encoding ascii
+        $script:GreenFile = Join-Path $script:GreenDir 'green.ps1'
+        Set-Content -LiteralPath $script:GreenFile -Value $script:DualContent -Encoding ascii
+
+        # RED / no-config project: NO settings file anywhere in the walk-up.
+        $script:RedDir = Join-Path $script:H_Fixtures 'proj-red'
+        New-Item -ItemType Directory -Force -Path $script:RedDir | Out-Null
+        $script:RedFile = Join-Path $script:RedDir 'red.ps1'
+        Set-Content -LiteralPath $script:RedFile -Value $script:DualContent -Encoding ascii
+
+        # OVERRIDE: a settings file OUTSIDE the fixture's walk path, pointed at by the
+        # settingsPath option. Fixture trips an alias rule (kept) + Write-Host (excluded).
+        $script:OvrCfg = Join-Path (Join-Path $script:H_Fixtures 'cfg-elsewhere') 'PSScriptAnalyzerSettings.psd1'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $script:OvrCfg) | Out-Null
+        Set-Content -LiteralPath $script:OvrCfg -Value $excludeAliases -Encoding ascii
+        $script:OvrDir = Join-Path $script:H_Fixtures 'proj-override'
+        New-Item -ItemType Directory -Force -Path $script:OvrDir | Out-Null
+        $script:OvrFile = Join-Path $script:OvrDir 'ovr.ps1'
+        Set-Content -LiteralPath $script:OvrFile -Value "function Frobnicate-Ovr {`n    gci`n}" -Encoding ascii
+
+        function Start-HonorDaemon {
+            param([string]$Sid, [hashtable]$ExtraEnv)
+            Invoke-PluginHook -ScriptPath (Join-Path $script:H_ScriptsDir 'session-start.ps1') `
+                -StdinJson (@{ session_id = $Sid } | ConvertTo-Json -Compress) `
+                -ExtraArgs @('-PreferredHost', 'pwsh') -CapMs 60000 -DataRoot $script:H_Data -ExtraEnv $ExtraEnv | Out-Null
+        }
+        function Wait-HonorDaemon {
+            param([string]$Sid)
+            $sf = Join-Path $script:H_Data ('session/' + $Sid + '.json')
+            for ($i = 0; $i -lt 60; $i++) {
+                if (Test-Path $sf) { $o = Get-Content $sf -Raw | ConvertFrom-Json; if ($o.state -eq 'ready') { return $o } }
+                Start-Sleep -Milliseconds 500
+            }
+            return $null
+        }
+        # Raise the CLIENT hard cap for these calls: the FIRST analyzed file pushes the
+        # settings and PSES rebuilds its analysis engine, which can exceed the 5s default.
+        function Get-HonorDiag {
+            param([string]$Sid, [string]$File, [string]$Cwd)
+            Invoke-PluginHook -ScriptPath (Join-Path $script:H_ScriptsDir 'lsp-client.ps1') `
+                -StdinJson (@{ session_id = $Sid; tool_input = @{ file_path = $File }; cwd = $Cwd } | ConvertTo-Json -Compress) `
+                -ExtraArgs @() -CapMs 25000 -DataRoot $script:H_Data -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+        }
+
+        $script:GreenSid = 'honor-green-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:RedSid = 'honor-red-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:OvrSid = 'honor-ovr-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+
+        # Launch all three detached, then wait -- overlaps the PSES warm-starts. GREEN
+        # and RED carry an EMPTY settingsPath option (no override); OVERRIDE carries the
+        # absolute path. Distinct session ids => distinct daemons (no cross-reap).
+        Start-HonorDaemon -Sid $script:GreenSid -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_settingsPath = '' }
+        Start-HonorDaemon -Sid $script:RedSid -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_settingsPath = '' }
+        Start-HonorDaemon -Sid $script:OvrSid -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_settingsPath = $script:OvrCfg }
+        $script:GreenInfo = Wait-HonorDaemon -Sid $script:GreenSid
+        $script:RedInfo = Wait-HonorDaemon -Sid $script:RedSid
+        $script:OvrInfo = Wait-HonorDaemon -Sid $script:OvrSid
+    }
+
+    AfterAll {
+        foreach ($info in @($script:GreenInfo, $script:RedInfo, $script:OvrInfo)) {
+            if ($null -ne $info) {
+                foreach ($pidVal in @($info.pid, $info.psesPid)) {
+                    if ($pidVal) { Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue }
+                }
+            }
+        }
+        # Clean only OUR fixtures + session files -- never the shared data root (it
+        # holds the bootstrapped PSES/PSSA bundle reused across runs).
+        foreach ($sid in @($script:GreenSid, $script:RedSid, $script:OvrSid)) {
+            $sf = Join-Path $script:H_Data ('session/' + $sid + '.json')
+            if (Test-Path -LiteralPath $sf) { Remove-Item -LiteralPath $sf -Force -ErrorAction SilentlyContinue }
+        }
+        if (Test-Path -LiteralPath $script:H_Fixtures) { Remove-Item -LiteralPath $script:H_Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'GREEN: a rule excluded by PSScriptAnalyzerSettings.psd1 is suppressed, and a non-excluded rule still fires' {
+        $script:GreenInfo | Should -Not -BeNullOrEmpty
+        $out = Get-HonorDiag -Sid $script:GreenSid -File $script:GreenFile -Cwd $script:GreenDir
+        $out | Should -Match 'PSUseApprovedVerbs'              # NOT excluded -> still fires (we did not silence everything)
+        $out | Should -Not -Match 'PSAvoidUsingCmdletAliases'  # excluded by the repo settings -> suppressed
+    }
+
+    It 'RED control: the SAME file with NO settings honored shows the excluded rule (honoring is load-bearing)' {
+        $script:RedInfo | Should -Not -BeNullOrEmpty
+        $out = Get-HonorDiag -Sid $script:RedSid -File $script:RedFile -Cwd $script:RedDir
+        $out | Should -Match 'PSAvoidUsingCmdletAliases'    # reappears without honoring -> RED to GREEN's absence
+    }
+
+    It 'explicit absolute settingsPath override is applied (points PSES at a settings file elsewhere)' {
+        $script:OvrInfo | Should -Not -BeNullOrEmpty
+        $out = Get-HonorDiag -Sid $script:OvrSid -File $script:OvrFile -Cwd $script:OvrDir
+        $out | Should -Match 'PSUseApprovedVerbs'              # analysis ran (verb rule not excluded)
+        $out | Should -Not -Match 'PSAvoidUsingCmdletAliases'  # excluded via the override settings file
+    }
+
+    It 'no-config non-regression: with no settings and no override, default diagnostics are unchanged' {
+        # The RED daemon honors nothing; the default rules must fire -- nothing is
+        # silently suppressed, so behavior matches the pre-honoring default.
+        $out = Get-HonorDiag -Sid $script:RedSid -File $script:RedFile -Cwd $script:RedDir
+        $out | Should -Match 'PSAvoidUsingCmdletAliases'
+        $out | Should -Match 'PSUseApprovedVerbs'
+    }
+}
