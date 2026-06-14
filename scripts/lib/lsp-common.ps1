@@ -103,6 +103,64 @@ function Get-PluginOptionInt {
     return $Default
 }
 
+function Get-PluginOptionBool {
+    # Boolean Get-PluginOption, mirroring Get-PluginOptionInt's fallback shape. The
+    # userConfig manifest types every option as a STRING (perFileCap = '20',
+    # timeoutMs = '5000'), so a boolean knob arrives as the text 'true'/'false'.
+    # 'true'/'1'/'yes'/'on' (case-insensitive) -> $true; 'false'/'0'/'no'/'off' ->
+    # $false; absent / blank / an unexpanded '${user_config...}' token -> $Default.
+    param([string]$Key, [bool]$Default = $false)
+    $raw = (Get-PluginOption $Key '').Trim()
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $Default }
+    switch ($raw.ToLowerInvariant()) {
+        'true'  { return $true }
+        '1'     { return $true }
+        'yes'   { return $true }
+        'on'    { return $true }
+        'false' { return $false }
+        '0'     { return $false }
+        'no'    { return $false }
+        'off'   { return $false }
+        default { return $Default }
+    }
+}
+
+# --- telemetry / stats (Track A) -------------------------------------------
+# Observe-only per-edit timing. The writer is best-effort and FAIL-SAFE by
+# contract: any failure (locked file, a directory squatting the path, disk full)
+# is swallowed so a telemetry hiccup can never affect the diagnostics emit or the
+# hook's exit code. JSONL (one object per line) -- not a JSON array -- so the
+# readout can stream it and PS 5.1's empty-array-returns-null quirk on read never
+# bites. Caller stamps the record (ts, path, ext, stage timings, counts); this
+# only serializes + appends with a single-rollover size cap.
+
+function Write-StatsLine {
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Record,
+        # ~5 MB live-file cap; one rollover to stats.jsonl.1 -> bounded ~2x on disk.
+        [int]$CapBytes = 5242880
+    )
+    try {
+        $dir = Get-LogDir
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+        $statsFile = Join-Path $dir 'stats.jsonl'
+        # Rotate BEFORE appending when the live file has reached the cap: move it to
+        # .1 (overwriting any prior .1) and start a fresh live file. Single rollover.
+        if (Test-Path -LiteralPath $statsFile) {
+            $item = Get-Item -LiteralPath $statsFile -ErrorAction Stop
+            if ([long]$item.Length -ge $CapBytes) {
+                Move-Item -LiteralPath $statsFile -Destination ($statsFile + '.1') -Force -ErrorAction Stop
+            }
+        }
+        $line = ($Record | ConvertTo-Json -Depth 8 -Compress)
+        # UTF-8 without BOM, explicit LF. (PS 5.1's ConvertTo-Json escapes non-ASCII
+        # to \uXXXX, but pwsh 7 emits it literally -- so UTF-8 keeps a non-ASCII path
+        # intact across hosts; this is a data file, not a parsed .ps1.)
+        $enc = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::AppendAllText($statsFile, ($line + "`n"), $enc)
+    } catch { }
+}
+
 # --- platform helpers (cross-platform forward-compat) ----------------------
 # Non-Windows branches below are AUTHORED but CI-verified later (this build runs
 # Windows only). They exist so the Windows-only calls are isolated and guarded.

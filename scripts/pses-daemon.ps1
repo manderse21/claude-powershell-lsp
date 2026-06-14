@@ -332,6 +332,14 @@ function Add-CodeActionCorrections {
 }
 
 # --- diagnostics request (didOpen/didChange + settle) ----------------------
+function Measure-CorrectionCount([object[]]$Records) {
+    # Telemetry (Track A): how many records carry a suggested fix. Counts only --
+    # never reads correction text into the stats line.
+    $n = 0
+    foreach ($r in @($Records)) { if (-not [string]::IsNullOrWhiteSpace([string]$r.correction)) { $n++ } }
+    return $n
+}
+
 function Get-Diagnostics([string]$filePath) {
     $full = [System.IO.Path]::GetFullPath($filePath)
     if (-not (Test-Path -LiteralPath $full)) { return @{ ok = $false; error = 'file not found' } }
@@ -344,7 +352,10 @@ function Get-Diagnostics([string]$filePath) {
     # Coalesce: identical content already analyzed -> return cached set.
     if ($script:lastHash.ContainsKey($key) -and $script:lastHash[$key] -eq $hash -and $script:diag.ContainsKey($key)) {
         Write-DLog ('cache-hit ' + $uri)
-        return @{ ok = $true; cached = $true; records = $script:diag[$key].records }
+        $cachedRecs = @($script:diag[$key].records)
+        return @{ ok = $true; cached = $true; records = $cachedRecs
+            path = 'cache-hit'; analysisMs = 0; codeActionMs = 0
+            recordCount = $cachedRecs.Count; correctionCount = (Measure-CorrectionCount $cachedRecs) }
     }
 
     # Debounce: let edits landing within the window fold into one pass, then
@@ -372,12 +383,15 @@ function Get-Diagnostics([string]$filePath) {
 
     # Settle: wait for a publish, then for SettleMs of quiet after the LAST one,
     # capped at MaxWaitMs. This skips the early (often empty) parser publish in
-    # favor of the settled PSScriptAnalyzer pass.
+    # favor of the settled PSScriptAnalyzer pass. [trackA] analysisMs spans exactly
+    # this didChange->settle window (the debounce above is a separate, fixed wait).
+    $swAnalysis = [System.Diagnostics.Stopwatch]::StartNew()
     Invoke-LspPump -Until {
         if (-not $script:diag.ContainsKey($key)) { return $false }
         $age = ((Get-Date) - $script:diag[$key].at).TotalMilliseconds
         return ($age -ge $SettleMs)
     } -MaxMs $MaxWaitMs | Out-Null
+    $swAnalysis.Stop()
 
     $entry = if ($script:diag.ContainsKey($key)) { $script:diag[$key] } else { $null }
     $records = if ($null -ne $entry) { $entry.records } else { @() }
@@ -385,12 +399,20 @@ function Get-Diagnostics([string]$filePath) {
     # Track C: thread PSSA suggested corrections onto the records (in place) via a
     # single codeAction pass -- only when there are findings, so a clean file does
     # no codeAction work and the warm fast path (and the cache-hit path above)
-    # stay untouched.
-    if (@($records).Count -gt 0) { Add-CodeActionCorrections $uri $rawDiags $records }
+    # stay untouched. [trackA] codeActionMs times that enrichment (0 when skipped).
+    $caMs = 0
+    if (@($records).Count -gt 0) {
+        $swCa = [System.Diagnostics.Stopwatch]::StartNew()
+        Add-CodeActionCorrections $uri $rawDiags $records
+        $swCa.Stop(); $caMs = [int]$swCa.ElapsedMilliseconds
+    }
     $script:lastHash[$key] = $hash
     if (-not $script:diag.ContainsKey($key)) { $script:diag[$key] = @{ records = @(); raw = @(); at = (Get-Date); seq = 0 } }
     Write-DLog ('analyzed ' + $uri + ' -> ' + @($records).Count + ' record(s)')
-    return @{ ok = $true; cached = $false; records = @($records) }
+    $recs = @($records)
+    return @{ ok = $true; cached = $false; records = $recs
+        path = 'daemon-analyze'; analysisMs = [int]$swAnalysis.ElapsedMilliseconds; codeActionMs = $caMs
+        recordCount = $recs.Count; correctionCount = (Measure-CorrectionCount $recs) }
 }
 
 # --- session file / heartbeat ----------------------------------------------
@@ -480,7 +502,9 @@ try {
                                 $shown = $filtered; $omitted = 0
                             }
                             $payload = [ordered]@{ ok = $true; action = 'diagnostics'; file = $file
-                                cached = [bool]$res.cached; count = @($shown).Count; omitted = $omitted; diagnostics = @($shown) }
+                                cached = [bool]$res.cached; count = @($shown).Count; omitted = $omitted; diagnostics = @($shown)
+                                path = [string]$res.path; analysisMs = [int]$res.analysisMs; codeActionMs = [int]$res.codeActionMs
+                                recordCount = [int]$res.recordCount; correctionCount = [int]$res.correctionCount }
                         } else {
                             $payload = [ordered]@{ ok = $false; action = 'diagnostics'; error = $res.error }
                         }

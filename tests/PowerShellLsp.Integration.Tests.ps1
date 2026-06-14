@@ -2,8 +2,9 @@
 
 # Integration regression tests (Pester 5): drive the REAL daemon end to end.
 # Needs PSES + PSScriptAnalyzer bootstrapped (the BeforeAll does it idempotently)
-# and named pipes, so it is Windows-only for now (cross-platform is authored but
-# CI-verified later). Skipped on non-Windows.
+# and named pipes. Runs on Windows, Linux, and macOS (named pipes map to Unix domain
+# sockets on .NET); only genuinely unsupported platforms are skipped -- see the
+# discovery-time gate below.
 
 # Discovery-time platform gate for -Skip (StrictMode-safe; PS 5.1 has no $IsWindows/$IsLinux).
 # Integration runs on Windows, Linux, and macOS; other platforms stay skipped.
@@ -37,7 +38,9 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
                 $p.StandardInput.BaseStream.Flush()
             }
             $p.StandardInput.Close()
+            $script:LastHookExit = $null   # Track A fail-safe test reads the hook's exit code
             if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            $script:LastHookExit = $p.ExitCode
             [void]$stdoutTask.Wait(1500)
             if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
         }
@@ -125,6 +128,78 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
             -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
         $out | Should -Match 'PowerShell diagnostics'
         $out | Should -Match '\(parser\)'
+    }
+
+    It 'telemetry is additive: PostToolUse feedback is byte-identical with stats ON vs OFF (Track A)' {
+        # The load-bearing invariant: turning stats on must not change a single byte
+        # of the FEEDBACK delivered to Claude (hookSpecificOutput.additionalContext).
+        # Prime the daemon cache for one fixed file, then run the client twice over
+        # identical content (both cache-hits) -- once with enableStats off, once on --
+        # and compare the additionalContext EXACTLY. (The raw JSON wrapper's key order
+        # is a pre-existing, per-process ConvertTo-Json artifact independent of
+        # telemetry -- it differs run to run regardless -- so the assertion is on the
+        # feedback payload, not the wrapper bytes.) To keep it honest, also assert the
+        # ON run actually WROTE a stats line (else "identical" would be vacuous) and the
+        # OFF run wrote nothing.
+        $fix = Join-Path $script:DataDir 'pester-additive-fixture.ps1'
+        'gci' | Set-Content -LiteralPath $fix -Encoding ascii   # PSAvoidUsingCmdletAliases (+ a fix)
+        $stdin = (@{ session_id = $script:Sid; tool_input = @{ file_path = $fix }; cwd = $script:DataDir } | ConvertTo-Json -Compress)
+        $statsFile = Join-Path $script:DataDir 'logs/stats.jsonl'
+        $clientPath = Join-Path $script:ScriptsDir 'lsp-client.ps1'
+        $countLines = { param($f) if (Test-Path -LiteralPath $f) { @(Get-Content -LiteralPath $f).Count } else { 0 } }
+
+        try {
+            # Prime (populate the daemon cache for this content); stats off.
+            $env:CLAUDE_PLUGIN_OPTION_enableStats = 'false'
+            Invoke-PluginHook -ScriptPath $clientPath -StdinJson $stdin -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir | Out-Null
+
+            # OFF run.
+            $beforeOff = & $countLines $statsFile
+            $offOut = Invoke-PluginHook -ScriptPath $clientPath -StdinJson $stdin -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
+            $afterOff = & $countLines $statsFile
+
+            # ON run (identical content -> still a cache-hit -> identical emit).
+            $env:CLAUDE_PLUGIN_OPTION_enableStats = 'true'
+            $beforeOn = & $countLines $statsFile
+            $onOut = Invoke-PluginHook -ScriptPath $clientPath -StdinJson $stdin -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
+            $afterOn = & $countLines $statsFile
+        } finally {
+            Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_OPTION_enableStats' -ErrorAction SilentlyContinue
+        }
+
+        $offCtx = ($offOut | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $onCtx = ($onOut | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $offCtx | Should -Match 'PSAvoidUsingCmdletAliases'   # the run actually produced the emit
+        $onCtx | Should -BeExactly $offCtx                    # feedback byte-identical (telemetry is additive)
+        $afterOff | Should -Be $beforeOff                     # OFF wrote no stats line
+        $afterOn | Should -Be ($beforeOn + 1)                 # ON wrote exactly one
+    }
+
+    It 'telemetry is fail-safe: a forced stats-write failure still emits the diagnostic and exits 0 (Track A)' {
+        # Force the stats write to fail by squatting a DIRECTORY on the stats.jsonl
+        # path, then run the client with stats ON. The diagnostic must still emit and
+        # the hook must still exit 0 -- telemetry is best-effort, off the hot path.
+        $logDir = Join-Path $script:DataDir 'logs'
+        New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+        $statsPath = Join-Path $logDir 'stats.jsonl'
+        if (Test-Path -LiteralPath $statsPath) { Remove-Item -LiteralPath $statsPath -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Force -Path $statsPath | Out-Null   # squat the path -> every write fails
+
+        $fix = Join-Path $script:DataDir 'pester-failsafe-fixture.ps1'
+        "function Frobnicate-Failsafe {`n    Get-Process`n}" | Set-Content -LiteralPath $fix -Encoding ascii   # PSUseApprovedVerbs
+        try {
+            $env:CLAUDE_PLUGIN_OPTION_enableStats = 'true'
+            $out = Invoke-PluginHook -ScriptPath (Join-Path $script:ScriptsDir 'lsp-client.ps1') `
+                -StdinJson (@{ session_id = $script:Sid; tool_input = @{ file_path = $fix }; cwd = $script:DataDir } | ConvertTo-Json -Compress) `
+                -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
+            $exit = $script:LastHookExit
+        } finally {
+            Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_OPTION_enableStats' -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $statsPath -Recurse -Force -ErrorAction SilentlyContinue   # unsquat for later tests
+        }
+
+        $out | Should -Match 'PSUseApprovedVerbs'   # diagnostic still emitted despite the write failure
+        $exit | Should -Be 0                         # and the hook still exited 0
     }
 
     It 'shuts down cleanly on SessionEnd with no orphaned daemon or PSES' {

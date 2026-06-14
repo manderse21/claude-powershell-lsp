@@ -34,6 +34,12 @@ $TimeoutMs = Get-PluginOptionInt 'timeoutMs' $TimeoutMs
 $HardCapMs = $TimeoutMs
 if ($ConnectTimeoutMs -gt $HardCapMs) { $ConnectTimeoutMs = $HardCapMs }
 
+# Track A: telemetry is OFF unless plugin option enableStats is truthy. Read ONCE.
+# The stats write is best-effort and FAIL-SAFE -- it never alters the emit below
+# nor the exit code, so the feedback is byte-identical with stats on or off.
+$StatsOn = Get-PluginOptionBool 'enableStats' $false
+$script:StatConnectMs = $null   # client->daemon connect ms; set on a successful connect
+
 $logDir = Get-LogDir
 try { New-Item -ItemType Directory -Force -Path $logDir | Out-Null } catch { }
 $clientLog = Join-Path $logDir 'lsp-client.log'
@@ -63,6 +69,9 @@ function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, 
                 $remaining = [Math]::Max(1, $hardCapMs - [int]$sw.ElapsedMilliseconds)
                 $client.Connect([Math]::Min($connectMs, $remaining))
                 $connected = $true
+                # Track A: connect ms = elapsed to here (connect is this function's
+                # first work, so $sw measures the pipe connect, retries included).
+                $script:StatConnectMs = [int]$sw.ElapsedMilliseconds
             } catch {
                 Write-CLog ('connect attempt ' + $attempts + ' failed: ' + $_.Exception.Message)
                 try { $client.Dispose() } catch { }
@@ -95,6 +104,7 @@ function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, 
 }
 
 try {
+    $swTotal = [System.Diagnostics.Stopwatch]::StartNew()   # Track A: end-to-end ms
     $raw = Get-StdinText
     if ([string]::IsNullOrWhiteSpace($raw)) { Write-CLog 'empty stdin'; exit 0 }
     $payload = $raw | ConvertFrom-Json
@@ -147,6 +157,14 @@ try {
         if ($cap -gt 0 -and $total -gt $cap) { [void]$sb.AppendLine('  ... and ' + ($total - $cap) + ' more (per-file cap)') }
         Write-HookContext ($sb.ToString().TrimEnd())
         Write-CLog ('parse error -> emitted ' + @($shown).Count + ' parse diagnostic(s); skipped daemon round-trip')
+        # Track A: telemetry for the parser-prepass short-circuit -- no daemon was
+        # contacted, so connect/analysis/codeAction are null; records = parse errors
+        # found (pre-cap). Strictly after the emit; file-only; never throws.
+        if ($StatsOn) {
+            Write-StatsLine @{ ts = (Get-Date -Format 'o'); path = $path; ext = $ext; taken = 'parser-prepass'
+                connectMs = $null; analysisMs = $null; codeActionMs = $null; totalMs = [int]$swTotal.ElapsedMilliseconds
+                records = $total; corrections = 0; cached = $false }
+        }
         exit 0
     }
 
@@ -154,41 +172,63 @@ try {
     Write-CLog ('requesting diagnostics for ' + $path + ' via ' + $pipeName)
 
     $resp = Get-Diagnostics $pipeName $path $ConnectTimeoutMs $HardCapMs
+    # $resp also carries optional telemetry fields the emit ignores (daemon-side
+    # path/analysisMs/codeActionMs/recordCount/correctionCount). A null/!ok response
+    # means the edit was never analyzed (unreachable/timeout) -> no stats line.
     if ($null -eq $resp) { exit 0 }
     if (-not (Get-Prop $resp 'ok')) { Write-CLog ('daemon error: ' + [string](Get-Prop $resp 'error')); exit 0 }
 
     $diags = @(Get-Prop $resp 'diagnostics')
-    if ($diags.Count -eq 0) { Write-CLog 'no diagnostics'; exit 0 }
     $omitted = [int](Get-Prop $resp 'omitted')
 
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine('PowerShell diagnostics (' + $diags.Count + ') for ' + $path + ':')
-    foreach ($d in $diags) {
-        $sev = [string](Get-Prop $d 'severity')
-        $line = [string](Get-Prop $d 'line')
-        $col = [string](Get-Prop $d 'col')
-        $src = [string](Get-Prop $d 'source')
-        $code = [string](Get-Prop $d 'code')
-        $msg = [string](Get-Prop $d 'message')
-        $hasCode = $code -and ($code -ne '0')
-        $label = if ($hasCode -and $src) { $src + '/' + $code } elseif ($src) { $src } else { 'parser' }
-        [void]$sb.AppendLine('  [' + $sev + '] line ' + $line + ', col ' + $col + ' -- ' + $msg + ' (' + $label + ')')
-        # Track C: surface the PSSA suggested fix (replacement text) when present.
-        # Surface-only -- the model applies it; the hook never writes files. Q3:
-        # primary correction plus a count of any further alternatives.
-        $corr = [string](Get-Prop $d 'correction')
-        if (-not [string]::IsNullOrWhiteSpace($corr)) {
-            $corrCount = [int](Get-Prop $d 'correctionCount')
-            $corrLine = ($corr -replace "[`r`n`t]", ' ').Trim()
-            $more = if ($corrCount -gt 1) { ' (and ' + ($corrCount - 1) + ' more)' } else { '' }
-            [void]$sb.AppendLine('      fix: ' + $corrLine + $more)
+    # Build + emit the feedback block ONLY when there is something to report. The
+    # emit shape is unchanged; a clean (0-diagnostic) edit emits nothing, exactly as
+    # before -- but it IS still an analyzed edit, so it gets a stats line below.
+    if ($diags.Count -gt 0) {
+        $sb = New-Object System.Text.StringBuilder
+        [void]$sb.AppendLine('PowerShell diagnostics (' + $diags.Count + ') for ' + $path + ':')
+        foreach ($d in $diags) {
+            $sev = [string](Get-Prop $d 'severity')
+            $line = [string](Get-Prop $d 'line')
+            $col = [string](Get-Prop $d 'col')
+            $src = [string](Get-Prop $d 'source')
+            $code = [string](Get-Prop $d 'code')
+            $msg = [string](Get-Prop $d 'message')
+            $hasCode = $code -and ($code -ne '0')
+            $label = if ($hasCode -and $src) { $src + '/' + $code } elseif ($src) { $src } else { 'parser' }
+            [void]$sb.AppendLine('  [' + $sev + '] line ' + $line + ', col ' + $col + ' -- ' + $msg + ' (' + $label + ')')
+            # Track C: surface the PSSA suggested fix (replacement text) when present.
+            # Surface-only -- the model applies it; the hook never writes files. Q3:
+            # primary correction plus a count of any further alternatives.
+            $corr = [string](Get-Prop $d 'correction')
+            if (-not [string]::IsNullOrWhiteSpace($corr)) {
+                $corrCount = [int](Get-Prop $d 'correctionCount')
+                $corrLine = ($corr -replace "[`r`n`t]", ' ').Trim()
+                $more = if ($corrCount -gt 1) { ' (and ' + ($corrCount - 1) + ' more)' } else { '' }
+                [void]$sb.AppendLine('      fix: ' + $corrLine + $more)
+            }
         }
-    }
-    if ($omitted -gt 0) { [void]$sb.AppendLine('  ... and ' + $omitted + ' more (per-file cap)') }
-    $context = $sb.ToString().TrimEnd()
+        if ($omitted -gt 0) { [void]$sb.AppendLine('  ... and ' + $omitted + ' more (per-file cap)') }
+        $context = $sb.ToString().TrimEnd()
 
-    Write-HookContext $context
-    Write-CLog ('emitted ' + $diags.Count + ' diagnostic(s)')
+        Write-HookContext $context
+        Write-CLog ('emitted ' + $diags.Count + ' diagnostic(s)')
+    } else {
+        Write-CLog 'no diagnostics'
+    }
+
+    # Track A: one best-effort JSONL line for this analyzed edit (cache-hit or
+    # daemon-analyze). File-only, wrapped, emits nothing to stdout -> the feedback
+    # above is byte-identical whether stats are on or off. records/corrections are
+    # the daemon's analyzer-output counts (pre client-side filter/cap).
+    if ($StatsOn) {
+        Write-StatsLine @{ ts = (Get-Date -Format 'o'); path = $path; ext = $ext
+            taken = [string](Get-Prop $resp 'path'); connectMs = $script:StatConnectMs
+            analysisMs = [int](Get-Prop $resp 'analysisMs'); codeActionMs = [int](Get-Prop $resp 'codeActionMs')
+            totalMs = [int]$swTotal.ElapsedMilliseconds
+            records = [int](Get-Prop $resp 'recordCount'); corrections = [int](Get-Prop $resp 'correctionCount')
+            cached = [bool](Get-Prop $resp 'cached') }
+    }
     exit 0
 }
 catch {
