@@ -62,6 +62,12 @@
       "title": "Max diagnostics per file",
       "description": "Cap the diagnostics reported per file; the rest collapse into an 'and N more' line. '0' = no cap.",
       "default": "20"
+    },
+    "enableStats": {
+      "type": "string",
+      "title": "Enable telemetry/stats",
+      "description": "When 'true', append one JSONL timing line per analyzed edit to logs/stats.jsonl (rotating, ~5 MB). Observe-only: never changes diagnostics output. View with scripts/show-stats.ps1. '0'/'false'/'off' disable.",
+      "default": "false"
     }
   },
   "lspServers": {

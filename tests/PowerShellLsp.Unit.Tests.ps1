@@ -155,6 +155,92 @@ Describe 'Get-PluginOption / Get-PluginOptionInt -- userConfig env fallback (v1.
     }
 }
 
+Describe 'Get-PluginOptionBool -- boolean userConfig (Track A enableStats)' {
+    # The manifest types every option as a STRING, so a boolean knob arrives as the
+    # text 'true'/'false'/etc. Get-PluginOptionBool maps the truthy/falsey tokens and
+    # falls back (like Get-PluginOptionInt) on absent / blank / unexpanded token.
+    BeforeEach {
+        Get-ChildItem Env: | Where-Object { $_.Name -like 'CLAUDE_PLUGIN_OPTION_*' } |
+            ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) -ErrorAction SilentlyContinue }
+    }
+    AfterEach {
+        Get-ChildItem Env: | Where-Object { $_.Name -like 'CLAUDE_PLUGIN_OPTION_*' } |
+            ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) -ErrorAction SilentlyContinue }
+    }
+    It 'defaults to $false when unset' {
+        Get-PluginOptionBool 'enableStats' | Should -BeFalse
+    }
+    It 'honors a non-default fallback when unset' {
+        Get-PluginOptionBool 'enableStats' $true | Should -BeTrue
+    }
+    It 'reads "<_>" as true' -ForEach @('true', '1', 'yes', 'on', 'TRUE', 'On') {
+        $env:CLAUDE_PLUGIN_OPTION_enableStats = $_
+        Get-PluginOptionBool 'enableStats' | Should -BeTrue
+    }
+    It 'reads "<_>" as false (overriding a true default)' -ForEach @('false', '0', 'no', 'off', 'FALSE') {
+        $env:CLAUDE_PLUGIN_OPTION_enableStats = $_
+        Get-PluginOptionBool 'enableStats' $true | Should -BeFalse
+    }
+    It 'falls back on an unexpanded user_config token' {
+        $env:CLAUDE_PLUGIN_OPTION_enableStats = '${user_config.enableStats}'
+        Get-PluginOptionBool 'enableStats' $false | Should -BeFalse
+    }
+    It 'falls back to the default on an unrecognized value' {
+        $env:CLAUDE_PLUGIN_OPTION_enableStats = 'maybe'
+        Get-PluginOptionBool 'enableStats' $true | Should -BeTrue
+    }
+}
+
+Describe 'Write-StatsLine -- telemetry writer (Track A: JSONL, append, rotation, fail-safe)' {
+    # Stats land under Get-LogDir, which keys off CLAUDE_PLUGIN_DATA -- so each test
+    # points it at a throwaway temp root and cleans up after.
+    BeforeEach {
+        $script:PrevData = $env:CLAUDE_PLUGIN_DATA
+        $script:TmpData = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-stats-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $env:CLAUDE_PLUGIN_DATA = $script:TmpData
+        $script:StatsFile = Join-Path (Get-LogDir) 'stats.jsonl'
+    }
+    AfterEach {
+        if (Test-Path -LiteralPath $script:TmpData) { Remove-Item -LiteralPath $script:TmpData -Recurse -Force -ErrorAction SilentlyContinue }
+        if ($null -eq $script:PrevData) {
+            Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_DATA' -ErrorAction SilentlyContinue
+        } else {
+            $env:CLAUDE_PLUGIN_DATA = $script:PrevData
+        }
+    }
+    It 'writes exactly one JSONL line that round-trips with its fields' {
+        Write-StatsLine @{ ts = 'T'; taken = 'daemon-analyze'; totalMs = 42; records = 3 }
+        $lines = @(Get-Content -LiteralPath $script:StatsFile)
+        $lines.Count | Should -Be 1
+        $obj = $lines[0] | ConvertFrom-Json
+        $obj.taken | Should -BeExactly 'daemon-analyze'
+        $obj.totalMs | Should -Be 42
+        $obj.records | Should -Be 3
+    }
+    It 'appends (does not overwrite) across calls' {
+        Write-StatsLine @{ taken = 'a' }
+        Write-StatsLine @{ taken = 'b' }
+        @(Get-Content -LiteralPath $script:StatsFile).Count | Should -Be 2
+    }
+    It 'rotates to stats.jsonl.1 once the cap is exceeded (single rollover)' {
+        # Tiny cap: the first write creates the file; the second sees it over-cap and
+        # rolls it to .1 before writing a fresh live file.
+        Write-StatsLine -Record @{ taken = 'first' } -CapBytes 5
+        Write-StatsLine -Record @{ taken = 'second' } -CapBytes 5
+        (Test-Path -LiteralPath ($script:StatsFile + '.1')) | Should -BeTrue
+        $live = @(Get-Content -LiteralPath $script:StatsFile)
+        $live.Count | Should -Be 1
+        ($live[0] | ConvertFrom-Json).taken | Should -BeExactly 'second'
+        (@(Get-Content -LiteralPath ($script:StatsFile + '.1'))[0] | ConvertFrom-Json).taken | Should -BeExactly 'first'
+    }
+    It 'is fail-safe: a directory squatting the stats path does not throw' {
+        # Force a write failure: create a directory where stats.jsonl should be. The
+        # writer must swallow it (best-effort) and never throw to its caller.
+        New-Item -ItemType Directory -Force -Path $script:StatsFile | Out-Null
+        { Write-StatsLine @{ taken = 'blocked' } } | Should -Not -Throw
+    }
+}
+
 Describe 'Diagnostics ordering and dedupe (Select-OrderedDiagnostics)' {
     It 'sorts by severity then line and dedupes identical findings' {
         $recs = @(
