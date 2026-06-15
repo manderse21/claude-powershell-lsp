@@ -382,3 +382,160 @@ Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -S
         $out | Should -Match 'PSUseApprovedVerbs'
     }
 }
+
+Describe 'Integration: edit-range diagnostic scoping (dispatch 000019)' -Skip:$script:SkipIntegration {
+    # End-to-end over the REAL daemon with a REAL PostToolUse payload carrying
+    # tool_response.structuredPatch. The adversarial control mirrors 000018: a file with
+    # one diagnostic INSIDE the edited range (gci on the last line -> PSAvoidUsingCmdletAliases)
+    # and one OUTSIDE it (an unapproved-verb function at the top -> PSUseApprovedVerbs). With
+    # scoping on and the patch on the gci line, only the in-range rule surfaces; turning
+    # scoping off makes the out-of-range rule reappear (RED-on-revert). Plus: fail open on a
+    # string/empty tool_response, and the surfaced-vs-total telemetry.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+
+        function Invoke-PluginHook {
+            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+            if ($StdinJson) {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
+                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
+            }
+            $p.StandardInput.Close()
+            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            [void]$stdoutTask.Wait(1500)
+            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+        }
+
+        $script:S_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:S_Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $env:PSLS_TEST_DATA_DIR
+        } else {
+            Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data'
+        }
+        New-Item -ItemType Directory -Force -Path $script:S_Data | Out-Null
+        $env:CLAUDE_PLUGIN_DATA = $script:S_Data
+        $script:S_Fixtures = Join-Path $script:S_Data 'scope-000019'
+        if (Test-Path -LiteralPath $script:S_Fixtures) { Remove-Item -LiteralPath $script:S_Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Force -Path $script:S_Fixtures | Out-Null
+
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:S_ScriptsDir 'ensure-pses.ps1') 2>&1 | Out-Null
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:S_ScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+
+        # Fixture: unapproved-verb function (line 1 -> PSUseApprovedVerbs, OUT of range)
+        # and an alias on the LAST line (line 11 -> PSAvoidUsingCmdletAliases, IN range).
+        # Comment padding between keeps the two findings far apart with nothing else firing.
+        $script:S_File = Join-Path $script:S_Fixtures 'scope.ps1'
+        $lines = @(
+            'function Frobnicate-Thing {',
+            '    Get-Process',
+            '}',
+            '# padding', '# padding', '# padding', '# padding', '# padding', '# padding', '# padding',
+            'gci')
+        Set-Content -LiteralPath $script:S_File -Value ($lines -join "`n") -Encoding ascii
+        $script:S_GciLine = 11
+
+        # structuredPatch as the PostToolUse tool_response would carry it: the edit
+        # touched only the gci line (newStart = 11, newLines = 1).
+        $script:S_Patch = @(@{ oldStart = 11; oldLines = 1; newStart = $script:S_GciLine; newLines = 1; lines = @('-gci', '+gci') })
+
+        function New-ScopeStdin {
+            # Build a PostToolUse payload. $Patch present -> tool_response with that patch;
+            # $ErrString set -> a STRING tool_response (a failed edit); neither -> an EMPTY
+            # patch (a Write that created a new file). Depth 8: structuredPatch nests deep.
+            param($Patch, [string]$ErrString)
+            $tr = if (-not [string]::IsNullOrEmpty($ErrString)) { $ErrString }
+                  elseif ($null -ne $Patch) { @{ filePath = $script:S_File; structuredPatch = $Patch } }
+                  else { @{ type = 'create'; filePath = $script:S_File; structuredPatch = @() } }
+            return (@{ session_id = $script:S_Sid; tool_input = @{ file_path = $script:S_File }; cwd = $script:S_Fixtures; tool_response = $tr } | ConvertTo-Json -Depth 8 -Compress)
+        }
+        function Get-ScopeDiag {
+            param($Patch, [string]$ErrString, [hashtable]$ExtraEnv = @{ })
+            Invoke-PluginHook -ScriptPath (Join-Path $script:S_ScriptsDir 'lsp-client.ps1') `
+                -StdinJson (New-ScopeStdin -Patch $Patch -ErrString $ErrString) `
+                -ExtraArgs @() -CapMs 25000 -DataRoot $script:S_Data `
+                -ExtraEnv (@{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' } + $ExtraEnv)
+        }
+
+        $script:S_Sid = 'scope-000019-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        Invoke-PluginHook -ScriptPath (Join-Path $script:S_ScriptsDir 'session-start.ps1') `
+            -StdinJson (@{ session_id = $script:S_Sid } | ConvertTo-Json -Compress) `
+            -ExtraArgs @('-PreferredHost', 'pwsh') -CapMs 60000 -DataRoot $script:S_Data -ExtraEnv @{ } | Out-Null
+        $sf = Join-Path $script:S_Data ('session/' + $script:S_Sid + '.json')
+        $script:S_Info = $null
+        for ($i = 0; $i -lt 60; $i++) {
+            if (Test-Path $sf) { $o = Get-Content $sf -Raw | ConvertFrom-Json; if ($o.state -eq 'ready') { $script:S_Info = $o; break } }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+
+    AfterAll {
+        if ($null -ne $script:S_Info) {
+            foreach ($pidVal in @($script:S_Info.pid, $script:S_Info.psesPid)) {
+                if ($pidVal) { Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue }
+            }
+        }
+        $sf = Join-Path $script:S_Data ('session/' + $script:S_Sid + '.json')
+        if (Test-Path -LiteralPath $sf) { Remove-Item -LiteralPath $sf -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $script:S_Fixtures) { Remove-Item -LiteralPath $script:S_Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'brings up the daemon for the scoping session' {
+        $script:S_Info | Should -Not -BeNullOrEmpty
+    }
+
+    It 'GREEN: scoping on + a patch on the gci line surfaces only the in-range rule' {
+        # scopeToEdit defaults ON. The edit touched line 11 (gci) -> only
+        # PSAvoidUsingCmdletAliases (line 11) surfaces; PSUseApprovedVerbs (line 1) is
+        # filtered as out-of-range.
+        $out = Get-ScopeDiag -Patch $script:S_Patch -ExtraEnv @{ }
+        $out | Should -Match 'PSAvoidUsingCmdletAliases'
+        $out | Should -Not -Match 'PSUseApprovedVerbs'
+    }
+
+    It 'RED on revert: scopeToEdit=off surfaces the whole file again (the out-of-range rule reappears)' {
+        # Same payload, scoping OFF -> both rules surface (byte-for-byte the pre-000019
+        # whole-file behavior). This is the adversarial control: the GREEN above is only
+        # meaningful because this RED proves the out-of-range rule was really there.
+        $out = Get-ScopeDiag -Patch $script:S_Patch -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_scopeToEdit = 'false' }
+        $out | Should -Match 'PSAvoidUsingCmdletAliases'
+        $out | Should -Match 'PSUseApprovedVerbs'
+    }
+
+    It 'FAIL OPEN: a string tool_response (a failed edit) surfaces the whole file' {
+        # Scoping on, but the tool_response is a string error -> indeterminate range ->
+        # everything surfaces. A scoping failure must never hide a diagnostic.
+        $out = Get-ScopeDiag -ErrString 'Error: String to replace not found in file.' -ExtraEnv @{ }
+        $out | Should -Match 'PSAvoidUsingCmdletAliases'
+        $out | Should -Match 'PSUseApprovedVerbs'
+    }
+
+    It 'FAIL OPEN: an empty structuredPatch (a Write that created the file) surfaces the whole file' {
+        # Scoping on, empty patch (a create IS the whole file) -> whole-file, never
+        # scoped to nothing.
+        $out = Get-ScopeDiag -ExtraEnv @{ }   # no patch, no err -> empty structuredPatch
+        $out | Should -Match 'PSAvoidUsingCmdletAliases'
+        $out | Should -Match 'PSUseApprovedVerbs'
+    }
+
+    It 'telemetry records surfaced-vs-total so the noise reduction is measurable' {
+        # With stats on and scoping applied, the stats line records scopeApplied=true and
+        # scopeSurfaced < scopeTotal (1 surfaced of 2 whole-file candidates).
+        $statsFile = Join-Path $script:S_Data 'logs/stats.jsonl'
+        $before = if (Test-Path -LiteralPath $statsFile) { @(Get-Content -LiteralPath $statsFile).Count } else { 0 }
+        Get-ScopeDiag -Patch $script:S_Patch -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_enableStats = 'true' } | Out-Null
+        @(Get-Content -LiteralPath $statsFile).Count | Should -BeGreaterThan $before
+        $last = (@(Get-Content -LiteralPath $statsFile))[-1] | ConvertFrom-Json
+        $last.scopeApplied | Should -BeTrue
+        [int]$last.scopeSurfaced | Should -Be 1            # only gci is on the edited line
+        [int]$last.scopeTotal | Should -BeGreaterThan 1    # >= the verb + alias whole-file candidates
+        [int]$last.scopeSurfaced | Should -BeLessThan ([int]$last.scopeTotal)
+    }
+}

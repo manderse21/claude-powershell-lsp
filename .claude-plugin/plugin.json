@@ -74,6 +74,18 @@
       "title": "PSScriptAnalyzerSettings.psd1 path (override)",
       "description": "Absolute path to a PSScriptAnalyzerSettings.psd1 the analyzer should honor. Overrides auto-discovery (the nearest PSScriptAnalyzerSettings.psd1 walked up from the edited file, bounded at the project root). Must be ABSOLUTE; a relative value is ignored. Empty = auto-discover.",
       "default": ""
+    },
+    "scopeToEdit": {
+      "type": "string",
+      "title": "Scope diagnostics to the edited lines",
+      "description": "When 'true' (default), filter the surfaced diagnostics to those overlapping the lines the edit touched (plus editContextLines of context), so the feedback is what the edit is responsible for rather than the whole file. '0'/'false'/'off' report whole-file. Fails open to whole-file whenever the touched range cannot be determined (a new-file Write, a failed edit, an unparseable payload) -- scoping never hides a diagnostic.",
+      "default": "true"
+    },
+    "editContextLines": {
+      "type": "string",
+      "title": "Edit-scope context lines",
+      "description": "Extra lines of context above and below the touched range kept when scopeToEdit is on. The edit's structured patch already includes a few context lines, so the default is 0; raise it to widen the window.",
+      "default": "0"
     }
   },
   "lspServers": {

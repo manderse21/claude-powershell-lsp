@@ -472,9 +472,17 @@ function ConvertTo-DiagRecord {
     )
     $range = Get-Prop $Diagnostic 'range'
     $startPos = Get-Prop $range 'start'
+    $endPos = Get-Prop $range 'end'
     $line = 1; $col = 1
     $lv = Get-Prop $startPos 'line'; if ($null -ne $lv) { $line = [int]$lv + 1 }
     $cv = Get-Prop $startPos 'character'; if ($null -ne $cv) { $col = [int]$cv + 1 }
+    # endLine (1-based) carries the diagnostic's LAST line so edit-range scoping can
+    # test true range OVERLAP, not just the start line -- a multi-line diagnostic
+    # straddling the edit boundary must still be kept (dispatch 000019). Defaults to
+    # the start line when no end is present (a point diagnostic).
+    $endLine = $line
+    $elv = Get-Prop $endPos 'line'; if ($null -ne $elv) { $endLine = [int]$elv + 1 }
+    if ($endLine -lt $line) { $endLine = $line }
     $sevNum = Get-Prop $Diagnostic 'severity'
     $sev = switch ([int]$sevNum) { 1 { 'Error' } 2 { 'Warning' } 3 { 'Information' } 4 { 'Hint' } default { 'Warning' } }
     $src = [string](Get-Prop $Diagnostic 'source')
@@ -484,7 +492,7 @@ function ConvertTo-DiagRecord {
     $msg = ($msg -replace "[`r`n`t]", ' ').Trim()
     return [ordered]@{
         severity = $sev; severityNum = [int]$sevNum
-        line = $line; col = $col; source = $src; code = $code; message = $msg
+        line = $line; endLine = $endLine; col = $col; source = $src; code = $code; message = $msg
         correction = [string]$Correction; correctionCount = [int]$CorrectionCount
     }
 }
@@ -542,4 +550,108 @@ function Select-OrderedDiagnostics {
         @{ Expression = { Get-SeverityRank $_.severity } }, `
         @{ Expression = { [int]$_.line } }, `
         @{ Expression = { [int]$_.col } })
+}
+
+# --- edit-range diagnostic scoping (dispatch 000019) -----------------------
+# Scope the surfaced diagnostics to the lines an edit touched. The touched range is
+# derived CLIENT-SIDE from the PostToolUse tool_response.structuredPatch (the only
+# place the per-edit line span is known) and passed to the daemon, which filters the
+# markers it already holds -- a cheap post-analysis filter, never an analysis-window
+# change (PSES still analyzes whole-file). FAIL OPEN is the load-bearing invariant:
+# any indeterminate range surfaces ALL diagnostics. A scoping failure must never hide
+# a problem the edit just introduced -- surfacing extra is the safe failure direction.
+
+function ConvertTo-TouchedRanges {
+    # Derive the touched line ranges (1-based, inclusive, post-edit) from a PostToolUse
+    # tool_response. Returns an array of [pscustomobject]@{ start; end }, or $null to
+    # signal an INDETERMINATE range (the caller fails open to whole-file). Keyed on
+    # PATCH STATE, not tool name (000019 Track 1, confirmed against real payloads):
+    #   - tool_response missing / a string  -> $null  (a FAILED edit reports a string
+    #     error and leaves the file unchanged; nothing meaningful was touched)
+    #   - no structuredPatch property        -> $null  (fail open)
+    #   - structuredPatch present but EMPTY  -> $null  (a Write that CREATED a new file;
+    #     a create IS the whole file -- never scope it to nothing, so fail open)
+    #   - structuredPatch with hunks         -> union of each hunk's post-edit span
+    #     [newStart, newStart + newLines - 1]  (Edit, MultiEdit, a Write that UPDATED an
+    #     existing file). newStart/newLines are already 1-based post-edit and already
+    #     include a few diff context lines, so ContextLines defaults to 0 (do not stack).
+    param($ToolResponse, [int]$ContextLines = 0)
+    if ($null -eq $ToolResponse) { return $null }
+    if ($ToolResponse -is [string]) { return $null }
+    if (-not (Test-Prop $ToolResponse 'structuredPatch')) { return $null }
+    $hunks = @(Get-Prop $ToolResponse 'structuredPatch')
+    if ($hunks.Count -eq 0) { return $null }
+    if ($ContextLines -lt 0) { $ContextLines = 0 }
+    $ranges = @()
+    foreach ($h in $hunks) {
+        $ns = Get-Prop $h 'newStart'
+        if ($null -eq $ns) { continue }
+        $newStart = [int]$ns
+        if ($newStart -le 0) { continue }
+        $nlv = Get-Prop $h 'newLines'
+        $newLines = if ($null -ne $nlv) { [int]$nlv } else { 0 }
+        # newLines == 0 is a pure-deletion hunk (nothing added at newStart); treat it as
+        # touching the single line at newStart so an edit-adjacent diagnostic is kept.
+        $start = $newStart - $ContextLines
+        $end = if ($newLines -gt 0) { $newStart + $newLines - 1 } else { $newStart }
+        $end = $end + $ContextLines
+        if ($start -lt 1) { $start = 1 }
+        if ($end -lt $start) { $end = $start }
+        $ranges += [pscustomobject]@{ start = $start; end = $end }
+    }
+    if ($ranges.Count -eq 0) { return $null }   # patch had hunks but none usable -> fail open
+    return $ranges
+}
+
+function Test-RangeOverlapsAny {
+    # True if the inclusive line span [Start,End] overlaps ANY of $Ranges (each an
+    # object with 1-based inclusive .start/.end). OVERLAP, not containment: a multi-line
+    # diagnostic straddling an edit boundary still counts (000019 Q4).
+    param([int]$Start, [int]$End, $Ranges)
+    foreach ($r in @($Ranges)) {
+        $rs = [int](Get-Prop $r 'start')
+        $re = [int](Get-Prop $r 'end')
+        if ($Start -le $re -and $End -ge $rs) { return $true }
+    }
+    return $false
+}
+
+function Select-DiagnosticsInRange {
+    # Keep only the diagnostic records whose [line, endLine] span overlaps a touched
+    # range. FAIL OPEN: a $null / empty range set returns ALL records unchanged -- an
+    # indeterminate range never hides a diagnostic. Records are the flat ordered
+    # hashtables from ConvertTo-DiagRecord (line + endLine, 1-based).
+    param([object[]]$Records, $Ranges)
+    if ($null -eq $Records) { return @() }
+    if ($null -eq $Ranges -or @($Ranges).Count -eq 0) { return @($Records) }
+    $out = @()
+    foreach ($rec in @($Records)) {
+        $s = [int]$rec.line
+        $e = $s
+        if (($rec -is [System.Collections.IDictionary]) -and $rec.Contains('endLine')) { $e = [int]$rec.endLine }
+        elseif (Test-Prop $rec 'endLine') { $e = [int](Get-Prop $rec 'endLine') }
+        if ($e -lt $s) { $e = $s }
+        if (Test-RangeOverlapsAny -Start $s -End $e -Ranges $Ranges) { $out += $rec }
+    }
+    return @($out)
+}
+
+function Get-ScopedCappedResult {
+    # Apply edit-range scoping THEN the per-file cap, in that order (000019 acceptance:
+    # scope first, then cap). $Records are already ordered + severity/rule filtered.
+    # Returns the shown set, the cap-omitted count, and the pre-scope (total) /
+    # post-scope (surfaced) counts for telemetry. A $null/empty $Ranges means no scoping
+    # (fail open / scoping off) -> byte-identical to the pre-000019 cap-only behavior.
+    param([object[]]$Records, $Ranges, [int]$PerFileCap)
+    $recs = @($Records)
+    $total = $recs.Count
+    $scopeApplied = ($null -ne $Ranges) -and (@($Ranges).Count -gt 0)
+    $scoped = if ($scopeApplied) { @(Select-DiagnosticsInRange $recs $Ranges) } else { $recs }
+    $surfaced = @($scoped).Count
+    if ($PerFileCap -gt 0 -and $surfaced -gt $PerFileCap) {
+        $shown = @($scoped[0..($PerFileCap - 1)]); $omitted = $surfaced - $PerFileCap
+    } else {
+        $shown = @($scoped); $omitted = 0
+    }
+    return @{ shown = @($shown); omitted = $omitted; total = $total; surfaced = $surfaced; scopeApplied = $scopeApplied }
 }
