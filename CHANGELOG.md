@@ -29,6 +29,81 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.4.0] - 2026-06-15
+
+MINOR: marks two capabilities that shipped since 1.3.0 -- repo-local
+`PSScriptAnalyzerSettings.psd1` honoring (000018) and edit-range diagnostic scoping
+(000019) -- alongside the telemetry foundation and manifest-honesty work that supported
+them, and adds a lockstep version-bump helper so the two version surfaces can never drift
+apart again. Entirely additive: new `userConfig` knobs and new opt-out-able behavior, with
+no knob removed or renamed and no change to the hook/registration contract.
+
+### Added
+
+- **Honor a repo-local `PSScriptAnalyzerSettings.psd1` (dispatch powershell-lsp/000018).**
+  The analyzer now discovers and applies the nearest `PSScriptAnalyzerSettings.psd1`,
+  walked up from the edited file and bounded at the project root, so a repo's own analyzer
+  configuration (custom rule set, severities, suppressions) is honored instead of ignored.
+  A new `settingsPath` knob overrides discovery with an explicit **absolute** path (a
+  relative value is ignored); empty = auto-discover. The settings file is resolved per
+  edit and applied to the warm PSES analyzer pass.
+- **Scope diagnostics to the edited lines (dispatch powershell-lsp/000019).** A new
+  `scopeToEdit` knob (**default on**) filters the surfaced diagnostics to those overlapping
+  the lines the edit actually touched, so the feedback is what the edit is responsible for
+  rather than the whole file. It **fails open** to whole-file whenever the touched range
+  cannot be determined -- a new-file `Write`, a failed edit, or an unparseable payload --
+  so scoping never hides a diagnostic. A companion `editContextLines` knob (default `0`,
+  because the edit's structured patch already carries a few context lines) widens the kept
+  window. Overlap, not containment: a multi-line diagnostic straddling the edit boundary is
+  kept. The syntax-error parser pre-pass is always surfaced unscoped (syntax errors cascade
+  off-edit).
+- **Per-edit telemetry foundation and readout (dispatch powershell-lsp/000015, Track A).**
+  An opt-in `enableStats` knob appends one JSONL timing line per analyzed edit to
+  `logs/stats.jsonl` (rotating, ~5 MB) -- observe-only, it never changes diagnostics output
+  -- and `scripts/show-stats.ps1` summarizes per-stage p50/p95 (connect, analysis,
+  code-action, total), cache-hit rate, path-taken breakdown, and sample count. The
+  edit-scope feature (000019) rides this foundation: the daemon reports the pre-scope total
+  and post-scope surfaced counts, and `show-stats.ps1` prints the resulting noise
+  reduction, so the trimming is measured rather than assumed.
+- **`scripts/bump-version.ps1` -- lockstep version-bump helper (this release).** Writes one
+  target version into both `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
+  from a single input -- lockstep by construction, so a future release physically cannot
+  bump one surface and forget the other (the 1.3.0 drift reconciled below). Dry-run by
+  default (it prints the plan and writes nothing without `-Apply`), idempotent, surgical
+  (only the version token changes; encoding and line endings are preserved verbatim), and
+  ASCII-clean. It prints the `git tag v<version>` command for the post-merge step but never
+  runs `git tag` / `git push` -- tagging stays a manual gate.
+
+### Changed
+
+- **`scopeToEdit` defaults to on.** After an edit, surfaced diagnostics are scoped to the
+  edited lines by default. This is a default-behavior change, but additive and fully
+  reversible: set `scopeToEdit` to `0` / `false` / `off` to restore the prior whole-file
+  behavior, which remains byte-identical to pre-1.4.0. Because scoping fails open, it can
+  only surface a superset of what it would otherwise suppress -- it never hides a diagnostic
+  it cannot place -- so the change forces no config or workflow adjustment (MINOR, not
+  MAJOR).
+
+### Docs
+
+- **Manifest description reconciled with what ships (dispatch powershell-lsp/000016).** The
+  `plugin.json` / `marketplace.json` description now states diagnostics and PSScriptAnalyzer
+  fix suggestions as the shipped capability, with hover, go-to-definition, and
+  find-references named as roadmap items pending Claude Code plugin LSP-server registration
+  ([#66987](https://github.com/anthropics/claude-code/issues/66987)), rather than implying
+  they are present today.
+- **Marketplace version reconciled to the shipped release (dispatch powershell-lsp/000017).**
+  `marketplace.json` `metadata.version` had drifted behind `plugin.json` at 1.3.0 and was
+  realigned. This release makes that lockstep automatic via the bump helper above, so the
+  drift cannot reopen.
+- **Pull-model LSP features remain registration-gated (dispatch powershell-lsp/000015,
+  Track B).** `docs/upstream/pull-feature-gating-probe.md` records the read-only verdict:
+  the four pull-model features (hover, go-to-definition, find-references, document-symbols)
+  cannot be delivered through the surface this plugin ships today -- the block is the
+  empirically inert Claude Code plugin LSP-server registration path (#66987), not a PSES
+  capability gap and not a hook-surface gap. PSES already speaks these features over the
+  warm daemon; only the registration channel is missing.
+
 ## [1.3.0] - 2026-06-07
 
 MINOR: the macOS (`macos-pwsh`) warm-daemon path is now CI-verified -- a newly
