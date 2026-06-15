@@ -40,6 +40,13 @@ if ($ConnectTimeoutMs -gt $HardCapMs) { $ConnectTimeoutMs = $HardCapMs }
 $StatsOn = Get-PluginOptionBool 'enableStats' $false
 $script:StatConnectMs = $null   # client->daemon connect ms; set on a successful connect
 
+# Edit-range scoping (000019): scopeToEdit defaults ON -- filter the surfaced
+# diagnostics to the lines the edit touched. editContextLines defaults 0 (the
+# structuredPatch hunks already include a few diff context lines; do not stack).
+# Read ONCE; the per-edit touched range is derived from tool_response below.
+$ScopeToEdit = Get-PluginOptionBool 'scopeToEdit' $true
+$EditContextLines = Get-PluginOptionInt 'editContextLines' 0
+
 $logDir = Get-LogDir
 try { New-Item -ItemType Directory -Force -Path $logDir | Out-Null } catch { }
 $clientLog = Join-Path $logDir 'lsp-client.log'
@@ -55,7 +62,7 @@ function Write-HookContext([string]$Context) {
     $out | ConvertTo-Json -Depth 6 -Compress
 }
 
-function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, [int]$hardCapMs, [string]$cwd = '') {
+function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, [int]$hardCapMs, [string]$cwd = '', $touchedRanges = $null) {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $client = $null
     try {
@@ -86,6 +93,9 @@ function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, 
         $reader = New-Object System.IO.StreamReader($client, [System.Text.Encoding]::UTF8, $false, 4096, $true)
 
         $reqObj = [ordered]@{ action = 'diagnostics'; file = $filePath; cwd = $cwd }
+        # Edit-range scoping (000019): send the touched ranges only when present.
+        # Omitting them is the whole-file path (scoping off or an indeterminate range).
+        if ($null -ne $touchedRanges -and @($touchedRanges).Count -gt 0) { $reqObj['touchedRanges'] = @($touchedRanges) }
         $writer.WriteLine(($reqObj | ConvertTo-Json -Compress))
         $writer.Flush()
 
@@ -166,7 +176,8 @@ try {
         if ($StatsOn) {
             Write-StatsLine @{ ts = (Get-Date -Format 'o'); path = $path; ext = $ext; taken = 'parser-prepass'
                 connectMs = $null; analysisMs = $null; codeActionMs = $null; totalMs = [int]$swTotal.ElapsedMilliseconds
-                records = $total; corrections = 0; cached = $false }
+                records = $total; corrections = 0; cached = $false
+                scopeApplied = $false; scopeTotal = $total; scopeSurfaced = $total }
         }
         exit 0
     }
@@ -174,7 +185,26 @@ try {
     $pipeName = 'powershell-lsp-' + $sessionId
     Write-CLog ('requesting diagnostics for ' + $path + ' via ' + $pipeName)
 
-    $resp = Get-Diagnostics $pipeName $path $ConnectTimeoutMs $HardCapMs $cwd
+    # Edit-range scoping (000019): derive the touched line range from the PostToolUse
+    # tool_response (structuredPatch). Only the client sees the payload, so the range
+    # is derived here and forwarded to the daemon, which filters before its cap. Any
+    # failure or indeterminate patch -> $null -> the daemon scopes nothing -> whole-file
+    # (fail open). scopeToEdit off -> also $null. The parser pre-pass above stays
+    # UNSCOPED on purpose: a syntax error is critical and may surface off the edit.
+    $touchedRanges = $null
+    if ($ScopeToEdit) {
+        try {
+            $toolResponse = Get-Prop $payload 'tool_response'
+            $touchedRanges = ConvertTo-TouchedRanges -ToolResponse $toolResponse -ContextLines $EditContextLines
+        } catch {
+            Write-CLog ('touched-range derivation failed (fail open to whole-file): ' + $_.Exception.Message)
+            $touchedRanges = $null
+        }
+    }
+    if ($null -ne $touchedRanges) { Write-CLog ('scoping to ' + @($touchedRanges).Count + ' touched range(s)') }
+    else { Write-CLog 'whole-file (scoping off or indeterminate range)' }
+
+    $resp = Get-Diagnostics $pipeName $path $ConnectTimeoutMs $HardCapMs $cwd $touchedRanges
     # $resp also carries optional telemetry fields the emit ignores (daemon-side
     # path/analysisMs/codeActionMs/recordCount/correctionCount). A null/!ok response
     # means the edit was never analyzed (unreachable/timeout) -> no stats line.
@@ -230,7 +260,8 @@ try {
             analysisMs = [int](Get-Prop $resp 'analysisMs'); codeActionMs = [int](Get-Prop $resp 'codeActionMs')
             totalMs = [int]$swTotal.ElapsedMilliseconds
             records = [int](Get-Prop $resp 'recordCount'); corrections = [int](Get-Prop $resp 'correctionCount')
-            cached = [bool](Get-Prop $resp 'cached') }
+            cached = [bool](Get-Prop $resp 'cached')
+            scopeApplied = [bool](Get-Prop $resp 'scopeApplied'); scopeTotal = [int](Get-Prop $resp 'scopeTotal'); scopeSurfaced = [int](Get-Prop $resp 'scopeSurfaced') }
     }
     exit 0
 }

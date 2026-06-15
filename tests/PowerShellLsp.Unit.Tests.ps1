@@ -436,3 +436,168 @@ Describe 'Shipped PowerShell is ASCII-clean and parses' {
         @($errs).Count | Should -Be 0
     }
 }
+
+# ===========================================================================
+# Edit-range diagnostic scoping (dispatch 000019)
+# ===========================================================================
+
+Describe 'ConvertTo-TouchedRanges -- derive touched line ranges from tool_response (dispatch 000019)' {
+    # Track 1 finding (confirmed against real PostToolUse payloads): a successful Edit /
+    # MultiEdit / Write-update carries structuredPatch hunks with 1-based post-edit
+    # newStart/newLines; a FAILED edit reports a STRING tool_response; a Write-create has
+    # an EMPTY patch. Derivation is keyed on PATCH STATE, not tool name, and FAILS OPEN
+    # (returns $null) on anything indeterminate so scoping can never hide a diagnostic.
+    BeforeAll {
+        # Defined in BeforeAll (run phase): a function in the Describe body would only
+        # exist during Pester's discovery phase and be invisible to the It blocks.
+        function New-Resp { param($Hunks) [pscustomobject]@{ structuredPatch = $Hunks } }
+        function New-Hunk { param($NewStart, $NewLines) [pscustomobject]@{ newStart = $NewStart; newLines = $NewLines } }
+    }
+
+    It 'derives a single hunk span [newStart, newStart+newLines-1]' {
+        $r = @(ConvertTo-TouchedRanges -ToolResponse (New-Resp @((New-Hunk 10 3))))
+        $r.Count | Should -Be 1
+        $r[0].start | Should -Be 10
+        $r[0].end | Should -Be 12
+    }
+    It 'unions multiple hunks (a single Edit can split into several)' {
+        $r = @(ConvertTo-TouchedRanges -ToolResponse (New-Resp @((New-Hunk 279 18), (New-Hunk 306 7))))
+        $r.Count | Should -Be 2
+        $r[0].start | Should -Be 279; $r[0].end | Should -Be 296
+        $r[1].start | Should -Be 306; $r[1].end | Should -Be 312
+    }
+    It 'widens by ContextLines and clamps the low end to line 1' {
+        $r = @(ConvertTo-TouchedRanges -ToolResponse (New-Resp @((New-Hunk 2 1))) -ContextLines 3)
+        $r[0].start | Should -Be 1     # 2 - 3 = -1 -> clamped to 1
+        $r[0].end | Should -Be 5       # (2 + 1 - 1) + 3 = 5
+    }
+    It 'defaults ContextLines to 0 (the patch already includes diff context; do not stack)' {
+        $r = @(ConvertTo-TouchedRanges -ToolResponse (New-Resp @((New-Hunk 10 1))))
+        $r[0].start | Should -Be 10
+        $r[0].end | Should -Be 10
+    }
+    It 'treats a 0-line (pure deletion) hunk as the single line at newStart' {
+        $r = @(ConvertTo-TouchedRanges -ToolResponse (New-Resp @((New-Hunk 40 0))))
+        $r[0].start | Should -Be 40
+        $r[0].end | Should -Be 40
+    }
+    It 'FAILS OPEN ($null) on a string tool_response (a FAILED edit reports a string error)' {
+        ConvertTo-TouchedRanges -ToolResponse 'Error: String to replace not found in file.' | Should -BeNullOrEmpty
+    }
+    It 'FAILS OPEN ($null) on a null tool_response (missing payload field)' {
+        ConvertTo-TouchedRanges -ToolResponse $null | Should -BeNullOrEmpty
+    }
+    It 'FAILS OPEN ($null) when there is no structuredPatch property' {
+        ConvertTo-TouchedRanges -ToolResponse ([pscustomobject]@{ filePath = 'x.ps1'; type = 'create' }) | Should -BeNullOrEmpty
+    }
+    It 'FAILS OPEN ($null) on an EMPTY structuredPatch (a Write that created a new file)' {
+        ConvertTo-TouchedRanges -ToolResponse (New-Resp @()) | Should -BeNullOrEmpty
+    }
+    It 'FAILS OPEN ($null) when hunks carry no usable newStart' {
+        ConvertTo-TouchedRanges -ToolResponse (New-Resp @(([pscustomobject]@{ newLines = 3 }))) | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Select-DiagnosticsInRange -- overlap not containment, fail-open (dispatch 000019)' {
+    BeforeAll {
+        function New-Rec { param($Line, $EndLine) [ordered]@{ severity = 'Warning'; line = $Line; endLine = $EndLine; col = 1; source = 'PSSA'; code = 'X'; message = ('m' + $Line) } }
+    }
+    It 'keeps a diagnostic whose multi-line span STRADDLES the edit boundary (overlap, not containment)' {
+        # Diagnostic spans lines 3..7; the edit touched only line 6. Neither endpoint is
+        # inside the range, but the span crosses it -> kept (000019 Q4: overlap).
+        $recs = @((New-Rec 3 7))
+        $range = @([pscustomobject]@{ start = 6; end = 6 })
+        @(Select-DiagnosticsInRange $recs $range).Count | Should -Be 1
+    }
+    It 'drops a diagnostic entirely outside the touched range' {
+        @(Select-DiagnosticsInRange @((New-Rec 3 3)) @([pscustomobject]@{ start = 6; end = 6 })).Count | Should -Be 0
+    }
+    It 'keeps an in-range diagnostic (never over-filters the edited line itself)' {
+        @(Select-DiagnosticsInRange @((New-Rec 6 6)) @([pscustomobject]@{ start = 6; end = 6 })).Count | Should -Be 1
+    }
+    It 'FAILS OPEN: null OR empty ranges return ALL records (an indeterminate range hides nothing)' {
+        $recs = @((New-Rec 3 3), (New-Rec 99 99))
+        @(Select-DiagnosticsInRange $recs $null).Count | Should -Be 2
+        @(Select-DiagnosticsInRange $recs @()).Count | Should -Be 2
+    }
+    It 'treats a record without endLine as a point at its start line' {
+        $recs = @([ordered]@{ severity = 'Warning'; line = 6; col = 1; source = 'PSSA'; code = 'X'; message = 'no-end' })
+        @(Select-DiagnosticsInRange $recs @([pscustomobject]@{ start = 6; end = 6 })).Count | Should -Be 1
+        @(Select-DiagnosticsInRange $recs @([pscustomobject]@{ start = 8; end = 8 })).Count | Should -Be 0
+    }
+}
+
+Describe 'Get-ScopedCappedResult -- scope then cap, with telemetry counts (dispatch 000019)' {
+    # The load-bearing adversarial control (mirrors 000018's RED/GREEN): with a touched
+    # range, the out-of-range diagnostic is filtered; with no range (scoping off /
+    # indeterminate), it reappears. Plus: scope runs BEFORE the cap, and the pre-scope
+    # (total) / post-scope (surfaced) counts are recorded so the noise reduction is
+    # measurable.
+    BeforeAll {
+        function New-Rec { param($Line, $EndLine) [ordered]@{ severity = 'Warning'; line = $Line; endLine = $EndLine; col = 1; source = 'PSSA'; code = 'X'; message = ('m' + $Line) } }
+        $script:Recs = @((New-Rec 5 5), (New-Rec 50 50), (New-Rec 6 8))
+        $script:Range = @([pscustomobject]@{ start = 4; end = 6 })
+    }
+    It 'GREEN: scopes to the touched range (out-of-range dropped, overlap kept)' {
+        $r = Get-ScopedCappedResult -Records $script:Recs -Ranges $script:Range -PerFileCap 20
+        @($r.shown).Count | Should -Be 2
+        $r.shown.line | Should -Not -Contain 50
+        $r.scopeApplied | Should -BeTrue
+        $r.total | Should -Be 3
+        $r.surfaced | Should -Be 2
+    }
+    It 'RED on revert: no ranges -> NOTHING dropped (whole-file, byte-identical to cap-only)' {
+        $r = Get-ScopedCappedResult -Records $script:Recs -Ranges $null -PerFileCap 20
+        @($r.shown).Count | Should -Be 3
+        $r.shown.line | Should -Contain 50
+        $r.scopeApplied | Should -BeFalse
+        $r.total | Should -Be 3
+        $r.surfaced | Should -Be 3
+    }
+    It 'scope-then-cap: the cap applies to the SCOPED set (30 in-range, cap 20 -> 20 shown, 10 omitted, 30 surfaced)' {
+        $many = @(1..30 | ForEach-Object { New-Rec 5 5 })
+        $r = Get-ScopedCappedResult -Records $many -Ranges $script:Range -PerFileCap 20
+        $r.surfaced | Should -Be 30
+        @($r.shown).Count | Should -Be 20
+        $r.omitted | Should -Be 10
+    }
+    It 'scope-then-cap: scoping below the cap means the cap never fires (5 in-range of 30 -> 5 shown, 0 omitted)' {
+        # If the cap ran FIRST (cap-then-scope), it would slice the unscoped 30 down to 20
+        # and then scope -- a different result. surfaced=5 + omitted=0 proves scope ran first.
+        $mix = @(1..5 | ForEach-Object { New-Rec 5 5 }) + @(1..25 | ForEach-Object { New-Rec 99 99 })
+        $r = Get-ScopedCappedResult -Records $mix -Ranges $script:Range -PerFileCap 20
+        $r.surfaced | Should -Be 5
+        @($r.shown).Count | Should -Be 5
+        $r.omitted | Should -Be 0
+    }
+}
+
+Describe 'ConvertTo-DiagRecord -- endLine for edit-range scoping (dispatch 000019)' {
+    It 'emits endLine (1-based); equals the start line for a single-line diagnostic' {
+        $d = [pscustomobject]@{
+            range = [pscustomobject]@{ start = [pscustomobject]@{ line = 4; character = 0 }; end = [pscustomobject]@{ line = 4; character = 3 } }
+            severity = 2; source = 'PSScriptAnalyzer'; code = 'X'; message = 'one line'
+        }
+        $r = ConvertTo-DiagRecord $d
+        $r.Contains('endLine') | Should -BeTrue
+        $r.line | Should -Be 5
+        $r.endLine | Should -Be 5
+    }
+    It 'carries a multi-line span end (end line > start line)' {
+        $d = [pscustomobject]@{
+            range = [pscustomobject]@{ start = [pscustomobject]@{ line = 4; character = 0 }; end = [pscustomobject]@{ line = 9; character = 2 } }
+            severity = 2; source = 'PSScriptAnalyzer'; code = 'X'; message = 'spans lines'
+        }
+        $r = ConvertTo-DiagRecord $d
+        $r.line | Should -Be 5
+        $r.endLine | Should -Be 10   # 0-based 9 -> 1-based 10
+    }
+    It 'defaults endLine to the start line when no range end is present' {
+        $d = [pscustomobject]@{
+            range = [pscustomobject]@{ start = [pscustomobject]@{ line = 7; character = 0 } }
+            severity = 2; source = 'PSScriptAnalyzer'; code = 'X'; message = 'no end'
+        }
+        $r = ConvertTo-DiagRecord $d
+        $r.endLine | Should -Be 8
+    }
+}

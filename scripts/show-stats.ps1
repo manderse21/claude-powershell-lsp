@@ -122,4 +122,26 @@ $corrSum = 0.0; foreach ($c in $corrVals) { $corrSum += $c }
 Write-Host ''
 Write-Host ('  records/edit: median ' + $recMedStr + '   corrections: total ' + [int]$corrSum)
 
+# --- edit-range scoping noise reduction (dispatch 000019) ------------------
+# How often scoping fired and how much it trimmed. surfaced-vs-total measures the
+# noise reduction: total = whole-file candidates (after severity/rule filtering),
+# surfaced = what scoping kept. Tolerant of older lines that predate these fields
+# (no scopeApplied -> counted as not-scoped).
+$scopedRecs = @($records | Where-Object { ($_.PSObject.Properties.Name -contains 'scopeApplied') -and $_.scopeApplied })
+$scopedCount = @($scopedRecs).Count
+Write-Host ''
+if ($scopedCount -gt 0) {
+    $totSum = 0; $surfSum = 0
+    foreach ($r in $scopedRecs) {
+        if ($r.PSObject.Properties.Name -contains 'scopeTotal') { $totSum += [int]$r.scopeTotal }
+        if ($r.PSObject.Properties.Name -contains 'scopeSurfaced') { $surfSum += [int]$r.scopeSurfaced }
+    }
+    $trimmed = $totSum - $surfSum
+    $pct = if ($totSum -gt 0) { [int][Math]::Round(100.0 * $trimmed / $totSum) } else { 0 }
+    Write-Host ('  edit-scope:   ' + $scopedCount + ' of ' + $total + ' edits scoped; ' +
+        $surfSum + ' surfaced / ' + $totSum + ' whole-file (' + $pct + '% trimmed)')
+} else {
+    Write-Host '  edit-scope:   no scoped edits recorded'
+}
+
 exit 0

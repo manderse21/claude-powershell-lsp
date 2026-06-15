@@ -535,21 +535,22 @@ try {
                     'diagnostics' {
                         $file = [string](Get-Prop $req 'file')
                         $reqCwd = [string](Get-Prop $req 'cwd')   # project root for settings bound (000018)
+                        # Edit-range scoping (000019): the client derives the touched line
+                        # range from the PostToolUse structuredPatch and sends it here.
+                        # Absent => no scoping (whole-file, byte-identical to pre-000019).
+                        # The full marker range lives daemon-side, so the filter runs here
+                        # -- BEFORE the per-file cap (scope-then-cap), via Get-ScopedCappedResult.
+                        $touched = Get-Prop $req 'touchedRanges'
                         $res = Get-Diagnostics $file $reqCwd
                         if ($res.ok) {
-                            # Stable order + dedupe, then apply the configured
-                            # severity threshold + rule include/exclude, then cap
-                            # per file (surfacing an "omitted" count for the client).
+                            # Stable order + dedupe, then severity threshold + rule
+                            # include/exclude, then scope to the edit, then cap per file.
                             $ordered = Select-OrderedDiagnostics @($res.records)
                             $filtered = @(Select-FilteredDiagnostics $ordered $SeverityThreshold $script:RuleIncludeArr $script:RuleExcludeArr)
-                            $total = $filtered.Count
-                            if ($PerFileCap -gt 0 -and $total -gt $PerFileCap) {
-                                $shown = @($filtered[0..($PerFileCap - 1)]); $omitted = $total - $PerFileCap
-                            } else {
-                                $shown = $filtered; $omitted = 0
-                            }
+                            $sc = Get-ScopedCappedResult -Records $filtered -Ranges $touched -PerFileCap $PerFileCap
                             $payload = [ordered]@{ ok = $true; action = 'diagnostics'; file = $file
-                                cached = [bool]$res.cached; count = @($shown).Count; omitted = $omitted; diagnostics = @($shown)
+                                cached = [bool]$res.cached; count = @($sc.shown).Count; omitted = [int]$sc.omitted; diagnostics = @($sc.shown)
+                                scopeApplied = [bool]$sc.scopeApplied; scopeTotal = [int]$sc.total; scopeSurfaced = [int]$sc.surfaced
                                 path = [string]$res.path; analysisMs = [int]$res.analysisMs; codeActionMs = [int]$res.codeActionMs
                                 recordCount = [int]$res.recordCount; correctionCount = [int]$res.correctionCount }
                         } else {
