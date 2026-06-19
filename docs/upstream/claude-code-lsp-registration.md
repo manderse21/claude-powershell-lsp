@@ -36,6 +36,31 @@ LSP servers a plugin provides"). `claude-code#15168` / `#15148` and
 `claude-plugins-official#379` remain open and untouched since the 2.1.167 test, and PR #378
 is still closed-unmerged. The refutation now holds across **2.1.167 and 2.1.168**.
 
+**Currency note (2026-06-19) -- re-confirmed inert on 2.1.183.** Re-probed on Claude
+Code **2.1.183** (now current). The canonical probe -- builtin `LSP` `goToDefinition` on
+`./test.ps1` at line 5, char 6, via a fresh `claude -p` (`--allowedTools LSP
+--strict-mcp-config --output-format stream-json --verbose`) -- again emitted a real `LSP`
+`tool_use` and returned its `tool_result` (not a prompt echo):
+
+```
+tool_use   : {"operation":"goToDefinition","filePath":"./test.ps1","line":5,"character":6}
+tool_result: No LSP server available for file type: .ps1
+```
+
+No registration fix landed in the **2.1.168 -> 2.1.183** window: `claude-code#15168` /
+`#15148` and `claude-plugins-official#379` remain open and untouched, and PR #378 is still
+closed-unmerged. The refutation now holds across **2.1.167, 2.1.168, and 2.1.183**.
+
+The harness checks **file existence before server availability** -- the probed `.ps1` must
+exist on disk to reach the registration check at all (a missing path short-circuits to
+`<tool_use_error>File does not exist: ...</tool_use_error>` and never reaches the LSP
+registrar; confirmed 2026-06-19).
+
+**Good-path confirmed on 2.1.183.** In the same build, an interactive `.ps1` edit fired the
+PostToolUse hook and the warm per-session PSES returned a PSScriptAnalyzer diagnostic
+(`PSUseApprovedVerbs`) via `additionalContext` -- a clean "native LSP dead / hook alive"
+pair.
+
 ---
 
 ## Comment body (draft)
@@ -116,7 +141,8 @@ localize the regression.
 
 ### Environment
 
-- Claude Code: 2.1.167 (2026-06-06)
+- Claude Code: 2.1.167 (2026-06-06) through 2.1.183 (2026-06-19); native LSP
+  registration inert across the span
 - Plugin: powershell-lsp (standalone repo); server declared in `plugin.json` `lspServers`
   + `docs/lsp.json.template`
 - PSES `v4.6.0`, PSScriptAnalyzer `1.25.0`; Windows 11
