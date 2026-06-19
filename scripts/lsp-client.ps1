@@ -213,12 +213,22 @@ try {
 
     $diags = @(Get-Prop $resp 'diagnostics')
     $omitted = [int](Get-Prop $resp 'omitted')
+    # Analysis status (dispatch 000022): '' / 'ok' = a clean, settled pass (behave exactly
+    # as before); 'incomplete' = the pass did NOT settle (this edit was not checked);
+    # 'degraded' = a settled but parser-only pass (PSScriptAnalyzer unavailable). The two
+    # non-clean banners ride the SAME additionalContext channel as the diagnostics, so the
+    # user sees them inline -- "could not analyze" and "fewer rules" never look like
+    # "analyzed, found nothing." A clean pass adds NOTHING, so the warm output is unchanged.
+    $status = [string](Get-Prop $resp 'status')
 
-    # Build + emit the feedback block ONLY when there is something to report. The
-    # emit shape is unchanged; a clean (0-diagnostic) edit emits nothing, exactly as
-    # before -- but it IS still an analyzed edit, so it gets a stats line below.
+    # Build the feedback block. The diagnostics rendering is byte-identical to before;
+    # 'degraded' leads with its banner then still lists any parser-only findings, and
+    # 'incomplete' (no trustworthy findings) renders the banner alone. A clean 0-diagnostic
+    # edit produces an empty block and emits nothing -- exactly as before -- but it IS still
+    # an analyzed edit, so it gets a stats line below.
+    $sb = New-Object System.Text.StringBuilder
+    if ($status -eq 'degraded') { [void]$sb.AppendLine((Get-DiagnosticsStatusBanner 'degraded' $path)) }
     if ($diags.Count -gt 0) {
-        $sb = New-Object System.Text.StringBuilder
         [void]$sb.AppendLine('PowerShell diagnostics (' + $diags.Count + ') for ' + $path + ':')
         foreach ($d in $diags) {
             $sev = [string](Get-Prop $d 'severity')
@@ -242,10 +252,14 @@ try {
             }
         }
         if ($omitted -gt 0) { [void]$sb.AppendLine('  ... and ' + $omitted + ' more (per-file cap)') }
-        $context = $sb.ToString().TrimEnd()
+    } elseif ($status -eq 'incomplete') {
+        [void]$sb.AppendLine((Get-DiagnosticsStatusBanner 'incomplete' $path))
+    }
+    $context = $sb.ToString().TrimEnd()
 
+    if (-not [string]::IsNullOrEmpty($context)) {
         Write-HookContext $context
-        Write-CLog ('emitted ' + $diags.Count + ' diagnostic(s)')
+        Write-CLog ('emitted ' + $diags.Count + ' diagnostic(s)' + $(if ($status -and $status -ne 'ok') { ' [status=' + $status + ']' } else { '' }))
     } else {
         Write-CLog 'no diagnostics'
     }

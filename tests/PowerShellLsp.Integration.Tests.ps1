@@ -539,3 +539,224 @@ Describe 'Integration: edit-range diagnostic scoping (dispatch 000019)' -Skip:$s
         [int]$last.scopeSurfaced | Should -BeLessThan ([int]$last.scopeTotal)
     }
 }
+
+Describe 'Integration: supervised restart + incomplete/degraded status (dispatch 000022)' -Skip:$script:SkipIntegration {
+    # Proves the three live behaviors the audit graded untested:
+    #   (a) a mid-session PSES child exit is RECOVERED by a bounded daemon-side re-spawn,
+    #       and a subsequent request returns a real diagnostic (R1 + R2-fatal);
+    #   (b) a non-settling pass returns a VISIBLE 'incomplete' status end-to-end through the
+    #       client -- never empty/clean (the Spine-1 false-clean);
+    #   (d) a PSSA-absent daemon comes up without crashing and surfaces a VISIBLE parser-only
+    #       'degraded' status (R6-surfaced).
+    # (b) and (d) launch the daemon DIRECTLY so the test can force a daemon param the
+    # shipping userConfig surface does not expose (-MaxWaitMs 1) and a data root with no
+    # vendored PSSA -- without touching any user-facing default.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+
+        function Invoke-PluginHook {
+            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+            if ($StdinJson) {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
+                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
+            }
+            $p.StandardInput.Close()
+            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            [void]$stdoutTask.Wait(1500)
+            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+        }
+
+        # Launch pses-daemon.ps1 DIRECTLY (long-lived) with arbitrary args + env. Returns
+        # the daemon Process. The daemon writes nothing to stdout/stderr (it logs to files);
+        # we drain both streams asynchronously so their buffers never fill.
+        function Start-RawDaemon {
+            param([string]$Sid, [string]$DataRoot, [string[]]$ExtraArgs, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+            $daemon = Join-Path $script:R_ScriptsDir 'pses-daemon.ps1'
+            $argList = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $daemon,
+                '-SessionId', $Sid, '-PsHost', 'pwsh', '-DataRoot', $DataRoot) + @($ExtraArgs)
+            Add-ProcessArguments $psi ($argList | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $null = $p.StandardOutput.ReadToEndAsync()
+            $null = $p.StandardError.ReadToEndAsync()
+            return $p
+        }
+
+        function Wait-DaemonReady {
+            param([string]$DataRoot, [string]$Sid, [int]$Tries = 80)
+            $sf = Join-Path $DataRoot ('session/' + $Sid + '.json')
+            for ($i = 0; $i -lt $Tries; $i++) {
+                if (Test-Path $sf) {
+                    $o = Get-Content $sf -Raw | ConvertFrom-Json
+                    if ($o.state -eq 'ready') { return $o }
+                }
+                Start-Sleep -Milliseconds 500
+            }
+            return $null
+        }
+
+        $script:R_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        # Share the warm-start block's data root so the PSES/PSSA bootstrap is a no-op.
+        $script:R_Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $env:PSLS_TEST_DATA_DIR
+        } else {
+            Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data'
+        }
+        New-Item -ItemType Directory -Force -Path $script:R_Data | Out-Null
+        $env:CLAUDE_PLUGIN_DATA = $script:R_Data
+
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:R_ScriptsDir 'ensure-pses.ps1') 2>&1 | Out-Null
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:R_ScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+
+        # (a) RESTART daemon -- launched via the real SessionStart hook (default params,
+        # so MaxPsesRestarts = 3). We kill its PSES child mid-It and assert recovery.
+        $script:R_SidA = 'restart-000022-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        Invoke-PluginHook -ScriptPath (Join-Path $script:R_ScriptsDir 'session-start.ps1') `
+            -StdinJson (@{ session_id = $script:R_SidA } | ConvertTo-Json -Compress) `
+            -ExtraArgs @('-PreferredHost', 'pwsh') -CapMs 60000 -DataRoot $script:R_Data -ExtraEnv @{ } | Out-Null
+        $script:R_InfoA = Wait-DaemonReady -DataRoot $script:R_Data -Sid $script:R_SidA
+
+        # (b) INCOMPLETE daemon -- launched directly with -MaxWaitMs 1 so every pass returns
+        # before any publish can settle (a deterministic non-settling pass).
+        $script:R_SidB = 'incomplete-000022-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:R_ProcB = Start-RawDaemon -Sid $script:R_SidB -DataRoot $script:R_Data -ExtraArgs @('-MaxWaitMs', '1') -ExtraEnv @{ }
+        $script:R_InfoB = Wait-DaemonReady -DataRoot $script:R_Data -Sid $script:R_SidB
+
+        # (d) DEGRADED daemon -- launched directly against a FRESH data root that has NO
+        # vendored PSSA (no modules/ dir), with PSES_BUNDLE_PATH pointed at the SHARED
+        # bundle so PSES still launches. pssaAvailable resolves $false -> parser-only.
+        $script:R_DataD = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-degraded-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:R_DataD | Out-Null
+        $script:R_BundleShared = Join-Path $script:R_Data 'PowerShellEditorServices'
+        $script:R_SidD = 'degraded-000022-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:R_ProcD = Start-RawDaemon -Sid $script:R_SidD -DataRoot $script:R_DataD -ExtraArgs @() -ExtraEnv @{ PSES_BUNDLE_PATH = $script:R_BundleShared }
+        $script:R_InfoD = Wait-DaemonReady -DataRoot $script:R_DataD -Sid $script:R_SidD
+
+        # (e) EXHAUSTION daemon -- launched directly with -MaxPsesRestarts 0 so the FIRST
+        # mid-session PSES exit spends the budget immediately. Proves the "never dies"
+        # guarantee: on exhaustion the daemon does NOT exit -- it flips the session file to
+        # 'degraded' and keeps serving 'incomplete'.
+        $script:R_SidE = 'exhaust-000022-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:R_ProcE = Start-RawDaemon -Sid $script:R_SidE -DataRoot $script:R_Data -ExtraArgs @('-MaxPsesRestarts', '0') -ExtraEnv @{ }
+        $script:R_InfoE = Wait-DaemonReady -DataRoot $script:R_Data -Sid $script:R_SidE
+    }
+
+    AfterAll {
+        # Reap every daemon + its PSES child (by recorded pid, and the raw Process handles).
+        $infos = @($script:R_InfoA, $script:R_InfoB, $script:R_InfoD, $script:R_InfoE)
+        foreach ($info in $infos) {
+            if ($null -ne $info) {
+                foreach ($pidVal in @($info.pid, $info.psesPid)) {
+                    if ($pidVal) { Stop-Process -Id ([int]$pidVal) -Force -ErrorAction SilentlyContinue }
+                }
+            }
+        }
+        foreach ($p in @($script:R_ProcB, $script:R_ProcD, $script:R_ProcE)) {
+            try { if ($null -ne $p -and -not $p.HasExited) { $p.Kill($true) } } catch { }
+        }
+        foreach ($pair in @(@($script:R_Data, $script:R_SidA), @($script:R_Data, $script:R_SidB), @($script:R_DataD, $script:R_SidD), @($script:R_Data, $script:R_SidE))) {
+            $sf = Join-Path $pair[0] ('session/' + $pair[1] + '.json')
+            if (Test-Path -LiteralPath $sf) { Remove-Item -LiteralPath $sf -Force -ErrorAction SilentlyContinue }
+        }
+        if (Test-Path -LiteralPath $script:R_DataD) { Remove-Item -LiteralPath $script:R_DataD -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It '(a) recovers from a mid-session PSES exit: a subsequent request returns a real diagnostic (R1 + R2-fatal)' {
+        $script:R_InfoA | Should -Not -BeNullOrEmpty
+        $origPsesPid = [int]$script:R_InfoA.psesPid
+        $origPsesPid | Should -BeGreaterThan 0
+        (Get-Process -Id $origPsesPid -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty   # PSES alive pre-kill
+
+        # Kill the PSES child mid-session. The daemon's idle loop must detect the exit and
+        # re-spawn a fresh PSES (bounded), updating the session file's psesPid.
+        Stop-Process -Id $origPsesPid -Force -ErrorAction SilentlyContinue
+
+        $sf = Join-Path $script:R_Data ('session/' + $script:R_SidA + '.json')
+        $newPsesPid = 0
+        for ($i = 0; $i -lt 80; $i++) {
+            Start-Sleep -Milliseconds 500
+            if (Test-Path $sf) {
+                $o = Get-Content $sf -Raw | ConvertFrom-Json
+                $pp = [int](Get-Prop $o 'psesPid')
+                if ($pp -gt 0 -and $pp -ne $origPsesPid) { $newPsesPid = $pp; break }
+            }
+        }
+        $newPsesPid | Should -BeGreaterThan 0           # a NEW PSES was re-spawned (the daemon did not die)
+        $newPsesPid | Should -Not -Be $origPsesPid
+        $script:R_InfoA = Get-Content $sf -Raw | ConvertFrom-Json   # refresh recorded pids for AfterAll
+
+        # The recovered daemon serves a REAL result again -- not a dead pipe or silence.
+        $fix = Join-Path $script:R_Data 'pester-restart-fixture.ps1'
+        "function Frobnicate-Restart {`n    Get-Process`n}" | Set-Content -LiteralPath $fix -Encoding ascii   # PSUseApprovedVerbs
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:R_ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:R_SidA; tool_input = @{ file_path = $fix }; cwd = $script:R_Data } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:R_Data -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+        $out | Should -Match 'PSUseApprovedVerbs'
+    }
+
+    It '(b) a non-settling pass surfaces a VISIBLE incomplete status, never empty/clean (Spine-1 false-clean)' {
+        $script:R_InfoB | Should -Not -BeNullOrEmpty   # the -MaxWaitMs 1 daemon came up ready
+        $fix = Join-Path $script:R_Data 'pester-incomplete-fixture.ps1'
+        # Clean-parsing (so it passes the client's in-process parser pre-pass and reaches the
+        # daemon) and would trip PSUseApprovedVerbs on a settled pass -- but the pass cannot
+        # settle (MaxWaitMs=1), so the client must render 'incomplete', not silence.
+        "function Frobnicate-Incomplete {`n    Get-Process`n}" | Set-Content -LiteralPath $fix -Encoding ascii
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:R_ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:R_SidB; tool_input = @{ file_path = $fix }; cwd = $script:R_Data } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:R_Data -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+        $out | Should -Match 'analysis did not complete'      # the visible incomplete banner
+        $out | Should -Match 'unavailable'
+        $out | Should -Not -Match 'PSUseApprovedVerbs'        # NOT a settled finding list
+    }
+
+    It '(d) PSSA-absent surfaces a VISIBLE parser-only degraded status and does not crash (R6-surfaced)' {
+        $script:R_InfoD | Should -Not -BeNullOrEmpty   # daemon came up ready despite no vendored PSSA (no crash)
+        $fix = Join-Path $script:R_DataD 'pester-degraded-fixture.ps1'
+        "function Frobnicate-Degraded {`n    Get-Process`n}" | Set-Content -LiteralPath $fix -Encoding ascii
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:R_ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:R_SidD; tool_input = @{ file_path = $fix }; cwd = $script:R_DataD } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:R_DataD -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+        $out | Should -Match 'parser-only'
+        $out | Should -Match 'PSScriptAnalyzer unavailable'
+    }
+
+    It '(e) on an exhausted re-spawn budget the daemon STAYS UP and serves incomplete -- it never silently dies (000022 Q(a)/Q(d))' {
+        $script:R_InfoE | Should -Not -BeNullOrEmpty
+        $daemonPid = [int]$script:R_InfoE.pid
+        $origPsesPid = [int]$script:R_InfoE.psesPid
+
+        # Kill PSES. With MaxPsesRestarts=0 the first detection spends the budget at once:
+        # the daemon must flip the session file to 'degraded' WITHOUT exiting.
+        Stop-Process -Id $origPsesPid -Force -ErrorAction SilentlyContinue
+        $sf = Join-Path $script:R_Data ('session/' + $script:R_SidE + '.json')
+        $state = ''
+        for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Milliseconds 500
+            if (Test-Path $sf) { $state = [string](Get-Prop (Get-Content $sf -Raw | ConvertFrom-Json) 'state') }
+            if ($state -eq 'degraded') { break }
+        }
+        $state | Should -Be 'degraded'                                                          # exhaustion is observable
+        (Get-Process -Id $daemonPid -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty # the daemon did NOT exit
+
+        # And every request now returns the VISIBLE incomplete status -- never empty/clean.
+        $fix = Join-Path $script:R_Data 'pester-exhaust-fixture.ps1'
+        "function Frobnicate-Exhaust {`n    Get-Process`n}" | Set-Content -LiteralPath $fix -Encoding ascii
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:R_ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:R_SidE; tool_input = @{ file_path = $fix }; cwd = $script:R_Data } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:R_Data -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+        $out | Should -Match 'analysis did not complete'
+        $out | Should -Match 'unavailable'
+    }
+}
