@@ -422,6 +422,73 @@ Describe 'New-ScriptAnalysisSettings -- the PSES scriptAnalysis settings object 
     }
 }
 
+# ===========================================================================
+# Analysis status: clean vs incomplete vs degraded (dispatch 000022)
+# ===========================================================================
+
+Describe 'Resolve-AnalysisStatus -- clean vs incomplete vs degraded (dispatch 000022)' {
+    # The pure seam that keeps "could not analyze" from looking identical to "analyzed,
+    # found nothing." Maps (settled, pssaAvailable) -> status; the daemon shapes it, the
+    # client renders it, so the two cannot drift. Adversarial control: collapse the
+    # not-settled branch in Resolve-AnalysisStatus and the 'incomplete beats degraded' and
+    # 'distinguishes clean from incomplete' assertions go RED.
+    It 'settled + PSSA available -> ok (a genuinely clean pass)' {
+        Resolve-AnalysisStatus -Settled $true -PssaAvailable $true | Should -BeExactly 'ok'
+    }
+    It 'NOT settled -> incomplete (did not settle = we do not know the file is clean)' {
+        Resolve-AnalysisStatus -Settled $false -PssaAvailable $true | Should -BeExactly 'incomplete'
+    }
+    It 'settled but PSSA absent -> degraded (parser-only)' {
+        Resolve-AnalysisStatus -Settled $true -PssaAvailable $false | Should -BeExactly 'degraded'
+    }
+    It 'incomplete OUTRANKS degraded: not settled on a parser-only daemon is still incomplete' {
+        # "this edit was not checked at all" beats "checked with fewer rules" (000022 Q(c)).
+        Resolve-AnalysisStatus -Settled $false -PssaAvailable $false | Should -BeExactly 'incomplete'
+    }
+    It 'distinguishes clean (settled, zero records) from incomplete (did not settle) -- they must NOT be equal' {
+        # The core acceptance (000022): a clean settled pass and a non-settling pass must
+        # map to different statuses, so the client can render one as nothing and the other
+        # as a visible "unavailable."
+        $clean = Resolve-AnalysisStatus -Settled $true -PssaAvailable $true
+        $incomplete = Resolve-AnalysisStatus -Settled $false -PssaAvailable $true
+        $clean | Should -Not -BeExactly $incomplete
+    }
+}
+
+Describe 'Get-DiagnosticsStatusBanner -- the visible, non-clean wording (dispatch 000022)' {
+    # The exact user-facing text, owned in one place so daemon + client never disagree.
+    # 'ok' MUST render empty -- that is the byte-identical warm-path guard (a clean pass
+    # adds nothing to additionalContext). Adversarial control: return a non-empty string
+    # for 'ok' and both this and the warm-path additivity integration test go RED.
+    It 'renders nothing for ok (clean) -- the byte-identical warm-path guard' {
+        Get-DiagnosticsStatusBanner 'ok' 'C:\x\foo.ps1' | Should -BeExactly ''
+    }
+    It 'renders nothing for an empty/absent status' {
+        Get-DiagnosticsStatusBanner '' 'C:\x\foo.ps1' | Should -BeExactly ''
+    }
+    It 'incomplete: a single visible "analysis did not complete" message naming the file' {
+        $b = Get-DiagnosticsStatusBanner 'incomplete' 'C:\x\foo.ps1'
+        $b | Should -Match 'unavailable'
+        $b | Should -Match 'did not complete'
+        $b | Should -Match ([regex]::Escape('C:\x\foo.ps1'))
+    }
+    It 'degraded: a DISTINCT parser-only / PSScriptAnalyzer-unavailable message' {
+        $b = Get-DiagnosticsStatusBanner 'degraded' 'C:\x\foo.ps1'
+        $b | Should -Match 'parser-only'
+        $b | Should -Match 'PSScriptAnalyzer unavailable'
+    }
+    It 'incomplete and degraded are DIFFERENT messages (two categories, not one)' {
+        (Get-DiagnosticsStatusBanner 'incomplete' 'C:\x\foo.ps1') |
+            Should -Not -BeExactly (Get-DiagnosticsStatusBanner 'degraded' 'C:\x\foo.ps1')
+    }
+    It 'is ASCII-only (PS 5.1 em-dash trap)' {
+        foreach ($s in @('incomplete', 'degraded')) {
+            $b = Get-DiagnosticsStatusBanner $s 'C:\x\foo.ps1'
+            (@([System.Text.Encoding]::UTF8.GetBytes($b) | Where-Object { $_ -gt 127 }).Count) | Should -Be 0
+        }
+    }
+}
+
 # (d) ASCII-clean + parse over every shipped .ps1 (scripts AND tests).
 $script:AllPs1 = Get-ChildItem (Split-Path -Parent $PSScriptRoot) -Recurse -Filter *.ps1 -File
 

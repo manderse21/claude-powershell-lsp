@@ -4,7 +4,11 @@
 # this directory, and exits non-zero on any failure. Used locally (both hosts)
 # and by CI.
 param(
-    [switch] $CI
+    [switch] $CI,
+    # Optional Pester FullName filter (Describe/It wildcard). Empty = run everything
+    # (default, unchanged). Lets a dispatch custom_check re-run just one feature's tests
+    # via the same command shape as the smoke_test, e.g. -FullNameFilter '*dispatch 000022*'.
+    [string] $FullNameFilter = ''
 )
 $ErrorActionPreference = 'Stop'
 
@@ -21,6 +25,7 @@ $config = New-PesterConfiguration
 $config.Run.Path = $PSScriptRoot
 $config.Run.PassThru = $true
 $config.Output.Verbosity = 'Detailed'
+if (-not [string]::IsNullOrWhiteSpace($FullNameFilter)) { $config.Filter.FullName = $FullNameFilter }
 if ($CI) {
     $config.TestResult.Enabled = $true
     $config.TestResult.OutputFormat = 'NUnitXml'

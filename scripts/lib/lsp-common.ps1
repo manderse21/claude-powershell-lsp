@@ -552,6 +552,48 @@ function Select-OrderedDiagnostics {
         @{ Expression = { [int]$_.col } })
 }
 
+# --- analysis status: clean vs incomplete vs degraded (dispatch 000022) ----
+# The one failure direction a linter must never have is "could not analyze" reading
+# identical to "analyzed, found nothing." These two PURE helpers separate the cases and
+# own the exact user-facing wording, so the daemon (which shapes the status) and the
+# client (which renders it) cannot drift, and the wording is unit-testable.
+#
+#   Settled = a publishDiagnostics result actually arrived for this pass (regardless of
+#     count -- zero diagnostics on a SETTLED pass is genuinely clean). NOT settled = the
+#     pass timed out, PSES threw, PSES exited, or a re-spawn was in progress -> we do NOT
+#     know the file is clean, so the result must say so rather than render as empty.
+#   PssaAvailable = the vendored PSScriptAnalyzer was present when PSES launched. Absent =
+#     the analyzer pass is parser-only (reduced capability) -- a persistent, session-
+#     lifetime degrade, distinct from a transient non-settle.
+
+function Resolve-AnalysisStatus {
+    # Map (settled, pssaAvailable) to one of: 'ok' | 'incomplete' | 'degraded'.
+    # Precedence (000022 Q(c)): a pass that did not settle is 'incomplete' even on a
+    # parser-only daemon -- "this edit was not checked at all" outranks "checked with
+    # fewer rules." Adversarial control: collapse the first branch and the
+    # 'incomplete beats degraded' unit assertion goes RED.
+    param([bool]$Settled, [bool]$PssaAvailable)
+    if (-not $Settled) { return 'incomplete' }
+    if (-not $PssaAvailable) { return 'degraded' }
+    return 'ok'
+}
+
+function Get-DiagnosticsStatusBanner {
+    # The exact ASCII user-facing line for a non-clean status, or '' for 'ok' (so the
+    # warm happy path renders nothing -- byte-identical to before). Confirmed wording
+    # (Mike, dispatch 000022 Q(b)/Q(c)): one message for the transient 'incomplete'
+    # family (sub-cause stays in the daemon log), and a DISTINCT message for the
+    # 'degraded' parser-only case (different meaning + remediation). Adversarial control:
+    # return a non-empty string for 'ok' and the byte-identical warm-path unit guard
+    # goes RED.
+    param([string]$Status, [string]$Path)
+    switch ($Status) {
+        'incomplete' { return ('PowerShell diagnostics unavailable for ' + $Path + ': analysis did not complete -- this edit was NOT checked.') }
+        'degraded'   { return ('PowerShell diagnostics for ' + $Path + ': parser-only mode -- PSScriptAnalyzer unavailable, lint rules were NOT checked (syntax errors are still reported).') }
+        default      { return '' }
+    }
+}
+
 # --- edit-range diagnostic scoping (dispatch 000019) -----------------------
 # Scope the surfaced diagnostics to the lines an edit touched. The touched range is
 # derived CLIENT-SIDE from the PostToolUse tool_response.structuredPatch (the only

@@ -41,7 +41,15 @@ param(
     # Explicit PSScriptAnalyzerSettings.psd1 override (absolute). Empty = auto-discover
     # the nearest settings file walked up from the edited file, bounded at the project
     # root (dispatch 000018). Absolute only -- see Resolve-PssaSettingsPath in lib.
-    [string] $SettingsPath = ''
+    [string] $SettingsPath = '',
+    # Supervised PSES re-spawn (dispatch 000022): bound a mid-session crash recovery so a
+    # transient PSES exit recovers but a hard-broken PSES does not thrash. MaxPsesRestarts
+    # mirrors the manifest's advertised maxRestarts (3) but on the ACTUAL daemon path; the
+    # budget is consecutive and resets after any settled pass. NOT a userConfig knob (the
+    # native lspServers knobs stay dormant per 000021); daemon-level so a test can force
+    # exhaustion by launching the daemon directly with a low value.
+    [int] $MaxPsesRestarts = 3,
+    [int] $RestartBackoffMs = 500
 )
 
 Set-StrictMode -Version Latest
@@ -91,6 +99,14 @@ $script:reqId     = 1000  # monotonic id for daemon-initiated requests (codeActi
 # file would force an engine rebuild on the hot path.
 $script:settingsResolved  = $false   # have we run the one-time resolve+push yet?
 $script:settingsPathInUse = ''        # the absolute settings file honored this session ('' = default rules)
+# Supervised re-spawn bookkeeping (000022): psesRestarts is the CONSECUTIVE re-spawn
+# count for the current crash episode (reset to 0 after any settled pass); psesGaveUp
+# latches once the budget is spent so the exhaustion logs once and the daemon then stays
+# up serving 'incomplete'. pssaAvailable records whether the vendored PSScriptAnalyzer was
+# present when PSES launched (a false = parser-only degrade for the daemon's whole life).
+$script:psesRestarts  = 0
+$script:psesGaveUp    = $false
+$script:pssaAvailable = $true
 
 function Get-ContentHash([string]$text) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -224,10 +240,14 @@ function Start-Pses {
     # Make the vendored PSScriptAnalyzer visible to PSES so the analyzer pass runs.
     $pssaDir = Get-PssaModuleDir
     if (Test-Path -LiteralPath $pssaDir) {
+        $script:pssaAvailable = $true
         $psi.EnvironmentVariables['PSModulePath'] = $pssaDir + [System.IO.Path]::PathSeparator + $env:PSModulePath
         Write-DLog ('prepended vendored PSSA to child PSModulePath: ' + $pssaDir)
     } else {
-        Write-DLog ('vendored PSSA dir absent (' + $pssaDir + '); analyzer pass may be parser-only')
+        # R6-surfaced (000022): record the reduced capability so every pass this daemon
+        # serves carries the 'degraded' (parser-only) status -- not a silent reduced pass.
+        $script:pssaAvailable = $false
+        Write-DLog ('vendored PSSA dir absent (' + $pssaDir + '); analyzer pass is parser-only (degraded)')
     }
 
     Write-DLog ('launching PSES via ' + $hostExe)
@@ -268,6 +288,76 @@ function Stop-Pses {
         try { if (-not $script:proc.HasExited) { $script:proc.Kill() } } catch { }
     }
     Write-DLog 'PSES stopped'
+}
+
+# --- supervised re-spawn (dispatch 000022: the daemon never silently dies) --
+function Test-PsesAlive {
+    # True only when the PSES child handle exists AND the OS process is still running.
+    # StrictMode-safe: a $null proc (e.g. after a failed re-spawn) must read as NOT alive
+    # rather than throw on .HasExited. Every PSES touch gates on this.
+    return ($null -ne $script:proc) -and (-not $script:proc.HasExited)
+}
+
+function Reset-PsesState {
+    # Drop ALL per-PSES shared state before a re-spawn so the NEW child starts clean.
+    # Each clear is load-bearing -- otherwise the restarted session is silently corrupt:
+    #   - respSeen still holding init id '1' would make the new Start-Pses believe
+    #     initialize was already answered and skip the handshake wait;
+    #   - diag/openDocs/lastHash carrying the dead child's per-URI state would make the
+    #     next request send a didChange (not didOpen) for a doc the new PSES never opened
+    #     -> no publish -> a FALSE 'incomplete' (the restart proving-test would catch this);
+    #   - settingsResolved left $true would skip re-pushing the analyzer settings the new
+    #     child needs; buf may hold a half-read frame from the dead child.
+    $script:proc = $null
+    $script:stdin = $null
+    $script:stdout = $null
+    $script:pending = $null
+    $script:buf.Clear()
+    $script:initDone = $false
+    $script:diag = @{}
+    $script:openDocs = @{}
+    $script:lastHash = @{}
+    $script:respSeen = @{}
+    $script:respResult = @{}
+    $script:settingsResolved = $false
+}
+
+function Restart-Pses {
+    # Bounded supervised re-spawn of the PSES child on a mid-session exit (closes R1 + the
+    # fatal half of R2). Returns $true when a live PSES is back, $false when the budget is
+    # spent or the re-spawn failed. The budget is CONSECUTIVE (psesRestarts) and resets to
+    # 0 after any settled pass (Get-Diagnostics), so a transient crash recovers but a PSES
+    # that dies every pass exhausts and stops -- no thrash. On exhaustion the daemon does
+    # NOT exit: psesGaveUp latches (logged once), the session file flips to 'degraded', and
+    # every later request returns 'incomplete' so a dead analyzer is VISIBLE, never silently
+    # clean. Backoff escalates (RestartBackoffMs * attempt): cheap for the common single
+    # transient, deliberately slower as it approaches giving up. Runs between requests
+    # (idle loop), off the client's critical path.
+    param([string]$Cause)
+    if ($script:psesRestarts -ge $MaxPsesRestarts) {
+        if (-not $script:psesGaveUp) {
+            $script:psesGaveUp = $true
+            Write-DLog ('PSES re-spawn budget exhausted (' + $script:psesRestarts + '/' + $MaxPsesRestarts + ', cause=' + $Cause + '); staying up, serving incomplete')
+            Write-SessionFile $pipeName 'degraded'
+        }
+        return $false
+    }
+    $script:psesRestarts++
+    $attempt = $script:psesRestarts
+    Write-DLog ('PSES gone (cause=' + $Cause + '); re-spawn attempt ' + $attempt + '/' + $MaxPsesRestarts)
+    if ($null -ne $script:proc -and -not $script:proc.HasExited) { try { Stop-Pses } catch { } }
+    Reset-PsesState
+    $backoff = $RestartBackoffMs * $attempt
+    if ($backoff -gt 0) { Start-Sleep -Milliseconds $backoff }
+    if (Start-Pses) {
+        Write-DLog ('PSES re-spawn attempt ' + $attempt + ' OK (psesPid=' + $script:proc.Id + ')')
+        Write-SessionFile $pipeName 'ready'
+        return $true
+    }
+    Write-DLog ('PSES re-spawn attempt ' + $attempt + ' FAILED')
+    try { if ($null -ne $script:proc -and -not $script:proc.HasExited) { $script:proc.Kill($true) } } catch { }
+    $script:proc = $null
+    return $false
 }
 
 # --- code-action correction enrichment (Track C) ---------------------------
@@ -388,6 +478,18 @@ function Get-Diagnostics([string]$filePath, [string]$cwd = '') {
     $uri = ConvertTo-FileUri $full
     $key = ConvertTo-UriKey $uri
 
+    # Supervised restart seam (dispatch 000022): if the PSES child is not alive, do NOT
+    # write to its closed stdin (that throws) and do NOT serve empty-as-clean. Return an
+    # explicit 'incomplete' FAST (well within the client hard cap); the daemon's idle loop
+    # re-spawns PSES off the request path, so the NEXT edit finds it live. This is the
+    # request-arrives-on-a-down-PSES half of the false-clean fix.
+    if (-not (Test-PsesAlive)) {
+        Write-DLog ('diagnostics request while PSES down -> incomplete: ' + $uri)
+        return @{ ok = $true; status = 'incomplete'; cached = $false; records = @()
+            path = 'daemon-incomplete'; analysisMs = 0; codeActionMs = 0
+            recordCount = 0; correctionCount = 0 }
+    }
+
     # 000018: resolve + push the settings path once, before the first didOpen, bounded
     # at the client-forwarded project root (cwd). Gated -- a no-op after the first file.
     Initialize-PssaSettings -FilePath $full -ProjectRoot $cwd
@@ -439,9 +541,25 @@ function Get-Diagnostics([string]$filePath, [string]$cwd = '') {
     } -MaxMs $MaxWaitMs | Out-Null
     $swAnalysis.Stop()
 
+    # Did this pass SETTLE? We cleared $script:diag[$key] before the settle, so its
+    # presence now means PSES actually published a result for this uri (regardless of
+    # count -- zero diagnostics on a settled pass is genuinely clean). ABSENT means the
+    # pass did NOT settle (MaxWaitMs timeout / a non-fatal PSES throw / PSES exited
+    # mid-pass): we do NOT know the file is clean. This is the clean-vs-incomplete seam
+    # (dispatch 000022, closes the Spine-1 false-clean).
     $entry = if ($script:diag.ContainsKey($key)) { $script:diag[$key] } else { $null }
-    $records = if ($null -ne $entry) { $entry.records } else { @() }
-    $rawDiags = if ($null -ne $entry -and $entry.Contains('raw')) { @($entry.raw) } else { @() }
+    $settled = ($null -ne $entry)
+    $records = if ($settled) { $entry.records } else { @() }
+    $rawDiags = if ($settled -and $entry.Contains('raw')) { @($entry.raw) } else { @() }
+    if (-not $settled) {
+        $cause = if (-not (Test-PsesAlive)) { 'pses-exited' } else { 'settle-timeout' }
+        Write-DLog ('analysis did not settle (cause=' + $cause + ') -> incomplete: ' + $uri)
+    } else {
+        # A settled pass proves PSES is healthy -- refresh the re-spawn budget so a later,
+        # unrelated transient still gets the full count (000022 Q(a): reset-on-recovery).
+        $script:psesRestarts = 0
+        $script:psesGaveUp = $false
+    }
     # Track C: thread PSSA suggested corrections onto the records (in place) via a
     # single codeAction pass -- only when there are findings, so a clean file does
     # no codeAction work and the warm fast path (and the cache-hit path above)
@@ -452,13 +570,21 @@ function Get-Diagnostics([string]$filePath, [string]$cwd = '') {
         Add-CodeActionCorrections $uri $rawDiags $records
         $swCa.Stop(); $caMs = [int]$swCa.ElapsedMilliseconds
     }
-    $script:lastHash[$key] = $hash
+    # Cache only a SETTLED result -- never poison the content-hash cache with a
+    # non-settling pass (else an identical re-edit would serve the empty set as "clean").
+    if ($settled) { $script:lastHash[$key] = $hash }
     if (-not $script:diag.ContainsKey($key)) { $script:diag[$key] = @{ records = @(); raw = @(); at = (Get-Date); seq = 0 } }
-    Write-DLog ('analyzed ' + $uri + ' -> ' + @($records).Count + ' record(s)')
+    Write-DLog ('analyzed ' + $uri + ' -> ' + @($records).Count + ' record(s); settled=' + $settled)
     $recs = @($records)
-    return @{ ok = $true; cached = $false; records = $recs
+    # Shape the status: clean (settled + PSSA) | incomplete (did not settle) | degraded
+    # (settled but parser-only). ADDITIVE -- attached only when NOT 'ok', so the warm
+    # happy-path result (and the client emit) is byte-identical to before.
+    $status = Resolve-AnalysisStatus -Settled $settled -PssaAvailable $script:pssaAvailable
+    $result = @{ ok = $true; cached = $false; records = $recs
         path = 'daemon-analyze'; analysisMs = [int]$swAnalysis.ElapsedMilliseconds; codeActionMs = $caMs
         recordCount = $recs.Count; correctionCount = (Measure-CorrectionCount $recs) }
+    if ($status -ne 'ok') { $result['status'] = $status }
+    return $result
 }
 
 # --- session file / heartbeat ----------------------------------------------
@@ -503,17 +629,26 @@ try {
     while ($running) {
         $now = Get-Date
         if (($now - $lastHeartbeat).TotalSeconds -ge 10) {
-            Write-SessionFile $pipeName 'ready'
+            # Keep the heartbeat HONEST: once the re-spawn budget is spent the daemon stays
+            # up but degraded -- it must not flip the session file back to 'ready' (000022).
+            Write-SessionFile $pipeName $(if ($script:psesGaveUp) { 'degraded' } else { 'ready' })
             $lastHeartbeat = $now
         }
         if (($now - $lastActivity).TotalMinutes -ge $IdleTtlMin) {
             Write-DLog ('idle TTL (' + $IdleTtlMin + ' min) reached; shutting down')
             break
         }
-        if ($script:proc.HasExited) { Write-DLog 'PSES child gone; shutting down'; break }
+        # Supervised re-spawn (dispatch 000022, closes R1 + the fatal half of R2): on a
+        # mid-session PSES exit, attempt a bounded re-spawn HERE -- between requests, off
+        # the client's critical path -- instead of breaking the loop and exiting. A
+        # transient crash recovers before the next edit; an exhausted budget keeps the
+        # daemon UP serving 'incomplete' (never silently dead). The daemon now exits only
+        # on idle-TTL or an explicit shutdown.
+        if (-not (Test-PsesAlive)) { Restart-Pses 'idle-detected' | Out-Null }
 
-        # brief idle drain so PSES server requests get answered between clients
-        Invoke-LspPump -Until { $false } -MaxMs 40 | Out-Null
+        # brief idle drain so PSES server requests get answered between clients (only when
+        # a live child exists to pump)
+        if (Test-PsesAlive) { Invoke-LspPump -Until { $false } -MaxMs 40 | Out-Null }
 
         if ($null -eq $connectTask) { $connectTask = $server.WaitForConnectionAsync() }
         if (-not $connectTask.Wait(500)) { continue }
@@ -553,13 +688,18 @@ try {
                                 scopeApplied = [bool]$sc.scopeApplied; scopeTotal = [int]$sc.total; scopeSurfaced = [int]$sc.surfaced
                                 path = [string]$res.path; analysisMs = [int]$res.analysisMs; codeActionMs = [int]$res.codeActionMs
                                 recordCount = [int]$res.recordCount; correctionCount = [int]$res.correctionCount }
+                            # Status (000022): additive -- present only on a non-clean pass
+                            # (incomplete/degraded), so the warm happy-path payload is
+                            # byte-identical to before. The client renders it visibly.
+                            if ($res.Contains('status')) { $payload['status'] = [string]$res.status }
                         } else {
                             $payload = [ordered]@{ ok = $false; action = 'diagnostics'; error = $res.error }
                         }
                         $writer.WriteLine(($payload | ConvertTo-Json -Depth 8 -Compress))
                     }
                     'ping' {
-                        $writer.WriteLine(([ordered]@{ ok = $true; action = 'ping'; pid = $PID; psesPid = $script:proc.Id } | ConvertTo-Json -Compress))
+                        $psesPidVal = if (Test-PsesAlive) { $script:proc.Id } else { $null }
+                        $writer.WriteLine(([ordered]@{ ok = $true; action = 'ping'; pid = $PID; psesPid = $psesPidVal } | ConvertTo-Json -Compress))
                     }
                     'shutdown' {
                         $writer.WriteLine(([ordered]@{ ok = $true; action = 'shutdown' } | ConvertTo-Json -Compress))
