@@ -949,3 +949,35 @@ Describe 'Integration: first-start install-incomplete is VISIBLE (dispatch 00002
         }
     }
 }
+
+Describe 'Integration: pses-stdio.ps1 emits no pre-handshake stdout (dispatch 000025 stdout-silence)' -Skip:$script:SkipIntegration {
+    # pses-stdio.ps1 now dot-sources lsp-common.ps1 for the single-source Get-PluginVersion
+    # HostVersion stamp. Its stdout IS the LSP byte stream once -Stdio starts, so a single
+    # stray byte from the new import would corrupt the protocol. This drives the launcher on
+    # the reachable bundle-MISSING path -- which exercises the import, then exits 1 with the
+    # error on STDERR -- and asserts stdout is byte-empty. Spawns the CURRENT host, so it is a
+    # real invocation under pwsh in CI and under Windows PowerShell 5.1 locally. Adversarial
+    # control: add a bare emitting line to lsp-common.ps1 (or pses-stdio.ps1) ahead of the
+    # handshake and the 'stdout is empty' assertion goes RED.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        $script:S_Stdio = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/pses-stdio.ps1'
+        $script:S_Host = (Get-Process -Id $PID).Path
+    }
+    It 'writes ZERO bytes to stdout when the bundle is missing (error -> stderr, exit 1)' {
+        $missing = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000025-absent-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $script:S_Host; $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+        Add-ProcessArguments $psi @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:S_Stdio)
+        $psi.EnvironmentVariables['PSES_BUNDLE_PATH'] = $missing
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $outT = $p.StandardOutput.ReadToEndAsync()
+        $errT = $p.StandardError.ReadToEndAsync()
+        if (-not $p.WaitForExit(30000)) { try { $p.Kill($true) } catch { }; throw 'pses-stdio did not exit' }
+        [void]$outT.Wait(2000); [void]$errT.Wait(2000)
+        $p.ExitCode | Should -Be 1
+        $outT.Result | Should -BeExactly ''       # the single byte that would corrupt the LSP stream
+        $errT.Result | Should -Match 'PSES not found'
+    }
+}

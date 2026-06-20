@@ -2,6 +2,15 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Shared lib -- dot-sourced ONLY for Get-PluginVersion (the single-source version stamp,
+# dispatch 000025). CONTRACT: stdout here is the LSP byte stream once -Stdio starts, so
+# nothing may print before the handshake. lsp-common.ps1 is load-silent (function defs
+# plus silent assignments only; verified by the 'lib is load-silent' unit test) and
+# Get-PluginVersion's return is consumed as the -HostVersion argument, never written to a
+# stream -- so this import adds no pre-handshake stdout (guarded by the pses-stdio
+# stdout-silence test).
+. (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
+
 # Resolve bundle path. env var set by plugin.json lspServers.env, with a fallback.
 $bundle = $env:PSES_BUNDLE_PATH
 if ([string]::IsNullOrWhiteSpace($bundle)) {
@@ -37,7 +46,7 @@ $sessionDetails = Join-Path $logDir 'pses-session.json'
     -SessionDetailsPath $sessionDetails `
     -HostName 'Claude Code' `
     -HostProfileId 'claude-code' `
-    -HostVersion '1.0.0' `
+    -HostVersion (Get-PluginVersion) `
     -FeatureFlags @() `
     -AdditionalModules @() `
     -Stdio

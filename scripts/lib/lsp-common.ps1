@@ -47,6 +47,77 @@ function Get-PsesStartScript {
     return (Join-Path (Get-PsesBundleRoot) 'PowerShellEditorServices/Start-EditorServices.ps1')
 }
 
+# --- plugin version: single source of truth is the manifest (dispatch 000025) ----
+# The host/client version stamps (pses-stdio HostVersion, daemon HostVersion, the LSP
+# clientInfo.version) and the startup log line all read the version from
+# .claude-plugin/plugin.json at runtime -- ONE source of truth, so a bump of the manifest
+# (the only place a version is hand-set) can never leave a stale literal behind, not even
+# on a hand-edit that bypasses bump-version.ps1. This replaces three drifted literals
+# (1.0.0 / 1.1.0 / 1.1.0 vs the real version) found by the 000023 audit (S1b), the same
+# one-place-for-one-fact principle as the M1 decorative-constant finding.
+#
+# LOAD-SILENT by contract: this lib is dot-sourced by the -Stdio launcher (pses-stdio.ps1),
+# whose stdout carries the LSP byte stream -- a single stray byte corrupts the protocol.
+# These are function definitions plus one silent assignment; nothing is emitted at import,
+# and Get-PluginVersion returns its value (consumed as a parameter), never writing a stream.
+
+# Capture this lib's own directory at dot-source time. The top-level $PSScriptRoot is
+# unambiguously scripts/lib here regardless of which script dot-sources us, dodging the
+# "$PSScriptRoot inside a dot-sourced function" ambiguity.
+$script:LspCommonDir = $PSScriptRoot
+$script:PluginVersionCache = $null
+
+function Get-PluginManifestPath {
+    # Locate .claude-plugin/plugin.json. Primary: walk up from this lib's directory
+    # (scripts/lib -> scripts -> plugin root), the deterministic layout in the shipped
+    # tree. Fallback: CLAUDE_PLUGIN_ROOT (set by Claude Code for plugin subprocesses).
+    # Returns '' if neither resolves (caller stamps an honest sentinel).
+    $libDir = $script:LspCommonDir
+    if ([string]::IsNullOrWhiteSpace($libDir)) { $libDir = $PSScriptRoot }
+    if (-not [string]::IsNullOrWhiteSpace($libDir)) {
+        $root = Split-Path -Parent (Split-Path -Parent $libDir)
+        if (-not [string]::IsNullOrWhiteSpace($root)) {
+            $candidate = Join-Path $root '.claude-plugin/plugin.json'
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+        }
+    }
+    $envRoot = $env:CLAUDE_PLUGIN_ROOT
+    if (-not [string]::IsNullOrWhiteSpace($envRoot)) {
+        $candidate = Join-Path $envRoot '.claude-plugin/plugin.json'
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+    return ''
+}
+
+function Get-PluginVersion {
+    # The single source of truth for the plugin version, read from the manifest and cached
+    # per process (read once, off the hot path). Returns '0.0.0-unknown' if the manifest
+    # cannot be located or parsed -- an honest sentinel that itself reads as a resolution
+    # failure in a log, never a fabricated version. Emits nothing but its return value.
+    if (-not [string]::IsNullOrWhiteSpace([string]$script:PluginVersionCache)) {
+        return $script:PluginVersionCache
+    }
+    $version = '0.0.0-unknown'
+    try {
+        $manifest = Get-PluginManifestPath
+        if (-not [string]::IsNullOrWhiteSpace($manifest)) {
+            $json = (Get-Content -LiteralPath $manifest -Raw) | ConvertFrom-Json
+            $ver = Get-Prop $json 'version'
+            if (-not [string]::IsNullOrWhiteSpace([string]$ver)) { $version = [string]$ver }
+        }
+    } catch { $version = '0.0.0-unknown' }
+    $script:PluginVersionCache = $version
+    return $version
+}
+
+function Get-VersionStamp {
+    # The product+version token for the startup log line, so a stranger's log or bug report
+    # can be tied to a plugin version from the log alone (000023 S1a). One wording, one
+    # source (Get-PluginVersion). The bare version (Get-PluginVersion) is what the
+    # HostVersion / clientInfo.version fields carry; this is the human-readable log form.
+    return ('powershell-lsp ' + (Get-PluginVersion))
+}
+
 # --- host detection (Stage 2 shared helper) --------------------------------
 
 function Resolve-PsHost {
@@ -406,7 +477,7 @@ function New-InitializeParams {
     )
     return @{
         processId = $ProcessId
-        clientInfo = @{ name = 'cc-pses-daemon'; version = '1.1.0' }
+        clientInfo = @{ name = 'cc-pses-daemon'; version = (Get-PluginVersion) }
         rootUri = $RootUri
         capabilities = (New-InitializeCapabilities)
     }

@@ -57,6 +57,10 @@ Set these via the `/plugin` config UI for `powershell-lsp`, or leave the default
 | `keepLastN`        | `10`     | Newest rolling log files kept per family (swept at SessionStart)                       |
 | `idleTtlMin`       | `30`     | Daemon self-terminates after this many minutes with no diagnostics request            |
 | `perFileCap`       | `20`     | Max diagnostics reported per file; the rest collapse into an `... and N more` line; `0` = no cap |
+| `enableStats`      | `false`  | Append one JSONL timing line per analyzed edit to `logs/stats.jsonl` (rotating, ~5 MB); observe-only, never changes output. View with `scripts/show-stats.ps1`. `0`/`off` disable |
+| `settingsPath`     | _(empty)_| Absolute path to a `PSScriptAnalyzerSettings.psd1` to honor, overriding auto-discovery; a relative value is ignored; empty = auto-discover (nearest file walked up to the project root) |
+| `scopeToEdit`      | `true`   | Scope surfaced diagnostics to the lines the edit touched (plus `editContextLines`); fails open to whole-file when the range is indeterminate. `0`/`off` report whole-file |
+| `editContextLines` | `0`      | Extra context lines kept above and below the touched range when `scopeToEdit` is on; the edit's patch already includes a few, so the default is `0` |
 
 Diagnostics are returned in a stable order (severity, then line, then column),
 deduped, threshold- and rule-filtered, then capped per file.
@@ -66,6 +70,12 @@ PSScriptAnalyzer rule set for live analysis, which is narrower than the
 `Invoke-ScriptAnalyzer` CLI default -- for example `PSAvoidUsingWriteHost` is not
 surfaced on the fly even though the CLI flags it. The knobs here can *suppress or
 narrow* what PSES reports; they cannot add a rule PSES does not run.
+
+> **Privacy note -- `enableStats` logs absolute paths.** When `enableStats` is on (it is
+> **off by default**), each timing line in `logs/stats.jsonl` records the **absolute path**
+> of the analyzed file. All logs stay under your plugin data directory and are never
+> transmitted, but if you share a log for a bug report, sanitize the paths first. (Path
+> redaction may arrive as a later option; for now the caveat is the contract.)
 
 ## Performance
 
@@ -160,8 +170,10 @@ today. The hook is the product; native registration is a bonus you can opt into.
 
 The plugin already declares its server (the `lspServers` block in `plugin.json`), and
 a standalone copy ships at [`docs/lsp.json.template`](docs/lsp.json.template). Both are
-the *intended* native path -- but **as of Claude Code 2.1.167 neither activates**. This
-was confirmed across every configuration on 2026-06-06 (dispatch 000008):
+the *intended* native path -- but **as of Claude Code 2.1.183 neither activates**. The
+detailed three-configuration test below was run on 2026-06-06 against Claude Code 2.1.167
+(dispatch 000008); the inertness has since been **re-confirmed through 2.1.183
+(2026-06-19)**, with no registration fix landing in the 2.1.167 -> 2.1.183 window:
 
 - a clean top-level-map `.lsp.json` with **literal** commands (no `${CLAUDE_PLUGIN_ROOT}`
   / `${user_config.*}` template variables), loaded into a **freshly started** process
@@ -176,8 +188,9 @@ was confirmed across every configuration on 2026-06-06 (dispatch 000008):
 
 So the inertness is not a reload-vs-restart, template-variable, or
 `--plugin-dir`-vs-installed-cache artifact -- a plugin `.lsp.json` simply does not
-register on 2.1.167. This finally tests the installed-cache path a prior re-test had to
-leave open, **closing** that caveat rather than narrowing it. Native registration is not
+register on 2.1.167, and the canonical probe re-confirms it inert through 2.1.183. This
+finally tests the installed-cache path a prior re-test had to leave open, **closing** that
+caveat rather than narrowing it. Native registration is not
 something this plugin can rely on today -- which is why diagnostics ride the PostToolUse
 hook, the path that works on every host now. (Methodology and evidence in
 [`docs/upstream/claude-code-lsp-registration.md`](docs/upstream/claude-code-lsp-registration.md),
@@ -191,8 +204,8 @@ to opt into the native path:
 ```
 cp docs/lsp.json.template .lsp.json
 # then FULLY restart Claude Code -- a new process. /reload-plugins is not enough:
-# the 2026-06-06 re-test confirmed a plugin-root .lsp.json stays inert even after a
-# full restart on 2.1.167, so this is for a future release that fixes registration.
+# re-probes confirmed a plugin-root .lsp.json stays inert even after a full restart,
+# through 2.1.183 (2026-06-19), so this is for a future release that fixes registration.
 ```
 
 > **Heads-up once it does activate -- duplicate diagnostics.** If native registration
@@ -232,6 +245,25 @@ pid is ours before any kill) is guarded behind `Test-OnWindows` with Linux `/pro
 and macOS `ps` fallbacks, and the client/daemon transport is `System.IO.Pipes` (Unix
 domain socket semantics on *nix). As of 1.3.0 that macOS `ps` fallback is exercised by
 the macOS CI integration leg, so **macOS is CI-verified** alongside Linux.
+
+## Diagnostics status
+
+Every analyzed edit resolves to one of four statuses. The clean case is silent; the other
+three surface a one-line banner in Claude's context, so a result is never *mistaken* for
+"analyzed, clean" when it was not actually analyzed. The wording is owned in one place
+(`Get-DiagnosticsStatusBanner` in `scripts/lib/lsp-common.ps1`).
+
+| Status            | When                                                                 | What you see / what to do |
+|-------------------|----------------------------------------------------------------------|---------------------------|
+| **`ok`**          | The PSScriptAnalyzer pass settled and the analyzer was available.    | Nothing extra -- diagnostics (if any) are shown, no banner. The warm happy path. |
+| **`incomplete`**  | The pass did **not** settle for this edit -- PSES timed out, threw, exited, or a supervised re-spawn was mid-flight. | `analysis did not complete -- this edit was NOT checked.` Transient: the next edit usually succeeds once PSES is back. |
+| **`degraded`**    | PSES is up and settled, but the vendored **PSScriptAnalyzer is absent**, so only the parser ran. | `parser-only mode -- PSScriptAnalyzer unavailable, lint rules were NOT checked (syntax errors are still reported).` Start a fresh session so `ensure-pssa` re-vendors; see `logs/ensure-pssa.log`. |
+| **`unavailable`** | The PSES bundle **never bootstrapped** (a clean box, offline or behind a proxy), so there is no language server to ask. | `PowerShell editor services are not installed -- the bootstrap did not complete (network/proxy?).` Fix network/proxy access, then start a fresh session so `ensure-pses` can bootstrap; see `logs/ensure-pses.log`. |
+
+`incomplete` (transient) and `unavailable` (install-time) are deliberately distinct -- a
+broken install needs a different remedy than a retryable miss. The install-time
+`unavailable` arrived in 1.5.0 (dispatch 000024), completing the mid-session
+`incomplete`/`degraded` split introduced earlier (dispatch 000022).
 
 ## Troubleshooting
 
