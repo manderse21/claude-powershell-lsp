@@ -232,7 +232,7 @@ function Start-Pses {
     $psi.WorkingDirectory = $logDir
     Add-ProcessArguments $psi @(
         '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startScript,
-        '-HostName', 'Claude Code PSES Daemon', '-HostProfileId', 'cc-pses-daemon', '-HostVersion', '1.1.0',
+        '-HostName', 'Claude Code PSES Daemon', '-HostProfileId', 'cc-pses-daemon', '-HostVersion', (Get-PluginVersion),
         '-BundledModulesPath', $bundleRoot,
         '-LogPath', $pseLog, '-LogLevel', 'Information',
         '-SessionDetailsPath', $sess,
@@ -612,7 +612,7 @@ $pipeName = 'powershell-lsp-' + $SessionId
 # start because the bundle never bootstrapped. The daemon then comes up to SERVE 'unavailable'
 # over the pipe (a visible banner on the first edit) instead of dying before the pipe exists.
 $script:serveUnavailable = $false
-Write-DLog ('--- daemon start: session=' + $SessionId + ' pipe=' + $pipeName + ' host=' + $PsHost + ' ---')
+Write-DLog ('--- daemon start: ' + (Get-VersionStamp) + ' session=' + $SessionId + ' pipe=' + $pipeName + ' host=' + $PsHost + ' ---')
 
 if (-not (Start-Pses)) {
     # First-start blind spot (000024, closes audit #1 daemon-half): dying here -- BEFORE the

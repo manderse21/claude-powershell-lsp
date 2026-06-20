@@ -685,3 +685,140 @@ Describe 'ConvertTo-DiagRecord -- endLine for edit-range scoping (dispatch 00001
         $r.endLine | Should -Be 8
     }
 }
+
+# ===========================================================================
+# Single-source version stamp + docs honesty (dispatch 000025)
+# ===========================================================================
+
+Describe 'Get-PluginVersion -- single source of truth is the manifest (dispatch 000025)' {
+    # 000023 audit S1b: three host-version literals (pses-stdio 1.0.0, pses-daemon 1.1.0,
+    # lsp-common clientInfo 1.1.0) had drifted from the real plugin version and
+    # bump-version.ps1 did not touch them. The fix sources every stamp from
+    # .claude-plugin/plugin.json at runtime, so a manifest bump (the only place a version is
+    # hand-set) can never leave a stale literal. Adversarial control: hardcode
+    # Get-PluginVersion to a literal and the 'matches the manifest' assertion goes RED.
+    BeforeAll {
+        $manifestPath = Join-Path $script:PluginRoot '.claude-plugin/plugin.json'
+        $script:ManifestVersion = [string](((Get-Content -LiteralPath $manifestPath -Raw) | ConvertFrom-Json).version)
+    }
+    It 'returns the exact version recorded in plugin.json' {
+        Get-PluginVersion | Should -BeExactly $script:ManifestVersion
+    }
+    It 'returns a single, clean MAJOR.MINOR.PATCH string (no stray pipeline output)' {
+        $out = @(Get-PluginVersion)
+        $out.Count | Should -Be 1
+        $out[0] | Should -Match '^\d+\.\d+\.\d+$'
+    }
+}
+
+Describe 'Version stamps read the single source -- clientInfo + log line (dispatch 000025)' {
+    # The warm-path LSP clientInfo.version (lib:409) and the daemon startup log stamp must
+    # report the manifest version, not a literal. Proven against Get-PluginVersion (itself
+    # proven == manifest above). Adversarial control: revert clientInfo.version to a literal
+    # and the 'clientInfo carries the manifest version' assertion goes RED.
+    It 'clientInfo.version equals Get-PluginVersion (the warm-path initialize stamp)' {
+        (New-InitializeParams -RootUri 'file:///C:/proj' -ProcessId 1).clientInfo.version |
+            Should -BeExactly (Get-PluginVersion)
+    }
+    It 'Get-VersionStamp embeds the plugin version (the daemon startup log surface, S1a)' {
+        Get-VersionStamp | Should -BeExactly ('powershell-lsp ' + (Get-PluginVersion))
+    }
+}
+
+Describe 'lsp-common.ps1 is load-silent -- the -Stdio stdout contract (dispatch 000025)' {
+    # pses-stdio.ps1 dot-sources this lib, and its stdout IS the LSP byte stream once -Stdio
+    # starts; a single byte emitted at import (or by Get-PluginVersion) would corrupt the
+    # protocol. Guard: re-dot-sourcing the lib and calling Get-PluginVersion produce NO
+    # success-stream output. Adversarial control: add a bare 'hello' expression at lib top
+    # level and the 'emits nothing' assertion goes RED. (End-to-end proof that pses-stdio
+    # itself prints nothing pre-handshake lives in the integration suite.)
+    It 'dot-sourcing the lib emits nothing to the success stream' {
+        $libPath = Join-Path $script:ScriptsDir 'lib/lsp-common.ps1'
+        $captured = (. $libPath)
+        $captured | Should -BeNullOrEmpty
+    }
+    It 'Get-PluginVersion emits nothing but its single return value' {
+        @(Get-PluginVersion).Count | Should -Be 1
+    }
+}
+
+Describe 'No hand-maintained host-version literal remains -- single-source guard (dispatch 000025)' {
+    # The single-source fix means NONE of the three sites may carry a hardcoded
+    # MAJOR.MINOR.PATCH version beside its stamp -- they must call Get-PluginVersion. This is
+    # the 'can never go stale' guard: revert any site to a literal and its assertion goes
+    # RED. Historical version mentions in COMMENTS (e.g. 'CHANGELOG 1.1.0') are NOT matched:
+    # the patterns anchor on the -HostVersion argument and the clientInfo.version assignment.
+    BeforeAll {
+        $script:StdioSrc  = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'pses-stdio.ps1') -Raw
+        $script:DaemonSrc = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'pses-daemon.ps1') -Raw
+        $script:LibSrc    = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'lib/lsp-common.ps1') -Raw
+    }
+    It 'pses-stdio.ps1 stamps -HostVersion from Get-PluginVersion, not a literal' {
+        $script:StdioSrc | Should -Match '-HostVersion \(Get-PluginVersion\)'
+        $script:StdioSrc | Should -Not -Match "-HostVersion '\d+\.\d+\.\d+'"
+    }
+    It 'pses-daemon.ps1 stamps -HostVersion from Get-PluginVersion, not a literal' {
+        $script:DaemonSrc | Should -Match "'-HostVersion', \(Get-PluginVersion\)"
+        $script:DaemonSrc | Should -Not -Match "'-HostVersion', '\d+\.\d+\.\d+'"
+    }
+    It 'lsp-common.ps1 clientInfo.version is Get-PluginVersion, not a literal' {
+        $script:LibSrc | Should -Match 'version = \(Get-PluginVersion\)'
+        $script:LibSrc | Should -Not -Match "name = 'cc-pses-daemon'; version = '\d"
+    }
+    It 'pses-daemon.ps1 start banner emits the version stamp into the log (S1a)' {
+        $script:DaemonSrc | Should -Match "daemon start: ' \+ \(Get-VersionStamp\)"
+    }
+}
+
+Describe 'README config table documents every userConfig knob (dispatch 000025, 000023 D1 #4)' {
+    # 000023 audit: the table documented 9 of 13 knobs (missing enableStats, settingsPath,
+    # scopeToEdit, editContextLines). A paid product must not under-document the surface a
+    # user pays to configure. Guard: the set of keys in the README Configuration table ==
+    # the userConfig keys in plugin.json, exactly. Adversarial control: drop a table row (or
+    # a manifest knob) and the set-equality assertion goes RED.
+    BeforeAll {
+        $manifestPath = Join-Path $script:PluginRoot '.claude-plugin/plugin.json'
+        $manifest = (Get-Content -LiteralPath $manifestPath -Raw) | ConvertFrom-Json
+        $script:ManifestKeys = @($manifest.userConfig.PSObject.Properties.Name) | Sort-Object
+
+        # Slice the '## Configuration' section and pull the first-column `key` token of each
+        # table row (the | Key | header and the |---| separator carry no backticks -> skipped;
+        # the privacy blockquote starts with '>' not '|' -> skipped).
+        $readmeText = Get-Content -LiteralPath (Join-Path $script:PluginRoot 'README.md') -Raw
+        $m = [regex]::Match($readmeText, '(?ms)^##\s+Configuration\s*$(.*?)^##\s')
+        $section = if ($m.Success) { $m.Groups[1].Value } else { '' }
+        $keys = @()
+        foreach ($line in ($section -split "`n")) {
+            if ($line -match '^\s*\|\s*`([^`]+)`') { $keys += $Matches[1] }
+        }
+        $script:DocumentedKeys = @($keys) | Sort-Object
+    }
+    It 'documents exactly the manifest userConfig keys (none missing, none extra)' {
+        ($script:DocumentedKeys -join ',') | Should -BeExactly ($script:ManifestKeys -join ',')
+    }
+    It 'documents the four knobs the 000023 audit found missing' {
+        foreach ($k in @('enableStats', 'settingsPath', 'scopeToEdit', 'editContextLines')) {
+            $script:DocumentedKeys | Should -Contain $k
+        }
+    }
+}
+
+Describe 'README documents the full diagnostics-status taxonomy (dispatch 000025)' {
+    # Now that 000024 added the install-time 'unavailable', the README must document all four
+    # statuses in one place. Guard: every status the code emits a non-empty banner for
+    # (incomplete / degraded / unavailable -- the Get-DiagnosticsStatusBanner switch) appears
+    # in the README, and the silent 'ok' is described too. Adversarial control: remove the
+    # README docs for one banner status and the coverage assertion goes RED.
+    BeforeAll {
+        $script:ReadmeText = Get-Content -LiteralPath (Join-Path $script:PluginRoot 'README.md') -Raw
+    }
+    It 'documents every status that has a user-facing banner' {
+        foreach ($s in @('incomplete', 'degraded', 'unavailable')) {
+            (Get-DiagnosticsStatusBanner -Status $s -Path 'x.ps1') | Should -Not -BeNullOrEmpty
+            $script:ReadmeText | Should -Match ('`' + $s + '`')
+        }
+    }
+    It 'documents the silent clean status (ok)' {
+        $script:ReadmeText | Should -Match '`ok`'
+    }
+}

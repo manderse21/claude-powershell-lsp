@@ -29,6 +29,55 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.5.1] - 2026-06-20
+
+PATCH: docs-honesty and diagnosability hardening with no user-visible behavior change
+(dispatch powershell-lsp/000025, closes the 000023 launch-readiness audit's backlog #3,
+#4, and #7). Diagnostics output is byte-for-byte unchanged; the only value that moves on
+the wire is a stale version label, now corrected. No `userConfig` knob is added, removed,
+or renamed.
+
+### Fixed
+
+- **Three stale, drifted host-version literals now read the real plugin version from one
+  source (dispatch 000025, 000023 audit S1b).** `pses-stdio.ps1` (was `1.0.0`),
+  `pses-daemon.ps1` (was `1.1.0`), and the LSP `clientInfo.version` in `lsp-common.ps1`
+  (was `1.1.0`) reported versions that had not tracked the plugin since early releases, and
+  `bump-version.ps1` did not touch them. A new `Get-PluginVersion` reads
+  `.claude-plugin/plugin.json` at runtime (cached, off the hot path), so every stamp now
+  reflects the manifest and can never go stale again -- not even on a hand-edit that
+  bypasses the bump helper. The same one-place-for-one-fact principle as the 000023 M1
+  decorative-constant finding.
+
+### Added
+
+- **Plugin version in the daemon startup log (dispatch 000025, 000023 audit S1a).** The
+  daemon start banner now reads `powershell-lsp <version>`, so a stranger's bug report can
+  be tied to a specific plugin version from the log alone -- the highest-leverage support
+  fix for a paid product. It is logged before the PSES launch, so even a failed or
+  `unavailable` first start still records its version.
+- **README documents the full analysis-status taxonomy (dispatch 000025).** A new
+  "Diagnostics status" section explains all four statuses a user can see -- `ok` (silent),
+  `incomplete` (transient; this edit was not checked), `degraded` (parser-only;
+  PSScriptAnalyzer unavailable), and `unavailable` (install/bootstrap failure) -- with what
+  each means and how to act, now that 000024 completed the set.
+- **README notes that `stats.jsonl` records absolute file paths (dispatch 000025, 000023
+  audit S1c, closes backlog #7).** Opt-in telemetry (`enableStats`, default off) writes the
+  full path of each analyzed file; the README now documents this so a user can sanitize a
+  log before sharing. Path redaction is deferred as a later enhancement.
+
+### Changed
+
+- **README config table now documents every `userConfig` knob (dispatch 000025, 000023
+  audit D1, closes backlog #4).** The four knobs the table omitted -- `enableStats`,
+  `settingsPath`, `scopeToEdit`, `editContextLines` -- are now documented, so the table
+  matches the manifest exactly (asserted by a unit test).
+- **README currency refreshed to Claude Code 2.1.183 (dispatch 000025, 000023 audit D1,
+  closes backlog #3).** Native `.lsp.json` registration was re-confirmed inert through
+  2.1.183 (2026-06-19); the "Why a hook" section now reflects that span rather than lagging
+  at 2.1.167. The honesty that native registration is inert and the hook is the production
+  path is unchanged.
+
 ## [1.5.0] - 2026-06-20
 
 MINOR: extends the 000022 "never report clean when it could not analyze" guarantee from
