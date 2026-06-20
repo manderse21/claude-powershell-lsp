@@ -29,6 +29,37 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.5.3] - 2026-06-20
+
+PATCH: formalize the plugin's public surface as a 1.x semver contract and add a runnable CI
+drift-guard. This ships a new document (`CONTRACT.md`) and a new test only -- **zero runtime
+change**: every shipped script is byte-identical to 1.5.2, and the warm path, the diagnostics
+output, and all four install-failure surfaces behave exactly as before. No `userConfig` knob is
+added, removed, or renamed; no status token changes.
+
+### Added
+
+- **`CONTRACT.md` -- a two-tier 1.x semver freeze (dispatch 000027).** Tier 1 (CONTRACTUAL,
+  drift-guarded): the 13 `userConfig` knob names (additive-only) and the four-token diagnostics
+  status taxonomy `{ok, incomplete, degraded, unavailable}`, plus the property that `ok` renders
+  an empty banner (the byte-identical warm path) while each non-ok token renders a distinct,
+  non-empty, visible banner. Tier 2 (ASPIRATIONAL -- documented but **not** semver-contractual
+  and **not** drift-guarded): the install-failure visibility guarantee, with the 000024/000026
+  integration tests cited as its living evidence. The freeze is token-level, not prose-level
+  (banner wording stays refinable under PATCH); knob names are frozen while behavior-neutral
+  default re-tuning stays MINOR/PATCH and a behavior-altering default change is a MAJOR; and the
+  `enableStats` stats-log format (absolute vs redacted paths) is explicitly **not** a frozen
+  output field.
+- **A CONTRACT.md drift-guard (extends the dispatch 000025 README Describes).** Two new Pester
+  Describes assert `CONTRACT.md` freezes **exactly** the manifest `userConfig` keys and
+  **exactly** the status tokens the code emits. Ground truth is extracted mechanically, live from
+  source -- the manifest keys are parsed from `plugin.json`, and the status tokens are read from
+  the `Get-DiagnosticsStatusBanner` switch via AST plus the clean token from calling
+  `Resolve-AnalysisStatus` -- with **no** hand-maintained baseline list in the test. Adding a knob
+  to the manifest or renaming a status token turns a CI leg red until both `CONTRACT.md` and the
+  README record it. The README and CONTRACT guards are separate Describes, so a red leg names
+  which document drifted.
+
 ## [1.5.2] - 2026-06-20
 
 PATCH: fix a non-Windows session-startup defect (dispatch powershell-lsp/000026). On macOS and
