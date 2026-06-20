@@ -29,6 +29,34 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.5.2] - 2026-06-20
+
+PATCH: fix a non-Windows session-startup defect (dispatch powershell-lsp/000026). On macOS and
+Linux the SessionStart hook leaked its stdin/stdout/stderr handles to the detached PowerShell
+Editor Services daemon, so the daemon held Claude Code's hook pipes open for the whole session.
+Windows was never affected. No `userConfig` knob is added, removed, or renamed; diagnostics
+output is byte-for-byte unchanged.
+
+### Fixed
+
+- **The detached daemon no longer inherits the SessionStart hook's standard handles on
+  macOS/Linux (dispatch 000026).** On non-Windows the daemon was launched with a bare
+  `Start-Process`; with no ShellExecute equivalent there, it inherited the hook's
+  stdin/stdout/stderr by normal POSIX file-descriptor inheritance and held those pipes open for
+  its entire lifetime. Because Claude Code's read of a SessionStart hook's stdout does not reach
+  EOF while a child holds the write-end, this could **stall session startup** until the global
+  hook timeout (cf. upstream claude-code #43123, affecting >= v2.1.87) -- on *every* non-Windows
+  session, since the daemon launches every time -- and, in the clean-box install-failure case,
+  it dropped the `additionalContext` "diagnostics unavailable" banner that dispatch 000024 added.
+  The daemon's three standard streams are now redirected to per-launch files (stamped, retired by
+  the existing log sweep) so it no longer holds the hook pipes. Windows is unchanged: there
+  `-WindowStyle Hidden` routes the launch through ShellExecute, which structurally does not pass
+  inheritable handles to the child. The load-bearing first-edit surface (the daemon-served
+  `unavailable` on the PostToolUse channel) was never affected and stayed green on all platforms.
+- **The dispatch 000024 SessionStart-surfacing integration test now passes on all four CI legs**
+  (macos-pwsh, ubuntu-pwsh, windows-pwsh, windows-powershell). It had been correctly red on the
+  two non-Windows legs since 000024 -- it was catching this defect, not a fixture flake.
+
 ## [1.5.1] - 2026-06-20
 
 PATCH: docs-honesty and diagnosability hardening with no user-visible behavior change

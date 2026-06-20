@@ -227,16 +227,32 @@ try {
     # PSScriptAnalyzerSettings.psd1 override (absolute); only pass when set, else the
     # daemon auto-discovers the nearest settings file from the edited file (000018).
     if (-not [string]::IsNullOrWhiteSpace($SettingsPath)) { $daemonArgs += @('-SettingsPath', $SettingsPath) }
-    # Launch DETACHED. Must NOT inherit this hook's stdout/stderr handles: if it
-    # did, Claude Code's SessionStart hook would block on its own output pipe
-    # until the daemon exits (the whole session). On Windows, Start-Process with
-    # no redirection uses ShellExecute, which does not pass inheritable handles to
-    # the child; the daemon writes nothing to stdout and logs to files itself.
-    # (Non-Windows branch authored, CI-verified later.)
+    # Launch DETACHED. The daemon must NOT inherit this hook's stdin/stdout/stderr handles: a
+    # long-lived child holding Claude Code's SessionStart hook pipes open means CC's read of the
+    # hook stdout never reaches EOF, which STALLS the session until the global hook timeout
+    # (upstream claude-code #43123, >= v2.1.87) -- not merely a dropped additionalContext banner,
+    # and on EVERY non-Windows session since the daemon always launches. On Windows, -WindowStyle
+    # Hidden makes Start-Process use ShellExecute, which STRUCTURALLY does not pass inheritable std
+    # handles to the child (Windows is already safe -- not because it redirects). Non-Windows has no
+    # ShellExecute, so a bare Start-Process inherits the hook pipes via normal POSIX fd inheritance
+    # (000026, proven on the macos/ubuntu CI legs); the equivalent fix is to redirect all three.
     if (Test-OnWindows) {
         Start-Process -FilePath $hostExe -ArgumentList $daemonArgs -WindowStyle Hidden | Out-Null
     } else {
-        Start-Process -FilePath $hostExe -ArgumentList $daemonArgs | Out-Null
+        # Redirect all three std streams to per-launch files: stdin <- an empty file (reads EOF at
+        # once, never holds CC's stdin), stdout/stderr -> launch logs. DISTINCT paths (Start-Process
+        # rejects any two sharing one) and STAMPED (unique per launch -> no concurrent collision;
+        # retired by the existing log sweep). Files only -- NO /dev/null: file redirects are verified
+        # cross-platform, whereas a null-device target that silently no-opped would reintroduce the
+        # leak. The daemon writes its real logs to files itself; these launch files are normally empty.
+        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+        $dlBase = Join-Path $logDir ('pses-daemon-launch-' + $stamp)
+        $dlIn = $dlBase + '.in'; $dlOut = $dlBase + '.out'; $dlErr = $dlBase + '.err'
+        New-Item -ItemType File -Force -Path $dlIn | Out-Null
+        Start-Process -FilePath $hostExe -ArgumentList $daemonArgs `
+            -RedirectStandardInput $dlIn `
+            -RedirectStandardOutput $dlOut `
+            -RedirectStandardError $dlErr | Out-Null
     }
     Write-SLog ('launched daemon (detached) for session ' + $sessionId + ' via ' + $hostExe)
     exit 0
