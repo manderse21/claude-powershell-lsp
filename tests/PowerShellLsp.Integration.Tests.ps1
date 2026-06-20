@@ -981,3 +981,107 @@ Describe 'Integration: pses-stdio.ps1 emits no pre-handshake stdout (dispatch 00
         $errT.Result | Should -Match 'PSES not found'
     }
 }
+
+Describe 'DIAGNOSTIC 000026 root-cause (TEMPORARY -- remove before ship)' -Skip:$script:SkipIntegration {
+    # TEMPORARY (dispatch 000026): pin the AFFIRMATIVE root cause of why the
+    # session-start-SPAWNED ensure-pses exits 0 on macos/ubuntu (empty banner) while the
+    # DIRECT sibling exits 1 under the SAME dead-proxy. Write-Host only; the It always passes.
+    # Read the 'DIAG ...' lines in the CI log for each leg, then DELETE this whole Describe.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        $script:DG_Scripts = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:DG_Proxy = @{ HTTPS_PROXY = 'http://127.0.0.1:1'; HTTP_PROXY = 'http://127.0.0.1:1'; ALL_PROXY = 'http://127.0.0.1:1' }
+
+        function New-DgRoot {
+            $d = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-diag-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+            return $d
+        }
+        function Invoke-DgCapture {
+            param([string]$ScriptPath, [string]$DataRoot, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+            Add-ProcessArguments $psi @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath)
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+            if (-not $p.WaitForExit(60000)) { try { $p.Kill($true) } catch { }; return @{ ExitCode = -999; Err = 'timeout' } }
+            [void]$o.Wait(2000); [void]$e.Wait(2000)
+            return @{ ExitCode = $p.ExitCode; Err = $e.Result }
+        }
+        function Invoke-DgHook {
+            param([string]$ScriptPath, [string]$StdinJson, [string]$DataRoot, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            Add-ProcessArguments $psi @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath, '-PreferredHost', 'pwsh')
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $o = $p.StandardOutput.ReadToEndAsync()
+            if ($StdinJson) { $b = [System.Text.Encoding]::UTF8.GetBytes($StdinJson); $p.StandardInput.BaseStream.Write($b, 0, $b.Length); $p.StandardInput.BaseStream.Flush() }
+            $p.StandardInput.Close()
+            if (-not $p.WaitForExit(60000)) { try { $p.Kill($true) } catch { }; return '' }
+            [void]$o.Wait(1500)
+            if ($o.IsCompleted) { return $o.Result } else { return '' }
+        }
+        function Format-DgLog {
+            param([string]$Path)
+            if (Test-Path -LiteralPath $Path) { return ((Get-Content -LiteralPath $Path -Raw) -replace "`r?`n", ' | ') }
+            return '(none)'
+        }
+    }
+
+    It 'DIAG: grandchild vs direct ensure-pses under dead-proxy (read the DIAG lines in the CI log)' {
+        Write-Host '=== DIAG 000026 BEGIN ==='
+        Write-Host ('DIAG PLATFORM: PSEdition=' + $PSVersionTable.PSEdition + ' PSVer=' + $PSVersionTable.PSVersion + ' OnWindows=' + (Test-OnWindows))
+
+        # (1) DIRECT ensure-pses, fresh root, dead-proxy -- expect exit!=0 on every leg.
+        $rD = New-DgRoot
+        $cap = Invoke-DgCapture -ScriptPath (Join-Path $script:DG_Scripts 'ensure-pses.ps1') -DataRoot $rD -ExtraEnv $script:DG_Proxy
+        Write-Host ('DIAG DIRECT ensure-pses: exit=' + $cap.ExitCode + ' err=[' + (($cap.Err) -replace "`r?`n", ' | ') + ']')
+        Write-Host ('DIAG DIRECT ensure-pses.log: ' + (Format-DgLog (Join-Path $rD 'logs/ensure-pses.log')))
+
+        # (2) session-start SPAWNED ensure-pses, fresh root, dead-proxy -- the failing path.
+        $rS = New-DgRoot
+        $sid = 'diag-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $out = Invoke-DgHook -ScriptPath (Join-Path $script:DG_Scripts 'session-start.ps1') -StdinJson (@{ session_id = $sid } | ConvertTo-Json -Compress) -DataRoot $rS -ExtraEnv $script:DG_Proxy
+        Write-Host ('DIAG SS banner: out.len=' + $out.Length + ' out=[' + ($out -replace "`r?`n", ' | ') + ']')
+        Write-Host ('DIAG SS grandchild ensure-pses.log: ' + (Format-DgLog (Join-Path $rS 'logs/ensure-pses.log')))
+        Write-Host ('DIAG SS grandchild ensure-pssa.log: ' + (Format-DgLog (Join-Path $rS 'logs/ensure-pssa.log')))
+        Write-Host ('DIAG SS session-start.log: ' + (Format-DgLog (Join-Path $rS 'logs/session-start.log')))
+        $sf = Join-Path $rS ('session/' + $sid + '.json')
+        if (Test-Path $sf) { $o2 = Get-Content $sf -Raw | ConvertFrom-Json; foreach ($pp in @((Get-Prop $o2 'pid'), (Get-Prop $o2 'psesPid'))) { if ($pp) { Stop-Process -Id ([int]$pp) -Force -ErrorAction SilentlyContinue } } }
+
+        # (3) does a `&`-spawned child honor an INHERITED proxy var? uppercase-only vs upper+lower.
+        $exe = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+        if ($exe) {
+            $iwr = Join-Path $rS 'probe-iwr.ps1'
+            $probeBody = @'
+$ErrorActionPreference = 'Stop'
+try {
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  $null = Invoke-WebRequest -Uri 'https://api.github.com' -UseBasicParsing -TimeoutSec 8
+  Write-Output 'IWR=SUCCEEDED'
+} catch { Write-Output ('IWR=FAILED: ' + $_.Exception.Message) }
+'@
+            Set-Content -LiteralPath $iwr -Value $probeBody -Encoding ascii
+            $env:HTTPS_PROXY = 'http://127.0.0.1:1'; $env:HTTP_PROXY = 'http://127.0.0.1:1'; $env:ALL_PROXY = 'http://127.0.0.1:1'
+            $up = (& $exe -NoLogo -NoProfile -File $iwr 2>&1) -join ' | '
+            Write-Host ('DIAG IWR inherited UPPERCASE-only -> ' + $up)
+            $env:https_proxy = 'http://127.0.0.1:1'; $env:http_proxy = 'http://127.0.0.1:1'; $env:all_proxy = 'http://127.0.0.1:1'
+            $both = (& $exe -NoLogo -NoProfile -File $iwr 2>&1) -join ' | '
+            Write-Host ('DIAG IWR inherited UPPER+lower -> ' + $both)
+            Remove-Item Env:\HTTPS_PROXY, Env:\HTTP_PROXY, Env:\ALL_PROXY -ErrorAction SilentlyContinue
+            Remove-Item Env:\https_proxy, Env:\http_proxy, Env:\all_proxy -ErrorAction SilentlyContinue
+        } else {
+            Write-Host 'DIAG IWR: pwsh not found for inherited-proxy probe'
+        }
+
+        foreach ($d in @($rD, $rS)) { if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue } }
+        Write-Host '=== DIAG 000026 END ==='
+        $true | Should -BeTrue
+    }
+}
