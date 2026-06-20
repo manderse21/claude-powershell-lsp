@@ -29,19 +29,26 @@ function Write-Log([string]$m) {
     ('[' + (Get-Date -Format 'o') + '] ' + $m) | Out-File -FilePath $log -Append -Encoding ascii
 }
 
+# Path handles for the staging area and the swap-aside backup. Defined BEFORE the try so the
+# catch can always clean them up (StrictMode: referencing an unset var would throw).
+$tmpZip = Join-Path $dataRoot ('pses-' + $PsesTag + '.zip')
+$extractRoot = Join-Path $dataRoot ('pses-extract-' + $PsesTag)
+$backupDir = $bundleDir + '.old-' + $PsesTag
+$url = 'https://github.com/PowerShell/PowerShellEditorServices/releases/download/' + $PsesTag + '/PowerShellEditorServices.zip'
+
 try {
     Write-Log ('Bootstrapping PSES ' + $PsesTag)
-    if (Test-Path -LiteralPath $bundleDir) {
-        Remove-Item -LiteralPath $bundleDir -Recurse -Force
-    }
-    $tmpZip = Join-Path $dataRoot ('pses-' + $PsesTag + '.zip')
-    $url = 'https://github.com/PowerShell/PowerShellEditorServices/releases/download/' + $PsesTag + '/PowerShellEditorServices.zip'
+
+    # NON-DESTRUCTIVE (000024): download + extract + VERIFY entirely in a temp staging area
+    # FIRST. Do not touch the live $bundleDir until a verified-good module is in hand, so a
+    # failed re-bootstrap (offline / proxy / corrupt zip) leaves the PRIOR working bundle
+    # intact rather than deleting it before a single-attempt download (the old :34-35 hazard).
+    if (Test-Path -LiteralPath $tmpZip) { Remove-Item -LiteralPath $tmpZip -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $extractRoot) { Remove-Item -LiteralPath $extractRoot -Recurse -Force }
 
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Invoke-WebRequest -Uri $url -OutFile $tmpZip -UseBasicParsing
 
-    $extractRoot = Join-Path $dataRoot ('pses-extract-' + $PsesTag)
-    if (Test-Path -LiteralPath $extractRoot) { Remove-Item -LiteralPath $extractRoot -Recurse -Force }
     Expand-Archive -LiteralPath $tmpZip -DestinationPath $extractRoot -Force
 
     # Normalize the layout regardless of how the archive nests things. The PSES
@@ -52,14 +59,29 @@ try {
     # -BundledModulesPath and the start script resolves at
     # $bundleDir/PowerShellEditorServices/Start-EditorServices.ps1. Locate the module
     # by finding Start-EditorServices.ps1 (shallowest match) rather than assuming a
-    # fixed nesting depth.
-    New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
+    # fixed nesting depth. This locate doubles as the download VERIFY -- a partial or
+    # wrong archive yields no match and throws BEFORE any destructive swap.
     $startLeaf = Get-ChildItem -LiteralPath $extractRoot -Recurse -Filter 'Start-EditorServices.ps1' -File |
         Sort-Object { $_.FullName.Length } | Select-Object -First 1
     if ($null -eq $startLeaf) {
         throw 'Start-EditorServices.ps1 not found in the extracted PSES archive.'
     }
-    Move-Item -LiteralPath $startLeaf.Directory.FullName -Destination (Join-Path $bundleDir 'PowerShellEditorServices')
+
+    # SWAP -- only now, with a verified-good module staged. Rename any existing bundle aside,
+    # build the new one, then drop the old. On a swap failure restore the prior bundle, so the
+    # user is never left with NO bundle. ($bundleDir is absent only for the few local FS ops
+    # between rename and move, and only after a verified download -- never on a network miss.)
+    if (Test-Path -LiteralPath $backupDir) { Remove-Item -LiteralPath $backupDir -Recurse -Force }
+    if (Test-Path -LiteralPath $bundleDir) { Rename-Item -LiteralPath $bundleDir -NewName (Split-Path -Leaf $backupDir) }
+    try {
+        New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
+        Move-Item -LiteralPath $startLeaf.Directory.FullName -Destination (Join-Path $bundleDir 'PowerShellEditorServices')
+    } catch {
+        if (Test-Path -LiteralPath $bundleDir) { Remove-Item -LiteralPath $bundleDir -Recurse -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $backupDir) { Rename-Item -LiteralPath $backupDir -NewName (Split-Path -Leaf $bundleDir) }
+        throw
+    }
+    if (Test-Path -LiteralPath $backupDir) { Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue }
 
     Remove-Item -LiteralPath $tmpZip -Force -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $extractRoot) { Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -68,6 +90,15 @@ try {
     Write-Log 'PSES bootstrap complete.'
 }
 catch {
-    Write-Log ('PSES bootstrap FAILED: ' + $_.Exception.Message)
-    # Do not throw to stdout; LSP startup will surface a clear error if the bundle is missing.
+    $msg = $_.Exception.Message
+    Write-Log ('PSES bootstrap FAILED: ' + $msg)
+    # Clean up partial staging only -- NEVER the live bundle (non-destructive, 000024).
+    foreach ($tmp in @($tmpZip, $extractRoot)) {
+        try { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue } } catch { }
+    }
+    # Fail LOUD (000024, mirrors ensure-pssa.ps1 :111-114): a clear stderr line + non-zero exit
+    # so the orchestration layer (session-start) can SURFACE the failure instead of swallowing a
+    # silent, log-only miss. The one component without which nothing works must not fail quietly.
+    [Console]::Error.WriteLine('ensure-pses: PSES bootstrap failed for ' + $PsesTag + ' (' + $msg + '); see ' + $log)
+    exit 1
 }

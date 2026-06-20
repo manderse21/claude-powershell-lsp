@@ -480,13 +480,16 @@ function Get-Diagnostics([string]$filePath, [string]$cwd = '') {
 
     # Supervised restart seam (dispatch 000022): if the PSES child is not alive, do NOT
     # write to its closed stdin (that throws) and do NOT serve empty-as-clean. Return an
-    # explicit 'incomplete' FAST (well within the client hard cap); the daemon's idle loop
+    # explicit non-clean status FAST (well within the client hard cap); the daemon's idle loop
     # re-spawns PSES off the request path, so the NEXT edit finds it live. This is the
-    # request-arrives-on-a-down-PSES half of the false-clean fix.
+    # request-arrives-on-a-down-PSES half of the false-clean fix. 000024: an install-incomplete
+    # first start (the bundle never bootstrapped) serves the DISTINCT 'unavailable' status -- a
+    # broken install reads differently from a transient mid-session non-settle.
     if (-not (Test-PsesAlive)) {
-        Write-DLog ('diagnostics request while PSES down -> incomplete: ' + $uri)
-        return @{ ok = $true; status = 'incomplete'; cached = $false; records = @()
-            path = 'daemon-incomplete'; analysisMs = 0; codeActionMs = 0
+        $downStatus = if ($script:serveUnavailable) { 'unavailable' } else { 'incomplete' }
+        Write-DLog ('diagnostics request while PSES down -> ' + $downStatus + ': ' + $uri)
+        return @{ ok = $true; status = $downStatus; cached = $false; records = @()
+            path = ('daemon-' + $downStatus); analysisMs = 0; codeActionMs = 0
             recordCount = 0; correctionCount = 0 }
     }
 
@@ -605,20 +608,36 @@ function Write-SessionFile([string]$pipeName, [string]$state) {
 # ===========================================================================
 $script:startedIso = (Get-Date -Format 'o')
 $pipeName = 'powershell-lsp-' + $SessionId
+# First-start install-incomplete latch (000024): set $true when PSES cannot launch at first
+# start because the bundle never bootstrapped. The daemon then comes up to SERVE 'unavailable'
+# over the pipe (a visible banner on the first edit) instead of dying before the pipe exists.
+$script:serveUnavailable = $false
 Write-DLog ('--- daemon start: session=' + $SessionId + ' pipe=' + $pipeName + ' host=' + $PsHost + ' ---')
 
 if (-not (Start-Pses)) {
-    Write-DLog 'PSES launch failed; daemon exiting'
-    Write-SessionFile $pipeName 'failed'
-    exit 1
+    # First-start blind spot (000024, closes audit #1 daemon-half): dying here -- BEFORE the
+    # named-pipe server below -- made the client connect-fail and exit 0 SILENTLY, the exact
+    # false-clean 000022 killed mid-session, surviving at install time. Distinguish a MISSING
+    # BUNDLE (clean box: the bootstrap never completed) from any other launch failure. On a
+    # missing bundle do NOT exit -- fall through to create the pipe and serve 'unavailable' so
+    # the first edit shows a VISIBLE banner. A bundle-PRESENT launch failure (host vanished /
+    # init handshake timeout) is not this dispatch's install case: keep the prior fail-fast.
+    if (-not (Test-Path -LiteralPath (Get-PsesStartScript))) {
+        $script:serveUnavailable = $true
+        Write-DLog ('first-start: PSES bundle missing (' + (Get-PsesStartScript) + '); coming up to serve unavailable (000024)')
+    } else {
+        Write-DLog 'PSES launch failed (bundle present); daemon exiting'
+        Write-SessionFile $pipeName 'failed'
+        exit 1
+    }
 }
 
 $server = New-Object System.IO.Pipes.NamedPipeServerStream(
     $pipeName, [System.IO.Pipes.PipeDirection]::InOut, 1,
     [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)
 
-Write-SessionFile $pipeName 'ready'
-Write-DLog 'pipe server ready'
+Write-SessionFile $pipeName $(if ($script:serveUnavailable) { 'unavailable' } else { 'ready' })
+Write-DLog $(if ($script:serveUnavailable) { 'pipe server ready (serving unavailable -- install incomplete)' } else { 'pipe server ready' })
 
 $lastActivity = Get-Date
 $lastHeartbeat = [DateTime]::MinValue
@@ -629,9 +648,10 @@ try {
     while ($running) {
         $now = Get-Date
         if (($now - $lastHeartbeat).TotalSeconds -ge 10) {
-            # Keep the heartbeat HONEST: once the re-spawn budget is spent the daemon stays
-            # up but degraded -- it must not flip the session file back to 'ready' (000022).
-            Write-SessionFile $pipeName $(if ($script:psesGaveUp) { 'degraded' } else { 'ready' })
+            # Keep the heartbeat HONEST: a first-start install-incomplete daemon stays
+            # 'unavailable' (000024); once the re-spawn budget is spent the daemon stays up but
+            # 'degraded' -- neither must flip the session file back to 'ready' (000022).
+            Write-SessionFile $pipeName $(if ($script:serveUnavailable) { 'unavailable' } elseif ($script:psesGaveUp) { 'degraded' } else { 'ready' })
             $lastHeartbeat = $now
         }
         if (($now - $lastActivity).TotalMinutes -ge $IdleTtlMin) {
@@ -643,8 +663,11 @@ try {
         # the client's critical path -- instead of breaking the loop and exiting. A
         # transient crash recovers before the next edit; an exhausted budget keeps the
         # daemon UP serving 'incomplete' (never silently dead). The daemon now exits only
-        # on idle-TTL or an explicit shutdown.
-        if (-not (Test-PsesAlive)) { Restart-Pses 'idle-detected' | Out-Null }
+        # on idle-TTL or an explicit shutdown. Skipped when serving install-incomplete
+        # (000024): re-spawn cannot conjure a missing bundle -- it would only thrash
+        # Start-Pses on the absent start script. Mid-session re-spawn applies only to a
+        # daemon that started PSES at least once.
+        if (-not $script:serveUnavailable -and -not (Test-PsesAlive)) { Restart-Pses 'idle-detected' | Out-Null }
 
         # brief idle drain so PSES server requests get answered between clients (only when
         # a live child exists to pump)

@@ -29,6 +29,39 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.5.0] - 2026-06-20
+
+MINOR: extends the 000022 "never report clean when it could not analyze" guarantee from
+mid-session to install-time. A clean-box bootstrap failure (offline, behind a corporate
+proxy, or with GitHub blocked) is now VISIBLE -- the first edit on a clean-parsing file
+shows an explicit "diagnostics unavailable -- PowerShell editor services not installed"
+banner instead of silence that looked identical to "analyzed, clean." Entirely additive:
+the surface appears only on a broken install; the healthy warm path is byte-for-byte
+unchanged, and no `userConfig` knob is added, removed, or renamed.
+
+### Added
+
+- **Surface a silent first-start install failure (dispatch powershell-lsp/000024, closes
+  the 000023 launch-readiness audit's backlog #1).** When the PowerShell Editor Services
+  bundle never bootstrapped (a clean box with no network), the daemon now comes up far
+  enough to serve an explicit `unavailable` status over its named pipe instead of exiting
+  before the pipe exists -- so the first edit renders a visible "not installed -- the
+  bootstrap did not complete (network/proxy?)" banner rather than nothing. `session-start`
+  also surfaces the failure immediately via SessionStart `additionalContext`. The new
+  `unavailable` status is deliberately distinct from the transient `incomplete` (000022) --
+  a broken install needs a different remedy than a retryable miss -- and its wording is
+  owned in one place (`Get-DiagnosticsStatusBanner`), so the daemon and client cannot drift.
+
+### Fixed
+
+- **`ensure-pses` now fails loud and non-destructively (dispatch powershell-lsp/000024,
+  closes the 000023 audit's backlog #2).** A bootstrap failure now writes a clear stderr
+  message and exits non-zero (mirroring `ensure-pssa`), so the orchestration layer can see
+  and surface it instead of swallowing a silent, log-only miss. The bootstrap also stages
+  and verifies the download in a temp area before touching the live bundle (renaming any
+  existing bundle aside and restoring it on a swap failure), so a failed re-run leaves the
+  previously working bundle intact rather than deleting it before a single-attempt download.
+
 ## [1.4.0] - 2026-06-15
 
 MINOR: marks two capabilities that shipped since 1.3.0 -- repo-local

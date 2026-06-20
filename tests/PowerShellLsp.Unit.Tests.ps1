@@ -481,8 +481,25 @@ Describe 'Get-DiagnosticsStatusBanner -- the visible, non-clean wording (dispatc
         (Get-DiagnosticsStatusBanner 'incomplete' 'C:\x\foo.ps1') |
             Should -Not -BeExactly (Get-DiagnosticsStatusBanner 'degraded' 'C:\x\foo.ps1')
     }
+    It 'unavailable (dispatch 000024): a DISTINCT install-incomplete message naming the file' {
+        # The install-time case -- the PSES bundle never bootstrapped. Its remediation differs
+        # from the transient 'incomplete' (fix the install/network, not "retry"), so it must
+        # read distinctly: "not installed" / "bootstrap did not complete", not "did not settle."
+        $b = Get-DiagnosticsStatusBanner 'unavailable' 'C:\x\foo.ps1'
+        $b | Should -Match 'unavailable'
+        $b | Should -Match 'not installed'
+        $b | Should -Match 'bootstrap'
+        $b | Should -Match ([regex]::Escape('C:\x\foo.ps1'))
+    }
+    It 'unavailable (dispatch 000024) is DIFFERENT from BOTH incomplete and degraded (three categories, not one)' {
+        # 000024 extends the 000022 "make failure modes distinct" thesis to install-time: a
+        # broken install must never render identically to a transient miss or a parser-only pass.
+        $u = Get-DiagnosticsStatusBanner 'unavailable' 'C:\x\foo.ps1'
+        $u | Should -Not -BeExactly (Get-DiagnosticsStatusBanner 'incomplete' 'C:\x\foo.ps1')
+        $u | Should -Not -BeExactly (Get-DiagnosticsStatusBanner 'degraded' 'C:\x\foo.ps1')
+    }
     It 'is ASCII-only (PS 5.1 em-dash trap)' {
-        foreach ($s in @('incomplete', 'degraded')) {
+        foreach ($s in @('incomplete', 'degraded', 'unavailable')) {
             $b = Get-DiagnosticsStatusBanner $s 'C:\x\foo.ps1'
             (@([System.Text.Encoding]::UTF8.GetBytes($b) | Where-Object { $_ -gt 127 }).Count) | Should -Be 0
         }

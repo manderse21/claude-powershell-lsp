@@ -213,12 +213,13 @@ try {
 
     $diags = @(Get-Prop $resp 'diagnostics')
     $omitted = [int](Get-Prop $resp 'omitted')
-    # Analysis status (dispatch 000022): '' / 'ok' = a clean, settled pass (behave exactly
-    # as before); 'incomplete' = the pass did NOT settle (this edit was not checked);
-    # 'degraded' = a settled but parser-only pass (PSScriptAnalyzer unavailable). The two
-    # non-clean banners ride the SAME additionalContext channel as the diagnostics, so the
-    # user sees them inline -- "could not analyze" and "fewer rules" never look like
-    # "analyzed, found nothing." A clean pass adds NOTHING, so the warm output is unchanged.
+    # Analysis status (dispatch 000022/000024): '' / 'ok' = a clean, settled pass (behave
+    # exactly as before); 'incomplete' = the pass did NOT settle (this edit was not checked);
+    # 'degraded' = a settled but parser-only pass (PSScriptAnalyzer unavailable); 'unavailable'
+    # = the PSES bundle never bootstrapped at first start (install incomplete -- 000024). The
+    # non-clean banners ride the SAME additionalContext channel as the diagnostics, so the user
+    # sees them inline -- "could not analyze", "fewer rules", and "not installed" never look
+    # like "analyzed, found nothing." A clean pass adds NOTHING, so the warm output is unchanged.
     $status = [string](Get-Prop $resp 'status')
 
     # Build the feedback block. The diagnostics rendering is byte-identical to before;
@@ -252,8 +253,12 @@ try {
             }
         }
         if ($omitted -gt 0) { [void]$sb.AppendLine('  ... and ' + $omitted + ' more (per-file cap)') }
-    } elseif ($status -eq 'incomplete') {
-        [void]$sb.AppendLine((Get-DiagnosticsStatusBanner 'incomplete' $path))
+    } elseif ($status -eq 'incomplete' -or $status -eq 'unavailable') {
+        # 000022 'incomplete' (transient non-settle) and 000024 'unavailable' (install
+        # incomplete) both render their banner ALONE when there are no trustworthy findings.
+        # The primitive owns the wording; pass $status so each renders its distinct message --
+        # a broken install ('unavailable') never reads as a retryable miss ('incomplete').
+        [void]$sb.AppendLine((Get-DiagnosticsStatusBanner $status $path))
     }
     $context = $sb.ToString().TrimEnd()
 

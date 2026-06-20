@@ -552,11 +552,14 @@ function Select-OrderedDiagnostics {
         @{ Expression = { [int]$_.col } })
 }
 
-# --- analysis status: clean vs incomplete vs degraded (dispatch 000022) ----
+# --- analysis status: clean vs incomplete vs degraded vs unavailable (000022/000024) ----
 # The one failure direction a linter must never have is "could not analyze" reading
 # identical to "analyzed, found nothing." These two PURE helpers separate the cases and
 # own the exact user-facing wording, so the daemon (which shapes the status) and the
-# client (which renders it) cannot drift, and the wording is unit-testable.
+# client (which renders it) cannot drift, and the wording is unit-testable. 000024 extends
+# the set with an install-time 'unavailable' (the bundle never bootstrapped) -- the banner
+# helper owns its wording too; Resolve-AnalysisStatus is unchanged (it maps a LIVE pass's
+# settled/pssa state, whereas 'unavailable' is produced by the daemon's first-start seam).
 #
 #   Settled = a publishDiagnostics result actually arrived for this pass (regardless of
 #     count -- zero diagnostics on a SETTLED pass is genuinely clean). NOT settled = the
@@ -586,11 +589,19 @@ function Get-DiagnosticsStatusBanner {
     # 'degraded' parser-only case (different meaning + remediation). Adversarial control:
     # return a non-empty string for 'ok' and the byte-identical warm-path unit guard
     # goes RED.
+    #
+    # 'unavailable' (dispatch 000024) is the INSTALL-TIME case: the PSES bundle never
+    # bootstrapped (clean box, offline/proxy), so the daemon could not launch PSES at first
+    # start. It is DISTINCT from the transient 'incomplete' on purpose -- the remediation
+    # differs (fix the install/network, not "retry"), so a broken install must never read as
+    # "this edit did not settle, try again." Confirmed (Mike, 000024 Q(a)): a separate status
+    # with its own actionable wording, NOT routed through 'incomplete'.
     param([string]$Status, [string]$Path)
     switch ($Status) {
-        'incomplete' { return ('PowerShell diagnostics unavailable for ' + $Path + ': analysis did not complete -- this edit was NOT checked.') }
-        'degraded'   { return ('PowerShell diagnostics for ' + $Path + ': parser-only mode -- PSScriptAnalyzer unavailable, lint rules were NOT checked (syntax errors are still reported).') }
-        default      { return '' }
+        'incomplete'  { return ('PowerShell diagnostics unavailable for ' + $Path + ': analysis did not complete -- this edit was NOT checked.') }
+        'degraded'    { return ('PowerShell diagnostics for ' + $Path + ': parser-only mode -- PSScriptAnalyzer unavailable, lint rules were NOT checked (syntax errors are still reported).') }
+        'unavailable' { return ('PowerShell diagnostics unavailable for ' + $Path + ': PowerShell editor services are not installed -- the bootstrap did not complete (network/proxy?). This edit was NOT checked. See logs/ensure-pses.log.') }
+        default       { return '' }
     }
 }
 

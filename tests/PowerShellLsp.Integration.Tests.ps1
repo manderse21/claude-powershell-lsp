@@ -760,3 +760,192 @@ Describe 'Integration: supervised restart + incomplete/degraded status (dispatch
         $out | Should -Match 'unavailable'
     }
 }
+
+# ===========================================================================
+# First-start install-incomplete is VISIBLE, never silence (dispatch 000024)
+# ===========================================================================
+Describe 'Integration: first-start install-incomplete is VISIBLE (dispatch 000024)' -Skip:$script:SkipIntegration {
+    # Extends the 000022 false-clean guarantee from MID-SESSION to INSTALL-TIME. The 000023
+    # audit (dead-proxy probe) proved a clean-box bootstrap failure is silent end to end:
+    # ensure-pses fails log-only, session-start swallows it, and the daemon exits BEFORE the
+    # pipe -- so the client connect-fails and the first edit shows NOTHING (identical to
+    # "analyzed, clean"). These tests drive that exact clean-box scenario and assert it is now
+    # VISIBLE: a missing-bundle first start serves 'unavailable', ensure-pses fails loud and
+    # non-destructively, and session-start surfaces the failure instead of swallowing it.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+
+        # Run a plugin script under pwsh with an explicit data root + extra env; capture stdout,
+        # stderr, and the exit code SEPARATELY (the fail-loud test asserts on all three).
+        function Invoke-CaptureU {
+            param([string]$ScriptPath, [string]$DataRoot, [string[]]$ExtraArgs, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+            Add-ProcessArguments $psi ((@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $outT = $p.StandardOutput.ReadToEndAsync()
+            $errT = $p.StandardError.ReadToEndAsync()
+            if (-not $p.WaitForExit(60000)) { try { $p.Kill($true) } catch { }; return @{ ExitCode = -999; Out = ''; Err = 'timeout' } }
+            [void]$outT.Wait(2000); [void]$errT.Wait(2000)
+            return @{ ExitCode = $p.ExitCode; Out = $outT.Result; Err = $errT.Result }
+        }
+
+        # Run a hook (session-start / lsp-client) with stdin JSON + extra env; return stdout.
+        function Invoke-HookEnvU {
+            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            Add-ProcessArguments $psi ((@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+            if ($StdinJson) {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
+                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
+            }
+            $p.StandardInput.Close()
+            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            [void]$stdoutTask.Wait(1500)
+            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+        }
+
+        # Launch pses-daemon.ps1 DIRECTLY with arbitrary args + env; return the Process. The
+        # daemon logs to files; drain stdout/stderr so their buffers never fill.
+        function Start-RawDaemonU {
+            param([string]$Sid, [string]$DataRoot, [string[]]$ExtraArgs, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+            $daemon = Join-Path $script:U_ScriptsDir 'pses-daemon.ps1'
+            $argList = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $daemon,
+                '-SessionId', $Sid, '-PsHost', 'pwsh', '-DataRoot', $DataRoot) + @($ExtraArgs)
+            Add-ProcessArguments $psi ($argList | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $null = $p.StandardOutput.ReadToEndAsync()
+            $null = $p.StandardError.ReadToEndAsync()
+            return $p
+        }
+
+        # Wait for the daemon's session file to reach a SPECIFIC state (e.g. 'unavailable').
+        function Wait-DaemonStateU {
+            param([string]$DataRoot, [string]$Sid, [string]$State, [int]$Tries = 80)
+            $sf = Join-Path $DataRoot ('session/' + $Sid + '.json')
+            for ($i = 0; $i -lt $Tries; $i++) {
+                if (Test-Path $sf) {
+                    $o = Get-Content $sf -Raw | ConvertFrom-Json
+                    if ([string](Get-Prop $o 'state') -eq $State) { return $o }
+                }
+                Start-Sleep -Milliseconds 300
+            }
+            return $null
+        }
+
+        $script:U_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        # A dead proxy forces every outbound download to a refused address -- the audit's own
+        # method, deterministic on pwsh (.NET Core honors HTTP(S)_PROXY env). No real network.
+        $script:U_DeadProxy = @{ HTTPS_PROXY = 'http://127.0.0.1:1'; HTTP_PROXY = 'http://127.0.0.1:1'; ALL_PROXY = 'http://127.0.0.1:1' }
+
+        $mk = {
+            param($tag)
+            $d = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000024-' + $tag + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+            return $d
+        }
+        $script:U_RootMarquee = & $mk 'marquee'
+        $script:U_RootLoud = & $mk 'loud'
+        $script:U_RootNonDestr = & $mk 'nondestr'
+        $script:U_RootSurface = & $mk 'surface'
+
+        # Seed a prior "working" bundle (sentinel start script) for the non-destructive test,
+        # but write NO marker -- so ensure-pses skips its fast-path no-op and takes the
+        # re-bootstrap path, where the OLD code wiped the bundle BEFORE the single download.
+        $script:U_Seed = Join-Path $script:U_RootNonDestr 'PowerShellEditorServices/PowerShellEditorServices/Start-EditorServices.ps1'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $script:U_Seed) | Out-Null
+        'SENTINEL-PRIOR-BUNDLE-000024' | Set-Content -LiteralPath $script:U_Seed -Encoding ascii
+
+        # (marquee) launch the daemon against a guaranteed-MISSING bundle. It must come up
+        # SERVING 'unavailable' (create the pipe + write the session file) -- not exit 1 before
+        # the pipe (the old first-start blind spot). PSES_BUNDLE_PATH pins the missing path so
+        # the test is hermetic regardless of any ambient bundle under CLAUDE_PLUGIN_DATA.
+        $script:U_Missing = Join-Path $script:U_RootMarquee 'no-such-bundle'
+        $script:U_Sid = 'unavail-000024-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:U_Proc = Start-RawDaemonU -Sid $script:U_Sid -DataRoot $script:U_RootMarquee -ExtraArgs @() -ExtraEnv @{ PSES_BUNDLE_PATH = $script:U_Missing }
+        $script:U_Info = Wait-DaemonStateU -DataRoot $script:U_RootMarquee -Sid $script:U_Sid -State 'unavailable'
+    }
+
+    AfterAll {
+        if ($null -ne $script:U_Info) {
+            foreach ($pidVal in @($script:U_Info.pid, $script:U_Info.psesPid)) {
+                if ($pidVal) { Stop-Process -Id ([int]$pidVal) -Force -ErrorAction SilentlyContinue }
+            }
+        }
+        try { if ($null -ne $script:U_Proc -and -not $script:U_Proc.HasExited) { $script:U_Proc.Kill($true) } } catch { }
+        foreach ($d in @($script:U_RootMarquee, $script:U_RootLoud, $script:U_RootNonDestr, $script:U_RootSurface)) {
+            if ($d -and (Test-Path -LiteralPath $d)) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It '(marquee) a clean-box first edit on a missing bundle shows a VISIBLE unavailable banner, never silence' {
+        # The daemon came up serving 'unavailable' instead of dying before the pipe (000024).
+        $script:U_Info | Should -Not -BeNullOrEmpty
+        [string](Get-Prop $script:U_Info 'state') | Should -Be 'unavailable'
+        (Get-Process -Id ([int]$script:U_Info.pid) -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
+
+        # Drive a FIRST edit on a clean-PARSING file (so it passes the client's in-process
+        # parser pre-pass and actually reaches the daemon). Before 000024 this showed nothing.
+        $fix = Join-Path $script:U_RootMarquee 'pester-unavailable-fixture.ps1'
+        "function Frobnicate-Unavailable {`n    Get-Process`n}" | Set-Content -LiteralPath $fix -Encoding ascii
+        $out = Invoke-HookEnvU -ScriptPath (Join-Path $script:U_ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:U_Sid; tool_input = @{ file_path = $fix }; cwd = $script:U_RootMarquee } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:U_RootMarquee -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+
+        $out | Should -Not -BeNullOrEmpty                       # NOT silence -- the whole point
+        $out | Should -Match 'unavailable'                      # the visible banner
+        $out | Should -Match 'not installed'                    # install-specific (distinct wording)
+        $out | Should -Match 'bootstrap'
+        $out | Should -Not -Match 'analysis did not complete'   # NOT the transient 'incomplete' banner
+        $out | Should -Not -Match 'PSUseApprovedVerbs'          # NOT a settled finding list
+    }
+
+    It 'ensure-pses fails LOUD on an unreachable download: non-zero exit + a clear stderr message' {
+        $r = Invoke-CaptureU -ScriptPath (Join-Path $script:U_ScriptsDir 'ensure-pses.ps1') -DataRoot $script:U_RootLoud -ExtraArgs @() -ExtraEnv $script:U_DeadProxy
+        $r.ExitCode | Should -Not -Be 0
+        $r.Err | Should -Match 'ensure-pses'
+        $r.Err | Should -Match 'bootstrap failed'
+    }
+
+    It 'ensure-pses is NON-DESTRUCTIVE on a failed re-run: the pre-existing bundle survives' {
+        # ensure-pses targets CLAUDE_PLUGIN_DATA/PowerShellEditorServices (NOT PSES_BUNDLE_PATH),
+        # so the seeded sentinel lives inside the very bundle the OLD code wiped before download.
+        $r = Invoke-CaptureU -ScriptPath (Join-Path $script:U_ScriptsDir 'ensure-pses.ps1') -DataRoot $script:U_RootNonDestr -ExtraArgs @() -ExtraEnv $script:U_DeadProxy
+        $r.ExitCode | Should -Not -Be 0                                    # the re-bootstrap failed (loud)
+        (Test-Path -LiteralPath $script:U_Seed) | Should -BeTrue           # prior bundle SURVIVED
+        (Get-Content -LiteralPath $script:U_Seed -Raw) | Should -Match 'SENTINEL-PRIOR-BUNDLE-000024'
+    }
+
+    It 'session-start SURFACES a bootstrap failure via additionalContext (no longer swallowed)' {
+        $sid = 'ss-surface-000024-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $out = Invoke-HookEnvU -ScriptPath (Join-Path $script:U_ScriptsDir 'session-start.ps1') `
+            -StdinJson (@{ session_id = $sid } | ConvertTo-Json -Compress) `
+            -ExtraArgs @('-PreferredHost', 'pwsh') -CapMs 60000 -DataRoot $script:U_RootSurface -ExtraEnv $script:U_DeadProxy
+
+        $out | Should -Match 'hookSpecificOutput'      # emitted on the SessionStart channel
+        $out | Should -Match 'SessionStart'
+        $out | Should -Match 'bootstrap'               # the actionable failure message
+        $out | Should -Match 'unavailable'
+
+        # Reap the detached daemon session-start launched (it came up serving 'unavailable').
+        $sf = Join-Path $script:U_RootSurface ('session/' + $sid + '.json')
+        if (Test-Path $sf) {
+            $o = Get-Content $sf -Raw | ConvertFrom-Json
+            foreach ($pidVal in @((Get-Prop $o 'pid'), (Get-Prop $o 'psesPid'))) { if ($pidVal) { Stop-Process -Id ([int]$pidVal) -Force -ErrorAction SilentlyContinue } }
+        }
+    }
+}

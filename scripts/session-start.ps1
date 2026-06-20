@@ -56,6 +56,17 @@ function Write-SLog([string]$m) {
     try { ('[' + (Get-Date -Format 'o') + '] ' + $m) | Out-File -FilePath $startLog -Append -Encoding ascii } catch { }
 }
 
+function Write-SessionStartContext([string]$Context) {
+    # 000024 (closes audit #1 surface-half): surface a bootstrap failure to the user at
+    # SessionStart via the SAME hookSpecificOutput.additionalContext channel the PostToolUse
+    # diagnostics ride. Emitted to stdout ONLY on a bootstrap failure -- the healthy path
+    # writes nothing here, so its output stays byte-identical to before. The daemon ALSO comes
+    # up serving 'unavailable' so the first edit re-surfaces the banner; this is the earlier,
+    # at-startup half of the same never-silent guarantee.
+    $out = @{ hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $Context } }
+    ($out | ConvertTo-Json -Depth 6 -Compress)
+}
+
 function Get-SessionIdFromStdin {
     try {
         $raw = Get-StdinText
@@ -167,12 +178,30 @@ try {
     $hostExe = Resolve-PsHost $PreferredHost
     if ($null -eq $hostExe) { Write-SLog 'no PowerShell host (pwsh/powershell) found; aborting bring-up'; exit 0 }
 
-    # 1) ensure PSES (existing bootstrap) and 2) ensure PSSA -- both idempotent.
+    # 1) ensure PSES (existing bootstrap) and 2) ensure PSSA -- both idempotent. CHECK each
+    # step's exit code instead of swallowing it (000024, closes audit #1 surface-half): the old
+    # `2>&1 | Out-Null` discarded BOTH stderr and $LASTEXITCODE, so even ensure-pses's new loud
+    # exit 1 would have vanished here. Capture the combined output to the log and remember a
+    # non-zero exit so the bootstrap failure can be SURFACED to the user below.
+    $bootstrapFailed = $false
     foreach ($step in @('ensure-pses.ps1', 'ensure-pssa.ps1')) {
         try {
-            & $hostExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptDir $step) 2>&1 | Out-Null
-            Write-SLog ('ran ' + $step)
-        } catch { Write-SLog ($step + ' error: ' + $_.Exception.Message) }
+            $stepOut = & $hostExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptDir $step) 2>&1
+            $stepExit = $LASTEXITCODE
+            foreach ($ln in @($stepOut)) { if (-not [string]::IsNullOrWhiteSpace([string]$ln)) { Write-SLog ($step + ': ' + ([string]$ln)) } }
+            Write-SLog ('ran ' + $step + ' (exit ' + $stepExit + ')')
+            if ($stepExit -ne 0) { $bootstrapFailed = $true; Write-SLog ($step + ' FAILED (exit ' + $stepExit + ')') }
+        } catch { $bootstrapFailed = $true; Write-SLog ($step + ' error: ' + $_.Exception.Message) }
+    }
+    # Surface a bootstrap failure NOW, at SessionStart (000024). The healthy path leaves
+    # $bootstrapFailed $false and emits nothing -- byte-identical to before. On failure, one
+    # actionable additionalContext line tells the user their edits will not be checked until
+    # the install completes; the detached daemon launched below independently comes up serving
+    # 'unavailable' so the first edit re-surfaces it on the PostToolUse channel.
+    if ($bootstrapFailed) {
+        $bootstrapMsg = 'PowerShell diagnostics unavailable: the PowerShell editor services bootstrap did not complete (network/proxy?). Edits will NOT be linted until the install completes. See ' + (Join-Path $logDir 'ensure-pses.log') + '.'
+        Write-SLog 'bootstrap failure detected; surfacing via SessionStart additionalContext'
+        Write-SessionStartContext $bootstrapMsg
     }
 
     # 3) log sweep
