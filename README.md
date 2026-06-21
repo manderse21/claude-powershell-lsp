@@ -12,35 +12,57 @@ This is language tooling, not project tooling: a standalone plugin that carries
 open a PowerShell file, and a single warm PSES serves the whole session so each
 edit pays a pipe round-trip (~2 s) instead of a cold start (~6 s).
 
-## Requirements
+## Prerequisites
 
-- **PowerShell 7+ (`pwsh`) is required.** As of 1.1.1 the plugin's hooks launch under
-  `pwsh`; Windows PowerShell 5.1 alone cannot bootstrap them. Install pwsh from
-  <https://aka.ms/powershell> or via `winget install Microsoft.PowerShell`.
-- Windows PowerShell 5.1 (`powershell`) is still supported as the **PSES child host**:
-  set `ps_host` to `powershell` to run the language server under 5.1 (the hooks
-  themselves still require `pwsh`).
-- Internet access on first run: PSES is downloaded on first use (not vendored).
+Check these before you start; the [Quick start](#quick-start) below runs them in order.
 
-## Install
+- [ ] **PowerShell 7+ (`pwsh`) on your PATH.** As of 1.1.1 the plugin's hooks launch
+  under `pwsh`; Windows PowerShell 5.1 alone cannot bootstrap them. Check with
+  `pwsh -v`; if it is missing, step 1 of the Quick start installs it.
+- [ ] **Internet access on the first enabled session.** PowerShell Editor Services
+  (PSES) and PSScriptAnalyzer are downloaded on first use, not vendored (see
+  [Pinned versions](#pinned-versions) for the exact pins). The download is idempotent
+  and marker-gated -- it runs once and no-ops every session after. Offline or behind a
+  proxy, the first run surfaces an honest `unavailable` banner instead of failing
+  silently (see [Diagnostics status](#diagnostics-status)).
+- [ ] **On managed / locked-down Windows,** a security control (WDAC / AppLocker /
+  ExecutionPolicy / Constrained Language Mode) can block a downloaded component; it
+  then reads as `unavailable` rather than crashing. See [Troubleshooting](#troubleshooting).
 
-Add this repository as a marketplace, then install the plugin:
+Windows PowerShell 5.1 can still serve as the PSES *child host* (set `ps_host` to
+`powershell`); it simply cannot launch the hooks themselves. See
+[Platform support](#platform-support).
 
-```
+## Quick start
+
+Copy-paste, top to bottom:
+
+```text
+# 1. Prerequisite (run in a terminal) -- skip if `pwsh -v` already works:
+winget install Microsoft.PowerShell
+
+# 2. In Claude Code -- add the marketplace, install, then enable the plugin:
 /plugin marketplace add manderse21/claude-powershell-lsp
 /plugin install powershell-lsp@claude-powershell-lsp
-```
-
-The plugin ships **disabled by default** (`defaultEnabled: false`) because it
-downloads a bundle and spawns a language server. Enable it explicitly:
-
-```
 /plugin enable powershell-lsp
+
+# 3. Start a new session (or run /reload-plugins) so the hooks load,
+#    then open a .ps1 / .psm1 / .psd1 file to bring the language server up.
 ```
 
-Then start a new session (or `/reload-plugins`). On the first session with the
-plugin enabled, the `SessionStart` hook bootstraps PSES into your plugin data
-directory. Open a `.ps1` file to bring the language server up.
+The machinery self-bootstraps, so the sequence above is the whole job. Three of its
+steps are deliberate -- documented here rather than removed:
+
+- **`/plugin enable` stays an explicit step.** The plugin ships disabled by default
+  (`defaultEnabled: false`) because it downloads a bundle and spawns a language server,
+  so enabling it is a conscious opt-in.
+- **The new session / reload is required** -- Claude Code loads plugin hooks at session
+  start, so enabling alone does not load them.
+- **The first enabled session does the rest itself.** Its `SessionStart` hook downloads
+  PSES and vendors PSScriptAnalyzer (both idempotent and marker-gated), then launches
+  one warm daemon for the session. The first edit may briefly read `incomplete` while
+  PSES finishes starting, then settles on the next edit (see
+  [Diagnostics status](#diagnostics-status)).
 
 ## Configuration
 
