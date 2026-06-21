@@ -1154,23 +1154,287 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
         $out | Should -Not -Match 'was not reachable'         # the never-silent backstop does NOT fire on a healthy pass (clean-pass boundary)
     }
 
-    It 'never-silent backstop: a clean edit with NO reachable daemon surfaces an honest banner, not silence (closes the residual no-pipe window + an idle-TTL/stopped daemon)' {
-        # The fullest expression of the never-silent thesis: even when there is NO pipe at all --
-        # the brief daemon-launch sliver, or a session whose daemon idle-TTL'd / died -- a clean
-        # edit must not read as "analyzed, clean." A session id with no daemon = guaranteed no pipe;
-        # a clean-PARSING file passes the client's in-process parser pre-pass and reaches the daemon
-        # path ($null unreachable -> the client backstop), exactly the residual window pipe-first
-        # cannot reach from the daemon side. Gated on $null, which a healthy pass never is (the
+    It 'never-silent backstop: an unreachable daemon that cannot be auto-recovered surfaces an honest banner, not silence (000028 backstop, 000030 fallback)' {
+        # The fullest expression of the never-silent thesis: even when there is NO pipe at all -- the
+        # brief daemon-launch sliver, or a session whose daemon idle-TTL'd / died -- a clean edit must
+        # not read as "analyzed, clean." Since 000030 an unreachable daemon is first AUTO-RELAUNCHED;
+        # the backstop banner is the FALLBACK for when recovery cannot help. Force that fallback
+        # deterministically by pre-writing a FRESH relaunch cooldown stamp (a relaunch already fired
+        # within the window), so the client SUPPRESSES the relaunch and falls straight to its honest
+        # banner -- no real launch, no timing race. Gated on $null, which a healthy pass never is (the
         # warm-start It above proves the backstop stays silent on a real result).
         $noDaemonSid = 'pf-nodaemon-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $sessDir = Join-Path $script:P_Data 'session'
+        New-Item -ItemType Directory -Force -Path $sessDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $sessDir ($noDaemonSid + '.relaunch')) -Value 'pre-existing' -Encoding ascii -Force
         $fix = Join-Path $script:P_Data 'nodaemon-fixture.ps1'
         "function Get-NoDaemon { 1 }" | Set-Content -LiteralPath $fix -Encoding ascii
         $out = Invoke-PluginHook -ScriptPath (Join-Path $script:P_ScriptsDir 'lsp-client.ps1') `
             -StdinJson (@{ session_id = $noDaemonSid; tool_input = @{ file_path = $fix }; cwd = $script:P_Data } | ConvertTo-Json -Compress) `
             -ExtraArgs @() -CapMs 25000 -DataRoot $script:P_Data -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '6000' }
         $out | Should -Not -BeNullOrEmpty                  # NOT silence -- the backstop fired
-        $out | Should -Match 'was not reachable'           # the client-side unreachable banner
+        $out | Should -Match 'was not reachable'           # the client-side unreachable banner (030 wording keeps this)
         $out | Should -Match 'this edit was NOT checked'
+    }
+}
+
+Describe 'Integration: auto-relaunch the idle-stopped daemon (dispatch 000030)' -Skip:$script:SkipIntegration {
+    # 000030 turns the RECOVERABLE subset of the 000028 no-daemon state into SILENT RECOVERY: an edit
+    # that finds the daemon unreachable ($null = no pipe = a clean idle-stop / crash / pre-pipe sliver)
+    # silently relaunches it via the SAME pipe-first launch session-start uses, then reconnects. The
+    # gate is the $null-vs-status='unavailable' split, already structural at the pipe: a PERMANENT init
+    # failure stays UP serving 'unavailable' (reachable, never $null), so it is never relaunched. All
+    # cases are forced DETERMINISTICALLY (kill+remove for a clean stop; a pre-written stamp for the
+    # cooldown; a bundle-less root for a relaunch that cannot initialize; a dummy-exit bundle for the
+    # permanent reachable case) -- NO wall-clock gate (the 000026 flaky-proxy lesson).
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+
+        function Invoke-PluginHook {
+            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+            if ($StdinJson) {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
+                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
+            }
+            $p.StandardInput.Close()
+            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            [void]$stdoutTask.Wait(1500)
+            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+        }
+
+        function Start-RawDaemon {
+            param([string]$Sid, [string]$DataRoot, [string[]]$ExtraArgs, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+            $daemon = Join-Path $script:RL_ScriptsDir 'pses-daemon.ps1'
+            $argList = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $daemon,
+                '-SessionId', $Sid, '-PsHost', 'pwsh', '-DataRoot', $DataRoot) + @($ExtraArgs)
+            Add-ProcessArguments $psi ($argList | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $null = $p.StandardOutput.ReadToEndAsync(); $null = $p.StandardError.ReadToEndAsync()
+            return $p
+        }
+
+        function Wait-DaemonAnyState {
+            param([string]$DataRoot, [string]$Sid, [string[]]$States, [int]$Tries = 80)
+            $sf = Join-Path $DataRoot ('session/' + $Sid + '.json')
+            for ($i = 0; $i -lt $Tries; $i++) {
+                if (Test-Path $sf) {
+                    $o = Get-Content $sf -Raw | ConvertFrom-Json
+                    if ($States -contains [string](Get-Prop $o 'state')) { return $o }
+                }
+                Start-Sleep -Milliseconds 400
+            }
+            return $null
+        }
+
+        function Get-SessionInfo {
+            param([string]$DataRoot, [string]$Sid)
+            $sf = Join-Path $DataRoot ('session/' + $Sid + '.json')
+            if (Test-Path $sf) { try { return (Get-Content $sf -Raw | ConvertFrom-Json) } catch { return $null } }
+            return $null
+        }
+
+        function Stop-DaemonBySession {
+            param([string]$DataRoot, [string]$Sid)
+            $o = Get-SessionInfo -DataRoot $DataRoot -Sid $Sid
+            if ($null -ne $o) {
+                foreach ($pidVal in @((Get-Prop $o 'pid'), (Get-Prop $o 'psesPid'))) {
+                    if ($pidVal) { Stop-Process -Id ([int]$pidVal) -Force -ErrorAction SilentlyContinue }
+                }
+            }
+        }
+
+        function New-DummyBundle {
+            param([string]$Root, [string]$Body)
+            $s = Join-Path $Root 'PowerShellEditorServices/Start-EditorServices.ps1'
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $s) | Out-Null
+            Set-Content -LiteralPath $s -Value $Body -Encoding ascii
+            return $Root
+        }
+
+        $script:RL_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:RL_Client = Join-Path $script:RL_ScriptsDir 'lsp-client.ps1'
+        $script:RL_Sids = @{}                                          # sid -> dataRoot (reaped in AfterAll)
+        $script:RL_Procs = New-Object System.Collections.Generic.List[object]
+
+        # Real bundle on the shared root (idempotent bootstrap) for the recovery + cooldown tests.
+        $script:RL_Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) { $env:PSLS_TEST_DATA_DIR } else { Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data' }
+        New-Item -ItemType Directory -Force -Path $script:RL_Data | Out-Null
+        $env:CLAUDE_PLUGIN_DATA = $script:RL_Data
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:RL_ScriptsDir 'ensure-pses.ps1') 2>&1 | Out-Null
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:RL_ScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+        $script:RL_RealBundle = Join-Path $script:RL_Data 'PowerShellEditorServices'
+
+        # Bundle-less root for the "relaunch cannot initialize" test (no PowerShellEditorServices).
+        $script:RL_NoBundle = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000030-nobundle-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:RL_NoBundle | Out-Null
+        $script:RL_MissingBundle = Join-Path $script:RL_NoBundle 'no-such-bundle'
+
+        # Dummy-exit bundle for the permanent sub-case B test (present, init fails -> unavailable).
+        $script:RL_DummyRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000030-dummy-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:RL_DummyRoot | Out-Null
+        $script:RL_DummyBundle = New-DummyBundle -Root (Join-Path $script:RL_DummyRoot 'dummy') -Body "exit 0`n"
+    }
+
+    AfterAll {
+        foreach ($entry in $script:RL_Sids.GetEnumerator()) {
+            Stop-DaemonBySession -DataRoot $entry.Value -Sid $entry.Key
+            foreach ($suffix in @('.json', '.relaunch')) {
+                $f = Join-Path $entry.Value ('session/' + $entry.Key + $suffix)
+                if (Test-Path $f) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+            }
+        }
+        foreach ($p in $script:RL_Procs) { try { if ($null -ne $p -and -not $p.HasExited) { $p.Kill($true) } } catch { } }
+        foreach ($d in @($script:RL_NoBundle, $script:RL_DummyRoot)) {
+            if ($d -and (Test-Path -LiteralPath $d)) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It '(recovery) a cleanly idle-stopped daemon is SILENTLY relaunched and recovers; a subsequent edit gets real analysis (the headline)' {
+        $sid = 'rl-recover-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $script:RL_Sids[$sid] = $script:RL_Data
+        # Bring up a real daemon to ready, then simulate a CLEAN idle-stop. The idle path's finally
+        # disposes the pipe + removes the session file, so the observable trace is exactly "no pipe,
+        # no session file." Reproduce that end state deterministically (kill the daemon + its PSES,
+        # remove the session file + any stamp); the client cannot tell HOW the daemon went away, only
+        # that it is gone -- faithful to a real clean idle-stop, without a timing race.
+        $bundleEnv = @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000'; PSES_BUNDLE_PATH = $script:RL_RealBundle }
+        $script:RL_Procs.Add((Start-RawDaemon -Sid $sid -DataRoot $script:RL_Data -ExtraArgs @() -ExtraEnv @{ PSES_BUNDLE_PATH = $script:RL_RealBundle }))
+        $info = Wait-DaemonAnyState -DataRoot $script:RL_Data -Sid $sid -States @('ready') -Tries 80
+        $info | Should -Not -BeNullOrEmpty
+        $oldPid = [int]$info.pid
+        Stop-DaemonBySession -DataRoot $script:RL_Data -Sid $sid
+        for ($i = 0; $i -lt 50 -and (Get-Process -Id $oldPid -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 100 }
+        foreach ($suffix in @('.json', '.relaunch')) {
+            $f = Join-Path $script:RL_Data ('session/' + $sid + $suffix)
+            if (Test-Path $f) { Remove-Item -LiteralPath $f -Force }
+        }
+
+        # Drive an edit on a file with a KNOWN finding (unapproved verb). A recovered+ready daemon
+        # returns the finding; a still-initializing relaunched daemon returns the transient 'incomplete'
+        # or the "is being restarted" backstop. Either way NON-EMPTY and NOT a permanent-failure banner.
+        $fix = Join-Path $script:RL_Data 'rl-recover-fixture.ps1'
+        "function Frobnicate-Recover {`n    Get-Process`n}" | Set-Content -LiteralPath $fix -Encoding ascii
+        $out = Invoke-PluginHook -ScriptPath $script:RL_Client `
+            -StdinJson (@{ session_id = $sid; tool_input = @{ file_path = $fix }; cwd = $script:RL_Data } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:RL_Data -ExtraEnv $bundleEnv
+
+        $out | Should -Not -BeNullOrEmpty                                  # NOT silence
+        $out | Should -Not -Match 'could not be restarted automatically'   # it WAS restarted
+        $out | Should -Not -Match 'whole session'                         # not the permanent unavailable
+        # The relaunch happened: a NEW daemon (different pid) is up, and the cooldown stamp was written.
+        $stamp = Join-Path $script:RL_Data ('session/' + $sid + '.relaunch')
+        $newInfo = Wait-DaemonAnyState -DataRoot $script:RL_Data -Sid $sid -States @('starting', 'ready') -Tries 80
+        $newInfo | Should -Not -BeNullOrEmpty
+        ([int]$newInfo.pid) | Should -Not -Be $oldPid
+        (Test-Path $stamp) | Should -BeTrue
+
+        # The acceptance headline: a SUBSEQUENT edit, once the relaunched daemon is ready, gets REAL
+        # analysis (the daemon fully returned) -- not a banner.
+        $ready = Wait-DaemonAnyState -DataRoot $script:RL_Data -Sid $sid -States @('ready') -Tries 80
+        $ready | Should -Not -BeNullOrEmpty
+        $out2 = Invoke-PluginHook -ScriptPath $script:RL_Client `
+            -StdinJson (@{ session_id = $sid; tool_input = @{ file_path = $fix }; cwd = $script:RL_Data } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:RL_Data -ExtraEnv $bundleEnv
+        $out2 | Should -Match 'PSUseApprovedVerbs'                         # real settled analysis after recovery
+        $out2 | Should -Not -Match 'was not reachable'
+        $out2 | Should -Not -Match 'is being restarted'
+    }
+
+    It '(bound) a relaunch that CANNOT initialize surfaces the honest banner, writes the stamp, and launches at most once (no spin)' {
+        $sid = 'rl-bound-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $script:RL_Sids[$sid] = $script:RL_NoBundle
+        $stamp = Join-Path $script:RL_NoBundle ('session/' + $sid + '.relaunch')
+        # No daemon, no stamp, a BUNDLE-LESS data root + a missing PSES_BUNDLE_PATH -> the relaunched
+        # daemon cannot bring PSES up. Pipe-first, it does NOT exit: it PARKS alive serving the
+        # permanent 'unavailable', so the client reconnects and renders the honest unavailable banner.
+        $fix = Join-Path $script:RL_NoBundle 'rl-bound-fixture.ps1'
+        "function Get-Bound { 1 }" | Set-Content -LiteralPath $fix -Encoding ascii
+        $env1 = @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000'; PSES_BUNDLE_PATH = $script:RL_MissingBundle }
+        $out1 = Invoke-PluginHook -ScriptPath $script:RL_Client `
+            -StdinJson (@{ session_id = $sid; tool_input = @{ file_path = $fix }; cwd = $script:RL_NoBundle } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:RL_NoBundle -ExtraEnv $env1
+
+        $out1 | Should -Not -BeNullOrEmpty                 # NEVER silence
+        $out1 | Should -Match 'could not start'            # the honest unavailable banner (relaunched daemon parked)
+        $out1 | Should -Match 'whole session'              # permanence
+        (Test-Path $stamp) | Should -BeTrue                # the cooldown stamp was written -- the bound is armed
+        $info1 = Wait-DaemonAnyState -DataRoot $script:RL_NoBundle -Sid $sid -States @('unavailable') -Tries 60
+        $info1 | Should -Not -BeNullOrEmpty                # exactly one daemon came up (parked unavailable)
+        $firstPid = [int]$info1.pid
+
+        # A SECOND edit must NOT spin: the parked daemon is reachable (serves 'unavailable', not $null),
+        # so the client connects to it -- no new launch. Same pid => at most one launch, did not loop.
+        $out2 = Invoke-PluginHook -ScriptPath $script:RL_Client `
+            -StdinJson (@{ session_id = $sid; tool_input = @{ file_path = $fix }; cwd = $script:RL_NoBundle } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:RL_NoBundle -ExtraEnv $env1
+        $out2 | Should -Match 'could not start'            # still honest, still not silence
+        $info2 = Get-SessionInfo -DataRoot $script:RL_NoBundle -Sid $sid
+        $info2 | Should -Not -BeNullOrEmpty
+        ([int]$info2.pid) | Should -Be $firstPid           # the SAME daemon -- no re-launch, no spin
+    }
+
+    It '(bound) a fresh cooldown stamp SUPPRESSES a second relaunch -> honest could-not-restart banner, launches nothing' {
+        $sid = 'rl-cooldown-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $script:RL_Sids[$sid] = $script:RL_Data
+        # No daemon for this sid (guaranteed $null) on a REAL-bundle root (so a relaunch WOULD succeed if
+        # attempted). Pre-write a FRESH stamp = "a relaunch already fired within the cooldown." The client
+        # must SUPPRESS the relaunch and emit its own honest backstop banner -- and launch nothing.
+        $sessDir = Join-Path $script:RL_Data 'session'
+        New-Item -ItemType Directory -Force -Path $sessDir | Out-Null
+        $stamp = Join-Path $sessDir ($sid + '.relaunch')
+        Set-Content -LiteralPath $stamp -Value 'pre-existing' -Encoding ascii -Force
+        $sf = Join-Path $sessDir ($sid + '.json')
+        if (Test-Path $sf) { Remove-Item -LiteralPath $sf -Force }
+
+        $fix = Join-Path $script:RL_Data 'rl-cooldown-fixture.ps1'
+        "function Get-Cooldown { 1 }" | Set-Content -LiteralPath $fix -Encoding ascii
+        $out = Invoke-PluginHook -ScriptPath $script:RL_Client `
+            -StdinJson (@{ session_id = $sid; tool_input = @{ file_path = $fix }; cwd = $script:RL_Data } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:RL_Data -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '6000' }
+
+        $out | Should -Not -BeNullOrEmpty                          # NEVER silence
+        $out | Should -Match 'could not be restarted automatically' # the client's honest suppressed-relaunch banner
+        # No daemon was launched: the session file must NOT appear within a bounded poll.
+        (Wait-DaemonAnyState -DataRoot $script:RL_Data -Sid $sid -States @('starting', 'ready', 'unavailable') -Tries 12) | Should -BeNullOrEmpty
+    }
+
+    It '(permanent) a reachable daemon serving unavailable (sub-case B) is NEVER relaunched (pid unchanged, no stamp)' {
+        $sid = 'rl-perm-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $script:RL_Sids[$sid] = $script:RL_DummyRoot
+        # A bundle-present-but-init-fails daemon (000028 sub-case B) parks alive serving 'unavailable'.
+        # It is REACHABLE (status='unavailable', not $null), so the client connects -- the relaunch
+        # logic is never entered. Prove relaunch did NOT fire: pid unchanged AND no stamp written.
+        $script:RL_Procs.Add((Start-RawDaemon -Sid $sid -DataRoot $script:RL_DummyRoot -ExtraArgs @('-InitTimeoutMs', '8000') -ExtraEnv @{ PSES_BUNDLE_PATH = $script:RL_DummyBundle }))
+        $info = Wait-DaemonAnyState -DataRoot $script:RL_DummyRoot -Sid $sid -States @('unavailable') -Tries 60
+        $info | Should -Not -BeNullOrEmpty
+        $permPid = [int]$info.pid
+        $stamp = Join-Path $script:RL_DummyRoot ('session/' + $sid + '.relaunch')
+        if (Test-Path $stamp) { Remove-Item -LiteralPath $stamp -Force }   # clean slate
+
+        $fix = Join-Path $script:RL_DummyRoot 'rl-perm-fixture.ps1'
+        "function Get-Perm { 1 }" | Set-Content -LiteralPath $fix -Encoding ascii
+        $out = Invoke-PluginHook -ScriptPath $script:RL_Client `
+            -StdinJson (@{ session_id = $sid; tool_input = @{ file_path = $fix }; cwd = $script:RL_DummyRoot } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:RL_DummyRoot -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000'; PSES_BUNDLE_PATH = $script:RL_DummyBundle }
+
+        $out | Should -Match 'could not start'                            # the daemon's own 'unavailable' banner
+        $out | Should -Not -Match 'could not be restarted automatically'  # the client relaunch path was NOT taken
+        $after = Get-SessionInfo -DataRoot $script:RL_DummyRoot -Sid $sid
+        ([int]$after.pid) | Should -Be $permPid                           # SAME daemon -- relaunch did NOT fire
+        (Test-Path $stamp) | Should -BeFalse                             # no relaunch attempted -> no stamp
     }
 }
 

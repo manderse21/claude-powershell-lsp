@@ -29,6 +29,60 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.7.0] - 2026-06-21
+
+MINOR: **auto-relaunch the idle-stopped daemon** -- the next edit after a clean idle-stop now SILENTLY
+relaunches the per-session daemon and recovers, instead of bannering "analyzer not reachable" on every
+edit until the session is manually restarted (dispatch 000030). This converts the *recoverable* subset of
+the 000028 no-daemon state into silent recovery, while keeping every 000028 honest banner as the fallback
+for the cases that genuinely cannot recover. It builds directly on the 000028 pipe-first daemon + client
+connect-fail backstop. No new `userConfig` knob; the four status tokens are unchanged (recovery reuses the
+transient `incomplete` during the relaunched daemon's init window), so the 000027 drift-guard greens with
+no Tier-1 change. `idleTtlMin`'s frozen meaning is unchanged -- auto-relaunch COMPLEMENTS it (free the
+daemon when truly idle, bring it back exactly when active again).
+
+### Added
+
+- **Silent recovery of a cleanly idle-stopped daemon (dispatch 000030).** When a PostToolUse edit finds
+  the daemon unreachable AND the condition is the recoverable no-daemon case, the client now silently
+  relaunches the daemon -- via the EXACT pipe-first launch path SessionStart uses (extracted into a shared
+  `Start-PsesDaemonDetached`) -- then reconnects within the existing hard cap. The relaunched daemon comes
+  up pipe-first, so the first edit during its ~init window honestly gets the transient `incomplete`
+  ("re-warming -- this edit was NOT checked"); the next edit gets real analysis. Resource hygiene is
+  preserved: the daemon still self-terminates after `idleTtlMin`; it simply comes back on the next edit.
+
+### The recoverable-vs-permanent gate (why it cannot spin)
+
+- **The gate is structural at the pipe, not a heuristic.** The client's unreachable (`$null`) response IS
+  the recoverable condition -- it means there is no daemon process at all (a clean idle-TTL self-terminate,
+  a crash, or the ~150ms pre-pipe launch sliver). A PERMANENT init failure never reaches it: the 000028
+  pipe-first daemon stays UP serving the reachable `unavailable` status (never `$null`), so a broken bundle
+  is never relaunched. Even the edge where a broken-bundle daemon ALSO idle-stopped relaunches exactly ONCE
+  and then re-parks alive serving `unavailable` (pipe-first daemons park, they do not exit-and-bounce) --
+  so there is no relaunch loop, by construction.
+- **Bounded: at most one relaunch per cooldown window** (a per-session stamp, ~the daemon init deadline).
+  A relaunch that is suppressed by the cooldown, finds no host, or whose spawn fails ALWAYS falls back to
+  the honest banner -- so the bound can only ever cost a banner, never a missed check.
+
+### Changed
+
+- **Backstop banner wording refined (prose-only, no token change).** After an auto-restart the client no
+  longer tells the user to "start a new session" -- a relaunch in progress reads "the analyzer had stopped
+  and is being restarted -- this edit was NOT checked; your next edit should be," and "could not be
+  restarted automatically" appears ONLY when the relaunch genuinely failed or was suppressed. A clean pass
+  still renders nothing (the byte-identical warm path).
+
+### Invariants held
+
+- **Never-silent (the 000022->000028 spine).** Recovery is SILENT only when it actually succeeds (and even
+  then the first init-window edit honestly says "not checked yet"); a failed or suppressed recovery
+  surfaces the honest banner. The only new silence is a SUCCESSFUL recovery -- correct, because the edit
+  then gets analyzed.
+- **The 000028 surfaces are intact.** Sub-case A (transient `incomplete`) and sub-case B (permanent
+  `unavailable`, never relaunched) are unchanged; SessionStart's launch is byte-equivalent (the extracted
+  `Start-PsesDaemonDetached` carries the same args + the 000026 cross-platform detachment). All prior
+  suites (000022/024/025/026/027/028) stay green on all four CI legs.
+
 ## [1.6.1] - 2026-06-20
 
 **License change only -- relicensed FORWARD from MIT to GPLv3 (`GPL-3.0-or-later`), with ZERO code
