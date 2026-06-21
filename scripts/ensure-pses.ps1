@@ -75,7 +75,21 @@ try {
     if (Test-Path -LiteralPath $bundleDir) { Rename-Item -LiteralPath $bundleDir -NewName (Split-Path -Leaf $backupDir) }
     try {
         New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
+        # MIT-notice preservation (dispatch 000029): the PSES release zip carries its MIT LICENSE +
+        # NOTICE.txt at the distribution root (siblings of the PowerShellEditorServices module dir).
+        # The module-only move below would drop them, leaving the installed bundle with NO upstream
+        # notice -- an MIT violation ('included in all copies'). Capture that root BEFORE the move,
+        # then copy the notices into the bundle root after. License-files only: ZERO runtime/behavior
+        # change (the daemon reads the same module byte-for-byte); best-effort, so a missing or
+        # uncopyable notice never aborts the install (the swap is already complete).
+        $psesNoticeRoot = $startLeaf.Directory.Parent.FullName
         Move-Item -LiteralPath $startLeaf.Directory.FullName -Destination (Join-Path $bundleDir 'PowerShellEditorServices')
+        foreach ($noticeName in @('LICENSE', 'NOTICE.txt')) {
+            $noticeSrc = Join-Path $psesNoticeRoot $noticeName
+            if (Test-Path -LiteralPath $noticeSrc -PathType Leaf) {
+                Copy-Item -LiteralPath $noticeSrc -Destination (Join-Path $bundleDir $noticeName) -Force -ErrorAction SilentlyContinue
+            }
+        }
     } catch {
         if (Test-Path -LiteralPath $bundleDir) { Remove-Item -LiteralPath $bundleDir -Recurse -Force -ErrorAction SilentlyContinue }
         if (Test-Path -LiteralPath $backupDir) { Rename-Item -LiteralPath $backupDir -NewName (Split-Path -Leaf $bundleDir) }

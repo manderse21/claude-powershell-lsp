@@ -29,6 +29,50 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.6.1] - 2026-06-20
+
+**License change only -- relicensed FORWARD from MIT to GPLv3 (`GPL-3.0-or-later`), with ZERO code
+or runtime change** (dispatch 000029). Every shipped `.ps1` is byte-identical to 1.6.0; the daemon,
+the diagnostics output, the four status tokens, and all four install-failure surfaces behave exactly
+as before. This is a PATCH by SemVer (no API or behavior change) -- the significance is legal, and it
+is carried in this entry, not in the version digit.
+
+### Why
+
+Publish-readiness, not monetization. GPLv3 is copyleft: anyone who distributes a modified version
+must keep it open under the same terms. Plain GPLv3 (not AGPL -- the tool is 100% local) is the
+deliberate fit for an open release.
+
+### Changed
+
+- **`LICENSE`** is now the verbatim canonical GPLv3 text, fetched from
+  <https://www.gnu.org/licenses/gpl-3.0.txt> and **byte-verified** (35,149 bytes, LF, no BOM;
+  SHA-256 `3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986` -- the canonical FSF
+  hash). Not hand-typed or paraphrased.
+- **SPDX id `GPL-3.0-or-later`** is declared consistently across the three authoritative sites:
+  `LICENSE`, `.claude-plugin/plugin.json` (`license`), and this README's License section.
+  (`marketplace.json` has **no** `license` field in the Claude Code marketplace schema -- the
+  per-plugin license lives in `plugin.json` -- so it carries none.) A new CI **drift-guard** fails
+  the build if these sites ever disagree.
+- **`THIRD-PARTY-LICENSES.md`** (new) documents the two components the plugin **downloads at install
+  time** (it does not bundle or redistribute them): PowerShell Editor Services and PSScriptAnalyzer,
+  both MIT (Microsoft), pinned in `ensure-pses.ps1` / `ensure-pssa.ps1`. MIT is GPL-compatible; their
+  notices travel inside the downloaded bundles and are neither modified nor relicensed.
+
+### Forward-only -- prior releases stay MIT
+
+This license change is **forward-only and does not reach backward**. **Releases v1.0 through v1.6.0
+remain under the MIT license they were published with** -- that grant is irrevocable and is **not**
+revoked, rescinded, or diminished here. Anyone using a v1.0-v1.6.0 release keeps their MIT rights.
+This is normal and expected for a license change, not a problem. From **v1.6.1 forward** the project
+is `GPL-3.0-or-later`.
+
+### Not legal advice
+
+This is the standard mechanical way to perform a forward license change, not legal advice. For a
+serious public release, a human/legal sanity check on the exact license text and the third-party
+attribution is advisable.
+
 ## [1.6.0] - 2026-06-20
 
 MINOR: **pipe-first daemon** -- close the no-pipe silent first-edit miss, with warm-start as the

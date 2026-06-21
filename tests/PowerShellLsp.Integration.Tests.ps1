@@ -1173,3 +1173,46 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
         $out | Should -Match 'this edit was NOT checked'
     }
 }
+
+Describe 'Third-party MIT notices are preserved in the installed bundle (dispatch 000029)' -Skip:$script:SkipIntegration {
+    # GPL-correctness: the plugin DOWNLOADS PSES + PSScriptAnalyzer (MIT, Microsoft) at install. MIT
+    # requires the notice 'in all copies', so the installed bundle must retain each dep's LICENSE /
+    # notice. The 000029 ensure-pses fix preserves the PSES release-root LICENSE + NOTICE.txt (the
+    # module-only move had dropped them -- a real pre-existing MIT violation the extraction check
+    # surfaced); ensure-pssa already preserves the PSSA module LICENSE + ThirdPartyNotices. This
+    # asserts BOTH survive extraction into the bundle (not merely attributed by-reference).
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        $script:N_Scripts = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:N_Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) { $env:PSLS_TEST_DATA_DIR } else { Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data' }
+        New-Item -ItemType Directory -Force -Path $script:N_Data | Out-Null
+        $env:CLAUDE_PLUGIN_DATA = $script:N_Data
+        # Self-heal: if a PRE-FIX PSES bundle (no LICENSE) is present, force a fresh bootstrap so this
+        # test exercises the CURRENT ensure-pses, not a stale bundle. A fresh CI runner has no bundle,
+        # so this is a no-op there (ensure-pses bootstraps fresh, with the fix).
+        $script:N_PsesBundle = Join-Path $script:N_Data 'PowerShellEditorServices'
+        if ((Test-Path $script:N_PsesBundle) -and -not (Test-Path (Join-Path $script:N_PsesBundle 'LICENSE'))) {
+            Remove-Item $script:N_PsesBundle -Recurse -Force -ErrorAction SilentlyContinue
+            Get-ChildItem -Path $script:N_Data -Filter 'pses-*.ok' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        }
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:N_Scripts 'ensure-pses.ps1') 2>&1 | Out-Null
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:N_Scripts 'ensure-pssa.ps1') 2>&1 | Out-Null
+        $psd = Get-ChildItem -Path (Join-Path $script:N_Data 'modules') -Recurse -Filter 'PSScriptAnalyzer.psd1' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        $script:N_PssaDir = if ($psd) { $psd.Directory.FullName } else { $null }
+    }
+    It 'PSES bundle retains its MIT LICENSE + NOTICE (the 000029 ensure-pses preservation fix)' {
+        $licPath = Join-Path $script:N_PsesBundle 'LICENSE'
+        (Test-Path $licPath) | Should -BeTrue
+        (Test-Path (Join-Path $script:N_PsesBundle 'NOTICE.txt')) | Should -BeTrue
+        (Get-Content -LiteralPath $licPath -Raw) | Should -Match 'Permission is hereby granted'   # MIT permission grant
+        (Get-Content -LiteralPath $licPath -Raw) | Should -Match 'Microsoft'
+        # the module still resolves alongside the notices -- zero runtime change
+        (Test-Path (Join-Path $script:N_PsesBundle 'PowerShellEditorServices/Start-EditorServices.ps1')) | Should -BeTrue
+    }
+    It 'PSScriptAnalyzer module retains its MIT LICENSE + ThirdPartyNotices' {
+        $script:N_PssaDir | Should -Not -BeNullOrEmpty
+        (Test-Path (Join-Path $script:N_PssaDir 'LICENSE')) | Should -BeTrue
+        (Test-Path (Join-Path $script:N_PssaDir 'ThirdPartyNotices.txt')) | Should -BeTrue
+        (Get-Content -LiteralPath (Join-Path $script:N_PssaDir 'LICENSE') -Raw) | Should -Match 'Permission is hereby granted'
+    }
+}

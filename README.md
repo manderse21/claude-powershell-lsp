@@ -305,4 +305,12 @@ silent. The mid-session `incomplete`/`degraded` split was introduced earlier (di
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+[GPL-3.0-or-later](https://spdx.org/licenses/GPL-3.0-or-later.html) (GPLv3). See [LICENSE](./LICENSE).
+
+The change to GPLv3 is **forward-only**, effective from **v1.6.1**. Prior releases (v1.0 through
+v1.6.0) remain under the MIT license they shipped with -- that grant is irrevocable and is not
+affected by this change.
+
+PowerShell Editor Services and PSScriptAnalyzer are **downloaded at install time** (not bundled in
+this repository) and remain under their own MIT licenses (Microsoft); MIT is GPL-compatible. See
+[THIRD-PARTY-LICENSES.md](./THIRD-PARTY-LICENSES.md).
