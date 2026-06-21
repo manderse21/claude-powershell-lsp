@@ -498,6 +498,22 @@ Describe 'Get-DiagnosticsStatusBanner -- the visible, non-clean wording (dispatc
         $u | Should -Not -BeExactly (Get-DiagnosticsStatusBanner 'incomplete' 'C:\x\foo.ps1')
         $u | Should -Not -BeExactly (Get-DiagnosticsStatusBanner 'degraded' 'C:\x\foo.ps1')
     }
+    It 'unavailable (dispatch 000028): the GENERALIZED prose covers BOTH causes AND lands PERMANENCE, distinct from the transient incomplete' {
+        # 000028 widened 'unavailable' from install-only to ALSO cover "present but failed to start"
+        # (the bundle-present init failure 000024 had left as a silent fail-fast). The token SET is
+        # unchanged (still 4) -- only the PROSE generalizes (a PATCH-level refinement per CONTRACT.md).
+        # It MUST land PERMANENT-this-session so a user never reads it as the TRANSIENT 'incomplete'
+        # ("the next edit will be checked"). Adversarial control: drop the permanence clause from the
+        # banner and this goes RED.
+        $u = Get-DiagnosticsStatusBanner 'unavailable' 'C:\x\foo.ps1'
+        $u | Should -Match 'could not start'                 # one wording for install-missing OR present-but-failed
+        $u | Should -Match 'failed to start'                 # the present-but-failed cause (sub-case B)
+        $u | Should -Match 'whole session'                   # PERMANENT this session, not a per-edit retry
+        $u | Should -Match 'restarted'                       # remediation: fix + restart (not "retry")
+        $u | Should -Not -Match 'analysis did not complete'  # must NOT borrow the transient incomplete signature
+        # And the transient incomplete must NOT accidentally claim permanence -- the two stay distinct.
+        (Get-DiagnosticsStatusBanner 'incomplete' 'C:\x\foo.ps1') | Should -Not -Match 'whole session'
+    }
     It 'is ASCII-only (PS 5.1 em-dash trap)' {
         foreach ($s in @('incomplete', 'degraded', 'unavailable')) {
             $b = Get-DiagnosticsStatusBanner $s 'C:\x\foo.ps1'

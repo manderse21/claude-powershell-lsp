@@ -208,7 +208,21 @@ try {
     # $resp also carries optional telemetry fields the emit ignores (daemon-side
     # path/analysisMs/codeActionMs/recordCount/correctionCount). A null/!ok response
     # means the edit was never analyzed (unreachable/timeout) -> no stats line.
-    if ($null -eq $resp) { exit 0 }
+    if ($null -eq $resp) {
+        # Never-silent backstop (dispatch 000028): $null means the daemon was UNREACHABLE -- no
+        # pipe yet (the brief daemon-launch window before pipe-first's pipe exists), the
+        # per-session daemon has stopped (e.g. idle-TTL self-terminate, or the daemon process
+        # died), or a connect/read failure. The daemon-served honesty banners ride the pipe, so
+        # with NO pipe there is no daemon banner -- the client must surface its own, or this edit
+        # reads as "analyzed, clean" (the exact could-not-X-looks-like-X-found-nothing failure
+        # 000028 exists to kill). This closes the residual no-pipe window pipe-first cannot reach
+        # from the daemon side. GATED on $null, which a HEALTHY pass is NEVER (a clean pass returns
+        # an ok response object -> renders nothing), so the byte-identical warm/clean path is
+        # untouched: the backstop fires only on a genuine could-not-reach, never on a clean result.
+        Write-HookContext ('PowerShell diagnostics unavailable for ' + $path + ': the analyzer was not reachable -- this edit was NOT checked. The per-session daemon may still be starting, or has stopped (e.g. after idle); start a new session to restart it.')
+        Write-CLog 'daemon unreachable -> emitted never-silent backstop banner (no pipe)'
+        exit 0
+    }
     if (-not (Get-Prop $resp 'ok')) { Write-CLog ('daemon error: ' + [string](Get-Prop $resp 'error')); exit 0 }
 
     $diags = @(Get-Prop $resp 'diagnostics')

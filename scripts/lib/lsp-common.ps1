@@ -661,17 +661,22 @@ function Get-DiagnosticsStatusBanner {
     # return a non-empty string for 'ok' and the byte-identical warm-path unit guard
     # goes RED.
     #
-    # 'unavailable' (dispatch 000024) is the INSTALL-TIME case: the PSES bundle never
-    # bootstrapped (clean box, offline/proxy), so the daemon could not launch PSES at first
-    # start. It is DISTINCT from the transient 'incomplete' on purpose -- the remediation
-    # differs (fix the install/network, not "retry"), so a broken install must never read as
-    # "this edit did not settle, try again." Confirmed (Mike, 000024 Q(a)): a separate status
-    # with its own actionable wording, NOT routed through 'incomplete'.
+    # 'unavailable' (dispatch 000024, generalized by 000028) is the PERMANENT first-start
+    # failure: PSES could not start AT ALL -- either the bundle never bootstrapped (clean box,
+    # offline/proxy) OR it is present but failed to initialize (a startup failure / init timeout,
+    # the sub-case 000024 had left as a silent fail-fast before the pipe). The token is
+    # DELIBERATELY one (not a new fifth token): the user-facing truth is identical -- the analyzer
+    # is not available -- so the prose is GENERALIZED to cover both causes. It is DISTINCT from the
+    # TRANSIENT 'incomplete' on purpose, and the wording must LAND that difference: 'incomplete'
+    # means "not checked this time, the next edit will be"; 'unavailable' means "OFF for this whole
+    # session until fixed and restarted." A broken/absent start must never read as a retryable
+    # miss. Confirmed (Mike, 000024 Q(a) + 000028): one token, generalized prose that lands the
+    # permanence, NOT a new token and NOT routed through 'incomplete'.
     param([string]$Status, [string]$Path)
     switch ($Status) {
         'incomplete'  { return ('PowerShell diagnostics unavailable for ' + $Path + ': analysis did not complete -- this edit was NOT checked.') }
         'degraded'    { return ('PowerShell diagnostics for ' + $Path + ': parser-only mode -- PSScriptAnalyzer unavailable, lint rules were NOT checked (syntax errors are still reported).') }
-        'unavailable' { return ('PowerShell diagnostics unavailable for ' + $Path + ': PowerShell editor services are not installed -- the bootstrap did not complete (network/proxy?). This edit was NOT checked. See logs/ensure-pses.log.') }
+        'unavailable' { return ('PowerShell diagnostics unavailable for ' + $Path + ': PowerShell editor services could not start -- not installed (the bootstrap did not complete), or installed but failed to start. Diagnostics will stay OFF for this whole session until it is fixed and the session is restarted; this edit was NOT checked. See logs/ensure-pses.log and logs/pses-daemon.log.') }
         default       { return '' }
     }
 }

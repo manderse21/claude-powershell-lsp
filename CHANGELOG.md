@@ -29,6 +29,77 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.6.0] - 2026-06-20
+
+MINOR: **pipe-first daemon** -- close the no-pipe silent first-edit miss, with warm-start as the
+latency win riding free on the same change (dispatch 000028). This dispatch began as "warm-start"
+and was reshaped under its own survey (the 000026 (A)->(B) pattern): the survey measured that the
+costly PSES init is **already** eager, so warm-start's standalone win was small (~0.75s typical),
+while it exposed a higher-severity correctness gap -- a first edit that raced PSES startup got
+**nothing, not even a banner** (the honesty banner rides the daemon's pipe, and the pipe did not
+exist until after init). The primary deliverable is now the correctness fix; warm-start is the
+documented side effect. No new `userConfig` knob; the four status tokens are unchanged (the
+`unavailable` **prose** is generalized -- a PATCH-level refinement per CONTRACT.md -- not a new
+token).
+
+### Fixed
+
+- **The no-pipe silent miss (the headline -- a never-silent / could-not-X spine gap).** The daemon
+  now creates its named pipe **before** bringing PSES up, then finishes PSES init **cooperatively**
+  in the serve loop. A first edit that arrives while PSES is still starting -- or after PSES fails
+  to start -- always reaches a daemon that answers with an **honest banner**, never the old silent
+  connect-fail (`return $null` -> `exit 0`, no banner). Two cases, both previously silent:
+  - **Still starting (transient):** a request during init is served `incomplete`
+    ("analysis did not complete -- this edit was NOT checked"); the next edit succeeds once ready.
+  - **Present but failed to start (permanent):** a bundle present but unable to initialize (startup
+    failure / init timeout) -- which 000024 had deliberately left as a silent `exit 1` before the
+    pipe -- now keeps the daemon **up** serving the permanent `unavailable`, never exit.
+- **Client-side never-silent backstop (closes the residual no-pipe window -- so the silence fix has
+  NO silence window).** Pipe-first closes the dominant ~4-13.5s PSES-init window from the daemon
+  side, but the honesty banners ride the pipe -- so any case with NO pipe still had no channel: the
+  brief (~150ms) sliver between the daemon process launching and it creating the pipe, and any
+  session whose daemon has stopped (idle-TTL self-terminate, or the daemon process died). The
+  PostToolUse client (`lsp-client.ps1`) now surfaces its OWN honest banner ("the analyzer was not
+  reachable -- this edit was NOT checked ... start a new session to restart it") whenever the daemon
+  is unreachable, instead of the old silent `exit 0`. Every could-not-analyze case is now visible --
+  startup race, present-but-failed init, an idle-stopped daemon (previously silent), or a
+  connect/read failure. Gated on the unreachable (`$null`) response, which a healthy clean pass is
+  **never** (a clean result returns an ok object and still renders nothing), so the byte-identical
+  warm/clean path is untouched.
+
+### Added
+
+- **Warm-start (the latency win, riding free).** Once PSES goes ready, the daemon drives one
+  synthetic in-memory analysis so PSScriptAnalyzer loads + compiles its rule engine in the idle gap
+  **before** the user's first real edit -- so that edit pays only the per-file cost, not the
+  analyzer cold-start (measured ~0.77s warm / ~2.2s cold-box removed from the first edit). Always
+  on, best-effort, off the request path; a failed warm just means the first edit self-warms as
+  before. Proven at the state level (PSES ready + pre-warmed before the first request); timing is
+  logged informationally and is **not** a CI gate (the 000026 "no flaky wall-clock proxy" lesson).
+
+### Changed
+
+- **`unavailable` banner prose generalized (token set unchanged).** It now covers BOTH "never
+  installed (the bootstrap did not complete)" AND "installed but failed to start," and lands the
+  **permanence** explicitly ("OFF for this whole session until it is fixed and the session is
+  restarted") -- kept distinct from the transient `incomplete`. Per the CONTRACT.md freeze this is a
+  prose refinement, not a taxonomy change: the four-token set `{ok, incomplete, degraded,
+  unavailable}` is untouched and the drift-guard greens without a Tier-1 change.
+- **`idleTtlMin` x warm-start reconciled** (the forward-compat note banked in CONTRACT.md, now
+  closed): the idle clock starts at daemon launch and resets only on a real client request -- the
+  internal pre-warm does not count -- so a never-edited session still self-terminates after
+  `idleTtlMin`, whose meaning is unchanged.
+
+### Invariants held
+
+- The SessionStart hook stays non-blocking (000026): pipe-first only reorders what the **detached**
+  daemon does, reaching "pipe open" sooner, never blocking the hook. The 000024/000026 surfacing
+  tests stay green on all four legs.
+- Warm vs cold diagnostics are byte-identical (latency-only): the warm happy path still renders no
+  banner; the existing diagnostics tests + the 000027 drift-guard stay green.
+- Supervised re-spawn (000022) is preserved: the mid-session crash path is unchanged; pipe-first
+  only adds the cooperative FIRST-init path alongside it.
+
 ## [1.5.3] - 2026-06-20
 
 PATCH: formalize the plugin's public surface as a 1.x semver contract and add a runnable CI
