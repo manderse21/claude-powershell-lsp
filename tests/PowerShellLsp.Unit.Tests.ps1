@@ -822,3 +822,112 @@ Describe 'README documents the full diagnostics-status taxonomy (dispatch 000025
         $script:ReadmeText | Should -Match '`ok`'
     }
 }
+
+# ===========================================================================
+# CONTRACT.md 1.x freeze -- drift-guard (dispatch 000027)
+# ===========================================================================
+# The 1.x semver freeze (CONTRACT.md) pins two enumerable surfaces: the userConfig knob
+# NAMES and the diagnostics status-token taxonomy. These guards give the freeze TEETH by
+# validating CONTRACT.md against GROUND TRUTH extracted MECHANICALLY, LIVE FROM SOURCE --
+# never against a hand-maintained list in this test:
+#   - knob ground truth  = the userConfig keys parsed live from .claude-plugin/plugin.json.
+#   - token ground truth = the Get-DiagnosticsStatusBanner switch labels (read from the
+#     shipped function's AST) for the non-ok tokens, PLUS the clean token obtained by
+#     CALLING Resolve-AnalysisStatus on a clean pass. ('ok' is the one token that is not a
+#     banner switch label -- the banner returns '' for it -- so it is read from the resolver
+#     that names it, not seeded as a literal here.)
+# There is deliberately NO static {ps_host, ...} / {ok, ...} array in this file as the
+# comparison anchor: the test reads the manifest and the functions, not a copy of them, so
+# adding a knob to the manifest or a token to the banner FAILS CI until BOTH README and
+# CONTRACT.md record it. README (above) and CONTRACT (here) are SEPARATE Describes so a red
+# leg names WHICH document drifted. (Mike's non-negotiable, dispatch 000027.)
+
+Describe 'CONTRACT.md freezes exactly the manifest userConfig knobs (dispatch 000027)' {
+    BeforeAll {
+        # GROUND TRUTH: the live manifest keys (read from plugin.json, NOT a copy).
+        $manifestPath = Join-Path $script:PluginRoot '.claude-plugin/plugin.json'
+        $manifest = (Get-Content -LiteralPath $manifestPath -Raw) | ConvertFrom-Json
+        $script:ContractManifestKeys = @($manifest.userConfig.PSObject.Properties.Name) | Sort-Object
+
+        # CONTRACT side: slice the sentinel-delimited FROZEN-KNOBS block and pull the
+        # first-column backtick token of each table row. The HTML-comment markers bound the
+        # machine-read region so prose backticks elsewhere in the doc cannot leak in; the
+        # header (| Knob |) and separator (|---|) rows carry no backtick and are skipped.
+        $contractPath = Join-Path $script:PluginRoot 'CONTRACT.md'
+        $contractText = Get-Content -LiteralPath $contractPath -Raw
+        $m = [regex]::Match($contractText, '(?s)FROZEN-KNOBS:BEGIN(.*?)FROZEN-KNOBS:END')
+        $block = if ($m.Success) { $m.Groups[1].Value } else { '' }
+        $keys = @()
+        foreach ($line in ($block -split "`n")) {
+            if ($line -match '^\s*\|\s*`([^`]+)`') { $keys += $Matches[1] }
+        }
+        $script:ContractKnobs = @($keys) | Sort-Object
+    }
+    It 'has a non-empty frozen-knobs block (the guard cannot pass vacuously)' {
+        $script:ContractKnobs.Count | Should -BeGreaterThan 0
+        $script:ContractManifestKeys.Count | Should -BeGreaterThan 0
+    }
+    It 'freezes exactly the manifest userConfig keys -- none missing, none extra' {
+        # Set-equality against the LIVE manifest: add/rename/remove a knob in plugin.json
+        # and this goes RED until CONTRACT.md matches. Adversarial control: drop or add a
+        # FROZEN-KNOBS row (or a manifest knob) and the exact-match assertion goes RED.
+        ($script:ContractKnobs -join ',') | Should -BeExactly ($script:ContractManifestKeys -join ',')
+    }
+}
+
+Describe 'CONTRACT.md freezes exactly the diagnostics status-token taxonomy (dispatch 000027)' {
+    BeforeAll {
+        # GROUND TRUTH (live from source, two ways, no literal token list as the anchor):
+        #   non-ok tokens <- the Get-DiagnosticsStatusBanner switch CLAUSE LABELS, via AST
+        #     (the switch labels are the tokens; the clause BODIES are prose and are ignored).
+        #   clean token   <- Resolve-AnalysisStatus on a settled + available pass: it RETURNS
+        #     the clean token's name ('ok'), which is not a banner switch label.
+        $libPath = Join-Path $script:ScriptsDir 'lib/lsp-common.ps1'
+        $libAst = [System.Management.Automation.Language.Parser]::ParseFile($libPath, [ref]$null, [ref]$null)
+        $bannerFn = $libAst.Find({
+                param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $n.Name -eq 'Get-DiagnosticsStatusBanner' }, $true)
+        $switchAst = $bannerFn.Find({
+                param($n) $n -is [System.Management.Automation.Language.SwitchStatementAst] }, $true)
+        $script:NonOkTokens = @($switchAst.Clauses | ForEach-Object { [string]$_.Item1.Value })
+        $script:CleanToken = Resolve-AnalysisStatus -Settled $true -PssaAvailable $true
+        $script:BannerTokens = @((@($script:CleanToken) + $script:NonOkTokens) | Select-Object -Unique) | Sort-Object
+
+        # CONTRACT side: the sentinel-delimited FROZEN-STATUS-TOKENS block, parsed the same
+        # first-column-backtick way as the knob block.
+        $contractPath = Join-Path $script:PluginRoot 'CONTRACT.md'
+        $contractText = Get-Content -LiteralPath $contractPath -Raw
+        $m = [regex]::Match($contractText, '(?s)FROZEN-STATUS-TOKENS:BEGIN(.*?)FROZEN-STATUS-TOKENS:END')
+        $block = if ($m.Success) { $m.Groups[1].Value } else { '' }
+        $toks = @()
+        foreach ($line in ($block -split "`n")) {
+            if ($line -match '^\s*\|\s*`([^`]+)`') { $toks += $Matches[1] }
+        }
+        $script:ContractTokens = @($toks) | Sort-Object
+    }
+    It 'extracts a non-empty token set from source (the guard cannot pass vacuously)' {
+        $script:BannerTokens.Count | Should -BeGreaterThan 0
+        $script:ContractTokens.Count | Should -BeGreaterThan 0
+    }
+    It 'freezes exactly the tokens the code emits -- none missing, none extra' {
+        # Set-equality against the AST-derived + resolver-derived token set. Rename a switch
+        # label (e.g. 'degraded' -> 'reduced') or add a clause without updating CONTRACT.md
+        # and this goes RED. Adversarial control: edit a FROZEN-STATUS-TOKENS row out of sync
+        # with the banner switch and the exact-match assertion goes RED.
+        ($script:ContractTokens -join ',') | Should -BeExactly ($script:BannerTokens -join ',')
+    }
+    It 'every non-ok frozen token yields a distinct, non-empty, visible banner (the frozen property)' {
+        $banners = @{}
+        foreach ($t in $script:NonOkTokens) {
+            $b = Get-DiagnosticsStatusBanner -Status $t -Path 'C:\x\foo.ps1'
+            $b | Should -Not -BeNullOrEmpty
+            $banners[$t] = $b
+        }
+        $set = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($b in $banners.Values) { [void]$set.Add($b) }
+        $set.Count | Should -Be $script:NonOkTokens.Count   # all pairwise-distinct
+    }
+    It 'the clean token renders an empty banner (the byte-identical warm path)' {
+        Get-DiagnosticsStatusBanner -Status $script:CleanToken -Path 'C:\x\foo.ps1' | Should -BeExactly ''
+    }
+}
