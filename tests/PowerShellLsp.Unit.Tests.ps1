@@ -947,3 +947,45 @@ Describe 'CONTRACT.md freezes exactly the diagnostics status-token taxonomy (dis
         Get-DiagnosticsStatusBanner -Status $script:CleanToken -Path 'C:\x\foo.ps1' | Should -BeExactly ''
     }
 }
+
+Describe 'License metadata is single-sourced and consistent (dispatch 000029)' {
+    # The 000027 docs-honesty / single-source discipline applied to the LICENSE: the SPDX id has ONE
+    # source of truth -- plugin.json's `license` (the same manifest the version stamp reads, 000025) --
+    # and the other declaration sites must agree. The LICENSE body is the GPLv3 text the SPDX id names,
+    # and the README declares the same id. marketplace.json carries NO license field (the Claude Code
+    # marketplace schema has none; an added value is silently ignored), so its ABSENCE is asserted
+    # rather than letting a misleading/ignored declaration drift in. Adversarial control: change the
+    # README SPDX id (or plugin.json's license) out of sync and the consistency assertions go RED.
+    BeforeAll {
+        $script:Lic_Root        = Split-Path -Parent $PSScriptRoot
+        $script:Lic_Manifest    = (Get-Content -LiteralPath (Join-Path $script:Lic_Root '.claude-plugin/plugin.json') -Raw | ConvertFrom-Json)
+        $script:Lic_Spdx        = [string]$script:Lic_Manifest.license
+        $script:Lic_LicenseText = Get-Content -LiteralPath (Join-Path $script:Lic_Root 'LICENSE') -Raw
+        $script:Lic_Readme      = Get-Content -LiteralPath (Join-Path $script:Lic_Root 'README.md') -Raw
+        $script:Lic_Market      = (Get-Content -LiteralPath (Join-Path $script:Lic_Root '.claude-plugin/marketplace.json') -Raw | ConvertFrom-Json)
+    }
+    It 'plugin.json declares a non-empty SPDX license -- the single source of truth' {
+        $script:Lic_Spdx | Should -Not -BeNullOrEmpty
+        $script:Lic_Spdx | Should -Match '^GPL-3\.0-(or-later|only)$'
+    }
+    It 'LICENSE is the GPLv3 body the SPDX id names' {
+        $script:Lic_Spdx | Should -Match '^GPL-3\.0'
+        $script:Lic_LicenseText | Should -Match 'GNU GENERAL PUBLIC LICENSE'
+        $script:Lic_LicenseText | Should -Match 'Version 3, 29 June 2007'
+    }
+    It 'README declares the SAME SPDX id as plugin.json (no drift)' {
+        $script:Lic_Readme | Should -Match ([regex]::Escape($script:Lic_Spdx))
+    }
+    It 'marketplace.json carries NO license field (license lives in plugin.json; the marketplace schema has none)' {
+        ($script:Lic_Market.PSObject.Properties.Name -contains 'license') | Should -BeFalse
+        foreach ($p in @($script:Lic_Market.plugins)) {
+            ($p.PSObject.Properties.Name -contains 'license') | Should -BeFalse
+        }
+    }
+    It 'THIRD-PARTY-LICENSES.md documents both downloaded MIT deps' {
+        $tp = Get-Content -LiteralPath (Join-Path $script:Lic_Root 'THIRD-PARTY-LICENSES.md') -Raw
+        $tp | Should -Match 'PowerShell Editor Services'
+        $tp | Should -Match 'PSScriptAnalyzer'
+        $tp | Should -Match 'MIT'
+    }
+}
