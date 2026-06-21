@@ -256,14 +256,21 @@ three surface a one-line banner in Claude's context, so a result is never *mista
 | Status            | When                                                                 | What you see / what to do |
 |-------------------|----------------------------------------------------------------------|---------------------------|
 | **`ok`**          | The PSScriptAnalyzer pass settled and the analyzer was available.    | Nothing extra -- diagnostics (if any) are shown, no banner. The warm happy path. |
-| **`incomplete`**  | The pass did **not** settle for this edit -- PSES timed out, threw, exited, or a supervised re-spawn was mid-flight. | `analysis did not complete -- this edit was NOT checked.` Transient: the next edit usually succeeds once PSES is back. |
+| **`incomplete`**  | The pass did **not** settle for this edit -- PSES timed out, threw, exited, a supervised re-spawn was mid-flight, or PSES is **still starting** (pipe-first opens the request pipe before PSES is ready, dispatch 000028). | `analysis did not complete -- this edit was NOT checked.` Transient: the next edit usually succeeds once PSES is ready. |
 | **`degraded`**    | PSES is up and settled, but the vendored **PSScriptAnalyzer is absent**, so only the parser ran. | `parser-only mode -- PSScriptAnalyzer unavailable, lint rules were NOT checked (syntax errors are still reported).` Start a fresh session so `ensure-pssa` re-vendors; see `logs/ensure-pssa.log`. |
-| **`unavailable`** | The PSES bundle **never bootstrapped** (a clean box, offline or behind a proxy), so there is no language server to ask. | `PowerShell editor services are not installed -- the bootstrap did not complete (network/proxy?).` Fix network/proxy access, then start a fresh session so `ensure-pses` can bootstrap; see `logs/ensure-pses.log`. |
+| **`unavailable`** | PSES **could not start at all**, for the whole session -- either the bundle **never bootstrapped** (a clean box, offline or behind a proxy) or it is present but **failed to initialize** (a startup failure / init timeout, dispatch 000028). | `PowerShell editor services could not start -- not installed (the bootstrap did not complete), or installed but failed to start. Diagnostics will stay OFF for this whole session until it is fixed and the session is restarted.` Fix the install/startup, then start a fresh session; see `logs/ensure-pses.log` and `logs/pses-daemon.log`. |
 
-`incomplete` (transient) and `unavailable` (install-time) are deliberately distinct -- a
-broken install needs a different remedy than a retryable miss. The install-time
-`unavailable` arrived in 1.5.0 (dispatch 000024), completing the mid-session
-`incomplete`/`degraded` split introduced earlier (dispatch 000022).
+`incomplete` (transient -- "not ready/settled this time, the next edit will be") and
+`unavailable` (permanent for the session -- "could not start; fix and restart") are
+deliberately distinct, with distinct remedies. The install-time `unavailable` arrived in 1.5.0
+(dispatch 000024); 1.6.0 (dispatch 000028) made the daemon **pipe-first** -- it opens the
+request pipe *before* bringing PSES up -- so a first edit that races startup now gets one of
+these honest banners instead of silence, and generalized `unavailable` to also cover a
+present-but-failed start (not just a missing install). When the daemon is unreachable entirely --
+no pipe at all (the brief daemon-launch window, or a session whose daemon has stopped after idle) --
+the PostToolUse client surfaces its own honest "analyzer was not reachable -- this edit was NOT
+checked" banner (start a new session to restart the daemon), so even the no-pipe case is never
+silent. The mid-session `incomplete`/`degraded` split was introduced earlier (dispatch 000022).
 
 ## Troubleshooting
 

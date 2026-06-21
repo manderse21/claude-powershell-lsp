@@ -93,7 +93,7 @@ to equal the tokens those functions emit, **exactly**.
 | `ok` | none -- clean pass, warm path renders nothing |
 | `incomplete` | distinct visible banner -- analysis did not settle (transient) |
 | `degraded` | distinct visible banner -- parser-only, PSScriptAnalyzer absent |
-| `unavailable` | distinct visible banner -- PSES never bootstrapped (install-time) |
+| `unavailable` | distinct visible banner -- PSES could not start (never bootstrapped, OR present but failed to start), permanent for the session |
 
 <!-- FROZEN-STATUS-TOKENS:END -->
 
@@ -113,11 +113,15 @@ What is frozen, precisely:
 
 ### Install-failure visibility
 
-**Goal:** a clean-box install failure is always made **visible**, never silent, on all
-four supported platforms (macOS pwsh, Linux pwsh, Windows pwsh, Windows PowerShell
-5.1). When the PSES bundle cannot bootstrap (offline, proxy, a broken first start), the
-user sees an actionable "diagnostics unavailable" banner rather than diagnostics that
-silently never appear.
+**Goal:** a clean-box install **or startup** failure is always made **visible**, never
+silent, on all four supported platforms (macOS pwsh, Linux pwsh, Windows pwsh, Windows
+PowerShell 5.1). When PSES cannot start -- the bundle never bootstrapped (offline, proxy)
+OR it is present but fails to initialize, AND even when the first edit races startup
+before PSES is ready -- the user sees an actionable banner (`unavailable` if PSES cannot
+start, `incomplete` if it is still starting) rather than diagnostics that silently never
+appear. Dispatch 000028 made the daemon **pipe-first** (the request pipe opens before
+PSES is brought up) so this guarantee holds across the whole startup window, closing the
+no-pipe silent miss.
 
 **Why this is Tier 2, not Tier 1:** this is a **behavior** across the daemon, the
 hooks, and four platforms -- it cannot be reduced to a string-diffable list, so a
@@ -132,6 +136,12 @@ and must keep existing and passing --
 - **dispatch 000026** -- the SessionStart secondary surface, fixed so the detached
   daemon no longer inherits the hook's standard handles on non-Windows (which had
   dropped the banner).
+- **dispatch 000028** -- pipe-first honest startup: the no-pipe silent miss (a first edit
+  racing PSES startup, or a present-but-failed init, getting NOTHING) is closed by opening
+  the pipe before PSES and serving an honest `incomplete` (still starting) / `unavailable`
+  (could not start) over it. A client-side backstop (`lsp-client.ps1`) covers the residual
+  NO-pipe window (the ~150ms daemon-launch sliver, or a session whose daemon has stopped after
+  idle) with its own "analyzer not reachable" banner -- so no could-not-analyze case is silent.
 
 These tests are this guarantee's living evidence. The Tier-1 drift-guard does **not**
 assert this guarantee; its enforcement is those tests continuing to exist and pass on
@@ -214,10 +224,12 @@ cold. None is a contract change; each is banked here deliberately.
   **deliberate handling** (a MAJOR, or an explicit opt-in), not an automatic "it is
   just additive" MINOR. Flagged so the silent no-op-becomes-active trap is not sprung
   by accident.
-- **`idleTtlMin` x warm-start (#5).** The roadmap warm-start daemon (pre-warm PSES at
-  SessionStart) interacts with `idleTtlMin`'s idle self-termination: the two must be
-  reconciled so pre-warming does not fight the idle TTL. This is a known forward
-  **interaction** to design for -- not a knob rename or a taxonomy change.
+- **`idleTtlMin` x warm-start (RESOLVED, dispatch 000028).** Warm-start shipped on the
+  pipe-first daemon (1.6.0): PSES is pre-warmed once it goes ready. The reconciliation: the
+  idle clock starts at daemon launch and resets only on a **real client request** -- the
+  internal pre-warm does NOT count as activity -- so a session that never edits still
+  self-terminates after `idleTtlMin`, and `idleTtlMin` keeps its frozen meaning. No knob
+  rename or taxonomy change; recorded here as closed, not open.
 
 ---
 
@@ -234,6 +246,11 @@ not edit that surface.
 - **000026** -- the non-Windows fd-leak fix that restored the SessionStart surface; the
   precondition that `main` is green on all four legs.
 - **000027** -- this contract and its drift-guard.
+- **000028** -- pipe-first honest startup: closed the no-pipe silent miss and generalized
+  `unavailable` to also cover a present-but-failed start (prose-only -- the token SET stays
+  four); warm-start shipped as the latency win riding free on the same change. First
+  post-freeze exercise: a MINOR (1.6.0) with no knob and no token added, so the drift-guard
+  greened without a Tier-1 change.
 
 Mike Andersen's locked decisions (dispatch 000027): only the mechanically-enforceable
 surfaces (knob names; status tokens) are CONTRACTUAL; the install-failure guarantee is

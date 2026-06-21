@@ -981,3 +981,195 @@ Describe 'Integration: pses-stdio.ps1 emits no pre-handshake stdout (dispatch 00
         $errT.Result | Should -Match 'PSES not found'
     }
 }
+
+Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$script:SkipIntegration {
+    # Pipe-first closes the no-pipe SILENT MISS: the daemon creates the named pipe BEFORE bringing
+    # PSES up, then finishes init cooperatively, so a first edit that races startup gets an HONEST
+    # banner over the pipe -- never the old silent connect-fail (client return $null -> exit 0).
+    # Two sub-cases, each driven DETERMINISTICALLY via a dummy bundle (no wall-clock race):
+    #   (A) PSES present but still INITIALIZING (dummy sleeps; never answers initialize) + a high
+    #       -InitTimeoutMs so it stays initializing -> a request gets the TRANSIENT 'incomplete'.
+    #   (B) PSES present but init FAILS (dummy exits at once) -> the daemon STAYS UP serving the
+    #       PERMANENT 'unavailable', never exit 1 (the bundle-present fail-fast 000024 left silent).
+    # Plus warm-start rides FREE: a real bundle reaches 'ready' with the analyzer pre-warmed (the
+    # daemon log records it for that PID), and the first real edit is served the clean warm
+    # diagnostic with no banner. The dummy-bundle seam mirrors the 000022/000024 daemon-direct
+    # pattern (force the CONDITION, assert the served STATUS over the pipe -- not a flaky proxy).
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+
+        function Invoke-PluginHook {
+            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+            if ($StdinJson) {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
+                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
+            }
+            $p.StandardInput.Close()
+            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            [void]$stdoutTask.Wait(1500)
+            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+        }
+
+        function Start-RawDaemon {
+            param([string]$Sid, [string]$DataRoot, [string[]]$ExtraArgs, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+            $daemon = Join-Path $script:P_ScriptsDir 'pses-daemon.ps1'
+            $argList = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $daemon,
+                '-SessionId', $Sid, '-PsHost', 'pwsh', '-DataRoot', $DataRoot) + @($ExtraArgs)
+            Add-ProcessArguments $psi ($argList | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $null = $p.StandardOutput.ReadToEndAsync(); $null = $p.StandardError.ReadToEndAsync()
+            return $p
+        }
+
+        function Wait-DaemonAnyState {
+            param([string]$DataRoot, [string]$Sid, [string[]]$States, [int]$Tries = 80)
+            $sf = Join-Path $DataRoot ('session/' + $Sid + '.json')
+            for ($i = 0; $i -lt $Tries; $i++) {
+                if (Test-Path $sf) {
+                    $o = Get-Content $sf -Raw | ConvertFrom-Json
+                    if ($States -contains [string](Get-Prop $o 'state')) { return $o }
+                }
+                Start-Sleep -Milliseconds 400
+            }
+            return $null
+        }
+
+        function New-DummyBundle {
+            param([string]$Root, [string]$Body)
+            $s = Join-Path $Root 'PowerShellEditorServices/Start-EditorServices.ps1'
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $s) | Out-Null
+            Set-Content -LiteralPath $s -Value $Body -Encoding ascii
+            return $Root
+        }
+
+        $script:P_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        # Shared data root (real PSES + PSSA bootstrapped) for the warm-start happy path.
+        $script:P_Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) { $env:PSLS_TEST_DATA_DIR } else { Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data' }
+        New-Item -ItemType Directory -Force -Path $script:P_Data | Out-Null
+        $env:CLAUDE_PLUGIN_DATA = $script:P_Data
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:P_ScriptsDir 'ensure-pses.ps1') 2>&1 | Out-Null
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:P_ScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+
+        # (A) dummy that SLEEPS (present, never answers initialize) + high init timeout -> stays initializing.
+        $script:P_DataA = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000028-A-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:P_DataA | Out-Null
+        $script:P_BundleA = New-DummyBundle -Root (Join-Path $script:P_DataA 'dummy') -Body "Start-Sleep -Seconds 300`n"
+        $script:P_SidA = 'pf-init-000028-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $script:P_ProcA = Start-RawDaemon -Sid $script:P_SidA -DataRoot $script:P_DataA -ExtraArgs @('-InitTimeoutMs', '120000') -ExtraEnv @{ PSES_BUNDLE_PATH = $script:P_BundleA }
+        $script:P_InfoA = Wait-DaemonAnyState -DataRoot $script:P_DataA -Sid $script:P_SidA -States @('starting') -Tries 30
+
+        # (B) dummy that EXITS at once (present, init fails) -> daemon stays up serving unavailable.
+        $script:P_DataB = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000028-B-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:P_DataB | Out-Null
+        $script:P_BundleB = New-DummyBundle -Root (Join-Path $script:P_DataB 'dummy') -Body "exit 0`n"
+        $script:P_SidB = 'pf-fail-000028-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $script:P_ProcB = Start-RawDaemon -Sid $script:P_SidB -DataRoot $script:P_DataB -ExtraArgs @('-InitTimeoutMs', '8000') -ExtraEnv @{ PSES_BUNDLE_PATH = $script:P_BundleB }
+        $script:P_InfoB = Wait-DaemonAnyState -DataRoot $script:P_DataB -Sid $script:P_SidB -States @('unavailable') -Tries 60
+
+        # (warm) real bundle on the shared root -> reaches ready, analyzer pre-warmed.
+        $script:P_SidW = 'pf-warm-000028-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $script:P_ProcW = Start-RawDaemon -Sid $script:P_SidW -DataRoot $script:P_Data -ExtraArgs @() -ExtraEnv @{ }
+        $script:P_InfoW = Wait-DaemonAnyState -DataRoot $script:P_Data -Sid $script:P_SidW -States @('ready') -Tries 80
+    }
+
+    AfterAll {
+        foreach ($info in @($script:P_InfoA, $script:P_InfoB, $script:P_InfoW)) {
+            if ($null -ne $info) { foreach ($pidVal in @($info.pid, $info.psesPid)) { if ($pidVal) { Stop-Process -Id ([int]$pidVal) -Force -ErrorAction SilentlyContinue } } }
+        }
+        foreach ($p in @($script:P_ProcA, $script:P_ProcB, $script:P_ProcW)) { try { if ($null -ne $p -and -not $p.HasExited) { $p.Kill($true) } } catch { } }
+        # the warm session file lives in the SHARED root; clean only OUR session file there.
+        $sfW = Join-Path $script:P_Data ('session/' + $script:P_SidW + '.json')
+        if (Test-Path -LiteralPath $sfW) { Remove-Item -LiteralPath $sfW -Force -ErrorAction SilentlyContinue }
+        foreach ($d in @($script:P_DataA, $script:P_DataB)) { if ($d -and (Test-Path -LiteralPath $d)) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue } }
+    }
+
+    It '(A) a request while PSES is still INITIALIZING surfaces the TRANSIENT incomplete, never silence' {
+        $script:P_InfoA | Should -Not -BeNullOrEmpty          # came up 'starting' (pipe open before PSES ready)
+        [string](Get-Prop $script:P_InfoA 'state') | Should -Be 'starting'
+        $fix = Join-Path $script:P_DataA 'init-fixture.ps1'
+        "function Get-Init { 1 }" | Set-Content -LiteralPath $fix -Encoding ascii   # clean parse -> reaches the daemon
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:P_ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:P_SidA; tool_input = @{ file_path = $fix }; cwd = $script:P_DataA } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:P_DataA -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+        $out | Should -Not -BeNullOrEmpty                     # NOT the old silent connect-fail
+        $out | Should -Match 'analysis did not complete'      # the TRANSIENT incomplete banner
+        $out | Should -Not -Match 'whole session'             # NOT the permanent unavailable (sub-case A != B)
+    }
+
+    It '(B) a bundle-present init FAILURE stays up serving PERMANENT unavailable -- never exit 1, never silence' {
+        $script:P_InfoB | Should -Not -BeNullOrEmpty
+        [string](Get-Prop $script:P_InfoB 'state') | Should -Be 'unavailable'
+        (Get-Process -Id ([int]$script:P_InfoB.pid) -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty   # daemon did NOT exit 1
+        $fix = Join-Path $script:P_DataB 'fail-fixture.ps1'
+        "function Get-Fail { 1 }" | Set-Content -LiteralPath $fix -Encoding ascii
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:P_ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:P_SidB; tool_input = @{ file_path = $fix }; cwd = $script:P_DataB } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:P_DataB -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+        $out | Should -Not -BeNullOrEmpty                      # NOT silence (the sub-case B silent miss, closed)
+        $out | Should -Match 'could not start'                 # generalized unavailable wording
+        $out | Should -Match 'whole session'                   # lands PERMANENCE (distinct from transient incomplete)
+        $out | Should -Not -Match 'analysis did not complete'  # NOT routed through the transient incomplete
+    }
+
+    It 'warm-start rides FREE: the daemon reaches ready pre-warmed and the first real edit is served clean+warm' {
+        $script:P_InfoW | Should -Not -BeNullOrEmpty
+        [string](Get-Prop $script:P_InfoW 'state') | Should -Be 'ready'
+        # Proof the analyzer was pre-warmed for THIS daemon (its PID). BOUNDED POLL for a DEFINITE
+        # event, not an instant assert: 'ready' is written to the session file BEFORE Invoke-WarmStart
+        # logs its line (the warm pass runs just after ready, up to ~MaxWaitMs for its analyzer pump),
+        # so a plain scrape races a slow runner (the 000026 flaky-proxy lesson -- macOS caught exactly
+        # this). Wait for the line; do not assume it is already there. A genuine warm-start failure
+        # would still fail here (the line never appears -> the poll times out).
+        $dlog = Join-Path $script:P_Data 'logs/pses-daemon.log'
+        $warmPat = '\[' + [int]$script:P_InfoW.pid + '\].*warm-start: analyzer pre-warmed'
+        $warmCount = 0
+        for ($i = 0; $i -lt 60; $i++) {
+            $warmCount = @(Select-String -Path $dlog -Pattern $warmPat -ErrorAction SilentlyContinue).Count
+            if ($warmCount -gt 0) { break }
+            Start-Sleep -Milliseconds 500
+        }
+        $warmCount | Should -BeGreaterThan 0
+        # Behavioral complement: the first real edit is served the clean WARM diagnostic, no banner.
+        $fix = Join-Path $script:P_Data 'warm-fixture.ps1'
+        "function Frobnicate-Warm {`n    Get-Process`n}" | Set-Content -LiteralPath $fix -Encoding ascii   # PSUseApprovedVerbs
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:P_ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:P_SidW; tool_input = @{ file_path = $fix }; cwd = $script:P_Data } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:P_Data -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+        $out | Should -Match 'PSUseApprovedVerbs'             # real settled analyzer result
+        $out | Should -Not -Match 'did not complete'          # not cold/incomplete -- served warm
+        $out | Should -Not -Match 'whole session'             # not unavailable
+        $out | Should -Not -Match 'was not reachable'         # the never-silent backstop does NOT fire on a healthy pass (clean-pass boundary)
+    }
+
+    It 'never-silent backstop: a clean edit with NO reachable daemon surfaces an honest banner, not silence (closes the residual no-pipe window + an idle-TTL/stopped daemon)' {
+        # The fullest expression of the never-silent thesis: even when there is NO pipe at all --
+        # the brief daemon-launch sliver, or a session whose daemon idle-TTL'd / died -- a clean
+        # edit must not read as "analyzed, clean." A session id with no daemon = guaranteed no pipe;
+        # a clean-PARSING file passes the client's in-process parser pre-pass and reaches the daemon
+        # path ($null unreachable -> the client backstop), exactly the residual window pipe-first
+        # cannot reach from the daemon side. Gated on $null, which a healthy pass never is (the
+        # warm-start It above proves the backstop stays silent on a real result).
+        $noDaemonSid = 'pf-nodaemon-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $fix = Join-Path $script:P_Data 'nodaemon-fixture.ps1'
+        "function Get-NoDaemon { 1 }" | Set-Content -LiteralPath $fix -Encoding ascii
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:P_ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $noDaemonSid; tool_input = @{ file_path = $fix }; cwd = $script:P_Data } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 25000 -DataRoot $script:P_Data -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '6000' }
+        $out | Should -Not -BeNullOrEmpty                  # NOT silence -- the backstop fired
+        $out | Should -Match 'was not reachable'           # the client-side unreachable banner
+        $out | Should -Match 'this edit was NOT checked'
+    }
+}

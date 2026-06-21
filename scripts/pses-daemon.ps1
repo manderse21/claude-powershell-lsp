@@ -49,7 +49,14 @@ param(
     # native lspServers knobs stay dormant per 000021); daemon-level so a test can force
     # exhaustion by launching the daemon directly with a low value.
     [int] $MaxPsesRestarts = 3,
-    [int] $RestartBackoffMs = 500
+    [int] $RestartBackoffMs = 500,
+    # Init deadline (ms): how long the daemon waits for PSES to answer `initialize` before
+    # declaring a PERMANENT first-start failure (pipe-first, dispatch 000028). While waiting,
+    # the daemon is already serving the pipe with a transient 'incomplete'; only after this
+    # deadline (or a PSES exit) does it flip to a permanent 'unavailable'. 30s mirrors the
+    # manifest lspServers.startupTimeout. NOT a userConfig knob; daemon-level so a surfacing
+    # test can hold the daemon in 'initializing' (set it high) or force a fast fail.
+    [int] $InitTimeoutMs = 30000
 )
 
 Set-StrictMode -Version Latest
@@ -107,6 +114,22 @@ $script:settingsPathInUse = ''        # the absolute settings file honored this 
 $script:psesRestarts  = 0
 $script:psesGaveUp    = $false
 $script:pssaAvailable = $true
+# Pipe-first lifecycle (dispatch 000028). The named pipe is created BEFORE PSES is brought
+# up, so the daemon can serve an HONEST status while PSES is still starting -- closing the
+# no-pipe silent miss (a first edit that raced the old after-init pipe got NOTHING, not even
+# a banner). psesState drives what a request is served:
+#   'initializing' -> PSES spawned, awaiting `initialize`; serve 'incomplete' (TRANSIENT --
+#                     not ready yet, the next edit will be checked). This is sub-case A.
+#   'ready'        -> handshake done; serve real diagnostics (or, if PSES died mid-session,
+#                     the existing 000022 down/respawn path).
+#   'unavailable'  -> PSES could not start at all (missing bundle, OR present-but-failed init
+#                     -- the bundle-present failure 000024 left as a silent fail-fast); serve
+#                     'unavailable' (PERMANENT this session). This is sub-case B + the 000024
+#                     install-missing case, unified under one token (generalized banner prose).
+# warmDone latches the one-shot analyzer pre-warm (warm-start rides free on pipe-first).
+$script:psesState     = 'initializing'
+$script:initSentAt    = [DateTime]::MinValue
+$script:warmDone      = $false
 
 function Get-ContentHash([string]$text) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -207,7 +230,13 @@ function Invoke-LspPump {
 }
 
 # --- PSES child lifecycle --------------------------------------------------
-function Start-Pses {
+function Start-PsesProcess {
+    # Spawn the PSES child and SEND `initialize` -- NON-BLOCKING (dispatch 000028). Returns
+    # $true once the process is started and initialize is on the wire; the response is awaited
+    # cooperatively by Complete-PsesInit so the daemon can serve the pipe (an honest transient
+    # 'incomplete') WHILE PSES initializes. Returns $false when PSES cannot even be launched
+    # (start script missing / no host / spawn threw) -- the caller comes up serving the
+    # permanent 'unavailable' over the already-open pipe (never the old exit-before-pipe).
     $startScript = Get-PsesStartScript
     if (-not (Test-Path -LiteralPath $startScript)) {
         Write-DLog ('PSES start script missing: ' + $startScript); return $false
@@ -250,8 +279,12 @@ function Start-Pses {
         Write-DLog ('vendored PSSA dir absent (' + $pssaDir + '); analyzer pass is parser-only (degraded)')
     }
 
-    Write-DLog ('launching PSES via ' + $hostExe)
-    $script:proc = [System.Diagnostics.Process]::Start($psi)
+    try {
+        Write-DLog ('launching PSES via ' + $hostExe)
+        $script:proc = [System.Diagnostics.Process]::Start($psi)
+    } catch {
+        Write-DLog ('PSES process start threw: ' + $_.Exception.Message); $script:proc = $null; return $false
+    }
     $script:stdin = $script:proc.StandardInput.BaseStream
     $script:stdout = $script:proc.StandardOutput.BaseStream
     $errFs = [System.IO.File]::Open($errLog, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
@@ -259,22 +292,105 @@ function Start-Pses {
 
     # initialize handshake (declares rename -> avoids PSES v4.6.0 NRE; see lib).
     $rootUri = ConvertTo-FileUri (Get-Location).Path
-    $initId = 1
     # [trackA] initialize OMITS workspaceFolders to dodge the PSES v4.6.0 Linux
     # OnInitialize NRE (#2300); the omission and its full rationale live in
     # New-InitializeParams (lib/lsp-common.ps1) and are guarded by the unit suite.
     Send-Lsp @{
-        jsonrpc = '2.0'; id = $initId; method = 'initialize'
+        jsonrpc = '2.0'; id = 1; method = 'initialize'
         params = (New-InitializeParams -RootUri $rootUri -ProcessId $PID)
     }
-    if (-not (Invoke-LspPump -Until { $script:respSeen.ContainsKey('1') } -MaxMs 20000)) {
-        Write-DLog 'initialize response not received before deadline'
-        return $false
-    }
+    $script:initSentAt = Get-Date
+    $script:psesState = 'initializing'
+    Write-DLog 'PSES launched; initialize sent (awaiting response, non-blocking)'
+    return $true
+}
+
+function Complete-PsesReady {
+    # PSES has answered `initialize`: finish the handshake (initialized + scriptAnalysis
+    # enable), flip to 'ready', record it, and pre-warm the analyzer. Shared by BOTH the
+    # cooperative first-init (Complete-PsesInit) and the blocking respawn (Start-Pses), so the
+    # "PSES is up => warmed and ready" invariant holds on either path.
     Send-Lsp @{ jsonrpc = '2.0'; method = 'initialized'; params = @{} }
     Send-Lsp @{ jsonrpc = '2.0'; method = 'workspace/didChangeConfiguration'; params = @{ settings = @{ powershell = @{ scriptAnalysis = @{ enable = $true } } } } }
     $script:initDone = $true
+    $script:psesState = 'ready'
     Write-DLog 'PSES initialized'
+    Write-SessionFile $pipeName 'ready'
+    Invoke-WarmStart
+}
+
+function Invoke-WarmStart {
+    # Warm-start (dispatch 000028), the latency win that rides FREE on pipe-first: right after
+    # PSES goes ready, drive ONE synthetic in-memory didOpen so PSScriptAnalyzer loads +
+    # compiles its rule engine NOW, in the idle gap before the user's first real edit -- so
+    # that edit pays only the per-file cost (~0.8s), not the analyzer cold-start (measured
+    # ~0.77s warm / ~2.2s cold-box on top). Default rules (the per-file settingsPath push stays
+    # lazy-from-first-file and is cheap, ~0ms measured). Result is discarded. BEST-EFFORT and
+    # off the request path: any failure is swallowed -- warm-start is an optimization layered
+    # on top, never a correctness dependency (a failed warm just means the first edit self-warms
+    # as before). One-shot per PSES (re-armed on a respawn via Reset-PsesState).
+    if ($script:warmDone) { return }
+    $script:warmDone = $true
+    if (-not (Test-PsesAlive)) { return }
+    try {
+        $warmFile = Join-Path $logDir '__warmup__.ps1'
+        $warmText = "function Warmup-Pses {`n    Get-Process`n}`n"   # unapproved verb -> a real PSSA pass
+        [System.IO.File]::WriteAllText($warmFile, $warmText, (New-Object System.Text.UTF8Encoding($false)))
+        $warmUri = ConvertTo-FileUri $warmFile
+        $warmKey = ConvertTo-UriKey $warmUri
+        if ($script:diag.ContainsKey($warmKey)) { $script:diag.Remove($warmKey) | Out-Null }
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        Send-Lsp @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'
+            params = @{ textDocument = @{ uri = $warmUri; languageId = 'powershell'; version = 0; text = $warmText } } }
+        Invoke-LspPump -Until { $script:diag.ContainsKey($warmKey) } -MaxMs $MaxWaitMs | Out-Null
+        $sw.Stop()
+        # didClose + drop the synthetic entry so PSES holds no phantom doc and the warm-up
+        # publish never collides with a real request's key.
+        Send-Lsp @{ jsonrpc = '2.0'; method = 'textDocument/didClose'
+            params = @{ textDocument = @{ uri = $warmUri } } }
+        if ($script:diag.ContainsKey($warmKey)) { $script:diag.Remove($warmKey) | Out-Null }
+        Write-DLog ('warm-start: analyzer pre-warmed in ' + [int]$sw.ElapsedMilliseconds + 'ms (informational, non-gating)')
+    } catch {
+        Write-DLog ('warm-start error (ignored, best-effort): ' + $_.Exception.Message)
+    }
+}
+
+function Complete-PsesInit {
+    # Cooperative, NON-BLOCKING advance of the first-start init (pipe-first). Called each loop
+    # iteration while state is 'initializing'. Pumps PSES briefly; on the `initialize` response
+    # -> Complete-PsesReady (handshake + warm + ready). On a PSES exit or the init deadline ->
+    # declare a PERMANENT first-start failure: serve 'unavailable', NEVER exit (the daemon stays
+    # up to surface the honest banner over the already-open pipe). This is exactly the
+    # bundle-present init failure that 000024 left as a silent fail-fast (sub-case B); it now
+    # reads as 'unavailable' (permanent), distinct from the transient 'incomplete' served while
+    # still initializing (sub-case A).
+    if ($script:psesState -ne 'initializing') { return }
+    Invoke-LspPump -Until { $script:respSeen.ContainsKey('1') } -MaxMs 80 | Out-Null
+    if ($script:respSeen.ContainsKey('1')) { Complete-PsesReady; return }
+    $exited = ($null -ne $script:proc) -and $script:proc.HasExited
+    $timedOut = ((Get-Date) - $script:initSentAt).TotalMilliseconds -ge $InitTimeoutMs
+    if ($exited -or $timedOut) {
+        $cause = if ($exited) { 'PSES exited during init' } else { ('init timed out after ' + $InitTimeoutMs + 'ms') }
+        Write-DLog ('first-start PSES did not initialize (' + $cause + '); serving unavailable (permanent this session)')
+        $script:serveUnavailable = $true
+        $script:psesState = 'unavailable'
+        try { if ($null -ne $script:proc -and -not $script:proc.HasExited) { $script:proc.Kill($true) } } catch { }
+        Write-SessionFile $pipeName 'unavailable'
+    }
+}
+
+function Start-Pses {
+    # Blocking bring-up used by the mid-session supervised RESPAWN path (dispatch 000022):
+    # spawn, wait for `initialize`, finish the handshake, go ready. Returns $true on success.
+    # The FIRST-start bring-up uses Start-PsesProcess + Complete-PsesInit (pipe-first) instead,
+    # so the daemon can serve the pipe while PSES initializes; respawn keeps the blocking shape
+    # because it already runs off the client's critical path (the idle loop) and is bounded.
+    if (-not (Start-PsesProcess)) { return $false }
+    if (-not (Invoke-LspPump -Until { $script:respSeen.ContainsKey('1') } -MaxMs $InitTimeoutMs)) {
+        Write-DLog 'initialize response not received before deadline'
+        return $false
+    }
+    Complete-PsesReady
     return $true
 }
 
@@ -320,6 +436,13 @@ function Reset-PsesState {
     $script:respSeen = @{}
     $script:respResult = @{}
     $script:settingsResolved = $false
+    # Re-arm warm-start so the freshly re-spawned (cold) PSES is pre-warmed too, and mark the
+    # lifecycle 'respawning' -- a DISTINCT state from first-start 'initializing' so the
+    # cooperative first-init (Complete-PsesInit) never grabs a mid-session respawn and wrongly
+    # flips it to permanent 'unavailable'; the respawn's Start-Pses flips it back to 'ready' on
+    # success, and Get-Diagnostics serves the transient 'incomplete' meanwhile (dispatch 000028).
+    $script:warmDone = $false
+    $script:psesState = 'respawning'
 }
 
 function Restart-Pses {
@@ -478,18 +601,26 @@ function Get-Diagnostics([string]$filePath, [string]$cwd = '') {
     $uri = ConvertTo-FileUri $full
     $key = ConvertTo-UriKey $uri
 
-    # Supervised restart seam (dispatch 000022): if the PSES child is not alive, do NOT
-    # write to its closed stdin (that throws) and do NOT serve empty-as-clean. Return an
-    # explicit non-clean status FAST (well within the client hard cap); the daemon's idle loop
-    # re-spawns PSES off the request path, so the NEXT edit finds it live. This is the
-    # request-arrives-on-a-down-PSES half of the false-clean fix. 000024: an install-incomplete
-    # first start (the bundle never bootstrapped) serves the DISTINCT 'unavailable' status -- a
-    # broken install reads differently from a transient mid-session non-settle.
-    if (-not (Test-PsesAlive)) {
-        $downStatus = if ($script:serveUnavailable) { 'unavailable' } else { 'incomplete' }
-        Write-DLog ('diagnostics request while PSES down -> ' + $downStatus + ': ' + $uri)
-        return @{ ok = $true; status = $downStatus; cached = $false; records = @()
-            path = ('daemon-' + $downStatus); analysisMs = 0; codeActionMs = 0
+    # Pipe-first serve gate (dispatch 000028, generalizing the 000022/000024 seam). The pipe is
+    # open before PSES is ready, so a request can arrive while PSES is still starting, after it
+    # permanently failed to start, or after a mid-session death -- in NONE of these may we write
+    # to a not-ready/closed stdin or serve empty-as-clean. Return an explicit non-clean status
+    # FAST (well within the client hard cap). Precedence: a PERMANENT startup failure
+    # ('unavailable' -- missing bundle OR present-but-failed init, 000024 + sub-case B) outranks
+    # the TRANSIENT not-ready/down ('incomplete' -- still initializing (sub-case A), or a
+    # mid-session exit the idle loop will re-spawn). The two banners are deliberately distinct:
+    # 'unavailable' says "won't lint this session, fix + restart"; 'incomplete' says "not checked
+    # this time, the next edit will be."
+    if ($script:serveUnavailable) {
+        Write-DLog ('diagnostics request while unavailable (permanent): ' + $uri)
+        return @{ ok = $true; status = 'unavailable'; cached = $false; records = @()
+            path = 'daemon-unavailable'; analysisMs = 0; codeActionMs = 0
+            recordCount = 0; correctionCount = 0 }
+    }
+    if ($script:psesState -ne 'ready' -or -not (Test-PsesAlive)) {
+        Write-DLog ('diagnostics request while not ready (state=' + $script:psesState + '): ' + $uri)
+        return @{ ok = $true; status = 'incomplete'; cached = $false; records = @()
+            path = 'daemon-incomplete'; analysisMs = 0; codeActionMs = 0
             recordCount = 0; correctionCount = 0 }
     }
 
@@ -608,36 +739,38 @@ function Write-SessionFile([string]$pipeName, [string]$state) {
 # ===========================================================================
 $script:startedIso = (Get-Date -Format 'o')
 $pipeName = 'powershell-lsp-' + $SessionId
-# First-start install-incomplete latch (000024): set $true when PSES cannot launch at first
-# start because the bundle never bootstrapped. The daemon then comes up to SERVE 'unavailable'
-# over the pipe (a visible banner on the first edit) instead of dying before the pipe exists.
+# First-start latch (000024, generalized by 000028): serveUnavailable=$true when PSES cannot be
+# brought up AT ALL -- the bundle never bootstrapped (install-missing) OR it is present but fails
+# to initialize (sub-case B). Either way the daemon stays up serving the PERMANENT 'unavailable'
+# banner over the pipe-first pipe, never dying before the pipe exists (the old exit-1 silent miss).
 $script:serveUnavailable = $false
 Write-DLog ('--- daemon start: ' + (Get-VersionStamp) + ' session=' + $SessionId + ' pipe=' + $pipeName + ' host=' + $PsHost + ' ---')
 
-if (-not (Start-Pses)) {
-    # First-start blind spot (000024, closes audit #1 daemon-half): dying here -- BEFORE the
-    # named-pipe server below -- made the client connect-fail and exit 0 SILENTLY, the exact
-    # false-clean 000022 killed mid-session, surviving at install time. Distinguish a MISSING
-    # BUNDLE (clean box: the bootstrap never completed) from any other launch failure. On a
-    # missing bundle do NOT exit -- fall through to create the pipe and serve 'unavailable' so
-    # the first edit shows a VISIBLE banner. A bundle-PRESENT launch failure (host vanished /
-    # init handshake timeout) is not this dispatch's install case: keep the prior fail-fast.
-    if (-not (Test-Path -LiteralPath (Get-PsesStartScript))) {
-        $script:serveUnavailable = $true
-        Write-DLog ('first-start: PSES bundle missing (' + (Get-PsesStartScript) + '); coming up to serve unavailable (000024)')
-    } else {
-        Write-DLog 'PSES launch failed (bundle present); daemon exiting'
-        Write-SessionFile $pipeName 'failed'
-        exit 1
-    }
-}
-
+# PIPE-FIRST (dispatch 000028): create the named pipe BEFORE bringing PSES up, so the client can
+# ALWAYS connect and the daemon can serve an HONEST status while PSES is still starting (or after
+# it fails). This is what closes the no-pipe silent miss: the install-failure honesty surface
+# (000022->000024) rides this pipe, so the pipe must exist before the first edit can race PSES
+# startup. PSES is then brought up NON-BLOCKING and finished cooperatively in the serve loop
+# (Complete-PsesInit), so this ordering never blocks the pipe (the 000026 non-blocking spirit,
+# carried inside the daemon).
 $server = New-Object System.IO.Pipes.NamedPipeServerStream(
     $pipeName, [System.IO.Pipes.PipeDirection]::InOut, 1,
     [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)
+Write-SessionFile $pipeName 'starting'
+Write-DLog 'pipe server ready (PSES initializing)'
 
-Write-SessionFile $pipeName $(if ($script:serveUnavailable) { 'unavailable' } else { 'ready' })
-Write-DLog $(if ($script:serveUnavailable) { 'pipe server ready (serving unavailable -- install incomplete)' } else { 'pipe server ready' })
+if (-not (Start-PsesProcess)) {
+    # PSES could not even be launched (missing bundle / no host / spawn threw). Do NOT exit --
+    # come up serving the PERMANENT 'unavailable' over the already-open pipe so the first edit
+    # shows a VISIBLE banner. This generalizes the 000024 bundle-missing fall-through to ALL
+    # "PSES could not start" first-start failures: the bundle-PRESENT init failure 000024 left as
+    # a silent fail-fast (exit 1 before the pipe) is now visible too. A PSES that DID spawn but
+    # then fails to answer initialize is handled the same way by Complete-PsesInit (in the loop).
+    $script:serveUnavailable = $true
+    $script:psesState = 'unavailable'
+    Write-DLog ('first-start: PSES could not be launched (' + (Get-PsesStartScript) + '); serving unavailable')
+    Write-SessionFile $pipeName 'unavailable'
+}
 
 $lastActivity = Get-Date
 $lastHeartbeat = [DateTime]::MinValue
@@ -648,30 +781,36 @@ try {
     while ($running) {
         $now = Get-Date
         if (($now - $lastHeartbeat).TotalSeconds -ge 10) {
-            # Keep the heartbeat HONEST: a first-start install-incomplete daemon stays
-            # 'unavailable' (000024); once the re-spawn budget is spent the daemon stays up but
-            # 'degraded' -- neither must flip the session file back to 'ready' (000022).
-            Write-SessionFile $pipeName $(if ($script:serveUnavailable) { 'unavailable' } elseif ($script:psesGaveUp) { 'degraded' } else { 'ready' })
+            # Keep the heartbeat HONEST: a first-start install/startup failure stays 'unavailable'
+            # (000024/000028); an exhausted re-spawn budget stays 'degraded' (000022); a daemon
+            # still bringing PSES up reads 'starting' -- none may flip the session file back to
+            # 'ready' until PSES actually is.
+            Write-SessionFile $pipeName $(if ($script:serveUnavailable) { 'unavailable' } elseif ($script:psesGaveUp) { 'degraded' } elseif ($script:psesState -eq 'ready') { 'ready' } else { 'starting' })
             $lastHeartbeat = $now
         }
         if (($now - $lastActivity).TotalMinutes -ge $IdleTtlMin) {
             Write-DLog ('idle TTL (' + $IdleTtlMin + ' min) reached; shutting down')
             break
         }
-        # Supervised re-spawn (dispatch 000022, closes R1 + the fatal half of R2): on a
-        # mid-session PSES exit, attempt a bounded re-spawn HERE -- between requests, off
-        # the client's critical path -- instead of breaking the loop and exiting. A
-        # transient crash recovers before the next edit; an exhausted budget keeps the
-        # daemon UP serving 'incomplete' (never silently dead). The daemon now exits only
-        # on idle-TTL or an explicit shutdown. Skipped when serving install-incomplete
-        # (000024): re-spawn cannot conjure a missing bundle -- it would only thrash
-        # Start-Pses on the absent start script. Mid-session re-spawn applies only to a
-        # daemon that started PSES at least once.
-        if (-not $script:serveUnavailable -and -not (Test-PsesAlive)) { Restart-Pses 'idle-detected' | Out-Null }
+        # Pipe-first first-start (dispatch 000028): while PSES is still initializing, advance the
+        # handshake cooperatively here -- NON-BLOCKING, so the loop keeps accepting connections and
+        # serving the transient 'incomplete' meanwhile. On the init response -> ready (+ warm-start);
+        # on a PSES exit or the init deadline -> permanent 'unavailable' (never exit). Once settled
+        # to ready/unavailable the state leaves 'initializing', so this stops running.
+        if ($script:psesState -eq 'initializing') { Complete-PsesInit }
 
-        # brief idle drain so PSES server requests get answered between clients (only when
-        # a live child exists to pump)
-        if (Test-PsesAlive) { Invoke-LspPump -Until { $false } -MaxMs 40 | Out-Null }
+        # Supervised re-spawn (dispatch 000022, closes R1 + the fatal half of R2): on a mid-session
+        # PSES exit, attempt a bounded re-spawn HERE -- between requests, off the client's critical
+        # path -- instead of breaking the loop and exiting. A transient crash recovers before the
+        # next edit; an exhausted budget keeps the daemon UP serving 'incomplete' (never silently
+        # dead). The daemon exits only on idle-TTL or explicit shutdown. Skipped while serving
+        # 'unavailable' (re-spawn cannot conjure a missing/broken bundle) and while first-start is
+        # still initializing (Complete-PsesInit owns that path).
+        if (-not $script:serveUnavailable -and $script:psesState -ne 'initializing' -and -not (Test-PsesAlive)) { Restart-Pses 'idle-detected' | Out-Null }
+
+        # brief idle drain so PSES server requests get answered between clients (only when ready
+        # with a live child to pump)
+        if ($script:psesState -eq 'ready' -and (Test-PsesAlive)) { Invoke-LspPump -Until { $false } -MaxMs 40 | Out-Null }
 
         if ($null -eq $connectTask) { $connectTask = $server.WaitForConnectionAsync() }
         if (-not $connectTask.Wait(500)) { continue }
