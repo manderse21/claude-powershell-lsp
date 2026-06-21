@@ -365,6 +365,66 @@ function Get-ProcessCommandLine {
     } catch { return '' }
 }
 
+# --- detached daemon launch (dispatch 000030: single source of the launch) --
+# The ONE place that launches the per-session PSES daemon detached. Extracted from
+# session-start.ps1 (no behavior change there) so the PostToolUse client can reuse the
+# EXACT pipe-first launch to AUTO-RELAUNCH a cleanly idle-stopped daemon on the next edit
+# (dispatch 000030). The daemon owns its own lifecycle (pipe-first per 000028); this only
+# starts it detached, with the 000026 cross-platform detachment so it never inherits the
+# caller's std handles -- on non-Windows that leak would stall the session (claude-code
+# #43123). Returns $true if the launch was fired, $false if it could not be (spawn threw).
+
+function Start-PsesDaemonDetached {
+    param(
+        [Parameter(Mandatory = $true)][string]$SessionId,
+        [Parameter(Mandatory = $true)][string]$HostExe,
+        [string]$SeverityThreshold = 'Hint',
+        [string]$RuleInclude = '',
+        [string]$RuleExclude = '',
+        [int]$DebounceMs = 150,
+        [int]$IdleTtlMin = 30,
+        [int]$PerFileCap = 20,
+        [string]$SettingsPath = ''
+    )
+    $scriptsDir = Split-Path -Parent $script:LspCommonDir   # scripts/lib -> scripts
+    if ([string]::IsNullOrWhiteSpace($scriptsDir)) { $scriptsDir = Split-Path -Parent $PSScriptRoot }
+    $daemon = Join-Path $scriptsDir 'pses-daemon.ps1'
+    $logDir = Get-LogDir
+    try { New-Item -ItemType Directory -Force -Path $logDir | Out-Null } catch { }
+    # Identical arg shape to the pre-000030 inline session-start launch: DataRoot is passed
+    # explicitly (a detached launch may not inherit the env var), rule lists / settings path
+    # only when non-empty (an empty positional element would misalign the daemon binding).
+    $daemonArgs = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $daemon,
+        '-SessionId', $SessionId, '-PsHost', $HostExe, '-DataRoot', (Get-PluginDataRoot),
+        '-SeverityThreshold', $SeverityThreshold, '-DebounceMs', [string]$DebounceMs,
+        '-IdleTtlMin', [string]$IdleTtlMin, '-PerFileCap', [string]$PerFileCap)
+    if (-not [string]::IsNullOrWhiteSpace($RuleInclude)) { $daemonArgs += @('-RuleInclude', $RuleInclude) }
+    if (-not [string]::IsNullOrWhiteSpace($RuleExclude)) { $daemonArgs += @('-RuleExclude', $RuleExclude) }
+    if (-not [string]::IsNullOrWhiteSpace($SettingsPath)) { $daemonArgs += @('-SettingsPath', $SettingsPath) }
+    try {
+        if (Test-OnWindows) {
+            # -WindowStyle Hidden routes through ShellExecute, which STRUCTURALLY does not pass
+            # inheritable std handles to the child (Windows is already detached-safe).
+            Start-Process -FilePath $HostExe -ArgumentList $daemonArgs -WindowStyle Hidden | Out-Null
+        } else {
+            # Non-Windows has no ShellExecute, so redirect all three std streams to per-launch
+            # files (stamped, retired by the log sweep) so the daemon never holds the caller's
+            # hook pipes open (000026). DISTINCT paths (Start-Process rejects two sharing one).
+            $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+            $dlBase = Join-Path $logDir ('pses-daemon-launch-' + $stamp)
+            $dlIn = $dlBase + '.in'; $dlOut = $dlBase + '.out'; $dlErr = $dlBase + '.err'
+            New-Item -ItemType File -Force -Path $dlIn | Out-Null
+            Start-Process -FilePath $HostExe -ArgumentList $daemonArgs `
+                -RedirectStandardInput $dlIn `
+                -RedirectStandardOutput $dlOut `
+                -RedirectStandardError $dlErr | Out-Null
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 # --- file URIs (landmine 1: uppercase Windows drive letters) ---------------
 
 function ConvertTo-FileUri {

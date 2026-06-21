@@ -47,6 +47,14 @@ $script:StatConnectMs = $null   # client->daemon connect ms; set on a successful
 $ScopeToEdit = Get-PluginOptionBool 'scopeToEdit' $true
 $EditContextLines = Get-PluginOptionInt 'editContextLines' 0
 
+# Auto-relaunch cooldown (dispatch 000030): the BOUND. After this client fires a relaunch of an
+# idle-stopped daemon, suppress any further relaunch for this long. A pipe-first daemon that launched
+# STAYS UP once it owns the pipe, so a fresh unreachable inside the window means the prior launch is
+# still coming up (reconnect to it) or genuinely cannot stay alive (do NOT relaunch again -- the
+# honest banner is the fallback; never a loop). ~InitTimeoutMs (the daemon's own time to come up or
+# park as unavailable), so it is one relaunch per init window.
+$script:RelaunchCooldownMs = 30000
+
 $logDir = Get-LogDir
 try { New-Item -ItemType Directory -Force -Path $logDir | Out-Null } catch { }
 $clientLog = Join-Path $logDir 'lsp-client.log'
@@ -111,6 +119,59 @@ function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, 
     } finally {
         try { if ($null -ne $client) { $client.Dispose() } } catch { }
     }
+}
+
+function Start-DaemonRelaunchIfRecoverable {
+    # Auto-relaunch the per-session daemon when an edit finds it UNREACHABLE (dispatch 000030).
+    # Reaching here means $null = no daemon process at all (a clean idle-TTL self-terminate, a
+    # crashed daemon, or the ~150ms pre-pipe launch sliver) -- the RECOVERABLE no-daemon condition.
+    # A PERMANENT init failure never reaches here: the pipe-first daemon stays UP serving
+    # 'unavailable' (a reachable status, not $null), so this seam is structurally the recoverable
+    # case -- the $null-vs-status='unavailable' gate IS the recoverable/permanent split.
+    #
+    # BOUND (never a loop): at most one relaunch per cooldown window, tracked by a per-session stamp.
+    # Returns @{ Attempted; LaunchOk }. Attempted=$false = suppressed (cooldown) or no host found;
+    # LaunchOk=$false = the spawn itself threw. The caller renders the honest banner in EVERY
+    # not-recovered case -- a suppressed/failed relaunch ALWAYS yields a banner, never silence, so the
+    # bound can only ever cost a banner, never a miss.
+    param([string]$SessionId)
+    $result = @{ Attempted = $false; LaunchOk = $false }
+    $sessionDir = Get-SessionDir
+    $stamp = Join-Path $sessionDir ($SessionId + '.relaunch')
+    try {
+        if (Test-Path -LiteralPath $stamp) {
+            $age = ((Get-Date) - (Get-Item -LiteralPath $stamp).LastWriteTime).TotalMilliseconds
+            if ($age -lt $script:RelaunchCooldownMs) {
+                Write-CLog ('auto-relaunch suppressed (cooldown: ' + [int]$age + 'ms < ' + $script:RelaunchCooldownMs + 'ms)')
+                return $result
+            }
+        }
+    } catch { }
+    $hostExe = Resolve-PsHost (Get-PluginOption 'ps_host' 'pwsh')
+    if ($null -eq $hostExe) { Write-CLog 'auto-relaunch: no PowerShell host (pwsh/powershell) found'; return $result }
+    # Stamp BEFORE the launch so a concurrent edit racing this one is suppressed -- one launch wins,
+    # the other backstops honestly (the daemon's NamedPipeServerStream max=1 also makes a racing
+    # second daemon throw and die, so at most one ever serves). The stamp only costs a banner.
+    try {
+        New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null
+        Set-Content -LiteralPath $stamp -Value ([string]$PID) -Encoding ascii -Force
+    } catch { }
+    $result.Attempted = $true
+    # Reuse the EXACT pipe-first launch session-start uses (Start-PsesDaemonDetached, lib). Resolve
+    # the daemon knobs from the same CLAUDE_PLUGIN_OPTION_* env session-start reads, so the relaunched
+    # daemon comes up identically. NOT ensure-pses/ensure-pssa (bootstrap; re-running risks the network
+    # and is the permanent case we do not spin on) and NOT the reap (next SessionStart handles a
+    # crash-orphaned PSES).
+    $result.LaunchOk = [bool](Start-PsesDaemonDetached -SessionId $SessionId -HostExe $hostExe `
+        -SeverityThreshold (Get-PluginOption 'severityThreshold' 'Hint') `
+        -RuleInclude (Get-PluginOption 'ruleInclude' '') `
+        -RuleExclude (Get-PluginOption 'ruleExclude' '') `
+        -DebounceMs (Get-PluginOptionInt 'debounceMs' 150) `
+        -IdleTtlMin (Get-PluginOptionInt 'idleTtlMin' 30) `
+        -PerFileCap (Get-PluginOptionInt 'perFileCap' 20) `
+        -SettingsPath (Get-PluginOption 'settingsPath' ''))
+    Write-CLog ('auto-relaunch: daemon launch ' + $(if ($result.LaunchOk) { 'fired' } else { 'FAILED (spawn threw)' }))
+    return $result
 }
 
 try {
@@ -209,19 +270,43 @@ try {
     # path/analysisMs/codeActionMs/recordCount/correctionCount). A null/!ok response
     # means the edit was never analyzed (unreachable/timeout) -> no stats line.
     if ($null -eq $resp) {
-        # Never-silent backstop (dispatch 000028): $null means the daemon was UNREACHABLE -- no
-        # pipe yet (the brief daemon-launch window before pipe-first's pipe exists), the
-        # per-session daemon has stopped (e.g. idle-TTL self-terminate, or the daemon process
-        # died), or a connect/read failure. The daemon-served honesty banners ride the pipe, so
-        # with NO pipe there is no daemon banner -- the client must surface its own, or this edit
-        # reads as "analyzed, clean" (the exact could-not-X-looks-like-X-found-nothing failure
-        # 000028 exists to kill). This closes the residual no-pipe window pipe-first cannot reach
-        # from the daemon side. GATED on $null, which a HEALTHY pass is NEVER (a clean pass returns
-        # an ok response object -> renders nothing), so the byte-identical warm/clean path is
-        # untouched: the backstop fires only on a genuine could-not-reach, never on a clean result.
-        Write-HookContext ('PowerShell diagnostics unavailable for ' + $path + ': the analyzer was not reachable -- this edit was NOT checked. The per-session daemon may still be starting, or has stopped (e.g. after idle); start a new session to restart it.')
-        Write-CLog 'daemon unreachable -> emitted never-silent backstop banner (no pipe)'
-        exit 0
+        # Auto-relaunch (dispatch 000030), plugged into the 000028 never-silent backstop seam. $null
+        # means the daemon was UNREACHABLE -- NO pipe: a clean idle-TTL self-terminate, a crashed
+        # daemon, or the ~150ms pre-pipe launch sliver. That is the RECOVERABLE no-daemon condition;
+        # a PERMANENT init failure stays UP serving 'unavailable' (reachable, never $null), so it
+        # never reaches here. FIRST attempt a bounded silent relaunch (the same pipe-first launch
+        # session-start uses), then retry-connect within the remaining hard cap. The relaunched daemon
+        # comes up pipe-first, so this edit honestly gets the transient 'incomplete' if it lands during
+        # init -- ONE edit, then real analysis. Recovery is SILENT only when it works; otherwise the
+        # honest banner below fires (never silence). GATED on $null, which a HEALTHY pass is NEVER (a
+        # clean pass returns an ok object -> renders nothing), so the byte-identical warm path is
+        # untouched: relaunch+backstop fire only on a genuine could-not-reach, never on a clean result.
+        $relaunch = Start-DaemonRelaunchIfRecoverable -SessionId $sessionId
+        if ($relaunch.LaunchOk) {
+            while ($null -eq $resp -and $swTotal.ElapsedMilliseconds -lt $HardCapMs) {
+                Start-Sleep -Milliseconds 250
+                $resp = Get-Diagnostics $pipeName $path $ConnectTimeoutMs $HardCapMs $cwd $touchedRanges
+            }
+        }
+        if ($null -eq $resp) {
+            # Still unreachable -> the honest never-silent backstop (028, wording refined for 030).
+            # NEVER silence. Two deliberately distinct cases:
+            #  - relaunch fired and the daemon is still coming up (pipe not ready within the cap):
+            #    do NOT say "start a new session" -- it IS being restarted; the next edit gets it.
+            #  - relaunch suppressed (cooldown) / no host / spawn threw: a GENUINE could-not-restart
+            #    -- "could not be restarted automatically", with a manual restart as the fallback.
+            if ($relaunch.Attempted -and $relaunch.LaunchOk) {
+                Write-HookContext ('PowerShell diagnostics unavailable for ' + $path + ': the analyzer had stopped (e.g. after idle) and is being restarted -- this edit was NOT checked; your next edit should be.')
+                Write-CLog 'daemon unreachable -> relaunched, re-warming; emitted honest is-being-restarted banner'
+            } else {
+                Write-HookContext ('PowerShell diagnostics unavailable for ' + $path + ': the analyzer was not reachable and could not be restarted automatically -- this edit was NOT checked. Start a new session to restart it.')
+                Write-CLog ('daemon unreachable -> not recovered (attempted=' + $relaunch.Attempted + ' launchOk=' + $relaunch.LaunchOk + '); emitted honest could-not-restart banner')
+            }
+            exit 0
+        }
+        Write-CLog ('auto-relaunch recovered a reachable daemon (status=' + [string](Get-Prop $resp 'status') + ')')
+        # fall through: $resp now carries the relaunched daemon's status (transient 'incomplete'
+        # during its init window, or a settled pass) -- rendered by the existing status path below.
     }
     if (-not (Get-Prop $resp 'ok')) { Write-CLog ('daemon error: ' + [string](Get-Prop $resp 'error')); exit 0 }
 
