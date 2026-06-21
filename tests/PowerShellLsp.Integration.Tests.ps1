@@ -1127,11 +1127,21 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
     It 'warm-start rides FREE: the daemon reaches ready pre-warmed and the first real edit is served clean+warm' {
         $script:P_InfoW | Should -Not -BeNullOrEmpty
         [string](Get-Prop $script:P_InfoW 'state') | Should -Be 'ready'
-        # State-level proof (NOT a wall-clock gate, the 000026 lesson): the analyzer was pre-warmed
-        # for THIS daemon (its PID) -- the warm pass ran as part of going ready, before any request.
+        # Proof the analyzer was pre-warmed for THIS daemon (its PID). BOUNDED POLL for a DEFINITE
+        # event, not an instant assert: 'ready' is written to the session file BEFORE Invoke-WarmStart
+        # logs its line (the warm pass runs just after ready, up to ~MaxWaitMs for its analyzer pump),
+        # so a plain scrape races a slow runner (the 000026 flaky-proxy lesson -- macOS caught exactly
+        # this). Wait for the line; do not assume it is already there. A genuine warm-start failure
+        # would still fail here (the line never appears -> the poll times out).
         $dlog = Join-Path $script:P_Data 'logs/pses-daemon.log'
-        $warmLines = @(Select-String -Path $dlog -Pattern ('\[' + [int]$script:P_InfoW.pid + '\].*warm-start: analyzer pre-warmed') -ErrorAction SilentlyContinue)
-        $warmLines.Count | Should -BeGreaterThan 0
+        $warmPat = '\[' + [int]$script:P_InfoW.pid + '\].*warm-start: analyzer pre-warmed'
+        $warmCount = 0
+        for ($i = 0; $i -lt 60; $i++) {
+            $warmCount = @(Select-String -Path $dlog -Pattern $warmPat -ErrorAction SilentlyContinue).Count
+            if ($warmCount -gt 0) { break }
+            Start-Sleep -Milliseconds 500
+        }
+        $warmCount | Should -BeGreaterThan 0
         # Behavioral complement: the first real edit is served the clean WARM diagnostic, no banner.
         $fix = Join-Path $script:P_Data 'warm-fixture.ps1'
         "function Frobnicate-Warm {`n    Get-Process`n}" | Set-Content -LiteralPath $fix -Encoding ascii   # PSUseApprovedVerbs
