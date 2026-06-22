@@ -1,0 +1,2 @@
+function Unclosed {
+    Write-Host "Missing brace"

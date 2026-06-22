@@ -69,3 +69,15 @@ jobs:
             psls-test-data/logs/**
             psls-test-data/session/**
           if-no-files-found: ignore
+
+      # The performance benchmark harness (dispatch 000040) emits its measured
+      # cold-start / warm-path numbers here; surface them as a first-class artifact
+      # so per-leg latency is downloadable for characterizing and later tightening
+      # the (deliberately generous) regression thresholds.
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ matrix.label }}
+          path: psls-test-data/logs/benchmark-results.json
+          if-no-files-found: ignore

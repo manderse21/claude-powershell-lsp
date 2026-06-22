@@ -1,0 +1,18 @@
+[
+  {
+    "ruleId": "UnexpectedToken",
+    "source": "parser",
+    "severity": "Error",
+    "line": 1,
+    "col": 11,
+    "message": "Unexpected token '{' in expression or statement."
+  },
+  {
+    "ruleId": "MissingEndParenthesisAfterStatement",
+    "source": "parser",
+    "severity": "Error",
+    "line": 1,
+    "col": 11,
+    "message": "Missing closing ')' after expression in 'if' statement."
+  }
+]
