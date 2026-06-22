@@ -7,6 +7,7 @@ BeforeAll {
     $script:PluginRoot = Split-Path -Parent $PSScriptRoot
     $script:ScriptsDir = Join-Path $script:PluginRoot 'scripts'
     . (Join-Path $script:ScriptsDir 'lib/lsp-common.ps1')
+    . (Join-Path $script:ScriptsDir 'lib/security-classifier.ps1')
 }
 
 # Drive-letter casing is a Windows concept; on *nix 'c:\x' is not a drive path,
@@ -1134,5 +1135,249 @@ Describe 'Preflight doctor -- per-check status decisions (dispatch 000036)' {
             $report | Should -Match 'security control'
             $report | Should -Not -Match 'WDAC|AppLocker|ExecutionPolicy|Constrained Language|Smart App Control'
         }
+    }
+}
+
+# ===========================================================================
+# Security-block classifier (dispatch 000038, building 000032 L3)
+# ===========================================================================
+# Honest degradation on a security-control block: attribute a bootstrap failure to the
+# control most likely blocking it -- but ONLY on positive evidence. The classifier is a
+# PURE function over INJECTED evidence (these tests pass evidence directly, no live
+# probes), so the honesty discipline is asserted deterministically per case. The live
+# probes are exercised separately with EVERY probe mocked. This ENRICHES the existing
+# never-silent surface (000024/000028); it adds NO status token (the 000027-frozen
+# taxonomy is untouched -- the Get-DiagnosticsStatusBanner drift-guard above stays green).
+
+Describe 'Resolve-SecurityBlock -- ExecutionPolicy attribution, GPO-scope only (dispatch 000038)' {
+    It 'names ExecutionPolicy (likely) when a GROUP-POLICY scope is AllSigned' {
+        $r = Resolve-SecurityBlock -Evidence @{ ExecutionPolicies = @{ MachinePolicy = 'AllSigned'; CurrentUser = 'Undefined' } } -Component 'PSES bootstrap'
+        $r.Control | Should -BeExactly 'ExecutionPolicy'
+        $r.Confidence | Should -BeExactly 'likely'
+        $r.Summary | Should -Match 'MachinePolicy'
+        $r.Summary | Should -Match 'AllSigned'
+        $r.Evidence | Should -Match 'Get-ExecutionPolicy -List'
+    }
+    It 'names ExecutionPolicy for a UserPolicy RemoteSigned (the other GPO scope)' {
+        $r = Resolve-SecurityBlock -Evidence @{ ExecutionPolicies = @{ UserPolicy = 'RemoteSigned' } } -Component 'PSES bootstrap'
+        $r.Control | Should -BeExactly 'ExecutionPolicy'
+        $r.Summary | Should -Match 'UserPolicy'
+    }
+    It 'does NOT name ExecutionPolicy for a CurrentUser/LocalMachine policy -- the plugin runs -ExecutionPolicy Bypass, which OVERRIDES those (the honesty boundary)' {
+        # The whole correctness of this check: a non-GPO AllSigned is NOT a real block, so
+        # naming it would be a false positive. Adversarial control: drop the scope filter and
+        # this case starts naming ExecutionPolicy and goes RED.
+        $r = Resolve-SecurityBlock -Evidence @{ ExecutionPolicies = @{ CurrentUser = 'AllSigned'; LocalMachine = 'RemoteSigned' } } -Component 'PSES bootstrap'
+        $r.Control | Should -BeNullOrEmpty
+        $r.Confidence | Should -BeExactly 'none'
+    }
+}
+
+Describe 'Resolve-SecurityBlock -- Constrained Language Mode (dispatch 000038)' {
+    It 'names CLM (likely) when the session LanguageMode is ConstrainedLanguage' {
+        $r = Resolve-SecurityBlock -Evidence @{ LanguageMode = 'ConstrainedLanguage' } -Component 'PSES bootstrap'
+        $r.Control | Should -BeExactly 'Constrained Language Mode'
+        $r.Confidence | Should -BeExactly 'likely'
+        $r.Summary | Should -Match 'Constrained Language Mode'
+    }
+    It 'does NOT name CLM for FullLanguage (no block)' {
+        $r = Resolve-SecurityBlock -Evidence @{ LanguageMode = 'FullLanguage' } -Component 'PSES bootstrap'
+        $r.Control | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Resolve-SecurityBlock -- App Control / WDAC via CodeIntegrity events (dispatch 000038)' {
+    It 'names WDAC (confirmed) on a 3077 enforced-block event NAMING a plugin component' {
+        $ev = @{ CodeIntegrityEvents = @(@{ Id = 3077; Message = 'Code Integrity blocked C:\data\PowerShellEditorServices\Start-EditorServices.ps1' }) }
+        $r = Resolve-SecurityBlock -Evidence $ev -Component 'PSES bootstrap'
+        $r.Control | Should -BeExactly 'App Control / WDAC'
+        $r.Confidence | Should -BeExactly 'confirmed'
+        $r.Summary | Should -Match '3077'
+    }
+    It 'names WDAC (likely) on a 3076 AUDIT event naming a plugin component -- audit is not enforced' {
+        $ev = @{ CodeIntegrityEvents = @(@{ Id = 3076; Message = 'audit: pses-daemon.ps1' }) }
+        $r = Resolve-SecurityBlock -Evidence $ev -Component 'PSES bootstrap'
+        $r.Control | Should -BeExactly 'App Control / WDAC'
+        $r.Confidence | Should -BeExactly 'likely'
+        $r.Summary | Should -Match '3076'
+    }
+    It 'does NOT name WDAC on a 3077 that names some OTHER, unrelated file (no false positive)' {
+        # Correlation, not bare presence: a 3077 about an unrelated binary on the box must not
+        # be attributed to us. Adversarial control: drop the component-reference test and this
+        # starts naming WDAC and goes RED.
+        $ev = @{ CodeIntegrityEvents = @(@{ Id = 3077; Message = 'Code Integrity blocked C:\Program Files\Other\thing.exe' }) }
+        $r = Resolve-SecurityBlock -Evidence $ev -Component 'PSES bootstrap'
+        $r.Control | Should -BeNullOrEmpty
+        $r.Confidence | Should -BeExactly 'none'
+    }
+}
+
+Describe 'Resolve-SecurityBlock -- Defender ASR via events (dispatch 000038)' {
+    It 'names Defender ASR (confirmed) on a 1121 block event naming a plugin component' {
+        $ev = @{ DefenderAsrEvents = @(@{ Id = 1121; Message = 'ASR blocked process: ensure-pses.ps1' }) }
+        $r = Resolve-SecurityBlock -Evidence $ev -Component 'PSES bootstrap'
+        $r.Control | Should -BeExactly 'Microsoft Defender ASR'
+        $r.Confidence | Should -BeExactly 'confirmed'
+        $r.Summary | Should -Match '1121'
+    }
+    It 'names Defender ASR (likely) on a 1122 audit event naming a plugin component' {
+        $ev = @{ DefenderAsrEvents = @(@{ Id = 1122; Message = 'ASR audit: pses-stdio.ps1' }) }
+        $r = Resolve-SecurityBlock -Evidence $ev -Component 'PSES bootstrap'
+        $r.Control | Should -BeExactly 'Microsoft Defender ASR'
+        $r.Confidence | Should -BeExactly 'likely'
+    }
+}
+
+Describe 'Resolve-SecurityBlock -- Smart App Control is SCOPED, never confirmed (dispatch 000038)' {
+    It 'names SAC only as POSSIBLE when enforced (state 1), with hedged "may be" wording' {
+        $r = Resolve-SecurityBlock -Evidence @{ SacState = 1 } -Component 'PSES bootstrap'
+        $r.Control | Should -BeExactly 'Smart App Control'
+        $r.Confidence | Should -BeExactly 'possible'
+        $r.Summary | Should -Match 'may be'
+    }
+    It 'names SAC as POSSIBLE in evaluation mode (state 2)' {
+        $r = Resolve-SecurityBlock -Evidence @{ SacState = 2 } -Component 'PSES bootstrap'
+        $r.Control | Should -BeExactly 'Smart App Control'
+        $r.Confidence | Should -BeExactly 'possible'
+    }
+    It 'does NOT name SAC when it is off (state 0)' {
+        $r = Resolve-SecurityBlock -Evidence @{ SacState = 0 } -Component 'PSES bootstrap'
+        $r.Control | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Resolve-SecurityBlock -- honest fallback, no fabrication (dispatch 000038)' {
+    It 'returns "none" (no control) for empty evidence -- never invents a control' {
+        $r = Resolve-SecurityBlock -Evidence @{ } -Component 'PSES bootstrap'
+        $r.Control | Should -BeNullOrEmpty
+        $r.Confidence | Should -BeExactly 'none'
+    }
+    It 'returns "none" for $null evidence (defensive)' {
+        $r = Resolve-SecurityBlock -Evidence $null -Component 'PSES bootstrap'
+        $r.Control | Should -BeNullOrEmpty
+        $r.Confidence | Should -BeExactly 'none'
+    }
+    It 'returns "none" for benign, non-blocking evidence across the board' {
+        $ev = @{ ExecutionPolicies = @{ MachinePolicy = 'Undefined'; CurrentUser = 'RemoteSigned' }; LanguageMode = 'FullLanguage'; SacState = 0; CodeIntegrityEvents = @(); DefenderAsrEvents = @() }
+        $r = Resolve-SecurityBlock -Evidence $ev -Component 'PSES bootstrap'
+        $r.Control | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Resolve-SecurityBlock -- precedence: highest-fidelity positive evidence wins (dispatch 000038)' {
+    It 'a 3077 event (confirmed) outranks a concurrent CLM signal (likely) -- the event names the root policy' {
+        $ev = @{ LanguageMode = 'ConstrainedLanguage'; CodeIntegrityEvents = @(@{ Id = 3077; Message = 'blocked pses-daemon.ps1' }) }
+        $r = Resolve-SecurityBlock -Evidence $ev -Component 'PSES bootstrap'
+        $r.Control | Should -BeExactly 'App Control / WDAC'
+        $r.Confidence | Should -BeExactly 'confirmed'
+    }
+    It 'CLM (a current in-process fact) outranks an ExecutionPolicy GPO state when both are present' {
+        $ev = @{ LanguageMode = 'ConstrainedLanguage'; ExecutionPolicies = @{ MachinePolicy = 'AllSigned' } }
+        $r = Resolve-SecurityBlock -Evidence $ev -Component 'PSES bootstrap'
+        $r.Control | Should -BeExactly 'Constrained Language Mode'
+    }
+    It 'an enforced 3077 outranks an audit 3076 in the same log' {
+        $ev = @{ CodeIntegrityEvents = @(@{ Id = 3076; Message = 'audit pses-daemon.ps1' }, @{ Id = 3077; Message = 'blocked ensure-pses.ps1' }) }
+        $r = Resolve-SecurityBlock -Evidence $ev -Component 'PSES bootstrap'
+        $r.Confidence | Should -BeExactly 'confirmed'
+    }
+}
+
+Describe 'Format-BootstrapFailureBanner -- enriched, never-silent, ASCII (dispatch 000038)' {
+    It 'a named classification yields a banner that NAMES the control and keeps bootstrap+unavailable' {
+        $c = Resolve-SecurityBlock -Evidence @{ LanguageMode = 'ConstrainedLanguage' } -Component 'PSES bootstrap'
+        $b = Format-BootstrapFailureBanner -Classification $c -LogPath 'logs/ensure-pses.log'
+        $b | Should -Match 'unavailable'                 # the never-silent surface (000024) holds
+        $b | Should -Match 'bootstrap'                   # and the existing surface integration test
+        $b | Should -Match 'Constrained Language Mode'   # the new attribution
+        $b | Should -Match ([regex]::Escape('logs/ensure-pses.log'))
+    }
+    It 'the "none" fallback is an honest POINTER (check ExecutionPolicy / language mode / CodeIntegrity), not a fabricated control' {
+        $c = Resolve-SecurityBlock -Evidence @{ } -Component 'PSES bootstrap'
+        $b = Format-BootstrapFailureBanner -Classification $c -LogPath 'logs/ensure-pses.log'
+        $b | Should -Match 'unavailable'
+        $b | Should -Match 'bootstrap'
+        $b | Should -Match 'Get-ExecutionPolicy -List'
+        $b | Should -Match 'CodeIntegrity'
+        $b | Should -Not -Match 'Constrained Language Mode is running'   # no asserted control in the fallback
+    }
+    It 'the confidence lead-in tracks the confidence (Cause / Likely cause / Possible cause)' {
+        $confirmed = Format-BootstrapFailureBanner -Classification (Resolve-SecurityBlock -Evidence @{ CodeIntegrityEvents = @(@{ Id = 3077; Message = 'pses-daemon.ps1' }) }) -LogPath 'x'
+        $likely = Format-BootstrapFailureBanner -Classification (Resolve-SecurityBlock -Evidence @{ LanguageMode = 'ConstrainedLanguage' }) -LogPath 'x'
+        $possible = Format-BootstrapFailureBanner -Classification (Resolve-SecurityBlock -Evidence @{ SacState = 1 }) -LogPath 'x'
+        $confirmed | Should -Match 'Cause:'
+        $likely | Should -Match 'Likely cause:'
+        $possible | Should -Match 'Possible cause:'
+    }
+    It 'every classification + banner is ASCII-only (PS 5.1 em-dash trap)' {
+        $cases = @(
+            (Resolve-SecurityBlock -Evidence @{ ExecutionPolicies = @{ MachinePolicy = 'AllSigned' } }),
+            (Resolve-SecurityBlock -Evidence @{ LanguageMode = 'ConstrainedLanguage' }),
+            (Resolve-SecurityBlock -Evidence @{ CodeIntegrityEvents = @(@{ Id = 3077; Message = 'pses-daemon.ps1' }) }),
+            (Resolve-SecurityBlock -Evidence @{ DefenderAsrEvents = @(@{ Id = 1121; Message = 'ensure-pses.ps1' }) }),
+            (Resolve-SecurityBlock -Evidence @{ SacState = 1 }),
+            (Resolve-SecurityBlock -Evidence @{ })
+        )
+        foreach ($c in $cases) {
+            foreach ($s in @([string]$c.Summary, [string]$c.Remediation, [string]$c.Evidence, (Format-BootstrapFailureBanner -Classification $c -LogPath 'logs/x.log'))) {
+                (@([System.Text.Encoding]::UTF8.GetBytes($s) | Where-Object { $_ -gt 127 }).Count) | Should -Be 0
+            }
+        }
+    }
+}
+
+Describe 'Security classifier -- the absolute fence: detect, never circumvent (dispatch 000038)' {
+    # Every remediation must be INSTRUCTIONS for the user/admin, never an action the plugin
+    # takes, and must never emit a control-modifying command. Adversarial control: put a
+    # Set-ExecutionPolicy / Add-MpPreference into any remediation and this goes RED.
+    It 'no remediation contains a control-MODIFYING command (Set-ExecutionPolicy / *-MpPreference / reg add)' {
+        $cases = @(
+            (Resolve-SecurityBlock -Evidence @{ ExecutionPolicies = @{ MachinePolicy = 'AllSigned' } }),
+            (Resolve-SecurityBlock -Evidence @{ LanguageMode = 'ConstrainedLanguage' }),
+            (Resolve-SecurityBlock -Evidence @{ CodeIntegrityEvents = @(@{ Id = 3077; Message = 'pses-daemon.ps1' }) }),
+            (Resolve-SecurityBlock -Evidence @{ DefenderAsrEvents = @(@{ Id = 1121; Message = 'ensure-pses.ps1' }) }),
+            (Resolve-SecurityBlock -Evidence @{ SacState = 1 })
+        )
+        foreach ($c in $cases) {
+            [string]$c.Remediation | Should -Not -Match 'Set-ExecutionPolicy'
+            [string]$c.Remediation | Should -Not -Match 'MpPreference'
+            [string]$c.Remediation | Should -Not -Match 'reg(\.exe)?\s+add'
+            # Positive framing: each names the plugin's REFUSAL to act ("will not") -- the fence in words.
+            [string]$c.Remediation | Should -Match 'will not'
+        }
+    }
+}
+
+Describe 'Get-SecurityBlockEvidence + Resolve-SecurityBlock -- ALL probes mocked (dispatch 000038)' {
+    # The live probes are best-effort glue; here EVERY probe is mocked so the gather -> classify
+    # path is deterministic and the "all probes mocked" acceptance is met literally.
+    It 'a mocked ConstrainedLanguage probe drives a CLM classification end to end' {
+        Mock Get-ExecutionPolicyState { @{} }
+        Mock Get-SessionLanguageMode { 'ConstrainedLanguage' }
+        Mock Get-SmartAppControlState { $null }
+        Mock Get-CodeIntegrityBlockEvents { @() }
+        Mock Get-DefenderAsrBlockEvents { @() }
+        $r = Resolve-SecurityBlock -Evidence (Get-SecurityBlockEvidence) -Component 'PSES bootstrap'
+        $r.Control | Should -BeExactly 'Constrained Language Mode'
+    }
+    It 'a mocked 3077 CodeIntegrity probe drives a WDAC (confirmed) classification end to end' {
+        Mock Get-ExecutionPolicyState { @{} }
+        Mock Get-SessionLanguageMode { 'FullLanguage' }
+        Mock Get-SmartAppControlState { $null }
+        Mock Get-CodeIntegrityBlockEvents { @(@{ Id = 3077; Message = 'blocked pses-daemon.ps1' }) }
+        Mock Get-DefenderAsrBlockEvents { @() }
+        $r = Resolve-SecurityBlock -Evidence (Get-SecurityBlockEvidence) -Component 'PSES bootstrap'
+        $r.Control | Should -BeExactly 'App Control / WDAC'
+        $r.Confidence | Should -BeExactly 'confirmed'
+    }
+    It 'all-benign mocked probes yield the honest "none" fallback' {
+        Mock Get-ExecutionPolicyState { @{ MachinePolicy = 'Undefined' } }
+        Mock Get-SessionLanguageMode { 'FullLanguage' }
+        Mock Get-SmartAppControlState { 0 }
+        Mock Get-CodeIntegrityBlockEvents { @() }
+        Mock Get-DefenderAsrBlockEvents { @() }
+        $r = Resolve-SecurityBlock -Evidence (Get-SecurityBlockEvidence) -Component 'PSES bootstrap'
+        $r.Control | Should -BeNullOrEmpty
+        $r.Confidence | Should -BeExactly 'none'
     }
 }
