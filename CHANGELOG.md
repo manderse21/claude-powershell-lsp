@@ -29,6 +29,55 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.9.0] - 2026-06-22
+
+MINOR: **honest degradation on a security-control block** -- when the PSES / PSScriptAnalyzer
+bootstrap fails on a managed Windows estate, the SessionStart banner now NAMES the most likely
+blocking security control and the legitimate remediation instead of a generic "could not complete
+(network/proxy?)" (dispatch 000038, building the 000032 L3 survey). It ENRICHES the existing
+never-silent surface (000024/000028): the status stays `unavailable`, the message gets specific.
+No new `userConfig` knob and NO new status token -- the four-token taxonomy is unchanged, so the
+000027 drift-guard greens with no Tier-1 change (banner prose is not a frozen surface, CONTRACT.md
+1.2).
+
+The discipline is calibrated honesty: a control is NAMED only on POSITIVE EVIDENCE, never guessed.
+ExecutionPolicy (Group-Policy scope) and Constrained Language Mode are cheaply and directly
+queryable, so a coincident failure names them with `likely` confidence; App Control / WDAC and
+Defender ASR are named `confirmed` only when a matching CodeIntegrity (3077 enforced / 3076 audit)
+or Defender (1121 block / 1122 audit) event references a plugin component; Smart App Control is
+reputation-gated, so it is only ever `possible` ("may be blocking ... until reputation accrues").
+With no positive evidence the banner falls back to an honest diagnostic POINTER (network/proxy is
+still the usual cause; here is how to check ExecutionPolicy, the language mode, and the CodeIntegrity
+log) -- richer than a bare `unavailable`, never a fabricated control.
+
+THE ABSOLUTE FENCE: the plugin DETECTS and EXPLAINS; it NEVER bypasses, disables, weakens, or
+auto-modifies any control. Every remediation is INSTRUCTIONS for the user or their administrator
+(allow-list, sign, adjust policy), never an action the plugin takes -- circumventing enterprise
+security is exactly what gets a tool banned, so honest degradation is the entire value.
+
+### Added
+
+- **Security-block classifier (`scripts/lib/security-classifier.ps1`).** A pure, CLM-safe, mockable
+  module: `Resolve-SecurityBlock` maps INJECTED evidence (ExecutionPolicy state, session language
+  mode, Smart App Control state, CodeIntegrity / Defender block events) to the most likely control
+  plus an actionable, instructions-only remediation, or an honest fallback when nothing is
+  positively identified. Thin best-effort live probes gather the evidence, each independently
+  fail-safe: a denied event-log permission, an absent log, a non-Windows host, or Constrained
+  Language Mode degrades to "no evidence", never an exception. 27 new unit tests cover every path
+  with the probes mocked.
+- **Named security-block banner at SessionStart.** `scripts/session-start.ps1` now enriches the
+  bootstrap-failure `additionalContext` line via the classifier. Fail-safe by construction: any
+  classifier error (or a missing module) falls back to the prior generic banner, and the hook still
+  exits 0 and never blocks editing (the 000026 spine is preserved).
+
+### Notes
+
+- Scope is L3 only (honest degradation on a block). Signing (L1), hash-verify (L2), the enterprise
+  TRUST.md doc (L4), and the signed release pipeline (L5/L6) remain separate, later work.
+- Wiring the 000036 doctor's generic security pointer to call this classifier is a natural follow-up
+  (it depends on dispatch 000037 landing) and is intentionally NOT included here; the doctor's
+  on-demand generic pointer and this SessionStart named banner remain distinct surfaces.
+
 ## [1.8.0] - 2026-06-21
 
 MINOR: **preflight `doctor` self-check** -- a new report-only `scripts/doctor.ps1` that turns the worst
