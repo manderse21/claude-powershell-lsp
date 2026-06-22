@@ -25,6 +25,7 @@
 # forthcoming security work). Zero control-specific probing here.
 #
 # Usage:  pwsh -File scripts/doctor.ps1
+#         pwsh -File scripts/doctor.ps1 -SessionId <claude-code-session-id>   # scope check 6
 #
 # Exit 0 when no check FAILED (passes and honest unknowns are not failures); exit 1
 # when at least one check failed. The script is dot-source safe: dot-sourcing defines
@@ -32,6 +33,15 @@
 # decision functions in isolation).
 #
 # Author: Mike Andersen / powershell-lsp plugin.
+
+param(
+    # Optional Claude Code session id to scope the daemon-health check (check 6) to a
+    # specific session's warm daemon. Empty (default) resolves from $env:CLAUDE_SESSION_ID,
+    # then discovers the live daemon(s) under the session data dir. A standalone run has no
+    # session id (Claude Code passes it only on hook stdin, never as an env var to a
+    # directly-invoked script), so the daemon check stays honest about what it can determine.
+    [string] $SessionId = ''
+)
 
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
 
@@ -175,6 +185,82 @@ function Test-DoctorHosts {
             -Detail ('reachable on TCP 443: ' + $names + '.'))
 }
 
+function Test-DoctorDaemon {
+    # Check 6 (dispatch 000037): the warm per-session PSES daemon's RUNTIME health -- is it
+    # alive and answering on its named pipe right now? This closes the "installed vs actually
+    # working" gap checks 1-5 cannot see: all five can pass while the language server is dead
+    # or wedged. REPORT-ONLY -- the probe observes; it never launches, relaunches, repairs, or
+    # kills the daemon.
+    #
+    # The status mapping is HONEST about the 000028 pipe-first + 000030 auto-relaunch semantics
+    # (grounded in the 000030 outbox: the recoverable/permanent split is structural at the pipe
+    # -- a $null/absent daemon auto-relaunches on the next edit (benign); a daemon parked
+    # 'unavailable' is genuinely degraded):
+    #   answering its pipe                         -> PASS
+    #   alive but parked 'unavailable'/'degraded'  -> FAIL + remediation (the genuine problem)
+    #   alive but NOT answering its pipe (wedged)  -> FAIL + remediation
+    #   NO daemon present (would auto-relaunch)    -> PASS, benign, says exactly that (never a scary FAIL)
+    #   indeterminate from outside the session     -> UNKNOWN
+    #
+    # Inputs are already-resolved observations (Get-DoctorDaemonObservation does the I/O), so
+    # the decision is unit-tested without a live daemon or pipe:
+    #   $DataRootKnown : CLAUDE_PLUGIN_DATA is set, so the session dir can be located.
+    #   $Determinable  : a single in-scope daemon could be identified ($false = ambiguous --
+    #                    several live daemons and no session id to pick THIS session's).
+    #   $DaemonPresent : a live daemon (recorded pid alive) is in scope.
+    #   $State         : that daemon's recorded session-file state (ready/starting/unavailable/degraded).
+    #   $Reachable     : the ping round-trip answered ($true) / did not ($false) / not attempted ($null).
+    #   $LiveCount     : how many live daemons were found (for the ambiguous message).
+    param(
+        [bool] $DataRootKnown,
+        [bool] $Determinable,
+        [bool] $DaemonPresent,
+        [string] $State = '',
+        $Reachable = $null,
+        [int] $LiveCount = 0
+    )
+    $component = 'Warm PSES daemon (runtime)'
+    $restart = 'Start a fresh Claude Code session to replace the daemon; see logs/pses-daemon.log (README: Diagnostics status).'
+
+    if (-not $DataRootKnown) {
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail 'cannot locate the plugin data directory (CLAUDE_PLUGIN_DATA is not set), so the warm daemon cannot be discovered from outside a session.' `
+                -Remediation 'Run this doctor from inside a Claude Code session (where CLAUDE_PLUGIN_DATA is set) for a definitive runtime check.')
+    }
+    if (-not $Determinable) {
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('found ' + $LiveCount + ' live daemons but no session id, so which one serves THIS session cannot be determined from outside it.') `
+                -Remediation 'Re-run with -SessionId <session-id> (or from a context that sets CLAUDE_SESSION_ID) to scope the check to this session.')
+    }
+    if (-not $DaemonPresent) {
+        # The benign 000030 case: a $null/absent daemon auto-relaunches on the next edit, so
+        # reporting it as a FAIL would lie about a self-healing state. PASS that says so.
+        return (New-DoctorResult -Status pass -Component $component `
+                -Detail 'no warm daemon is running for this session right now; this is benign -- one auto-relaunches on your next PowerShell edit (dispatch 000030). Nothing to fix.')
+    }
+    if ($State -eq 'unavailable') {
+        return (New-DoctorResult -Status fail -Component $component `
+                -Detail 'a daemon is alive but parked "unavailable" -- PowerShell editor services could not start for this session, so edits are NOT being linted (diagnostics stay OFF until it is fixed and the session is restarted).' `
+                -Remediation 'Fix the install/startup, then start a fresh Claude Code session; see logs/pses-daemon.log and logs/ensure-pses.log (README: Diagnostics status, "unavailable").')
+    }
+    if ($State -eq 'degraded') {
+        return (New-DoctorResult -Status fail -Component $component `
+                -Detail 'a daemon is alive but "degraded" -- its PSES child died and the supervised re-spawn budget is exhausted, so edits return parser-only / incomplete results.' `
+                -Remediation 'Start a fresh Claude Code session to get a healthy analyzer; see logs/pses-daemon.log (README: Diagnostics status, "degraded").')
+    }
+    if ($Reachable -eq $true) {
+        $note = if ($State -eq 'starting') { ' (PSES is still initializing; the first edit may read "incomplete" until it is ready).' } else { '.' }
+        return (New-DoctorResult -Status pass -Component $component `
+                -Detail ('the warm per-session daemon is alive and answered on its named pipe (round-trip ok)' + $note))
+    }
+    # Live pid but the pipe did not answer within the cap. Pipe-first means a healthy daemon
+    # ALWAYS holds its pipe open (dispatch 000028), so an alive-but-silent pipe is a real fault
+    # (wedged), distinct from the benign no-daemon case above.
+    return (New-DoctorResult -Status fail -Component $component `
+            -Detail 'the daemon process is alive but did not answer on its named pipe within the timeout (it may be wedged), so edits would not be checked.' `
+            -Remediation $restart)
+}
+
 # ===========================================================================
 # Live probes -- the environment-dependent half. Kept OUT of the pure functions so
 # the decision logic stays unit-testable; these are exercised by the end-to-end run.
@@ -280,6 +366,107 @@ function Test-DoctorHostReachableProbe {
     }
 }
 
+function Test-DoctorDaemonPingProbe {
+    # Read-only liveness round-trip over the warm daemon's named pipe, REUSING the daemon's
+    # existing 'ping' action and the SAME one-line-JSON pipe protocol the PostToolUse client
+    # uses (lsp-client.ps1 Get-Diagnostics) -- NOT a second client or a parallel protocol. The
+    # daemon's 'ping' handler returns {ok,pid,psesPid} WITHOUT touching its PSES child (no
+    # didOpen/didChange, no analysis, no state change), so the probe is non-disruptive: it
+    # cannot wedge the daemon or steal analysis; it connects, asks, disconnects, like any
+    # client (a connection only resets the daemon's idle-TTL timer, exactly as a real edit
+    # does -- benign). $true iff a ping response with ok=true came back; $false otherwise.
+    param([string] $PipeName, [int] $ConnectTimeoutMs = 1500, [int] $ReadTimeoutMs = 1500)
+    $attempts = 0
+    while ($attempts -lt 2) {
+        $attempts++
+        $client = $null
+        try {
+            $client = New-Object System.IO.Pipes.NamedPipeClientStream('.', $PipeName,
+                [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::Asynchronous)
+            $client.Connect($ConnectTimeoutMs)
+            $writer = New-Object System.IO.StreamWriter($client, (New-Object System.Text.UTF8Encoding($false)), 4096, $true)
+            $writer.NewLine = "`n"; $writer.AutoFlush = $true
+            $reader = New-Object System.IO.StreamReader($client, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+            $writer.WriteLine('{"action":"ping"}')
+            $writer.Flush()
+            $readTask = $reader.ReadLineAsync()
+            if (-not $readTask.Wait($ReadTimeoutMs)) { return $false }
+            $line = $readTask.Result
+            if ([string]::IsNullOrWhiteSpace($line)) { return $false }
+            $resp = $line | ConvertFrom-Json
+            return ([bool](Get-Prop $resp 'ok'))
+        } catch {
+            # Connect timeout / refused / broken pipe -> not reachable on this attempt; retry once.
+        } finally {
+            if ($null -ne $client) { try { $client.Dispose() } catch { } }
+        }
+    }
+    return $false
+}
+
+function Get-DoctorDaemonObservation {
+    # Resolve the daemon-health observation that the pure Test-DoctorDaemon decides on, doing
+    # ALL the I/O here (kept out of the pure function so the decision stays unit-testable).
+    #
+    # Discovery uses the daemon's OWN durable handle -- the per-session details json the daemon
+    # writes at <data>/session/<sessionid>.json (sessionId/pid/pipe/state/heartbeat) -- and its
+    # OWN liveness notion (recorded pid alive), exactly as session-start's reap does; there is
+    # no second discovery path. Session id precedence: explicit $SessionId, then
+    # $env:CLAUDE_SESSION_ID, then discovery across all session files. Claude Code does not
+    # expose the session id to a directly-invoked doctor (it arrives only on hook stdin), so an
+    # unscoped run that finds several live daemons is honestly UNKNOWN, not a guess.
+    param([string] $SessionId = '')
+
+    if (-not (Get-DoctorDataRootKnown)) {
+        return @{ DataRootKnown = $false; Determinable = $false; DaemonPresent = $false; State = ''; Reachable = $null; LiveCount = 0 }
+    }
+    $sessionDir = Get-SessionDir
+    $sid = $SessionId
+    if ([string]::IsNullOrWhiteSpace($sid)) { $sid = [string]$env:CLAUDE_SESSION_ID }
+    $scoped = -not [string]::IsNullOrWhiteSpace($sid)
+
+    # Gather candidate handles: the one scoped file, or every session file for discovery.
+    $files = @()
+    try {
+        if ($scoped) {
+            $one = Join-Path $sessionDir ($sid + '.json')
+            if (Test-Path -LiteralPath $one -PathType Leaf) { $files = @(Get-Item -LiteralPath $one) }
+        } else {
+            $files = @(Get-ChildItem -LiteralPath $sessionDir -Filter '*.json' -File -ErrorAction SilentlyContinue)
+        }
+    } catch { $files = @() }
+
+    # A live candidate = a parseable handle whose recorded pid is alive. A dead pid means the
+    # daemon is gone (benign-absent); a lingering stale file is NOT a live daemon.
+    $live = @()
+    foreach ($f in $files) {
+        $obj = $null
+        try { $obj = (Get-Content -LiteralPath $f.FullName -Raw) | ConvertFrom-Json } catch { $obj = $null }
+        if ($null -eq $obj) { continue }
+        $recPid = 0; $pv = Get-Prop $obj 'pid'
+        if ($null -ne $pv) { try { $recPid = [int]$pv } catch { $recPid = 0 } }
+        if ($recPid -le 0) { continue }
+        $alive = $false
+        try { $alive = ($null -ne (Get-Process -Id $recPid -ErrorAction SilentlyContinue)) } catch { $alive = $false }
+        if (-not $alive) { continue }
+        $pipe = [string](Get-Prop $obj 'pipe')
+        if ([string]::IsNullOrWhiteSpace($pipe)) { $pipe = 'powershell-lsp-' + [string](Get-Prop $obj 'sessionId') }
+        $live += [pscustomobject]@{ Pipe = $pipe; State = [string](Get-Prop $obj 'state') }
+    }
+
+    if ($live.Count -eq 0) {
+        # No live daemon in scope -> the benign 000030 absent-but-relaunchable case.
+        return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $false; State = ''; Reachable = $null; LiveCount = 0 }
+    }
+    if (-not $scoped -and $live.Count -gt 1) {
+        # Several live daemons and no session id to pick THIS session's -> honest UNKNOWN.
+        return @{ DataRootKnown = $true; Determinable = $false; DaemonPresent = $true; State = ''; Reachable = $null; LiveCount = $live.Count }
+    }
+    $d = $live[0]
+    $reachable = Test-DoctorDaemonPingProbe -PipeName $d.Pipe
+    return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; State = $d.State; Reachable = $reachable; LiveCount = 1 }
+}
+
 # ===========================================================================
 # Compose + render
 # ===========================================================================
@@ -287,6 +474,8 @@ function Test-DoctorHostReachableProbe {
 function Invoke-Doctor {
     # Gather the live probes, run the pure checks, and return the ordered result objects.
     # Separated from rendering so the structured results can be consumed programmatically.
+    # $SessionId (optional) scopes the daemon-health check (6) to a specific session.
+    param([string] $SessionId = '')
     $scriptsDir = $PSScriptRoot
     $results = @()
 
@@ -339,6 +528,15 @@ function Invoke-Doctor {
     }
     $results += (Test-DoctorHosts -HostProbes $hostProbes)
 
+    # 6) warm PSES daemon runtime health (dispatch 000037): is the per-session daemon alive
+    # and answering on its named pipe right now? Report-only -- the observation (discovery +
+    # the non-disruptive ping round-trip) is resolved live; the pass/fail/unknown decision is
+    # pure. This is the runtime bookend to check 3 (which only confirms the bundle is
+    # INSTALLED): a user can pass checks 1-5 and still have a dead or wedged language server.
+    $daemonObs = Get-DoctorDaemonObservation -SessionId $SessionId
+    $results += (Test-DoctorDaemon -DataRootKnown $daemonObs.DataRootKnown -Determinable $daemonObs.Determinable `
+            -DaemonPresent $daemonObs.DaemonPresent -State $daemonObs.State -Reachable $daemonObs.Reachable -LiveCount $daemonObs.LiveCount)
+
     return @($results)
 }
 
@@ -378,7 +576,7 @@ function Format-DoctorReport {
 if ($MyInvocation.InvocationName -ne '.') {
     Set-StrictMode -Version Latest
     $ErrorActionPreference = 'Stop'
-    $doctorResults = Invoke-Doctor
+    $doctorResults = Invoke-Doctor -SessionId $SessionId
     Write-Host (Format-DoctorReport -Results $doctorResults)
     $doctorFailures = @($doctorResults | Where-Object { $_.Status -eq 'fail' }).Count
     if ($doctorFailures -gt 0) { exit 1 } else { exit 0 }

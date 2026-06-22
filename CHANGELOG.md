@@ -29,6 +29,45 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.11.0] - 2026-06-22
+
+MINOR: **doctor daemon/pipe-health check** -- the preflight doctor (`scripts/doctor.ps1`, dispatch 000036)
+gains a sixth, report-only check: is the warm per-session PSES daemon alive and answering on its named pipe
+right now (dispatch 000037)? Checks 1-5 confirm the bundle is INSTALLED; this confirms the language server is
+actually RUNNING, closing the "installed vs actually working" gap -- a user can pass all five static checks
+and still have a dead or wedged daemon. REPORT-ONLY: the probe observes and never launches, relaunches,
+repairs, or kills the daemon. No new `userConfig` knob and NO change to the diagnostics status-token taxonomy
+(the doctor keeps its own pass/fail/unknown vocabulary), so the 000027 drift-guard greens with no Tier-1 change.
+
+The probe is non-disruptive and honest about the pipe-first + auto-relaunch design. It reuses the daemon's
+existing `ping` action over the same named-pipe protocol the PostToolUse client uses -- a round-trip the
+daemon answers WITHOUT touching its PSES child (no analysis, no state change), so it cannot wedge the live
+daemon or steal its pipe. The four-state mapping respects the 000028/000030 semantics: a daemon answering its
+pipe is `PASS`; a daemon alive but parked `unavailable` / `degraded`, or alive but not answering, is a `FAIL`
+with the restart remedy; NO daemon present is a benign `PASS` (one auto-relaunches on the next edit -- never a
+scary FAIL); and a state that cannot be determined from outside the session (no data dir, or several live
+daemons and no session id to disambiguate) is an honest `UNKNOWN`.
+
+### Added
+
+- **Daemon-health check (`scripts/doctor.ps1`), dispatch 000037.** New pure decision `Test-DoctorDaemon`
+  (unit-tested over injected observations) plus the live probes `Get-DoctorDaemonObservation` (discovery via
+  the daemon's own durable handle -- the `<data>/session/<id>.json` details file and its recorded-pid
+  liveness, exactly as the SessionStart reap does) and `Test-DoctorDaemonPingProbe` (the non-disruptive
+  `ping` round-trip). An optional `-SessionId` argument scopes the check to a specific session; otherwise it
+  resolves `$env:CLAUDE_SESSION_ID`, then discovers the live daemon(s). Nine new unit tests cover the mapping
+  (healthy / parked-unavailable / degraded / wedged / absent-but-relaunchable / no-session-context /
+  ambiguous), with the daemon and pipe state mocked.
+
+### Notes
+
+- Claude Code passes the session id to hooks on stdin, not as an environment variable, so a standalone
+  `pwsh -File scripts/doctor.ps1` cannot key the check to its own session: it discovers the live daemon(s) by
+  the durable handle and is honestly `UNKNOWN` when more than one is live and none is named. Run with
+  `-SessionId` (or from inside the session) for a definitive scoped check.
+- A `--fix` / repair mode stays out of scope (the doctor is report-only); it is deferred to a later slice,
+  gated on evidence that "restart your session" is insufficient.
+
 ## [1.10.0] - 2026-06-22
 
 MINOR: **dogfood diagnostic capture** -- every diagnostic the plugin surfaces is now also teed to a
