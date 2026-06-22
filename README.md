@@ -306,7 +306,7 @@ pwsh -File scripts/doctor.ps1
 ```
 
 It verifies, in order: PowerShell 7 (`pwsh`) is present and new enough (see
-[Requirements](#requirements)); the plugin is enabled (see [Install](#install)); the PSES
+[Prerequisites](#prerequisites)); the plugin is enabled (see [Quick start](#quick-start)); the PSES
 bundle and PSScriptAnalyzer finished bootstrapping (the pinned markers plus
 `Start-EditorServices.ps1`, see [Pinned versions](#pinned-versions)); and the first-run
 download hosts are reachable. Each check reports `PASS`, a specific failure with the fix,
@@ -316,10 +316,12 @@ bundle checks report `UNKNOWN` (run it from inside an enabled session for a defi
 result).
 
 The doctor is **report-only**: it never downloads, repairs, or runs the bootstrap. It
-also does **not** probe security controls -- if a check fails for a reason its fix does
-not resolve, a security control on a managed machine (an execution or application-control
-policy) may be blocking the component; naming which control is the job of the separate
-security-block detection work on the roadmap, not this check.
+also does **not** probe security controls itself -- but when a *bootstrap* failure is
+caused by one, the SessionStart banner now names the most likely control and the
+legitimate fix (see [Security-control blocks on managed Windows](#security-control-blocks-on-managed-windows)
+below). If a doctor check fails for a reason its own fix does not resolve, a security
+control on a managed machine (an execution or application-control policy) may be the
+cause -- check that banner and the section below.
 
 ### Symptoms
 
@@ -351,6 +353,43 @@ security-block detection work on the roadmap, not this check.
   a client that omits rename (e.g. a hand-rolled minimal client against the cold
   `-Stdio` launcher); if so, pin PSES `v4.5.0` in `scripts/ensure-pses.ps1`
   (`$PsesTag`), which predates the rename handler.
+
+### Security-control blocks on managed Windows
+
+PowerShell developers often work inside locked-down Windows estates, and this plugin does
+exactly what those estates gate: it **downloads** executables (PSES, PSScriptAnalyzer),
+**runs** PowerShell, and **spawns** a daemon. When a security control blocks one of those
+at first start, the bootstrap fails -- and instead of a generic "could not start", the
+SessionStart banner now **names the most likely control and the legitimate remediation**.
+The status stays `unavailable` (see [Diagnostics status](#diagnostics-status)); only the
+message gets specific.
+
+A control is named **only on positive evidence**, with calibrated confidence -- an
+uncertain case gets an honest "here is how to check" pointer, never a guessed control:
+
+| Control | How it is detected | Confidence | Banner names / fix |
+|---------|--------------------|------------|--------------------|
+| **ExecutionPolicy** (Group Policy) | `Get-ExecutionPolicy -List` shows `MachinePolicy`/`UserPolicy` = `AllSigned`/`RemoteSigned` (a command-line `-Bypass` is ignored when the policy is from GPO) | likely | the policy + scope. Fix: an admin allow-lists / signs the scripts, or adjusts the policy. |
+| **Constrained Language Mode** | the session `LanguageMode` is `ConstrainedLanguage` | likely | CLM. The plugin's .NET-using bootstrap cannot run under it. Fix: sign + policy-trust the plugin (admin). |
+| **App Control / WDAC** | a CodeIntegrity Operational event **3077** (enforced) or **3076** (audit) names a plugin component | confirmed / likely | the control + event id. Fix: an admin adds an allow rule. |
+| **Microsoft Defender ASR** | a Defender Operational event **1121** (block) or **1122** (audit) names a plugin component | confirmed / likely | the rule family + event id. Fix: an admin reviews / allows the rule. |
+| **Smart App Control** | the SAC registry state (`VerifiedAndReputablePolicyState`) is enforced / evaluation | possible | SAC is reputation-gated, so it is only ever *possible*. Fix: it relaxes as reputation accrues, or an admin turns it off. |
+| *(none identified)* | no positive evidence | -- | honest pointer: usually network/proxy; if managed, check `Get-ExecutionPolicy -List`, the language mode, and the CodeIntegrity log. |
+
+To investigate a named (or suspected) block yourself, on the affected machine:
+
+```
+Get-ExecutionPolicy -List
+$ExecutionContext.SessionState.LanguageMode
+Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-CodeIntegrity/Operational'; Id = 3076, 3077 } -MaxEvents 20
+```
+
+**The plugin only ever detects and explains a block -- it never bypasses, disables, or
+modifies a security control.** Every remediation above is something a user or their
+administrator does deliberately (sign, allow-list, adjust policy); the plugin itself takes
+no such action. A tool that tried to circumvent enterprise security would deserve to be
+banned -- honest degradation, telling you exactly what is blocked and how to allow it, is
+the whole value.
 
 ## License
 

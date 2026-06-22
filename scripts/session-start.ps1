@@ -29,6 +29,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
+# 000038 (000032 L3): the security-block classifier that turns a generic bootstrap
+# 'unavailable' into a NAMED, actionable banner. Wrapped so a missing/partial install
+# degrades to the generic banner (the call site below also falls back) rather than
+# breaking SessionStart bring-up -- the 000026 fail-safe spine stays intact.
+try { . (Join-Path $PSScriptRoot 'lib/security-classifier.ps1') } catch { }
 
 # v1.1.1: the SessionStart hook no longer passes userConfig as -Args -- the
 # ${user_config.*} substitution refused to launch the hook on CC v2.1.167 when any
@@ -199,7 +204,21 @@ try {
     # the install completes; the detached daemon launched below independently comes up serving
     # 'unavailable' so the first edit re-surfaces it on the PostToolUse channel.
     if ($bootstrapFailed) {
-        $bootstrapMsg = 'PowerShell diagnostics unavailable: the PowerShell editor services bootstrap did not complete (network/proxy?). Edits will NOT be linted until the install completes. See ' + (Join-Path $logDir 'ensure-pses.log') + '.'
+        # 000038 (000032 L3): enrich the banner with the security-control attribution when a
+        # control positively blocked a component -- ExecutionPolicy (GPO) / Constrained Language
+        # Mode via cheap direct probes, App Control/WDAC / Defender ASR via a matching
+        # CodeIntegrity/Defender block event, Smart App Control scoped -- else the honest
+        # diagnostic pointer (no fabricated control). This ENRICHES the existing never-silent
+        # surface (000024); the status stays 'unavailable', the message gets specific.
+        # Get-BootstrapSecurityBanner is fail-safe (returns '' on any error); on '' (or if the
+        # classifier is absent) fall back to the prior generic message so the never-silent
+        # guarantee and the 000026 exit-0 spine are never weakened by this enrichment.
+        $logRef = Join-Path $logDir 'ensure-pses.log'
+        $bootstrapMsg = ''
+        try { $bootstrapMsg = Get-BootstrapSecurityBanner -LogPath $logRef } catch { $bootstrapMsg = '' }
+        if ([string]::IsNullOrWhiteSpace($bootstrapMsg)) {
+            $bootstrapMsg = 'PowerShell diagnostics unavailable: the PowerShell editor services bootstrap did not complete (network/proxy?). Edits will NOT be linted until the install completes. See ' + $logRef + '.'
+        }
         Write-SLog 'bootstrap failure detected; surfacing via SessionStart additionalContext'
         Write-SessionStartContext $bootstrapMsg
     }
