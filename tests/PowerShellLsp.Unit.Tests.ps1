@@ -989,3 +989,150 @@ Describe 'License metadata is single-sourced and consistent (dispatch 000029)' {
         $tp | Should -Match 'MIT'
     }
 }
+
+# ===========================================================================
+# Preflight doctor -- per-check status decisions (dispatch 000036)
+# ===========================================================================
+# The doctor (scripts/doctor.ps1) is REPORT-ONLY: each check is a pure function over
+# already-resolved probe inputs returning a status object, so the decision logic is
+# unit-testable WITHOUT a live PSES install or network. These guards assert pass / fail /
+# unknown per check with the probes injected. Dot-sourcing doctor.ps1 loads the functions
+# without running the live checks (the entry-point guard skips on InvocationName '.').
+# The live probes (Get-DoctorPwsh, Test-DoctorHostReachableProbe, ...) are exercised by
+# the end-to-end run captured in the dispatch outbox, not here.
+
+Describe 'Preflight doctor -- per-check status decisions (dispatch 000036)' {
+    BeforeAll {
+        . (Join-Path $script:ScriptsDir 'doctor.ps1')
+    }
+
+    Context 'New-DoctorResult -- the status-object shape and frozen vocabulary' {
+        It 'carries Status / Component / Detail / Remediation' {
+            $r = New-DoctorResult -Status pass -Component 'X' -Detail 'd'
+            $r.Status | Should -Be 'pass'
+            $r.Component | Should -Be 'X'
+            $r.PSObject.Properties.Name | Should -Contain 'Remediation'
+        }
+        It 'rejects a status outside pass/fail/unknown (the inbox rule: no invented status words)' {
+            # Adversarial control: widen or drop the ValidateSet and an invented token stops
+            # throwing, so this assertion goes RED -- the vocabulary guard has teeth.
+            { New-DoctorResult -Status 'broken' -Component 'X' } | Should -Throw
+        }
+    }
+
+    Context 'Test-DoctorPwsh -- check 1: PowerShell 7 host' {
+        It 'PASS when pwsh 7+ is present' {
+            (Test-DoctorPwsh -Found $true -Version ([version]'7.4.2')).Status | Should -Be 'pass'
+        }
+        It 'FAIL when pwsh is absent (the hooks cannot launch)' {
+            $r = Test-DoctorPwsh -Found $false -Version $null
+            $r.Status | Should -Be 'fail'
+            $r.Remediation | Should -Match 'winget install Microsoft.PowerShell'
+        }
+        It 'FAIL when pwsh is present but older than 7' {
+            # Adversarial control: drop the Major -lt 7 branch and the 5.1 case flips
+            # fail -> pass, going RED. (Resolve-PsHost accepts 5.1 as a host; the hooks do not.)
+            (Test-DoctorPwsh -Found $true -Version ([version]'5.1.19041')).Status | Should -Be 'fail'
+        }
+        It 'UNKNOWN when pwsh is present but its version is undeterminable (honest, not a fabricated fail)' {
+            (Test-DoctorPwsh -Found $true -Version $null).Status | Should -Be 'unknown'
+        }
+    }
+
+    Context 'Test-DoctorEnabled -- check 2: plugin enablement' {
+        It 'PASS when the plugin subprocess environment is present' {
+            (Test-DoctorEnabled -PluginRootResolved $true).Status | Should -Be 'pass'
+        }
+        It 'UNKNOWN (never a fabricated fail) when enablement cannot be observed' {
+            # Adversarial control: return 'fail' from the not-observed branch and this goes RED.
+            # Absence of the plugin env does NOT prove the plugin is disabled.
+            $r = Test-DoctorEnabled -PluginRootResolved $false
+            $r.Status | Should -Be 'unknown'
+            $r.Remediation | Should -Match '/plugin enable powershell-lsp'
+        }
+    }
+
+    Context 'Test-DoctorPses -- check 3: PSES bundle bootstrapped' {
+        It 'PASS only when BOTH the pinned marker and Start-EditorServices.ps1 are present' {
+            (Test-DoctorPses -DataRootKnown $true -MarkerPresent $true -StartScriptPresent $true -PinTag 'v4.6.0').Status | Should -Be 'pass'
+        }
+        It 'FAIL when Start-EditorServices.ps1 is missing (bundle did not finish)' {
+            $r = Test-DoctorPses -DataRootKnown $true -MarkerPresent $true -StartScriptPresent $false -PinTag 'v4.6.0'
+            $r.Status | Should -Be 'fail'
+            $r.Detail | Should -Match 'Start-EditorServices\.ps1'
+        }
+        It 'FAIL when the marker is missing even though the start script exists' {
+            # Adversarial control: require only ONE of the two and this case flips to pass -> RED.
+            (Test-DoctorPses -DataRootKnown $true -MarkerPresent $false -StartScriptPresent $true -PinTag 'v4.6.0').Status | Should -Be 'fail'
+        }
+        It 'UNKNOWN when the data root cannot be located (no false "not installed")' {
+            # Adversarial control: treat an unknown data root as fail and this goes RED -- the
+            # standalone invocation would then slander a healthy install as broken.
+            (Test-DoctorPses -DataRootKnown $false -MarkerPresent $false -StartScriptPresent $false).Status | Should -Be 'unknown'
+        }
+    }
+
+    Context 'Test-DoctorPssa -- check 4: PSScriptAnalyzer vendored + importable' {
+        It 'PASS when the marker is present and the module imports' {
+            (Test-DoctorPssa -DataRootKnown $true -MarkerPresent $true -Importable $true -PinVersion '1.25.0').Status | Should -Be 'pass'
+        }
+        It 'FAIL (degraded) when vendored but not importable' {
+            $r = Test-DoctorPssa -DataRootKnown $true -MarkerPresent $true -Importable $false -PinVersion '1.25.0'
+            $r.Status | Should -Be 'fail'
+            $r.Detail | Should -Match 'degraded'
+        }
+        It 'FAIL when the vendor marker is missing' {
+            (Test-DoctorPssa -DataRootKnown $true -MarkerPresent $false -Importable $false -PinVersion '1.25.0').Status | Should -Be 'fail'
+        }
+        It 'UNKNOWN when the data root cannot be located' {
+            (Test-DoctorPssa -DataRootKnown $false -MarkerPresent $false -Importable $false).Status | Should -Be 'unknown'
+        }
+    }
+
+    Context 'Test-DoctorHosts -- check 5: first-run download hosts reachable' {
+        It 'PASS when all hosts are reachable' {
+            $probes = @(
+                [pscustomobject]@{ Host = 'github.com'; Reachable = $true }
+                [pscustomobject]@{ Host = 'www.powershellgallery.com'; Reachable = $true }
+            )
+            (Test-DoctorHosts -HostProbes $probes).Status | Should -Be 'pass'
+        }
+        It 'FAIL (naming the host) when any host is unreachable' {
+            # Adversarial control: collapse the $false branch into unknown and this fail -> unknown
+            # flip goes RED -- a definite "could not reach" must read as a failure, not a maybe.
+            $probes = @(
+                [pscustomobject]@{ Host = 'github.com'; Reachable = $true }
+                [pscustomobject]@{ Host = 'www.powershellgallery.com'; Reachable = $false }
+            )
+            $r = Test-DoctorHosts -HostProbes $probes
+            $r.Status | Should -Be 'fail'
+            $r.Detail | Should -Match 'www\.powershellgallery\.com'
+        }
+        It 'UNKNOWN when a probe could not run and none definitely failed' {
+            $probes = @(
+                [pscustomobject]@{ Host = 'github.com'; Reachable = $true }
+                [pscustomobject]@{ Host = 'www.powershellgallery.com'; Reachable = $null }
+            )
+            (Test-DoctorHosts -HostProbes $probes).Status | Should -Be 'unknown'
+        }
+    }
+
+    Context 'Format-DoctorReport -- the generic security pointer (boundary: dispatch 000036)' {
+        It 'omits the security pointer when every check passed' {
+            $clean = @(New-DoctorResult -Status pass -Component 'A' -Detail 'ok')
+            (Format-DoctorReport -Results $clean) | Should -Not -Match 'security control'
+        }
+        It 'appends a single GENERIC security pointer when a check did not pass -- no control names' {
+            # The doctor does not probe security controls (WDAC/AppLocker/ExecutionPolicy/CLM/SAC);
+            # it may only point. Adversarial control: name a specific control here and the
+            # "no control names" assertion goes RED.
+            $dirty = @(
+                New-DoctorResult -Status pass -Component 'A' -Detail 'ok'
+                New-DoctorResult -Status fail -Component 'B' -Detail 'bad' -Remediation 'do x'
+            )
+            $report = Format-DoctorReport -Results $dirty
+            $report | Should -Match 'security control'
+            $report | Should -Not -Match 'WDAC|AppLocker|ExecutionPolicy|Constrained Language|Smart App Control'
+        }
+    }
+}

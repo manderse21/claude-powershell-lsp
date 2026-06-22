@@ -29,6 +29,32 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.8.0] - 2026-06-21
+
+MINOR: **preflight `doctor` self-check** -- a new report-only `scripts/doctor.ps1` that turns the worst
+onboarding failure mode (the plugin is enabled but a prerequisite is missing, so diagnostics silently do
+nothing) into a named, actionable fix-list (dispatch 000036). It is the on-demand bookend to the
+000024/000028 never-silent spine: same honesty, a new entry point. Report-only by design -- it never
+downloads, repairs, or runs the bootstrap. It deliberately does NOT detect security-control blocks
+(WDAC / AppLocker / ExecutionPolicy / Smart App Control / Constrained Language Mode); that surface is the
+separate ROADMAP L3 security track (survey 000032), so an indeterminate failure gets only one generic
+pointer, with zero control-specific probing. No new `userConfig` knob and no change to the diagnostics
+status-token taxonomy, so the 000027 drift-guard greens with no Tier-1 change.
+
+### Added
+
+- **Preflight doctor (`scripts/doctor.ps1`), dispatch 000036.** Runs an ordered set of checks and prints,
+  per check, PASS / a specific failure naming the blocked component plus the remediation (tied to the
+  README Requirements / Install / Troubleshooting) / an honest UNKNOWN when it genuinely cannot determine
+  (for example when run outside a Claude Code session, where it cannot see the plugin data directory). The
+  checks: (1) PowerShell 7 (`pwsh`) present and new enough for the hooks; (2) the plugin enabled
+  (`defaultEnabled` is false); (3) the PSES bundle bootstrapped (the per-pin marker AND
+  `Start-EditorServices.ps1`, the exact pair `ensure-pses.ps1` gates on); (4) PSScriptAnalyzer vendored AND
+  importable; (5) the first-run download hosts reachable. Every pin, marker name, install path, and host is
+  read single-source from `ensure-pses.ps1` / `ensure-pssa.ps1` (never hardcoded). Each check is a pure,
+  mockable function returning a status object, unit-tested for pass / fail / unknown with the probes
+  injected. Documented under README Troubleshooting. Report-only; exits non-zero only when a check FAILED.
+
 ## [1.7.0] - 2026-06-21
 
 MINOR: **auto-relaunch the idle-stopped daemon** -- the next edit after a clean idle-stop now SILENTLY

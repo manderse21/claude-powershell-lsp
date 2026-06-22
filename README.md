@@ -296,6 +296,33 @@ silent. The mid-session `incomplete`/`degraded` split was introduced earlier (di
 
 ## Troubleshooting
 
+### Preflight self-check (the doctor)
+
+Before chasing a specific symptom, run the preflight **doctor** -- it checks the
+prerequisites and bootstrap health in one place and prints a named fix-list:
+
+```
+pwsh -File scripts/doctor.ps1
+```
+
+It verifies, in order: PowerShell 7 (`pwsh`) is present and new enough (see
+[Requirements](#requirements)); the plugin is enabled (see [Install](#install)); the PSES
+bundle and PSScriptAnalyzer finished bootstrapping (the pinned markers plus
+`Start-EditorServices.ps1`, see [Pinned versions](#pinned-versions)); and the first-run
+download hosts are reachable. Each check reports `PASS`, a specific failure with the fix,
+or an honest `UNKNOWN` when it genuinely cannot determine -- for example, run outside a
+Claude Code session it cannot see the plugin data directory, so the enable-state and
+bundle checks report `UNKNOWN` (run it from inside an enabled session for a definitive
+result).
+
+The doctor is **report-only**: it never downloads, repairs, or runs the bootstrap. It
+also does **not** probe security controls -- if a check fails for a reason its fix does
+not resolve, a security control on a managed machine (an execution or application-control
+policy) may be blocking the component; naming which control is the job of the separate
+security-block detection work on the roadmap, not this check.
+
+### Symptoms
+
 - **Hooks fail with `'pwsh' is not recognized` / pwsh not found:** as of 1.1.1 the
   hooks launch under PowerShell 7. Install it (`winget install Microsoft.PowerShell`)
   -- Windows PowerShell 5.1 alone cannot launch the hooks. (`ps_host` only selects the
