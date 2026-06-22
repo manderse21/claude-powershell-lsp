@@ -242,6 +242,161 @@ Describe 'Write-StatsLine -- telemetry writer (Track A: JSONL, append, rotation,
     }
 }
 
+Describe 'Dogfood diagnostic capture (dispatch 000039)' {
+    # The capture side-channel mirrors Write-StatsLine's fail-safe contract: append-only
+    # JSONL, best-effort, never alters the diagnostics surface or the exit code. The log path
+    # is redirected to a throwaway temp file via the POWERSHELL_LSP_DOGFOOD_LOG override so
+    # these never touch the real (gitignored) dogfood/ tree.
+    BeforeEach {
+        $script:PrevDfLog = $env:POWERSHELL_LSP_DOGFOOD_LOG
+        $script:DfDir = Join-Path $TestDrive ('df-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:DfDir | Out-Null
+        $script:DfLog = Join-Path $script:DfDir 'diagnostics.jsonl'
+        $env:POWERSHELL_LSP_DOGFOOD_LOG = $script:DfLog
+    }
+    AfterEach {
+        if ($null -eq $script:PrevDfLog) {
+            Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_DOGFOOD_LOG' -ErrorAction SilentlyContinue
+        } else {
+            $env:POWERSHELL_LSP_DOGFOOD_LOG = $script:PrevDfLog
+        }
+    }
+
+    Context 'Get-DiagnosticShapeHash -- stable analysis-time dedup key (OQ2 normalization)' {
+        It 'is identical for identical (rule, line)' {
+            (Get-DiagnosticShapeHash -RuleId 'PSUseApprovedVerbs' -OffendingLine 'function Frob-X {') |
+                Should -BeExactly (Get-DiagnosticShapeHash -RuleId 'PSUseApprovedVerbs' -OffendingLine 'function Frob-X {')
+        }
+        It 'collapses interior whitespace and trims (same shape -> same hash)' {
+            (Get-DiagnosticShapeHash -RuleId 'R' -OffendingLine '  a   b  ') |
+                Should -BeExactly (Get-DiagnosticShapeHash -RuleId 'R' -OffendingLine 'a b')
+        }
+        It 'differs across distinct rule ids (same line)' {
+            (Get-DiagnosticShapeHash -RuleId 'R1' -OffendingLine 'x') |
+                Should -Not -BeExactly (Get-DiagnosticShapeHash -RuleId 'R2' -OffendingLine 'x')
+        }
+        It 'differs across distinct lines (same rule)' {
+            (Get-DiagnosticShapeHash -RuleId 'R' -OffendingLine 'x') |
+                Should -Not -BeExactly (Get-DiagnosticShapeHash -RuleId 'R' -OffendingLine 'y')
+        }
+        It 'PRESERVES case -- lines differing only in case do NOT collapse (the conservative OQ2 choice)' {
+            # Lowercasing would risk collapsing genuinely distinct lines (e.g. two string
+            # literals differing only in case), so case is preserved. Adversarial control:
+            # add .ToLowerInvariant() to the normalization and this goes RED.
+            (Get-DiagnosticShapeHash -RuleId 'R' -OffendingLine 'Get-Item') |
+                Should -Not -BeExactly (Get-DiagnosticShapeHash -RuleId 'R' -OffendingLine 'get-item')
+        }
+        It 'does not collide across the rule/line boundary (separator works)' {
+            (Get-DiagnosticShapeHash -RuleId 'AB' -OffendingLine '') |
+                Should -Not -BeExactly (Get-DiagnosticShapeHash -RuleId 'A' -OffendingLine 'B')
+        }
+        It 'is a 64-char lowercase hex SHA-256 digest' {
+            (Get-DiagnosticShapeHash -RuleId 'R' -OffendingLine 'x') | Should -Match '^[0-9a-f]{64}$'
+        }
+    }
+
+    Context 'record normalizers -- the two emit-site shapes' {
+        It 'New-CaptureRecordFromDiag maps a PSSA diagnostic (code -> ruleId, source kept)' {
+            $d = [pscustomobject]@{ severity = 'Warning'; line = 9; col = 5; source = 'PSScriptAnalyzer'; code = 'PSUseApprovedVerbs'; message = 'verb' }
+            $r = New-CaptureRecordFromDiag $d
+            $r.ruleId | Should -BeExactly 'PSUseApprovedVerbs'
+            $r.source | Should -BeExactly 'PSScriptAnalyzer'
+            $r.severity | Should -BeExactly 'Warning'
+            $r.line | Should -Be 9
+            $r.col | Should -Be 5
+        }
+        It 'New-CaptureRecordFromDiag falls back to source=parser and ruleId="" on a no-source/no-code diag' {
+            $d = [pscustomobject]@{ severity = 'Error'; line = 1; col = 1; source = ''; code = ''; message = 'm' }
+            $r = New-CaptureRecordFromDiag $d
+            $r.source | Should -BeExactly 'parser'
+            $r.ruleId | Should -BeExactly ''
+        }
+        It 'New-CaptureRecordFromDiag treats a "0" code as no rule id' {
+            $d = [pscustomobject]@{ severity = 'Error'; line = 1; col = 1; source = 'X'; code = '0'; message = 'm' }
+            (New-CaptureRecordFromDiag $d).ruleId | Should -BeExactly ''
+        }
+        It 'New-CaptureRecordFromParseError maps a real ParseError (source=parser, severity=Error, ErrorId)' {
+            $t = $null; $e = $null
+            [void][System.Management.Automation.Language.Parser]::ParseInput("function X {`n  Get-Process", [ref]$t, [ref]$e)
+            $r = New-CaptureRecordFromParseError $e[0]
+            $r.source | Should -BeExactly 'parser'
+            $r.severity | Should -BeExactly 'Error'
+            $r.ruleId | Should -Not -BeNullOrEmpty       # the parser's ErrorId (e.g. MissingEndCurlyBrace)
+            $r.line | Should -BeGreaterThan 0
+        }
+    }
+
+    Context 'Add-DiagnosticCaptureEntries -- append-only JSONL, every occurrence, fail-safe' {
+        It 'appends one entry carrying every required field, with verdict present and EMPTY' {
+            $src = Join-Path $script:DfDir 'sample.ps1'
+            "line one`nfunction Frobnicate-X {`n  Get-Process`n}" | Set-Content -LiteralPath $src -Encoding ascii
+            $rec = @{ line = 2; col = 10; ruleId = 'PSUseApprovedVerbs'; source = 'PSScriptAnalyzer'; severity = 'Warning'; message = 'verb' }
+            Add-DiagnosticCaptureEntries -File $src -Records @($rec)
+            $lines = @(Get-Content -LiteralPath $script:DfLog)
+            $lines.Count | Should -Be 1
+            $o = $lines[0] | ConvertFrom-Json
+            foreach ($field in @('ts', 'file', 'line', 'col', 'ruleId', 'source', 'severity', 'message', 'snippet', 'hash', 'verdict')) {
+                ($o.PSObject.Properties.Name -contains $field) | Should -BeTrue -Because "the entry must carry '$field'"
+            }
+            $o.verdict | Should -BeExactly ''                          # present AND empty (reserved for later annotation)
+            $o.ruleId | Should -BeExactly 'PSUseApprovedVerbs'
+            $o.source | Should -BeExactly 'PSScriptAnalyzer'
+            $o.snippet | Should -BeExactly 'function Frobnicate-X {'   # the offending line at line 2
+            $o.hash | Should -Match '^[0-9a-f]{64}$'
+        }
+        It 'logs EVERY occurrence -- two identical diagnostics yield two entries (no capture-time dedup)' {
+            $src = Join-Path $script:DfDir 'sample2.ps1'
+            'Write-Host hi' | Set-Content -LiteralPath $src -Encoding ascii
+            $rec = @{ line = 1; col = 1; ruleId = 'PSAvoidUsingWriteHost'; source = 'PSScriptAnalyzer'; severity = 'Warning'; message = 'wh' }
+            Add-DiagnosticCaptureEntries -File $src -Records @($rec, $rec)
+            $lines = @(Get-Content -LiteralPath $script:DfLog)
+            $lines.Count | Should -Be 2
+            # identical (rule, line shape) -> identical hash, yet both occurrences are kept.
+            ($lines[0] | ConvertFrom-Json).hash | Should -BeExactly ($lines[1] | ConvertFrom-Json).hash
+        }
+        It 'appends across calls (does not overwrite)' {
+            $src = Join-Path $script:DfDir 'sample3.ps1'
+            'gci' | Set-Content -LiteralPath $src -Encoding ascii
+            $rec = @{ line = 1; col = 1; ruleId = 'PSAvoidUsingCmdletAliases'; source = 'PSScriptAnalyzer'; severity = 'Warning'; message = 'a' }
+            Add-DiagnosticCaptureEntries -File $src -Records @($rec)
+            Add-DiagnosticCaptureEntries -File $src -Records @($rec)
+            @(Get-Content -LiteralPath $script:DfLog).Count | Should -Be 2
+        }
+        It 'is fail-safe: a directory squatting the log path does not throw (mirrors Write-StatsLine)' {
+            Remove-Item -LiteralPath $script:DfLog -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force -Path $script:DfLog | Out-Null   # squat -> every append fails
+            $src = Join-Path $script:DfDir 'sample4.ps1'
+            'gci' | Set-Content -LiteralPath $src -Encoding ascii
+            $rec = @{ line = 1; col = 1; ruleId = 'R'; source = 'PSScriptAnalyzer'; severity = 'Warning'; message = 'm' }
+            { Add-DiagnosticCaptureEntries -File $src -Records @($rec) } | Should -Not -Throw
+        }
+        It 'is a fail-safe no-op when given no records' {
+            { Add-DiagnosticCaptureEntries -File 'C:\nope\x.ps1' -Records @() } | Should -Not -Throw
+            (Test-Path -LiteralPath $script:DfLog) | Should -BeFalse
+        }
+        It 'writes an empty snippet when the diagnostic line is out of range (still appends)' {
+            $src = Join-Path $script:DfDir 'sample5.ps1'
+            'only one line' | Set-Content -LiteralPath $src -Encoding ascii
+            $rec = @{ line = 999; col = 1; ruleId = 'R'; source = 'PSScriptAnalyzer'; severity = 'Warning'; message = 'm' }
+            Add-DiagnosticCaptureEntries -File $src -Records @($rec)
+            $o = @(Get-Content -LiteralPath $script:DfLog)[0] | ConvertFrom-Json
+            $o.snippet | Should -BeExactly ''
+            $o.line | Should -Be 999
+        }
+    }
+
+    Context 'Get-DogfoodLogPath -- resolution + override' {
+        It 'honors the POWERSHELL_LSP_DOGFOOD_LOG override verbatim' {
+            $env:POWERSHELL_LSP_DOGFOOD_LOG = 'C:\custom\df.jsonl'
+            Get-DogfoodLogPath | Should -BeExactly 'C:\custom\df.jsonl'
+        }
+        It 'defaults to the plugin-root dogfood/diagnostics.jsonl when no override is set' {
+            Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_DOGFOOD_LOG' -ErrorAction SilentlyContinue
+            Get-DogfoodLogPath | Should -BeExactly (Join-Path $script:PluginRoot 'dogfood/diagnostics.jsonl')
+        }
+    }
+}
+
 Describe 'Diagnostics ordering and dedupe (Select-OrderedDiagnostics)' {
     It 'sorts by severity then line and dedupes identical findings' {
         $recs = @(

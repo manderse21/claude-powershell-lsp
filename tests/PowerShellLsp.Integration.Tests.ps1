@@ -202,6 +202,34 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
         $exit | Should -Be 0                         # and the hook still exited 0
     }
 
+    It 'dogfood capture (000039): tees the surfaced PSSA diagnostic to the log with an empty verdict, surface + exit unchanged' {
+        # Tap 2 (the warm-daemon path) end to end: a PSUseApprovedVerbs finding is appended to
+        # the dogfood log with the PSScriptAnalyzer ruleId/source and an EMPTY verdict, WITHOUT
+        # changing the surfaced diagnostics block or the exit 0. The log is redirected to a
+        # throwaway temp file via POWERSHELL_LSP_DOGFOOD_LOG (the real dogfood/ tree is untouched).
+        $fix = Join-Path $script:DataDir 'pester-dogfood-fixture.ps1'
+        "function Frobnicate-Dogfood {`n    Get-Process`n}" | Set-Content -LiteralPath $fix -Encoding ascii   # PSUseApprovedVerbs
+        $log = Join-Path $script:DataDir ('dogfood-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.jsonl')
+        $stdin = (@{ session_id = $script:Sid; tool_input = @{ file_path = $fix }; cwd = $script:DataDir } | ConvertTo-Json -Compress)
+        try {
+            $env:POWERSHELL_LSP_DOGFOOD_LOG = $log
+            $out = Invoke-PluginHook -ScriptPath (Join-Path $script:ScriptsDir 'lsp-client.ps1') `
+                -StdinJson $stdin -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
+            $exit = $script:LastHookExit
+        } finally {
+            Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_DOGFOOD_LOG' -ErrorAction SilentlyContinue
+        }
+        $out | Should -Match 'PSUseApprovedVerbs'    # surface unchanged: the diagnostic still emits
+        $exit | Should -Be 0                          # and the hook still exits 0
+        (Test-Path -LiteralPath $log) | Should -BeTrue
+        $entries = @(Get-Content -LiteralPath $log | ForEach-Object { $_ | ConvertFrom-Json })
+        $hit = $entries | Where-Object { $_.ruleId -eq 'PSUseApprovedVerbs' } | Select-Object -First 1
+        $hit | Should -Not -BeNullOrEmpty
+        $hit.source | Should -BeExactly 'PSScriptAnalyzer'
+        $hit.verdict | Should -BeExactly ''           # present and EMPTY, reserved for later annotation
+        $hit.snippet | Should -Match 'Frobnicate-Dogfood'
+    }
+
     It 'shuts down cleanly on SessionEnd with no orphaned daemon or PSES' {
         $daemonPid = $script:DaemonInfo.pid
         $psesPid = $script:DaemonInfo.psesPid
@@ -1478,5 +1506,96 @@ Describe 'Third-party MIT notices are preserved in the installed bundle (dispatc
         (Test-Path (Join-Path $script:N_PssaDir 'LICENSE')) | Should -BeTrue
         (Test-Path (Join-Path $script:N_PssaDir 'ThirdPartyNotices.txt')) | Should -BeTrue
         (Get-Content -LiteralPath (Join-Path $script:N_PssaDir 'LICENSE') -Raw) | Should -Match 'Permission is hereby granted'
+    }
+}
+
+Describe 'Integration: dogfood diagnostic capture (dispatch 000039)' -Skip:$script:SkipIntegration {
+    # The invisible-side-channel + never-silent guarantees, end to end through the REAL hook
+    # entry (scripts/lsp-client.ps1). Uses the PARSER pre-pass path -- a deliberately broken
+    # .ps1 plus a NO-DAEMON session id -- so it needs NO PSES/PSScriptAnalyzer bootstrap and NO
+    # warm daemon: it exercises the capture tap and the surface byte-for-byte regardless of
+    # network. The dogfood log is redirected to a throwaway temp file via the
+    # POWERSHELL_LSP_DOGFOOD_LOG override so the real (gitignored) dogfood/ tree is never touched.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        $script:DfScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:DfData = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-df-itg-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:DfData | Out-Null
+
+        function Invoke-DfHook {
+            param([string]$StdinJson, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            Add-ProcessArguments $psi @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $script:DfScriptsDir 'lsp-client.ps1'))
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $script:DfData
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)   # no BOM
+            $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
+            $p.StandardInput.Close()
+            $script:DfHookExit = $null
+            if (-not $p.WaitForExit(9000)) { try { $p.Kill($true) } catch { }; return '' }
+            $script:DfHookExit = $p.ExitCode
+            [void]$stdoutTask.Wait(1500)
+            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+        }
+
+        # A deliberately broken .ps1 (unclosed brace) under the scratch root (NOT the repo tree --
+        # the ASCII/parse unit guard would trip on a broken .ps1). A NO-DAEMON session id means a
+        # result can ONLY have come from the in-process parser pre-pass (no daemon could answer).
+        $script:DfBroken = Join-Path $script:DfData 'broken-fixture.ps1'
+        "function Test-DfBroken {`n    Get-Process" | Set-Content -LiteralPath $script:DfBroken -Encoding ascii
+        $script:DfStdin = (@{ session_id = ('no-daemon-' + [guid]::NewGuid().ToString('N').Substring(0, 8)); tool_input = @{ file_path = $script:DfBroken }; cwd = $script:DfData } | ConvertTo-Json -Compress)
+    }
+
+    AfterAll {
+        Remove-Item -LiteralPath $script:DfData -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'captures the surfaced parser diagnostic to the log with an EMPTY verdict (end to end)' {
+        $log = Join-Path $script:DfData 'capture-ok.jsonl'
+        $out = Invoke-DfHook -StdinJson $script:DfStdin -ExtraEnv @{ POWERSHELL_LSP_DOGFOOD_LOG = $log }
+        # (a) the surface emitted the parser diagnostics block, and the hook exited 0
+        $out | Should -Match 'PowerShell diagnostics'
+        $out | Should -Match '\(parser\)'
+        $script:DfHookExit | Should -Be 0
+        # (b) the matching JSONL line(s) were appended, each with source=parser and an EMPTY verdict
+        (Test-Path -LiteralPath $log) | Should -BeTrue
+        $entries = @(Get-Content -LiteralPath $log | ForEach-Object { $_ | ConvertFrom-Json })
+        $entries.Count | Should -BeGreaterThan 0
+        $entries[0].source | Should -BeExactly 'parser'
+        $entries[0].verdict | Should -BeExactly ''
+        $entries[0].snippet | Should -Not -BeNullOrEmpty
+        $entries[0].hash | Should -Match '^[0-9a-f]{64}$'
+    }
+
+    It 'LOAD-BEARING: the surfaced diagnostics block is byte-for-byte identical whether the capture write SUCCEEDS or FAILS, and the hook exits 0 either way' {
+        # capture-SUCCESS run (writable log).
+        $okLog = Join-Path $script:DfData 'lb-ok.jsonl'
+        $okOut = Invoke-DfHook -StdinJson $script:DfStdin -ExtraEnv @{ POWERSHELL_LSP_DOGFOOD_LOG = $okLog }
+        $okExit = $script:DfHookExit
+        # capture-FAILURE run: point the log at an unwritable path whose PARENT is a FILE, so the
+        # directory-create + append throw inside the capture and are swallowed.
+        $blocker = Join-Path $script:DfData 'blocker.txt'
+        'x' | Set-Content -LiteralPath $blocker -Encoding ascii
+        $failLog = Join-Path $blocker 'nested/diagnostics.jsonl'
+        $failOut = Invoke-DfHook -StdinJson $script:DfStdin -ExtraEnv @{ POWERSHELL_LSP_DOGFOOD_LOG = $failLog }
+        $failExit = $script:DfHookExit
+
+        # Assert on the FEEDBACK payload (additionalContext), not the raw JSON wrapper: the
+        # wrapper's key order is a pre-existing per-process ConvertTo-Json artifact that differs
+        # run to run regardless (same caveat the Track A additive test documents).
+        $okCtx = ($okOut | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $failCtx = ($failOut | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $okCtx | Should -Match 'PowerShell diagnostics'   # the run actually produced the surface (not vacuous)
+        $failCtx | Should -BeExactly $okCtx               # byte-for-byte identical: capture is invisible
+        $okExit | Should -Be 0
+        $failExit | Should -Be 0                          # a capture failure never changes the exit code
+        # the SUCCESS run wrote the log (so "identical" is not vacuous); the FAILURE run wrote nothing.
+        (Test-Path -LiteralPath $okLog) | Should -BeTrue
+        @(Get-Content -LiteralPath $okLog).Count | Should -BeGreaterThan 0
+        (Test-Path -LiteralPath $failLog) | Should -BeFalse
     }
 }

@@ -294,6 +294,31 @@ the PostToolUse client surfaces its own honest "analyzer was not reachable -- th
 checked" banner (start a new session to restart the daemon), so even the no-pipe case is never
 silent. The mid-session `incomplete`/`degraded` split was introduced earlier (dispatch 000022).
 
+## Dogfood diagnostic capture
+
+Every diagnostic the plugin surfaces is also **teed to a local, append-only log** so the real
+diagnostics from real day-to-day editing can drive the roadmap's quality work -- rule curation,
+false-positive reduction, fix-suggestion quality -- ranked on evidence instead of guesses. This is
+**capture only**; the annotation/review tool that consumes the log is a planned fast-follow.
+
+- **Where:** `dogfood/diagnostics.jsonl` in the plugin tree. Override with the
+  `POWERSHELL_LSP_DOGFOOD_LOG` environment variable (a full path to the `.jsonl` file).
+- **What:** one JSON object per line, one line per diagnostic **occurrence** -- two identical
+  diagnostics make two lines (frequency is the signal; de-duplication is an analysis-time concern,
+  never a capture-time one). Each entry carries: `ts` (ISO-8601), `file`, `line`, `col`, `ruleId`
+  (the PSScriptAnalyzer rule, or empty for a parser error), `source` (`PSScriptAnalyzer` or
+  `parser`), `severity`, `message`, `snippet` (the full offending line), `hash` (a stable key over
+  the rule id + the normalized offending-line shape, for analysis-time de-duplication), and
+  `verdict` -- written **empty**, reserved for you to annotate later (e.g. `true-positive` /
+  `false-positive`) when the review tool lands.
+- **Invisible side channel:** capture runs *after* the diagnostics are surfaced and is fully
+  fail-safe. If the write fails for any reason, the diagnostics you see and the hook's exit code are
+  byte-for-byte unchanged; logging never changes, reorders, delays, or gates what is surfaced.
+
+> **Never commit this log.** It holds **real source snippets** from the files you edit. The whole
+> `dogfood/` directory is gitignored (see `.gitignore`) and must never be staged, added, or
+> committed -- do not weaken that entry.
+
 ## Troubleshooting
 
 ### Preflight self-check (the doctor)

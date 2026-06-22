@@ -231,6 +231,14 @@ try {
         if ($cap -gt 0 -and $total -gt $cap) { [void]$sb.AppendLine('  ... and ' + ($total - $cap) + ' more (per-file cap)') }
         Write-HookContext ($sb.ToString().TrimEnd())
         Write-CLog ('parse error -> emitted ' + @($shown).Count + ' parse diagnostic(s); skipped daemon round-trip')
+        # Dogfood capture (000039): tee the surfaced parser diagnostics into the local
+        # append-only log. STRICTLY after the emit, fully wrapped, and piped to Out-Null --
+        # a pure side-channel that can never alter the surface above or the exit 0 below
+        # (the invisible-side-channel fence). $shown is the exact set just surfaced.
+        try {
+            $capRecords = @($shown | ForEach-Object { New-CaptureRecordFromParseError $_ })
+            Add-DiagnosticCaptureEntries -File $path -Records $capRecords | Out-Null
+        } catch { Write-CLog ('dogfood capture (parser path) failed -- swallowed: ' + $_.Exception.Message) }
         # Track A: telemetry for the parser-prepass short-circuit -- no daemon was
         # contacted, so connect/analysis/codeAction are null; records = parse errors
         # found (pre-cap). Strictly after the emit; file-only; never throws.
@@ -366,6 +374,19 @@ try {
         Write-CLog ('emitted ' + $diags.Count + ' diagnostic(s)' + $(if ($status -and $status -ne 'ok') { ' [status=' + $status + ']' } else { '' }))
     } else {
         Write-CLog 'no diagnostics'
+    }
+
+    # Dogfood capture (000039): tee the surfaced daemon diagnostics into the local
+    # append-only log. STRICTLY after the emit, fully wrapped, and piped to Out-Null -- it
+    # can never alter, reorder, delay, or gate the surface above or the exit 0 below (the
+    # invisible-side-channel fence). $diags is the exact (already scoped + capped) set
+    # surfaced to Claude; every occurrence is logged (no capture-time dedup). Only diagnostic
+    # OCCURRENCES are captured -- a status-only banner (incomplete/unavailable) is not one.
+    if ($diags.Count -gt 0) {
+        try {
+            $capRecords = @($diags | ForEach-Object { New-CaptureRecordFromDiag $_ })
+            Add-DiagnosticCaptureEntries -File $path -Records $capRecords | Out-Null
+        } catch { Write-CLog ('dogfood capture (daemon path) failed -- swallowed: ' + $_.Exception.Message) }
     }
 
     # Track A: one best-effort JSONL line for this analyzed edit (cache-hit or
