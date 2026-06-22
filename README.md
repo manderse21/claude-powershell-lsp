@@ -101,19 +101,33 @@ narrow* what PSES reports; they cannot add a rule PSES does not run.
 
 ## Performance
 
-**Warm-path daemon (v1.1.0), `pwsh` 7.6.2, Windows 11.** Measured warm-path
-latency (median of 5 successive edits): **~2.0 s wall clock** per edit
-(`~1998 ms`), versus the ~6 s cold start of a per-edit-spawn predecessor. Roughly
-0.7 s of that is the per-hook `pwsh` process spawn that Claude Code pays
-regardless of plugin code.
+Measured on `pwsh` 7.6.3, Windows 11, at the v1.12.0 build:
 
-The acceptance suite confirms: cold-session bring-up launches exactly one daemon;
-a deliberate diagnostic returns over the warm path; the settled PSScriptAnalyzer
-pass (not the early parser publish) is reported; file URIs carry uppercase drive
-letters; three rapid edits coalesce into one analysis pass; SessionEnd leaves no
-daemon/PSES processes; and killing the daemon mid-session degrades gracefully
-(no stdout, under the hard cap) while the next SessionStart reaps the stale
-session and its orphaned PSES.
+- **Warm-path latency** (edit -> diagnostic round-trip; median of 5 successive
+  real edits against an already-warm daemon): **~2.2 s** (median ~2210 ms; range
+  ~2154-2236 ms).
+- **Cold-start latency** (SessionStart hook -> the per-session PSES daemon reaches
+  ready; median of 3): **~3.9 s** (median ~3892 ms; range ~3789-4561 ms).
+
+Roughly 0.7 s of the warm path is the per-hook `pwsh` process spawn that Claude
+Code pays regardless of plugin code.
+
+These latencies are **measured and guarded in CI** by a repeatable benchmark
+harness (`tests/PowerShellLsp.Benchmark.Tests.ps1`): it times the real daemon/pipe
+path on all four CI legs (Windows `pwsh`, Windows PowerShell 5.1, Ubuntu, macOS),
+emits structured results (`benchmark-results.json`), and fails if a median
+regresses past a generous threshold. The first-pass bounds are deliberately loose
+(cold under 20 s, warm under 9 s) -- enough to catch a gross regression without
+flaking on slower hosted runners; they tighten as per-leg CI numbers are
+characterized.
+
+The acceptance suite also confirms: cold-session bring-up launches exactly one
+daemon; a deliberate diagnostic returns over the warm path; the settled
+PSScriptAnalyzer pass (not the early parser publish) is reported; file URIs carry
+uppercase drive letters; three rapid edits coalesce into one analysis pass;
+SessionEnd leaves no daemon/PSES processes; and killing the daemon mid-session
+degrades gracefully (no stdout, under the hard cap) while the next SessionStart
+reaps the stale session and its orphaned PSES.
 
 ## How it works (warm-start daemon)
 
@@ -318,6 +332,31 @@ false-positive reduction, fix-suggestion quality -- ranked on evidence instead o
 > **Never commit this log.** It holds **real source snippets** from the files you edit. The whole
 > `dogfood/` directory is gitignored (see `.gitignore`) and must never be staged, added, or
 > committed -- do not weaken that entry.
+
+## Diagnostic-correctness corpus
+
+A curated corpus (`tests/corpus/`) proves the diagnostics the tool *reports* are correct -- not
+merely present, and not merely honest when it cannot analyze. Three sample categories:
+
+- **clean** -- expect zero findings (no false positives on clean code).
+- **known-bad** -- each sample trips a specific PSScriptAnalyzer rule the tool surfaces.
+- **parser-error** -- expect parser diagnostics.
+
+**The invariant that makes it trustworthy:** every expected finding is *derived* by running the
+REAL tool over the sample and snapshotting exactly what it emits (through the plugin's own dogfood
+capture channel) -- never hand-authored, never model-authored. A generator
+(`tests/corpus/Update-CorpusSnapshots.ps1`) writes the committed snapshots; the corpus test
+re-derives the same way and asserts the live tool still matches. A future behavior change becomes a
+visible, located failure, and a hand-edited snapshot cannot make the test pass -- it would simply
+disagree with the real tool.
+
+One fact the corpus surfaced: the tool's effective default ruleset (via PowerShell Editor Services)
+is **narrower** than raw PSScriptAnalyzer. Of eight candidate rules, the daemon surfaces three --
+`PSAvoidUsingCmdletAliases`, `PSUseApprovedVerbs`, and `PSUseDeclaredVarsMoreThanAssignments` -- and
+drops others (e.g. `PSAvoidUsingEmptyCatchBlock`, `PSReviewUnusedParameter`,
+`PSUseShouldProcessForStateChangingFunctions`, `PSAvoidUsingWriteHost`). The corpus records what the
+tool actually surfaces; tuning the ruleset is a separate, dogfood-paced quality track. The corpus
+runs in CI on all four legs.
 
 ## Troubleshooting
 

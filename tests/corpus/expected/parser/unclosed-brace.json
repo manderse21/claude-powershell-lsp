@@ -1,0 +1,8 @@
+[{
+  "ruleId": "MissingEndCurlyBrace",
+  "source": "parser",
+  "severity": "Error",
+  "line": 1,
+  "col": 19,
+  "message": "Missing closing '}' in statement block or type definition."
+}]

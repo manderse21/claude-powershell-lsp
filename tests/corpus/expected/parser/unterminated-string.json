@@ -1,0 +1,8 @@
+[{
+  "ruleId": "TerminatorExpectedAtEndOfString",
+  "source": "parser",
+  "severity": "Error",
+  "line": 1,
+  "col": 1,
+  "message": "The string is missing the terminator: '."
+}]

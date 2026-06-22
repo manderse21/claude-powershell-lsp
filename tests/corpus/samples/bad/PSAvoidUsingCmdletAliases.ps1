@@ -1,0 +1,2 @@
+# Triggers PSAvoidUsingCmdletAliases
+gci

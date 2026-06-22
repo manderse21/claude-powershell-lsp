@@ -29,6 +29,35 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.12.0] - 2026-06-22
+
+MINOR: **CI proof-framework -- diagnostic-correctness corpus + performance benchmark harness**
+(dispatch 000040). Two CI regression guards that close the roadmap's buildable-now correctness and
+release-engineering gaps (Gap A, Gap C): a corpus that proves WHAT the tool reports is correct, and a
+benchmark that measures and guards HOW FAST it reports it. This is a PROOF framework: it measures and
+asserts current behavior and does not change it. Nothing under `scripts/` is modified, the diagnostics
+surface is byte-for-byte unchanged, and the 000027 contract drift-guard stays green.
+
+### Added
+
+- **Diagnostic-correctness corpus (`tests/corpus/`), Gap A.** Curated clean / known-bad-per-rule /
+  parser-error PowerShell samples, each with an expected-findings snapshot DERIVED from the real tool
+  (the warm PSES daemon + PScriptAnalyzer, or the in-process parser pre-pass) through the dogfood
+  capture channel -- never hand-authored, never model-authored. `tests/corpus/Update-CorpusSnapshots.ps1`
+  regenerates the snapshots; `tests/PowerShellLsp.Corpus.Tests.ps1` re-derives the same way and asserts
+  the live tool still matches, so a behavior change is a visible, located failure. The corpus also
+  records the observed fact that the tool's effective PSES default ruleset is narrower than raw
+  PSScriptAnalyzer.
+- **Performance benchmark harness (`tests/bench/`, `tests/PowerShellLsp.Benchmark.Tests.ps1`), Gap C.**
+  Repeatably measures cold-start (SessionStart -> daemon ready) and warm-path (edit -> diagnostic
+  round-trip) latency against the real daemon/pipe path, emits structured results
+  (`benchmark-results.json`), and guards each median against a generous first-pass threshold (cold under
+  20 s, warm under 9 s). Build-time medians: cold ~3.9 s, warm ~2.2 s (`pwsh` 7.6.3, Windows 11).
+- **README.** Publishes the measured latency numbers and adds a Diagnostic-correctness corpus section.
+
+Both halves run in CI on all four legs (windows-pwsh, windows-powershell, ubuntu-pwsh, macos-pwsh) via
+the existing `tests/run-tests.ps1` auto-discovery; the benchmark numbers upload as a CI artifact.
+
 ## [1.11.0] - 2026-06-22
 
 MINOR: **doctor daemon/pipe-health check** -- the preflight doctor (`scripts/doctor.ps1`, dispatch 000036)
