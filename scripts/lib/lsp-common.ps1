@@ -318,6 +318,155 @@ function Write-StatsLine {
     } catch { }
 }
 
+# --- dogfood diagnostic capture (dispatch 000039) --------------------------
+# Tee EVERY surfaced diagnostic OCCURRENCE into a local, append-only JSONL log so the
+# roadmap's quality wave (rule curation -> false-positive reduction -> fix quality) can be
+# ranked on REAL diagnostics from REAL usage instead of guesses. CAPTURE ONLY: the
+# annotation/review tool that consumes the empty verdict field is a deliberate fast-follow.
+#
+# THE INVISIBLE-SIDE-CHANNEL FENCE (the core constraint): capture is strictly additive and
+# invisible to the diagnostics surface. It runs AFTER the surface is emitted, is fully
+# wrapped so ANY failure is swallowed, and writes NOTHING to stdout -- so what is surfaced,
+# its order, the (already-delivered) timing, and the hook's exit code are byte-for-byte
+# unchanged whether capture succeeds, fails, or is absent. Same fail-safe contract as
+# Write-StatsLine; the 000026 fail-safe spine and the 000024/000028 never-silent guarantee
+# are preserved unchanged. No dedup/sampling/rate-limit at capture: one entry per
+# occurrence (two identical diagnostics -> two entries); the hash is an ANALYSIS-time dedup
+# key only.
+#
+# THE NEVER-COMMIT FENCE: the log holds REAL source snippets. It is gitignored and must
+# NEVER be staged, added, or committed (see .gitignore and the README dogfood section).
+
+function Get-DogfoodLogPath {
+    # Resolve the dogfood capture log path. Precedence:
+    #   1. $env:POWERSHELL_LSP_DOGFOOD_LOG -- an explicit full-path override (a test seam and
+    #      an advanced-relocation escape hatch). Honored verbatim.
+    #   2. <plugin-root>/dogfood/diagnostics.jsonl -- the default. The root is resolved the
+    #      SAME way as Get-PluginManifestPath: walk up from this lib's dir (scripts/lib ->
+    #      scripts -> root); fall back to $env:CLAUDE_PLUGIN_ROOT.
+    # Returns '' when the root cannot be resolved -- the caller's append then fails safe and
+    # surfaces nothing. The log lands in whichever plugin tree is running; for dogfooding
+    # that is the dev clone, whose .gitignore covers it.
+    $override = $env:POWERSHELL_LSP_DOGFOOD_LOG
+    if (-not [string]::IsNullOrWhiteSpace($override)) { return $override }
+    $libDir = $script:LspCommonDir
+    if ([string]::IsNullOrWhiteSpace($libDir)) { $libDir = $PSScriptRoot }
+    $root = ''
+    if (-not [string]::IsNullOrWhiteSpace($libDir)) {
+        $root = Split-Path -Parent (Split-Path -Parent $libDir)
+    }
+    if ([string]::IsNullOrWhiteSpace($root) -or -not (Test-Path -LiteralPath $root)) {
+        $envRoot = $env:CLAUDE_PLUGIN_ROOT
+        if (-not [string]::IsNullOrWhiteSpace($envRoot)) { $root = $envRoot }
+    }
+    if ([string]::IsNullOrWhiteSpace($root)) { return '' }
+    return (Join-Path $root 'dogfood/diagnostics.jsonl')
+}
+
+function Get-DiagnosticShapeHash {
+    # Stable analysis-time dedup key over (rule ID + normalized offending-line shape).
+    # Normalization (dispatch 000039 OQ2): trim, then collapse interior whitespace runs to a
+    # single space; CASE IS PRESERVED -- lowercasing risks collapsing genuinely distinct
+    # lines (e.g. two string literals differing only in case), so the conservative,
+    # correctness-preserving option is taken. Deterministic SHA-256 over UTF-8 bytes:
+    # identical (rule, line shape) -> identical hash across processes/hosts; distinct inputs
+    # -> distinct hash. Capture-time code NEVER dedups on this; it is for the later
+    # annotation/analysis pass only.
+    param([string]$RuleId, [string]$OffendingLine)
+    $normLine = ((([string]$OffendingLine) -replace '\s+', ' ').Trim())
+    # A U+0001 separator (a control char that cannot occur in a rule id or a source line) so
+    # (rule 'AB' + line '') and (rule 'A' + line 'B') can never collide.
+    $material = ([string]$RuleId) + ([char]1) + $normLine
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($material)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $hashBytes = $sha.ComputeHash($bytes) } finally { $sha.Dispose() }
+    return (([System.BitConverter]::ToString($hashBytes)) -replace '-', '').ToLowerInvariant()
+}
+
+function New-CaptureRecordFromDiag {
+    # Normalize ONE daemon-surfaced diagnostic (the PSObject the client renders) into the
+    # flat capture-record shape. ruleId = the PSSA rule code when present; source = the LSP
+    # source, falling back to 'parser' when empty (mirrors the surface label's own fallback).
+    param($Diagnostic)
+    $code = [string](Get-Prop $Diagnostic 'code')
+    $ruleId = if ($code -and $code -ne '0') { $code } else { '' }
+    $src = [string](Get-Prop $Diagnostic 'source')
+    if ([string]::IsNullOrWhiteSpace($src)) { $src = 'parser' }
+    $line = 0; $lv = Get-Prop $Diagnostic 'line'; if ($null -ne $lv) { $line = [int]$lv }
+    $col = 0; $cv = Get-Prop $Diagnostic 'col'; if ($null -ne $cv) { $col = [int]$cv }
+    return @{
+        line = $line; col = $col; ruleId = $ruleId; source = $src
+        severity = [string](Get-Prop $Diagnostic 'severity'); message = [string](Get-Prop $Diagnostic 'message')
+    }
+}
+
+function New-CaptureRecordFromParseError {
+    # Normalize ONE in-process parser diagnostic (a System.Management.Automation.Language.
+    # ParseError) into the flat capture-record shape. source is always 'parser' and severity
+    # 'Error' (mirrors the parser pre-pass surface); ruleId is the parser ErrorId when present.
+    param($ParseErr)
+    $line = 0; $col = 0; $ruleId = ''; $msg = ''
+    try { $line = [int]$ParseErr.Extent.StartLineNumber } catch { $line = 0 }
+    try { $col = [int]$ParseErr.Extent.StartColumnNumber } catch { $col = 0 }
+    try { $ruleId = [string]$ParseErr.ErrorId } catch { $ruleId = '' }
+    try { $msg = ((([string]$ParseErr.Message) -replace "[`r`n`t]", ' ').Trim()) } catch { $msg = '' }
+    return @{
+        line = $line; col = $col; ruleId = $ruleId; source = 'parser'
+        severity = 'Error'; message = $msg
+    }
+}
+
+function Add-DiagnosticCaptureEntries {
+    # Append one JSONL entry per SURFACED diagnostic occurrence to the dogfood log. STRICTLY
+    # fail-safe and additive (see the section header): any failure is swallowed, nothing is
+    # written to stdout, and the caller's surface + exit code are untouched. $Records are the
+    # flat hashtables produced by New-CaptureRecordFrom*; the offending-line snippet and the
+    # dedup hash are derived here so the two emit call sites stay thin. The verdict field is
+    # written EMPTY, reserved for the later annotation pass.
+    param([string]$File, [object[]]$Records)
+    try {
+        $recs = @($Records)
+        if ($recs.Count -eq 0) { return }
+        $logPath = Get-DogfoodLogPath
+        if ([string]::IsNullOrWhiteSpace($logPath)) { return }
+        $dir = Split-Path -Parent $logPath
+        if (-not [string]::IsNullOrWhiteSpace($dir) -and -not (Test-Path -LiteralPath $dir)) {
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        }
+        # Read the post-edit file ONCE for snippets; tolerate any read failure (snippet '').
+        $lines = $null
+        try { $lines = [System.IO.File]::ReadAllLines($File) } catch { $lines = $null }
+        $ts = (Get-Date -Format 'o')
+        $sb = New-Object System.Text.StringBuilder
+        foreach ($r in $recs) {
+            $lineNum = 0; try { $lineNum = [int]$r.line } catch { $lineNum = 0 }
+            $colNum = 0; try { $colNum = [int]$r.col } catch { $colNum = 0 }
+            $snippet = ''
+            if ($null -ne $lines -and $lineNum -ge 1 -and $lineNum -le $lines.Count) {
+                $snippet = [string]$lines[$lineNum - 1]
+            }
+            $ruleId = [string]$r.ruleId
+            $entry = [ordered]@{
+                ts       = $ts
+                file     = [string]$File
+                line     = $lineNum
+                col      = $colNum
+                ruleId   = $ruleId
+                source   = [string]$r.source
+                severity = [string]$r.severity
+                message  = [string]$r.message
+                snippet  = $snippet
+                hash     = (Get-DiagnosticShapeHash -RuleId $ruleId -OffendingLine $snippet)
+                verdict  = ''
+            }
+            [void]$sb.Append(($entry | ConvertTo-Json -Depth 5 -Compress))
+            [void]$sb.Append("`n")
+        }
+        $enc = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::AppendAllText($logPath, $sb.ToString(), $enc)
+    } catch { }
+}
+
 # --- platform helpers (cross-platform forward-compat) ----------------------
 # Non-Windows branches below are AUTHORED but CI-verified later (this build runs
 # Windows only). They exist so the Windows-only calls are isolated and guarded.

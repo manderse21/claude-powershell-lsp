@@ -1,0 +1,7 @@
+# Dogfood diagnostic capture (dispatch 000039)
+# -----------------------------------------------------------------------------
+# The diagnostics capture log holds REAL source snippets from the .ps1 files you
+# edit while dogfooding the plugin. It is LOCAL-ONLY and must NEVER be committed.
+# The whole dogfood/ directory is ignored so no captured snippet can ever be
+# staged -- do not weaken this. See README -> "Dogfood diagnostic capture".
+/dogfood/

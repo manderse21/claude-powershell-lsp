@@ -29,6 +29,48 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.10.0] - 2026-06-22
+
+MINOR: **dogfood diagnostic capture** -- every diagnostic the plugin surfaces is now also teed to a
+local, append-only JSONL log (`dogfood/diagnostics.jsonl`), one entry per occurrence, each with an EMPTY
+`verdict` field reserved for later manual annotation (dispatch 000039). This starts the accumulation clock
+the roadmap's quality wave (rule curation, false-positive reduction, fix-suggestion quality) needs to rank
+work on REAL diagnostics from REAL usage instead of guesses. It is CAPTURE ONLY: the annotation/review tool
+that consumes the verdict field is a deliberate fast-follow (next_suggested). No new `userConfig` knob and
+NO change to the diagnostics status-token taxonomy, so the 000027 drift-guard greens with no Tier-1 change.
+
+Capture is a pure, INVISIBLE side channel: it runs AFTER the diagnostics are surfaced, is fully fail-safe
+(any write failure is swallowed), and writes nothing to stdout -- so what is surfaced, its order, the
+timing, and the hook's exit code are byte-for-byte unchanged whether capture succeeds, fails, or is absent.
+The 000026 fail-safe spine and the 000024/000028 never-silent guarantee are preserved unchanged. The log
+holds REAL source snippets and is gitignored -- it must NEVER be committed.
+
+### Added
+
+- **Diagnostic capture tap (`scripts/lib/lsp-common.ps1`, `scripts/lsp-client.ps1`), dispatch 000039.** At
+  BOTH per-diagnostic emit sites in the PostToolUse client -- the in-process parser pre-pass and the
+  warm-daemon PSScriptAnalyzer path -- the surfaced occurrences are appended to the dogfood log. Each entry
+  carries: ISO-8601 `ts`, `file`, `line`, `col`, `ruleId` (the PSSA rule, or empty for a parser error),
+  `source` (`PSScriptAnalyzer` or `parser`), `severity`, `message`, `snippet` (the full offending line), a
+  stable `hash` over the rule id + the normalized offending-line shape (analysis-time de-duplication only:
+  trim + collapse interior whitespace, case preserved), and an empty `verdict`. Every occurrence is logged
+  (two identical diagnostics -> two entries); there is no dedup, sampling, or rate-limiting at capture. New
+  helpers `Get-DogfoodLogPath`, `Get-DiagnosticShapeHash`, `New-CaptureRecordFromDiag`,
+  `New-CaptureRecordFromParseError`, and the fail-safe `Add-DiagnosticCaptureEntries`, with new unit +
+  integration tests -- including the load-bearing guard: a forced capture-write failure leaves the surfaced
+  block byte-for-byte unchanged and the hook still exits 0.
+- **`.gitignore` (new) + README "Dogfood diagnostic capture".** The whole `dogfood/` directory is gitignored
+  so no captured source snippet is ever staged, and the README documents what is captured, that it is
+  local-only and never committed, that it holds real source snippets, and how the `verdict` field is used
+  later.
+
+### Notes
+
+- The log path defaults to `dogfood/diagnostics.jsonl` in the plugin tree and can be relocated with the
+  `POWERSHELL_LSP_DOGFOOD_LOG` environment variable (also the test seam). It is NOT a `userConfig` knob.
+- Capture only: the annotation/review tool that walks unannotated entries and lets you tag verdicts is the
+  planned fast-follow.
+
 ## [1.9.0] - 2026-06-22
 
 MINOR: **honest degradation on a security-control block** -- when the PSES / PSScriptAnalyzer
