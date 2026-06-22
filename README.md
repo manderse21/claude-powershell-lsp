@@ -333,15 +333,23 @@ pwsh -File scripts/doctor.ps1
 It verifies, in order: PowerShell 7 (`pwsh`) is present and new enough (see
 [Prerequisites](#prerequisites)); the plugin is enabled (see [Quick start](#quick-start)); the PSES
 bundle and PSScriptAnalyzer finished bootstrapping (the pinned markers plus
-`Start-EditorServices.ps1`, see [Pinned versions](#pinned-versions)); and the first-run
-download hosts are reachable. Each check reports `PASS`, a specific failure with the fix,
-or an honest `UNKNOWN` when it genuinely cannot determine -- for example, run outside a
-Claude Code session it cannot see the plugin data directory, so the enable-state and
-bundle checks report `UNKNOWN` (run it from inside an enabled session for a definitive
-result).
+`Start-EditorServices.ps1`, see [Pinned versions](#pinned-versions)); the first-run
+download hosts are reachable; and the **warm per-session daemon** is alive and answering on its
+named pipe -- the *runtime* check the first five cannot make (they confirm the bundle is
+**installed**; this confirms the language server is actually **running**). Each check reports
+`PASS`, a specific failure with the fix, or an honest `UNKNOWN` when it genuinely cannot
+determine -- for example, run outside a Claude Code session it cannot see the plugin data
+directory, so the enable-state, bundle, and daemon checks report `UNKNOWN` (run it from inside
+an enabled session for a definitive result).
 
-The doctor is **report-only**: it never downloads, repairs, or runs the bootstrap. It
-also does **not** probe security controls itself -- but when a *bootstrap* failure is
+The daemon check **observes only** -- it never starts, restarts, or kills the daemon -- and it
+is honest about the auto-relaunch design (see [Diagnostics status](#diagnostics-status)): **no
+daemon running** reports `PASS` (benign -- one auto-relaunches on your next edit), never a scary
+failure, while a daemon that is alive but parked `unavailable` / `degraded`, or alive but not
+answering its pipe, is a `FAIL` with the restart remedy.
+
+The doctor is **report-only**: it never downloads, repairs, runs the bootstrap, or
+starts/restarts the daemon. It also does **not** probe security controls itself -- but when a *bootstrap* failure is
 caused by one, the SessionStart banner now names the most likely control and the
 legitimate fix (see [Security-control blocks on managed Windows](#security-control-blocks-on-managed-windows)
 below). If a doctor check fails for a reason its own fix does not resolve, a security

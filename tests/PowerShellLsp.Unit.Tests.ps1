@@ -1294,6 +1294,93 @@ Describe 'Preflight doctor -- per-check status decisions (dispatch 000036)' {
 }
 
 # ===========================================================================
+# Preflight doctor -- daemon/pipe health (dispatch 000037)
+# ===========================================================================
+# Check 6 (Test-DoctorDaemon) is the RUNTIME bookend to check 3: checks 1-5 confirm the
+# bundle is INSTALLED; this confirms the warm per-session daemon is ACTUALLY ALIVE and
+# answering on its named pipe. Like the 000036 checks it is a PURE decision over
+# already-resolved observations (Get-DoctorDaemonObservation does the discovery + the
+# non-disruptive 'ping' round-trip live), so the four-state mapping is asserted here with
+# the daemon/pipe state injected -- no live daemon, no pipe. The mapping must stay HONEST
+# about the 000028 pipe-first + 000030 auto-relaunch semantics: an absent daemon
+# auto-relaunches on the next edit (benign), so it must NOT read as a FAIL.
+
+Describe 'Preflight doctor -- daemon/pipe health (dispatch 000037)' {
+    BeforeAll {
+        . (Join-Path $script:ScriptsDir 'doctor.ps1')
+    }
+
+    Context 'Test-DoctorDaemon -- check 6: warm daemon runtime health' {
+        It 'PASS when a daemon is alive and answered its pipe (the round-trip succeeded)' {
+            $r = Test-DoctorDaemon -DataRootKnown $true -Determinable $true -DaemonPresent $true -State 'ready' -Reachable $true
+            $r.Status | Should -Be 'pass'
+            $r.Detail | Should -Match 'answered on its named pipe'
+        }
+        It 'PASS (still benign) when the daemon answers but PSES is still starting' {
+            $r = Test-DoctorDaemon -DataRootKnown $true -Determinable $true -DaemonPresent $true -State 'starting' -Reachable $true
+            $r.Status | Should -Be 'pass'
+            $r.Detail | Should -Match 'still initializing'
+        }
+        It 'FAIL (parked unavailable) names the genuine problem and the restart remedy' {
+            # Adversarial control: this is the 000030 PERMANENT case (a daemon ALIVE and reachable
+            # but parked unavailable). It must FAIL even though the pipe answers -- so the State
+            # check MUST precede the Reachable check. Reorder them and this fail -> pass, going RED.
+            $r = Test-DoctorDaemon -DataRootKnown $true -Determinable $true -DaemonPresent $true -State 'unavailable' -Reachable $true
+            $r.Status | Should -Be 'fail'
+            $r.Detail | Should -Match 'unavailable'
+            $r.Remediation | Should -Match 'fresh Claude Code session'
+        }
+        It 'FAIL (degraded) when the daemon is alive but its analyzer re-spawn budget is exhausted' {
+            $r = Test-DoctorDaemon -DataRootKnown $true -Determinable $true -DaemonPresent $true -State 'degraded' -Reachable $true
+            $r.Status | Should -Be 'fail'
+            $r.Detail | Should -Match 'degraded'
+        }
+        It 'FAIL (wedged) when the daemon process is alive but the pipe did NOT answer' {
+            # Adversarial control: pipe-first means a healthy daemon ALWAYS holds its pipe open, so
+            # alive-but-silent is a real fault. Collapse this into the benign-absent branch and the
+            # fail -> pass flip goes RED -- a wedged daemon must not read as "nothing to fix."
+            $r = Test-DoctorDaemon -DataRootKnown $true -Determinable $true -DaemonPresent $true -State 'ready' -Reachable $false
+            $r.Status | Should -Be 'fail'
+            $r.Detail | Should -Match 'did not answer'
+        }
+        It 'PASS (benign, never FAIL) when no daemon is present -- it auto-relaunches on the next edit' {
+            # Adversarial control: the 000030 recoverable case. A $null/absent daemon is benign (one
+            # auto-relaunches on the next edit). Return fail from this branch and BOTH assertions go
+            # RED -- a benign self-healing state must never be reported as a scary failure.
+            $r = Test-DoctorDaemon -DataRootKnown $true -Determinable $true -DaemonPresent $false
+            $r.Status | Should -Be 'pass'
+            $r.Status | Should -Not -Be 'fail'
+            $r.Detail | Should -Match 'auto-relaunches'
+        }
+        It 'UNKNOWN (no session context) when the data root cannot be located' {
+            # Adversarial control: treat an unknown data root as fail/pass and this goes RED -- a
+            # standalone run cannot see the daemon, so the honest answer is UNKNOWN, never a verdict.
+            $r = Test-DoctorDaemon -DataRootKnown $false -Determinable $false -DaemonPresent $false
+            $r.Status | Should -Be 'unknown'
+            $r.Remediation | Should -Match 'inside a Claude Code session'
+        }
+        It 'UNKNOWN (ambiguous) when several daemons are live and no session id disambiguates' {
+            # Adversarial control: guessing one of N live daemons would be a misleading PASS/FAIL.
+            # The honest answer is UNKNOWN, naming the count and the -SessionId way to scope it.
+            $r = Test-DoctorDaemon -DataRootKnown $true -Determinable $false -DaemonPresent $true -LiveCount 2
+            $r.Status | Should -Be 'unknown'
+            $r.Detail | Should -Match '2 live daemons'
+            $r.Remediation | Should -Match 'SessionId'
+        }
+        It 'keeps its status inside the frozen pass/fail/unknown vocabulary (no invented token)' {
+            foreach ($s in @(
+                    (Test-DoctorDaemon -DataRootKnown $true -Determinable $true -DaemonPresent $true -State 'ready' -Reachable $true),
+                    (Test-DoctorDaemon -DataRootKnown $true -Determinable $true -DaemonPresent $true -State 'unavailable' -Reachable $true),
+                    (Test-DoctorDaemon -DataRootKnown $true -Determinable $true -DaemonPresent $false),
+                    (Test-DoctorDaemon -DataRootKnown $false -Determinable $false -DaemonPresent $false)
+                )) {
+                $s.Status | Should -BeIn @('pass', 'fail', 'unknown')
+            }
+        }
+    }
+}
+
+# ===========================================================================
 # Security-block classifier (dispatch 000038, building 000032 L3)
 # ===========================================================================
 # Honest degradation on a security-control block: attribute a bootstrap failure to the
