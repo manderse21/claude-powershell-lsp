@@ -397,6 +397,233 @@ Describe 'Dogfood diagnostic capture (dispatch 000039)' {
     }
 }
 
+Describe 'Dogfood annotation/review tool (dispatch 000043)' {
+    # The reviewer FILLS the empty verdict the 000039 capture reserves. It is dot-source safe
+    # (the doctor.ps1 pattern), so these exercise the pure logic with no I/O beyond TestDrive
+    # temp files. Persistence keys on the capture record's shape-hash and lands in a SEPARATE
+    # annotations file -- the diagnostics log is never rewritten (the non-destructive fence).
+    BeforeAll {
+        . (Join-Path $script:ScriptsDir 'review-dogfood.ps1')
+
+        # Build one capture entry in the EXACT 000039 on-disk shape (ts/file/line/col/ruleId/
+        # source/severity/message/snippet/hash/verdict). Defined in BeforeAll so the It blocks
+        # (run phase) can see it.
+        function New-DfEntry {
+            param(
+                [string] $Hash,
+                [string] $RuleId = 'PSUseApprovedVerbs',
+                [string] $Source = 'PSScriptAnalyzer',
+                [string] $Severity = 'Warning',
+                [string] $Message = 'msg',
+                [string] $Snippet = 'function Frob-X {',
+                [int] $Line = 1,
+                [int] $Col = 10,
+                [string] $File = 'C:\proj\a.ps1'
+            )
+            return [ordered]@{
+                ts = '2026-06-23T00:00:00.0000000Z'; file = $File; line = $Line; col = $Col
+                ruleId = $RuleId; source = $Source; severity = $Severity; message = $Message
+                snippet = $Snippet; hash = $Hash; verdict = ''
+            }
+        }
+        function Write-DfLog {
+            param([string] $LogPath, [object[]] $Entries)
+            $sb = New-Object System.Text.StringBuilder
+            foreach ($e in @($Entries)) { [void]$sb.Append(($e | ConvertTo-Json -Depth 5 -Compress)); [void]$sb.Append("`n") }
+            [System.IO.File]::WriteAllText($LogPath, $sb.ToString(), (New-Object System.Text.UTF8Encoding($false)))
+        }
+    }
+
+    BeforeEach {
+        $script:DfDir = Join-Path $TestDrive ('rev-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:DfDir | Out-Null
+        $script:DfLog = Join-Path $script:DfDir 'diagnostics.jsonl'
+        $script:DfAnn = Join-Path $script:DfDir 'annotations.jsonl'
+    }
+
+    Context 'frozen verdict vocabulary (NOT the 000027 taxonomy; no userConfig knob)' {
+        It 'accepts each of the five frozen verdicts' {
+            foreach ($v in @('useful', 'false-positive', 'noisy', 'bad-fix', 'unsure')) {
+                (Test-DogfoodVerdict $v) | Should -BeTrue -Because "$v is frozen-valid"
+            }
+        }
+        It 'rejects an out-of-enum verdict' {
+            (Test-DogfoodVerdict 'great') | Should -BeFalse
+        }
+        It 'is case-sensitive (the enum is lower-case by definition)' {
+            # Adversarial control: switch -ccontains to -contains in Test-DogfoodVerdict and this
+            # goes RED -- the freeze is exact, not case-folded.
+            (Test-DogfoodVerdict 'Useful') | Should -BeFalse
+        }
+        It 'the -Verdict ValidateSet and $script:DogfoodVerdicts are the SAME frozen set (no drift)' {
+            # Both in-code sources of the enum are read FROM THE SCRIPT AST and must equal the
+            # frozen five. Adversarial control: add a value to the ValidateSet or the array (not
+            # both) and the set-equality goes RED -- the two cannot drift apart silently.
+            $frozen = @('bad-fix', 'false-positive', 'noisy', 'unsure', 'useful')   # sorted
+            $scriptPath = Join-Path $script:ScriptsDir 'review-dogfood.ps1'
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$null)
+            $vParam = $ast.Find({
+                    param($n) $n -is [System.Management.Automation.Language.ParameterAst] -and
+                    $n.Name.VariablePath.UserPath -eq 'Verdict' }, $true)
+            $vsAttr = @($vParam.Attributes | Where-Object { $_.TypeName.FullName -match 'ValidateSet' })[0]
+            $vsValues = @($vsAttr.PositionalArguments | ForEach-Object { [string]$_.Value }) | Sort-Object
+            ($vsValues -join ',') | Should -BeExactly ($frozen -join ',')
+            $assign = $ast.Find({
+                    param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $n.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $n.Left.VariablePath.UserPath -eq 'script:DogfoodVerdicts' }, $true)
+            $arrValues = @($assign.Right.FindAll({
+                        param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) |
+                    ForEach-Object { [string]$_.Value }) | Sort-Object
+            ($arrValues -join ',') | Should -BeExactly ($frozen -join ',')
+        }
+    }
+
+    Context 'readers -- tolerant JSONL parse (mirrors show-stats)' {
+        It 'Read-DogfoodLog returns empty for a missing file (never throws)' {
+            @(Read-DogfoodLog -LogPath (Join-Path $script:DfDir 'nope.jsonl')).Count | Should -Be 0
+        }
+        It 'Read-DogfoodLog parses valid lines and skips blank / malformed ones' {
+            Write-DfLog -LogPath $script:DfLog -Entries @((New-DfEntry -Hash 'h-a'), (New-DfEntry -Hash 'h-b'))
+            Add-Content -LiteralPath $script:DfLog -Value '' -Encoding ascii
+            Add-Content -LiteralPath $script:DfLog -Value '{ not json' -Encoding ascii
+            @(Read-DogfoodLog -LogPath $script:DfLog).Count | Should -Be 2
+        }
+        It 'Read-DogfoodAnnotations returns an empty hashtable for a missing file' {
+            (Read-DogfoodAnnotations -AnnotationsPath (Join-Path $script:DfDir 'nope.jsonl')).Count | Should -Be 0
+        }
+        It 'Read-DogfoodAnnotations is last-write-wins per hash (append-only correction)' {
+            Set-DogfoodVerdict -LogPath $script:DfLog -AnnotationsPath $script:DfAnn -Hash 'h-a' -Verdict 'noisy' | Out-Null
+            Set-DogfoodVerdict -LogPath $script:DfLog -AnnotationsPath $script:DfAnn -Hash 'h-a' -Verdict 'false-positive' | Out-Null
+            $ann = Read-DogfoodAnnotations -AnnotationsPath $script:DfAnn
+            $ann['h-a'].verdict | Should -BeExactly 'false-positive'   # the later line wins
+            @(Get-Content -LiteralPath $script:DfAnn).Count | Should -Be 2   # both kept (non-destructive)
+        }
+    }
+
+    Context 'Get-DogfoodShapes -- collapse occurrences to distinct shapes by hash' {
+        It 'groups by hash, counts occurrences, and keeps the first representative + order' {
+            Write-DfLog -LogPath $script:DfLog -Entries @(
+                (New-DfEntry -Hash 'h-x' -RuleId 'PSAvoidUsingCmdletAliases' -Snippet 'gci'),
+                (New-DfEntry -Hash 'h-x' -RuleId 'PSAvoidUsingCmdletAliases' -Snippet 'gci'),
+                (New-DfEntry -Hash 'h-x' -RuleId 'PSAvoidUsingCmdletAliases' -Snippet 'gci'),
+                (New-DfEntry -Hash 'h-y' -RuleId 'PSUseApprovedVerbs' -Snippet 'function Frob-Z {'))
+            $shapes = @(Get-DogfoodShapes -Records (Read-DogfoodLog -LogPath $script:DfLog))
+            $shapes.Count | Should -Be 2
+            $shapes[0].hash | Should -BeExactly 'h-x'      # first-seen order preserved
+            $shapes[0].count | Should -Be 3                # all three occurrences counted
+            $shapes[0].ruleId | Should -BeExactly 'PSAvoidUsingCmdletAliases'
+            $shapes[1].count | Should -Be 1
+        }
+    }
+
+    Context 'Get-DogfoodPendingShapes -- resumability' {
+        It 'excludes shapes whose hash already carries a verdict' {
+            Write-DfLog -LogPath $script:DfLog -Entries @((New-DfEntry -Hash 'h-a'), (New-DfEntry -Hash 'h-b'))
+            Set-DogfoodVerdict -LogPath $script:DfLog -AnnotationsPath $script:DfAnn -Hash 'h-a' -Verdict 'useful' | Out-Null
+            $shapes = Get-DogfoodShapes -Records (Read-DogfoodLog -LogPath $script:DfLog)
+            $ann = Read-DogfoodAnnotations -AnnotationsPath $script:DfAnn
+            $pending = @(Get-DogfoodPendingShapes -Shapes $shapes -Annotations $ann)
+            $pending.Count | Should -Be 1
+            $pending[0].hash | Should -BeExactly 'h-b'
+        }
+    }
+
+    Context 'persistence model -- hash-keyed, sibling file, non-destructive' {
+        It 'Get-DogfoodAnnotationsPath is annotations.jsonl beside the log' {
+            Get-DogfoodAnnotationsPath -LogPath 'C:\d\dogfood\diagnostics.jsonl' |
+                Should -BeExactly (Join-Path 'C:\d\dogfood' 'annotations.jsonl')
+        }
+        It 'New-DogfoodAnnotation carries hash/ruleId/verdict/rationale/ts and honors a pinned timestamp' {
+            $a = New-DogfoodAnnotation -Hash 'h-a' -Verdict 'noisy' -RuleId 'R' -Rationale 'why' -Now '2020-01-01T00:00:00Z'
+            $a.hash | Should -BeExactly 'h-a'
+            $a.verdict | Should -BeExactly 'noisy'
+            $a.ruleId | Should -BeExactly 'R'
+            $a.rationale | Should -BeExactly 'why'
+            $a.ts | Should -BeExactly '2020-01-01T00:00:00Z'
+        }
+        It 'New-DogfoodAnnotation throws on an out-of-enum verdict' {
+            { New-DogfoodAnnotation -Hash 'h' -Verdict 'bogus' } | Should -Throw
+        }
+        It 'Set-DogfoodVerdict writes, resolves the ruleId from the log, and is idempotent' {
+            Write-DfLog -LogPath $script:DfLog -Entries @((New-DfEntry -Hash 'h-a' -RuleId 'PSUseApprovedVerbs'))
+            (Set-DogfoodVerdict -LogPath $script:DfLog -AnnotationsPath $script:DfAnn -Hash 'h-a' -Verdict 'false-positive') | Should -BeExactly 'written'
+            (Set-DogfoodVerdict -LogPath $script:DfLog -AnnotationsPath $script:DfAnn -Hash 'h-a' -Verdict 'false-positive') | Should -BeExactly 'unchanged'
+            @(Get-Content -LiteralPath $script:DfAnn).Count | Should -Be 1   # idempotent: no duplicate line
+            (Read-DogfoodAnnotations -AnnotationsPath $script:DfAnn)['h-a'].ruleId | Should -BeExactly 'PSUseApprovedVerbs'
+        }
+        It 'annotating NEVER mutates the diagnostics log -- byte-identical (non-destructive fence)' {
+            # The load-bearing fence (analog of the 000039 byte-identity capture test): a verdict
+            # is ADDED to a separate file; the capture evidence is immutable. Adversarial control:
+            # make Set-DogfoodVerdict rewrite the log in place and this goes RED.
+            Write-DfLog -LogPath $script:DfLog -Entries @((New-DfEntry -Hash 'h-a'), (New-DfEntry -Hash 'h-b'))
+            $before = [System.IO.File]::ReadAllBytes($script:DfLog)
+            Set-DogfoodVerdict -LogPath $script:DfLog -AnnotationsPath $script:DfAnn -Hash 'h-a' -Verdict 'useful' | Out-Null
+            $after = [System.IO.File]::ReadAllBytes($script:DfLog)
+            ([System.Convert]::ToBase64String($after)) | Should -BeExactly ([System.Convert]::ToBase64String($before))
+        }
+        It 'the annotation file never carries the snippet (only hash/ruleId/verdict/rationale/ts)' {
+            Write-DfLog -LogPath $script:DfLog -Entries @((New-DfEntry -Hash 'h-a' -Snippet 'secret-source-token'))
+            Set-DogfoodVerdict -LogPath $script:DfLog -AnnotationsPath $script:DfAnn -Hash 'h-a' -Verdict 'useful' | Out-Null
+            (Get-Content -LiteralPath $script:DfAnn -Raw) | Should -Not -Match 'secret-source-token'
+        }
+    }
+
+    Context 'Get-DogfoodSummary -- the ranked readout (occurrence-weighted)' {
+        BeforeEach {
+            Write-DfLog -LogPath $script:DfLog -Entries @(
+                (New-DfEntry -Hash 'h-fp' -RuleId 'PSUseApprovedVerbs'),
+                (New-DfEntry -Hash 'h-fp' -RuleId 'PSUseApprovedVerbs'),
+                (New-DfEntry -Hash 'h-fp' -RuleId 'PSUseApprovedVerbs'),
+                (New-DfEntry -Hash 'h-ok' -RuleId 'PSAvoidUsingCmdletAliases'))
+        }
+        It 'reports coverage, per-verdict shape/occurrence counts, and excludes useful from top rules' {
+            Set-DogfoodVerdict -LogPath $script:DfLog -AnnotationsPath $script:DfAnn -Hash 'h-fp' -Verdict 'false-positive' | Out-Null
+            Set-DogfoodVerdict -LogPath $script:DfLog -AnnotationsPath $script:DfAnn -Hash 'h-ok' -Verdict 'useful' | Out-Null
+            $shapes = Get-DogfoodShapes -Records (Read-DogfoodLog -LogPath $script:DfLog)
+            $ann = Read-DogfoodAnnotations -AnnotationsPath $script:DfAnn
+            $sum = Get-DogfoodSummary -Shapes $shapes -Annotations $ann
+            $sum.totalShapes | Should -Be 2
+            $sum.totalOccurrences | Should -Be 4
+            $sum.annotatedShapes | Should -Be 2
+            $sum.coveragePct | Should -Be 100
+            $sum.byVerdict['false-positive'].shapes | Should -Be 1
+            $sum.byVerdict['false-positive'].occurrences | Should -Be 3      # occurrence-weighted
+            $sum.byVerdict['useful'].occurrences | Should -Be 1
+            # 'useful' is NOT actionable, so only the false-positive rule ranks.
+            @($sum.topRules).Count | Should -Be 1
+            $sum.topRules[0].ruleId | Should -BeExactly 'PSUseApprovedVerbs'
+            $sum.topRules[0].occurrences | Should -Be 3
+        }
+        It 'an empty log summarizes cleanly (zero shapes, zero coverage)' {
+            $sum = Get-DogfoodSummary -Shapes @() -Annotations @{}
+            $sum.totalShapes | Should -Be 0
+            $sum.coveragePct | Should -Be 0
+        }
+    }
+
+    Context 'rendering -- snippet redaction is the source fence for sharing' {
+        It 'Format-DogfoodSnippet masks to a length placeholder under -Redact' {
+            (Format-DogfoodSnippet -Snippet 'gci -Recurse' -Redact) | Should -BeExactly '[redacted 12 chars]'
+        }
+        It 'Format-DogfoodSnippet returns the snippet verbatim without -Redact' {
+            (Format-DogfoodSnippet -Snippet 'gci -Recurse') | Should -BeExactly 'gci -Recurse'
+        }
+        It 'Format-DogfoodSnippet renders an empty snippet as (no snippet)' {
+            (Format-DogfoodSnippet -Snippet '') | Should -BeExactly '(no snippet)'
+        }
+        It 'Format-DogfoodShape redacts the snippet but still shows rule + hash' {
+            # Round-trip through the log (JSON -> PSCustomObject) exactly as real usage does.
+            Write-DfLog -LogPath $script:DfLog -Entries @((New-DfEntry -Hash 'h-a' -Snippet 'leak-me' -RuleId 'PSUseApprovedVerbs'))
+            $shape = (Get-DogfoodShapes -Records (Read-DogfoodLog -LogPath $script:DfLog))[0]
+            $out = Format-DogfoodShape -Shape $shape -Annotations @{} -Redact
+            $out | Should -Not -Match 'leak-me'
+            $out | Should -Match 'PSUseApprovedVerbs'
+            $out | Should -Match 'h-a'
+        }
+    }
+}
+
 Describe 'Diagnostics ordering and dedupe (Select-OrderedDiagnostics)' {
     It 'sorts by severity then line and dedupes identical findings' {
         $recs = @(
