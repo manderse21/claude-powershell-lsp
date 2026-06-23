@@ -29,6 +29,41 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.15.0] - 2026-06-23
+
+MINOR: **an enterprise trust-surface and correctness-proof bundle** (dispatch 000046) -- four
+isolated workstreams in one release. The behavior change that warrants MINOR is **fail-closed
+hash verification of the downloaded dependencies** (WS2); the rest is additive (a measured
+correctness proof, plus trust/disclosure docs). The 000027 contract drift-guard stays green:
+**no new `userConfig` knob and no new diagnostics status token** -- a hash mismatch reuses the
+existing honest `unavailable` surface.
+
+### Added
+
+- **Fail-closed dependency integrity (Gap B L2).** PowerShell Editor Services (the GitHub
+  release zip) and PSScriptAnalyzer (the PowerShell Gallery `.nupkg`) are now verified against
+  a SHA-256 pin **computed from the real known-good artifact** before they are used
+  (`Test-PinnedFileHash` in `scripts/lib/lsp-common.ps1`, wired into `scripts/ensure-pses.ps1`
+  and `scripts/ensure-pssa.ps1`). A match proceeds exactly as before; a **mismatch fails
+  closed** -- the unverified bundle is refused, any prior working bundle is left intact, the
+  session surfaces the existing honest `unavailable` banner, and the hook still exits 0 (editing
+  is never broken). PSScriptAnalyzer now acquires via the **verified `.nupkg` download first**,
+  falling back to `Save-Module` only on a download failure (never on a hash mismatch).
+- **Measured diagnostic-correctness proof (Gap A).** The 000040 corpus is filled to 16
+  known-good and 18 known-bad cases spanning every rule the default ruleset surfaces, with a
+  **measured 0% false-positive rate and 100% true-positive coverage** under the default config,
+  recomputed from the live tool and **guarded in CI on all four legs**
+  (`tests/PowerShellLsp.Corpus.Tests.ps1`; report artifact `corpus-correctness-report.json`).
+  Numbers are published in the README. Correcting an earlier undercount: the daemon surfaces
+  **six** rules on the fly, not three.
+- **`TRUST.md`** (Gap B L4 + Gap E) -- the enterprise approve-or-deny reference: local-only /
+  no-telemetry posture, the pinned versions AND hashes, pointers to the CycloneDX SBOM and
+  build-provenance attestation, the honest signing status (SignPath application **pending -- not
+  signed**, no security audit), paste-ready WDAC / AppLocker rules, CodeIntegrity 3076/3077
+  guidance, and the governance / single-maintainer bus-factor posture.
+- **`SECURITY.md`** -- a real disclosure policy: supported versions, a **private** report
+  channel (GitHub private vulnerability reporting), scope, and response expectations.
+
 ## [1.14.1] - 2026-06-23
 
 PATCH: **a cross-platform test fix -- the dogfood-review annotations-path test no longer hardcodes a
