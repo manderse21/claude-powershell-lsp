@@ -527,6 +527,10 @@ SBOM and build-provenance attestation, the honest signing status (**pending -- n
 no security audit), paste-ready WDAC / AppLocker allow-list rules, and the governance /
 bus-factor posture.
 
+Found a vulnerability? See **[SECURITY.md](./SECURITY.md)** -- report it privately via GitHub
+private vulnerability reporting (never a public issue); it covers supported versions, scope,
+and what to expect.
+
 ## Releasing
 
 Releases are cut by a **maintainer-triggered, gate-validated pipeline** -- never automatically
