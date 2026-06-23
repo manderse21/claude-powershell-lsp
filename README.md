@@ -379,9 +379,20 @@ pwsh -File scripts/review-dogfood.ps1 -Hash <hash> -Verdict false-positive -Rati
 A curated corpus (`tests/corpus/`) proves the diagnostics the tool *reports* are correct -- not
 merely present, and not merely honest when it cannot analyze. Three sample categories:
 
-- **clean** -- expect zero findings (no false positives on clean code).
-- **known-bad** -- each sample trips a specific PSScriptAnalyzer rule the tool surfaces.
-- **parser-error** -- expect parser diagnostics.
+- **clean** (16 cases) -- expect zero findings (no false positives on clean code).
+- **known-bad** (18 cases) -- each sample trips a specific PSScriptAnalyzer rule the tool surfaces,
+  asserting the exact rule id, line, and severity; multiple cases per rule exercise varied
+  triggering constructs.
+- **parser-error** (3 cases) -- expect parser diagnostics.
+
+**Measured correctness (default config, all four CI legs).** Across those curated cases the tool
+posts a **0% false-positive rate** (0 of 16 known-good cases produced any finding) and **100%
+true-positive coverage** (18 of 18 known-bad cases surfaced their expected rule), spanning every
+rule the default ruleset surfaces. These numbers are not prose -- they are recomputed from the live
+tool on every CI run and **guarded** (`tests/PowerShellLsp.Corpus.Tests.ps1`: the report fails CI if
+the false-positive rate rises above zero, coverage drops below 100%, or any surfaced default rule
+loses its known-bad case), and the per-run report is uploaded as a CI artifact
+(`logs/corpus-correctness-report.json`). The claim is *measured and defensible*, not *exhaustive*.
 
 **The invariant that makes it trustworthy:** every expected finding is *derived* by running the
 REAL tool over the sample and snapshotting exactly what it emits (through the plugin's own dogfood
@@ -392,12 +403,15 @@ visible, located failure, and a hand-edited snapshot cannot make the test pass -
 disagree with the real tool.
 
 One fact the corpus surfaced: the tool's effective default ruleset (via PowerShell Editor Services)
-is **narrower** than raw PSScriptAnalyzer. Of eight candidate rules, the daemon surfaces three --
-`PSAvoidUsingCmdletAliases`, `PSUseApprovedVerbs`, and `PSUseDeclaredVarsMoreThanAssignments` -- and
-drops others (e.g. `PSAvoidUsingEmptyCatchBlock`, `PSReviewUnusedParameter`,
-`PSUseShouldProcessForStateChangingFunctions`, `PSAvoidUsingWriteHost`). The corpus records what the
-tool actually surfaces; tuning the ruleset is a separate, dogfood-paced quality track. The corpus
-runs in CI on all four legs.
+is **narrower** than raw PSScriptAnalyzer. Measured against the live daemon, it surfaces **six** rules
+on the fly -- `PSAvoidUsingCmdletAliases`, `PSUseApprovedVerbs`,
+`PSUseDeclaredVarsMoreThanAssignments`, `PSAvoidUsingPlainTextForPassword`,
+`PSPossibleIncorrectComparisonWithNull`, and `PSAvoidDefaultValueSwitchParameter` -- and drops others
+the CLI flags (e.g. `PSAvoidUsingEmptyCatchBlock`, `PSReviewUnusedParameter`,
+`PSUseShouldProcessForStateChangingFunctions`, `PSAvoidUsingWriteHost`,
+`PSAvoidUsingPositionalParameters`, `PSUseSingularNouns`). The corpus records what the tool actually
+surfaces; tuning the ruleset is a separate, dogfood-paced quality track. The corpus runs in CI on all
+four legs.
 
 ## Troubleshooting
 
@@ -503,6 +517,19 @@ administrator does deliberately (sign, allow-list, adjust policy); the plugin it
 no such action. A tool that tried to circumvent enterprise security would deserve to be
 banned -- honest degradation, telling you exactly what is blocked and how to allow it, is
 the whole value.
+
+## Security and trust
+
+Evaluating this plugin for a managed or locked-down Windows estate? **[TRUST.md](./TRUST.md)**
+is the approve-or-deny reference: what runs locally and what never leaves the machine (no
+network service, no telemetry), the **pinned + SHA-256-verified** downloads, the CycloneDX
+SBOM and build-provenance attestation, the honest signing status (**pending -- not signed**,
+no security audit), paste-ready WDAC / AppLocker allow-list rules, and the governance /
+bus-factor posture.
+
+Found a vulnerability? See **[SECURITY.md](./SECURITY.md)** -- report it privately via GitHub
+private vulnerability reporting (never a public issue); it covers supported versions, scope,
+and what to expect.
 
 ## Releasing
 

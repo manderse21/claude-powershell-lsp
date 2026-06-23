@@ -59,12 +59,22 @@ function Get-CorpusSampleSpec {
         if (-not (Test-Path -LiteralPath $s.Dir)) { continue }
         foreach ($f in (Get-ChildItem -LiteralPath $s.Dir -Filter $s.Filter -File | Sort-Object Name)) {
             $base = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+            # RuleId -- the EXPECTED PSScriptAnalyzer rule a known-bad sample must surface,
+            # decoupled from the filename so MORE THAN ONE case can exist per rule (dispatch
+            # 000046). PSES surfaces a NARROW default rule set on the fly (6 rules, measured),
+            # so a one-rule-per-file scheme cannot reach a meaningful known-bad count; instead
+            # a 'bad' file is named <RuleId>.<variant>.ps1 (e.g. PSUseApprovedVerbs.wibble.ps1)
+            # and the expected rule is the FIRST dot-segment of the base. A legacy single-segment
+            # name (PSUseApprovedVerbs.ps1) yields RuleId == base unchanged, so existing samples
+            # keep working. Only 'bad' uses RuleId; 'clean'/'parser' carry the base for symmetry.
+            $ruleId = if ($s.Category -eq 'bad') { ($base -split '\.')[0] } else { $base }
             # Hashtables (not PSCustomObjects): Pester 5 -ForEach exposes each key as a
             # named variable inside the test; dot access ($spec.Label) still works for the
             # generator's foreach. One spec shape, used by both call sites.
             $specs += @{
                 Category     = $s.Category
                 Name         = $base
+                RuleId       = $ruleId
                 Label        = ($s.Category + '/' + $base)
                 SourcePath   = $f.FullName
                 ExpectedPath = (Join-Path (Join-Path $p.ExpectedDir $s.Category) ($base + '.json'))
@@ -241,4 +251,58 @@ function Import-CorpusSnapshot {
     if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
     $parsed = $raw | ConvertFrom-Json
     return @(@($parsed) | Where-Object { $null -ne $_ })
+}
+
+function Get-CorpusCorrectnessReport {
+    # THE MEASURED CORRECTNESS REPORT (dispatch 000046, Gap A). Compute the tool's
+    # diagnostic correctness numbers from a DERIVED corpus result set -- the same live
+    # findings the snapshot test asserts, never hand-authored. PURE over injected data.
+    #
+    #   $Derived  : a hashtable  Label -> array of finding objects (the test's $script:Derived
+    #               map, or the generator's per-sample derivation).
+    #
+    # Two measured numbers under the tool's DEFAULT config:
+    #   falsePositiveRate  -- % of KNOWN-GOOD (clean) samples that WRONGLY produced any
+    #                         finding. The headline trust number: clean code must stay silent.
+    #   truePositiveRate   -- % of KNOWN-BAD samples whose EXPECTED rule (spec.RuleId) actually
+    #                         surfaced. Coverage of the curated defect set.
+    # Plus rulesCovered (the distinct expected rules a known-bad case proved) and
+    # rulesExpected (every distinct expected rule in the corpus) so a caller can assert the
+    # whole surfaced default set is exercised. Counts are plain ints; rates are 0..100.
+    param([hashtable]$Derived)
+    $specs = @(Get-CorpusSampleSpec)
+    $clean = @($specs | Where-Object { $_.Category -eq 'clean' })
+    $bad = @($specs | Where-Object { $_.Category -eq 'bad' })
+
+    $fpCount = 0
+    foreach ($s in $clean) {
+        if (@($Derived[$s.Label]).Count -gt 0) { $fpCount++ }
+    }
+
+    $tpCount = 0
+    $covered = @{}
+    $expected = @{}
+    foreach ($s in $bad) {
+        $expected[$s.RuleId] = $true
+        $ids = @(@($Derived[$s.Label]) | ForEach-Object { $_.ruleId })
+        if ($ids -contains $s.RuleId) {
+            $tpCount++
+            $covered[$s.RuleId] = $true
+        }
+    }
+
+    $cleanN = $clean.Count
+    $badN = $bad.Count
+    $fpRate = if ($cleanN -gt 0) { [math]::Round((100.0 * $fpCount / $cleanN), 2) } else { 0 }
+    $tpRate = if ($badN -gt 0) { [math]::Round((100.0 * $tpCount / $badN), 2) } else { 0 }
+    return [ordered]@{
+        knownGood         = $cleanN
+        knownBad          = $badN
+        falsePositives    = $fpCount
+        falsePositiveRate = $fpRate
+        truePositives     = $tpCount
+        truePositiveRate  = $tpRate
+        rulesExpected     = @($expected.Keys | Sort-Object)
+        rulesCovered      = @($covered.Keys | Sort-Object)
+    }
 }

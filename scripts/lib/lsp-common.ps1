@@ -47,6 +47,33 @@ function Get-PsesStartScript {
     return (Join-Path (Get-PsesBundleRoot) 'PowerShellEditorServices/Start-EditorServices.ps1')
 }
 
+# --- downloaded-dependency integrity (dispatch 000046, Gap B L2) ------------
+# The plugin downloads PSES (a GitHub release zip) and PSScriptAnalyzer (a PowerShell
+# Gallery .nupkg). Both are hashed against a SHA-256 pin COMPUTED FROM THE REAL known-good
+# artifact (Get-FileHash on the actual pinned download) right after download and BEFORE the
+# bundle is used. A match proceeds exactly as before; a mismatch is treated by the caller as
+# FAIL CLOSED -- refuse the unverified bundle, leave any prior working bundle intact, exit
+# non-zero so SessionStart surfaces the existing honest 'unavailable' banner, and keep the
+# hook itself exiting 0 (editing is never broken; the analyzer is simply OFF until a verified
+# bundle lands). This adds NO diagnostics status token: it reuses the 000024/000028
+# 'unavailable' surface, so the 000027 contract drift-guard stays green.
+
+function Test-PinnedFileHash {
+    # Return $true ONLY when the file at $Path hashes (SHA-256) EXACTLY to $ExpectedSha256
+    # (compared case-insensitively -- Get-FileHash emits upper-case hex). Returns $false on
+    # ANY other outcome: a blank pin, a missing/unreadable file, a hash that cannot be
+    # computed, or a genuine mismatch. The conservative direction is deliberate -- the caller
+    # fails CLOSED on $false, so an unreadable artifact or an empty pin can never be mistaken
+    # for "verified." PURE over the file bytes; no side effects, nothing written to any stream.
+    param([string]$Path, [string]$ExpectedSha256)
+    if ([string]::IsNullOrWhiteSpace($ExpectedSha256)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    $actual = ''
+    try { $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path -ErrorAction Stop).Hash } catch { return $false }
+    if ([string]::IsNullOrWhiteSpace($actual)) { return $false }
+    return [string]::Equals($actual, $ExpectedSha256, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 # --- plugin version: single source of truth is the manifest (dispatch 000025) ----
 # The host/client version stamps (pses-stdio HostVersion, daemon HostVersion, the LSP
 # clientInfo.version) and the startup log line all read the version from

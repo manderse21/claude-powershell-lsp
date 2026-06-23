@@ -1,0 +1,8 @@
+[{
+  "ruleId": "PSUseDeclaredVarsMoreThanAssignments",
+  "source": "PSScriptAnalyzer",
+  "severity": "Warning",
+  "line": 2,
+  "col": 1,
+  "message": "The variable 'name' is assigned but never used."
+}]
