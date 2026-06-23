@@ -2,9 +2,19 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Shared helpers -- Test-PinnedFileHash for the WS2 download-integrity check (dispatch 000046).
+# Load-silent, defines-only; dot-sourced the same way ensure-pssa.ps1 already does.
+. (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
+
 # Pin resolved at build time against GitHub PowerShell/PowerShellEditorServices
 # (latest stable release). Resolved 2026-06-01. Do not invent or hand-edit.
 $PsesTag = 'v4.6.0'
+# SHA-256 of the pinned PowerShellEditorServices.zip release asset, computed with Get-FileHash
+# on the REAL v4.6.0 download (dispatch 000046, Gap B L2). The archive is verified against this
+# AFTER download and BEFORE extraction; a mismatch FAILS CLOSED (the bundle is refused, the
+# prior working bundle is left intact, and SessionStart surfaces the honest 'unavailable'
+# banner). Recompute with Get-FileHash if $PsesTag is bumped -- never invent or guess it.
+$PsesSha256 = '0D91898F73D4FAEB64291336F6386F0C890A933DF012827571ADF7008480A04A'
 
 $dataRoot = $env:CLAUDE_PLUGIN_DATA
 if ([string]::IsNullOrWhiteSpace($dataRoot)) {
@@ -48,6 +58,20 @@ try {
 
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Invoke-WebRequest -Uri $url -OutFile $tmpZip -UseBasicParsing
+
+    # WS2 (dispatch 000046, Gap B L2): FAIL CLOSED on a hash mismatch. Verify the downloaded
+    # archive against the pinned SHA-256 BEFORE extracting or swapping. A mismatch means the
+    # bytes are NOT the known-good pinned artifact (tampered mirror, MITM, truncation) -- refuse
+    # it and throw, so the catch below cleans up the staging area, leaves the PRIOR working
+    # bundle intact (non-destructive, 000024), and fails LOUD (stderr + exit 1). SessionStart
+    # then surfaces the honest 'unavailable' banner and the hook still exits 0 -- editing is
+    # never broken, the analyzer is just OFF until a verified bundle lands. No new status token.
+    if (-not (Test-PinnedFileHash -Path $tmpZip -ExpectedSha256 $PsesSha256)) {
+        $actualHash = ''
+        try { $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $tmpZip -ErrorAction Stop).Hash } catch { }
+        throw ('PSES archive integrity check FAILED -- refusing unverified bundle. Expected SHA-256 ' +
+            $PsesSha256 + ' but got ' + $actualHash + '. The download does not match the pinned ' + $PsesTag + ' artifact.')
+    }
 
     Expand-Archive -LiteralPath $tmpZip -DestinationPath $extractRoot -Force
 

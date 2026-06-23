@@ -910,6 +910,57 @@ Describe 'Get-DiagnosticsStatusBanner -- the visible, non-clean wording (dispatc
     }
 }
 
+# --- WS2: downloaded-dependency integrity (dispatch 000046, Gap B L2) -------
+Describe 'Test-PinnedFileHash -- downloaded-dependency integrity (dispatch 000046)' {
+    BeforeAll {
+        $script:GoodFile = Join-Path $TestDrive 'artifact.bin'
+        [System.IO.File]::WriteAllText($script:GoodFile, 'pinned-artifact-bytes', (New-Object System.Text.ASCIIEncoding))
+        $script:GoodHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $script:GoodFile).Hash
+    }
+    It 'returns $true when the file matches its pinned SHA-256 (the verified-bundle direction)' {
+        Test-PinnedFileHash -Path $script:GoodFile -ExpectedSha256 $script:GoodHash | Should -BeTrue
+    }
+    It 'matches case-insensitively (Get-FileHash emits upper-case hex)' {
+        Test-PinnedFileHash -Path $script:GoodFile -ExpectedSha256 $script:GoodHash.ToLowerInvariant() | Should -BeTrue
+    }
+    It 'returns $false on a hash MISMATCH (the tampered-artifact direction -> caller fails closed)' {
+        Test-PinnedFileHash -Path $script:GoodFile -ExpectedSha256 ('0' * 64) | Should -BeFalse
+    }
+    It 'detects a single-byte tamper (flipping one byte flips the verdict to $false)' {
+        $tampered = Join-Path $TestDrive 'tampered.bin'
+        [System.IO.File]::WriteAllText($tampered, 'pinned-artifact-byteS', (New-Object System.Text.ASCIIEncoding))
+        Test-PinnedFileHash -Path $tampered -ExpectedSha256 $script:GoodHash | Should -BeFalse
+    }
+    It 'returns $false when the artifact is missing (absence is never read as verified)' {
+        Test-PinnedFileHash -Path (Join-Path $TestDrive 'nope.bin') -ExpectedSha256 $script:GoodHash | Should -BeFalse
+    }
+    It 'returns $false on a blank pin (an empty pin can never count as verified)' {
+        Test-PinnedFileHash -Path $script:GoodFile -ExpectedSha256 '' | Should -BeFalse
+    }
+}
+
+Describe 'Pinned hash verification is WIRED into the bootstrap (dispatch 000046, Gap B L2)' {
+    # The helper is only load-bearing if the ensure scripts actually CALL it against their pin
+    # before using the download. These guards read the LIVE source so the wiring cannot silently
+    # regress (a refactor that drops the verify, or a pin declared but never checked). Adversarial
+    # control: delete the Test-PinnedFileHash call from ensure-pses and the ordering assertion
+    # (verify-before-extract) goes RED.
+    It 'ensure-pses.ps1 declares a 64-hex SHA-256 pin and verifies BEFORE extracting' {
+        $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'ensure-pses.ps1') -Raw
+        $src | Should -Match '\$PsesSha256\s*=\s*''[0-9A-Fa-f]{64}'''
+        $src | Should -Match 'Test-PinnedFileHash[^\r\n]*\$PsesSha256'
+        $verifyIdx = $src.IndexOf('Test-PinnedFileHash')
+        $extractIdx = $src.IndexOf('Expand-Archive')
+        $verifyIdx | Should -BeGreaterThan 0
+        $extractIdx | Should -BeGreaterThan $verifyIdx
+    }
+    It 'ensure-pssa.ps1 declares a 64-hex SHA-256 pin and verifies the downloaded .nupkg' {
+        $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'ensure-pssa.ps1') -Raw
+        $src | Should -Match '\$PssaSha256\s*=\s*''[0-9A-Fa-f]{64}'''
+        $src | Should -Match 'Test-PinnedFileHash[^\r\n]*\$PssaSha256'
+    }
+}
+
 # (d) ASCII-clean + parse over every shipped .ps1 (scripts AND tests).
 $script:AllPs1 = Get-ChildItem (Split-Path -Parent $PSScriptRoot) -Recurse -Filter *.ps1 -File
 

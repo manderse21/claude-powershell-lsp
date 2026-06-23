@@ -19,6 +19,11 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
 
 $PssaVersion = '1.25.0'
+# SHA-256 of the pinned PSScriptAnalyzer .nupkg from the PowerShell Gallery, computed with
+# Get-FileHash on the REAL 1.25.0 download (dispatch 000046, Gap B L2). The .nupkg is verified
+# against this AFTER download and BEFORE expansion; a mismatch FAILS CLOSED. Recompute with
+# Get-FileHash if $PssaVersion is bumped -- never invent or guess it.
+$PssaSha256 = '14E634C828EB98EFB9F40B2918BA90F139ED5ECCDF663A2A747736D996995D60'
 
 $dataRoot = Get-PluginDataRoot
 if ([string]::IsNullOrWhiteSpace($dataRoot)) { return }
@@ -66,45 +71,67 @@ New-Item -ItemType Directory -Force -Path $vendorDir | Out-Null
 Write-Log ('vendoring PSScriptAnalyzer ' + $PssaVersion)
 $installed = $false
 
-# Method 1: Save-Module at the pinned version (clean versioned layout).
+# Method 1 (PRIMARY, hash-verified -- dispatch 000046 Gap B L2): download the pinned .nupkg,
+# verify it against $PssaSha256, then expand. The VERIFIED path is primary on purpose so the
+# integrity pin is LOAD-BEARING (it gates the install on the happy path) rather than bypassed
+# by an unverified installer. A hash MISMATCH is a tamper signal -> FAIL CLOSED immediately
+# (exit 1, loud, NO fallback to an unverified install). A DOWNLOAD/expand failure (offline /
+# proxy) falls through to the Save-Module fallback, which relies on the PowerShell Gallery's
+# own publisher/catalog integrity. Layout is identical to the prior nupkg path
+# (vendorDir/PSScriptAnalyzer/<version>), so Find-PssaManifest resolves it unchanged.
 try {
-    Save-Module -Name PSScriptAnalyzer -RequiredVersion $PssaVersion -Path $vendorDir -Repository PSGallery -Force -ErrorAction Stop
-    if (Test-PssaImportable) { $installed = $true; Write-Log 'Save-Module succeeded.' }
-    else { Write-Log 'Save-Module ran but module not importable; will try nupkg.' }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('pssa-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    $nupkg = Join-Path $tmp 'pssa.zip'
+    $url = 'https://www.powershellgallery.com/api/v2/package/PSScriptAnalyzer/' + $PssaVersion
+    Invoke-WebRequest -Uri $url -OutFile $nupkg -UseBasicParsing
+
+    if (-not (Test-PinnedFileHash -Path $nupkg -ExpectedSha256 $PssaSha256)) {
+        $actualHash = ''
+        try { $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $nupkg -ErrorAction Stop).Hash } catch { }
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Log ('PSSA .nupkg integrity check FAILED -- refusing unverified package. expected ' +
+            $PssaSha256 + ' got ' + $actualHash)
+        # FAIL CLOSED: a tamper signal must NOT fall back to an unverified install. Exit loud so
+        # SessionStart surfaces the honest 'unavailable' surface; the hook itself still exits 0.
+        [Console]::Error.WriteLine('ensure-pssa: PSScriptAnalyzer ' + $PssaVersion +
+            ' integrity check failed (hash mismatch); refusing unverified package; see ' + $log)
+        exit 1
+    }
+
+    $expand = Join-Path $tmp 'expand'
+    Expand-Archive -LiteralPath $nupkg -DestinationPath $expand -Force
+    $psd1 = Get-ChildItem -LiteralPath $expand -Recurse -Filter 'PSScriptAnalyzer.psd1' -File |
+        Sort-Object { $_.FullName.Length } | Select-Object -First 1
+    if ($null -eq $psd1) { throw 'PSScriptAnalyzer.psd1 not found in package.' }
+    $moduleSrc = $psd1.Directory.FullName
+
+    $dest = Join-Path (Join-Path $vendorDir 'PSScriptAnalyzer') $PssaVersion
+    if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    $skip = @('_rels', 'package', '[Content_Types].xml')
+    Get-ChildItem -LiteralPath $moduleSrc -Force | Where-Object {
+        ($skip -notcontains $_.Name) -and ($_.Extension -ne '.nuspec')
+    } | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $dest -Recurse -Force }
+    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+
+    if (Test-PssaImportable) { $installed = $true; Write-Log 'verified .nupkg method succeeded.' }
+    else { Write-Log 'verified .nupkg expanded but module not importable; will try Save-Module.' }
 } catch {
-    Write-Log ('Save-Module failed: ' + $_.Exception.Message)
+    Write-Log ('verified .nupkg method failed (download/expand): ' + $_.Exception.Message)
 }
 
-# Method 2: direct pinned .nupkg download + expand (no PackageManagement dep).
+# Method 2 (FALLBACK -- download/network failure only): Save-Module at the pinned version. Used
+# only when the verified .nupkg path could not COMPLETE (NOT on a hash mismatch -- that already
+# failed closed above and exited). Relies on the PowerShell Gallery's own publisher/catalog integrity.
 if (-not $installed) {
     try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('pssa-' + [Guid]::NewGuid().ToString('N'))
-        New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-        $nupkg = Join-Path $tmp 'pssa.zip'
-        $url = 'https://www.powershellgallery.com/api/v2/package/PSScriptAnalyzer/' + $PssaVersion
-        Invoke-WebRequest -Uri $url -OutFile $nupkg -UseBasicParsing
-
-        $expand = Join-Path $tmp 'expand'
-        Expand-Archive -LiteralPath $nupkg -DestinationPath $expand -Force
-        $psd1 = Get-ChildItem -LiteralPath $expand -Recurse -Filter 'PSScriptAnalyzer.psd1' -File |
-            Sort-Object { $_.FullName.Length } | Select-Object -First 1
-        if ($null -eq $psd1) { throw 'PSScriptAnalyzer.psd1 not found in package.' }
-        $moduleSrc = $psd1.Directory.FullName
-
-        $dest = Join-Path (Join-Path $vendorDir 'PSScriptAnalyzer') $PssaVersion
-        if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
-        New-Item -ItemType Directory -Force -Path $dest | Out-Null
-        $skip = @('_rels', 'package', '[Content_Types].xml')
-        Get-ChildItem -LiteralPath $moduleSrc -Force | Where-Object {
-            ($skip -notcontains $_.Name) -and ($_.Extension -ne '.nuspec')
-        } | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $dest -Recurse -Force }
-        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
-
-        if (Test-PssaImportable) { $installed = $true; Write-Log 'nupkg method succeeded.' }
-        else { Write-Log 'nupkg expanded but module not importable.' }
+        Save-Module -Name PSScriptAnalyzer -RequiredVersion $PssaVersion -Path $vendorDir -Repository PSGallery -Force -ErrorAction Stop
+        if (Test-PssaImportable) { $installed = $true; Write-Log 'Save-Module fallback succeeded.' }
+        else { Write-Log 'Save-Module fallback ran but module not importable.' }
     } catch {
-        Write-Log ('nupkg method failed: ' + $_.Exception.Message)
+        Write-Log ('Save-Module fallback failed: ' + $_.Exception.Message)
     }
 }
 
