@@ -518,6 +518,15 @@ no such action. A tool that tried to circumvent enterprise security would deserv
 banned -- honest degradation, telling you exactly what is blocked and how to allow it, is
 the whole value.
 
+## Security and trust
+
+Evaluating this plugin for a managed or locked-down Windows estate? **[TRUST.md](./TRUST.md)**
+is the approve-or-deny reference: what runs locally and what never leaves the machine (no
+network service, no telemetry), the **pinned + SHA-256-verified** downloads, the CycloneDX
+SBOM and build-provenance attestation, the honest signing status (**pending -- not signed**,
+no security audit), paste-ready WDAC / AppLocker allow-list rules, and the governance /
+bus-factor posture.
+
 ## Releasing
 
 Releases are cut by a **maintainer-triggered, gate-validated pipeline** -- never automatically
