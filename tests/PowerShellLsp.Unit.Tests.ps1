@@ -531,8 +531,13 @@ Describe 'Dogfood annotation/review tool (dispatch 000043)' {
 
     Context 'persistence model -- hash-keyed, sibling file, non-destructive' {
         It 'Get-DogfoodAnnotationsPath is annotations.jsonl beside the log' {
-            Get-DogfoodAnnotationsPath -LogPath 'C:\d\dogfood\diagnostics.jsonl' |
-                Should -BeExactly (Join-Path 'C:\d\dogfood' 'annotations.jsonl')
+            # Portable base: a hardcoded C:\ literal makes PowerShell resolve a non-existent
+            # C: PSDrive off-Windows (DriveNotFoundException) before the assertion runs, so
+            # use $TestDrive -- a real per-platform temp dir -- and prove the same beside-the-
+            # log derivation on all four CI legs (dispatch 000044).
+            $dir = Join-Path $TestDrive 'dogfood'
+            Get-DogfoodAnnotationsPath -LogPath (Join-Path $dir 'diagnostics.jsonl') |
+                Should -BeExactly (Join-Path $dir 'annotations.jsonl')
         }
         It 'New-DogfoodAnnotation carries hash/ruleId/verdict/rationale/ts and honors a pinned timestamp' {
             $a = New-DogfoodAnnotation -Hash 'h-a' -Verdict 'noisy' -RuleId 'R' -Rationale 'why' -Now '2020-01-01T00:00:00Z'
