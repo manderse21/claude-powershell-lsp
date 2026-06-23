@@ -29,6 +29,68 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.13.0] - 2026-06-22
+
+MINOR: **release-engineering automation -- a gated release pipeline that makes a bad tag structurally
+impossible, with CHANGELOG-driven notes, an SBOM, and build provenance** (dispatch 000042). Closes the
+roadmap's release-automation gap (Gap C.2) and the buildable-now half of the trust-surface gap (Gap B:
+SBOM + provenance). CI/CD + docs only: **nothing under `scripts/` changes**, the plugin runtime and the
+diagnostics surface are **byte-for-byte unchanged**, the existing four-leg CI is untouched, and the
+000027 contract drift-guard stays green. The governing principle is **automate the mechanics, preserve
+the decision** -- the release is maintainer-triggered (Mike chooses when and which version); the pipeline
+only makes the mechanical execution safe. Tagging stays Mike's gate.
+
+### Added
+
+- **Gated release pipeline (`.github/workflows/powershell-lsp-release.yml`), Gap C.2.** A new SIBLING of
+  the CI workflow (not a rewrite), triggered ONLY by a manual `workflow_dispatch` -- it NEVER auto-fires
+  on push or merge. Given a version, it validates four preconditions and **refuses to tag** unless ALL
+  hold: (1) the target commit is merged to `main`; (2) the tag `v<version>` is free; (3) `plugin.json`
+  and `marketplace.json` BOTH read the requested version at that commit (lockstep); and (4) the
+  push-event CI run for that exact commit concluded `success` on every required leg (`windows-pwsh`,
+  `windows-powershell`, `ubuntu-pwsh`, `macos-pwsh`). Only then does it cut and push the annotated tag
+  **from the pipeline, on the validated commit** -- never a hand-typed `git tag` -- and create the
+  GitHub Release. This makes a tag on an unmerged, red, wrong-version, or wrong commit **structurally
+  impossible** (the failure mode that, the previous round, put a tag on the wrong tree by a fat-fingered
+  manual step). A `dry_run` input validates every gate and stops without tagging, for a safe rehearsal.
+  Permissions are least-privilege (`contents: read` by default; the release job adds exactly
+  `contents: write` + `actions: read` + `id-token: write` + `attestations: write`); only the ephemeral
+  `GITHUB_TOKEN` is used -- no PAT, no secret exposed.
+- **CHANGELOG-driven release notes (`release/Get-ChangelogEntry.ps1`).** The Release body is the
+  CHANGELOG entry for the released version, **extracted by the pipeline** -- single-sourced, never
+  hand-retyped. The extractor refuses a version it cannot find (you cannot release what you did not
+  document).
+- **CycloneDX 1.5 SBOM (`release/New-PluginSbom.ps1`), Gap B.** Generated over the plugin and its two
+  **pinned downloaded dependencies** -- PowerShell Editor Services (`v4.6.0`) and PSScriptAnalyzer
+  (`1.25.0`) -- with versions read STRAIGHT from `scripts/ensure-pses.ps1` and `scripts/ensure-pssa.ps1`,
+  so the SBOM can never drift from what the tool actually fetches. Attached to the Release. (An
+  off-the-shelf directory scanner cannot see these deps, because they are downloaded at install time and
+  are not in the repo tree -- hence an authored, single-sourced generator.)
+- **Build-provenance attestation (Gap B), with an honest boundary.** `actions/attest-build-provenance`
+  produces a verifiable SLSA-style attestation over the release source archive and the SBOM. The honest
+  scope, stated rather than glossed: a git-distributed plugin has no compiled binary, so the meaningful
+  artifact is the **packaged source archive** -- the attestation covers that downloadable artifact
+  (verifiable with `gh attestation verify`), but NOT the `/plugin` clone-based install path, whose
+  integrity rests on the git commit and tag themselves. Real provenance over a real artifact, with its
+  limits documented -- not attestation theater over a non-artifact.
+- **RELEASING doc (`docs/RELEASING.md`), linked from the README.** How to trigger a release, what the
+  pipeline validates, what it produces, the dry-run rehearsal, how to verify a release, the provenance
+  boundary, the testability boundary, and the manual fallback if the pipeline ever misbehaves.
+- **Release-logic regression tests (`tests/PowerShellLsp.Release.Tests.ps1`).** Cover the CHANGELOG
+  extraction (boundary-exact), the CycloneDX SBOM generation and its single-sourcing from the live pins,
+  and the version-lockstep invariant the tag-gate re-checks. Run on all four CI legs.
+
+### Notes
+
+- **Testability boundary (stated honestly).** Everything testable WITHOUT a real release was validated:
+  YAML parse + least-privilege permissions, the CHANGELOG-to-notes and SBOM logic (unit tests), the
+  artifact build (`git archive` + SBOM + notes dry-run), and the green-CI gate query (simulated against
+  the real main-tip push run -- job names and per-leg success detection confirmed). What ONLY proves out
+  on the first real release is the end-to-end run on GitHub's servers: the attestation step (needs a
+  server-issued OIDC token) and the actual tag push + release creation. The manual fallback is documented.
+- **Bootstrap irony.** This 1.13.0 release is the LAST one cut the old manual way; the pipeline proves
+  out on the NEXT release.
+
 ## [1.12.1] - 2026-06-22
 
 PATCH: **test-reliability hardening -- make the 000029 licensing test deterministic** (dispatch 000041).

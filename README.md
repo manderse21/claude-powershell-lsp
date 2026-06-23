@@ -463,6 +463,16 @@ no such action. A tool that tried to circumvent enterprise security would deserv
 banned -- honest degradation, telling you exactly what is blocked and how to allow it, is
 the whole value.
 
+## Releasing
+
+Releases are cut by a **maintainer-triggered, gate-validated pipeline** -- never automatically
+on push or merge. The pipeline refuses to tag unless the target commit is merged to `main`,
+green on every CI leg, and version-matched (`plugin.json` agrees with `marketplace.json`), then
+cuts the tag itself on that validated commit and publishes a GitHub Release with
+CHANGELOG-sourced notes, a CycloneDX SBOM, and a build-provenance attestation. See
+[docs/RELEASING.md](docs/RELEASING.md) for how to trigger a release, what it validates, what it
+produces, and the manual fallback.
+
 ## License
 
 [GPL-3.0-or-later](https://spdx.org/licenses/GPL-3.0-or-later.html) (GPLv3). See [LICENSE](./LICENSE).
