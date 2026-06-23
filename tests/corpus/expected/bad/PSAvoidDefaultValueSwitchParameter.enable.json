@@ -1,0 +1,8 @@
+[{
+  "ruleId": "PSAvoidDefaultValueSwitchParameter",
+  "source": "PSScriptAnalyzer",
+  "severity": "Warning",
+  "line": 2,
+  "col": 30,
+  "message": "Script definition has a switch parameter default to true."
+}]

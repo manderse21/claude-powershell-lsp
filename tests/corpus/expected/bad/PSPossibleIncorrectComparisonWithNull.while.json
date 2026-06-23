@@ -1,0 +1,8 @@
+[{
+  "ruleId": "PSPossibleIncorrectComparisonWithNull",
+  "source": "PSScriptAnalyzer",
+  "severity": "Warning",
+  "line": 2,
+  "col": 44,
+  "message": "$null should be on the left side of equality comparisons."
+}]

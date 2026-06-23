@@ -66,6 +66,20 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
                         -ScratchName $spec.ScratchName -Content $content)
             }
         }
+
+        # The MEASURED correctness report (dispatch 000046, Gap A): compute the
+        # false-positive rate + true-positive coverage from the SAME live findings the
+        # snapshot test asserts, and emit it as a downloadable CI artifact alongside the
+        # benchmark results (the CI workflow already uploads logs/**). The report It blocks
+        # below assert the trust invariants (0% FP, 100% TP, full default-set coverage), so
+        # the published README numbers are a real CI regression guard, not just prose.
+        $script:CorpusReport = Get-CorpusCorrectnessReport -Derived $script:Derived
+        try {
+            $reportPath = Join-Path (Join-Path $script:DataDir 'logs') 'corpus-correctness-report.json'
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $reportPath) | Out-Null
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($reportPath, (($script:CorpusReport | ConvertTo-Json -Depth 5) + "`n"), $enc)
+        } catch { }
     }
 
     AfterAll {
@@ -118,7 +132,7 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
         foreach ($s in $bad) {
             $d = @($script:Derived[$s.Label])
             $d.Count | Should -BeGreaterThan 0 -Because "$($s.Label) must surface at least one finding"
-            @($d | ForEach-Object { $_.ruleId }) | Should -Contain $s.Name -Because "$($s.Label) must surface rule $($s.Name)"
+            @($d | ForEach-Object { $_.ruleId }) | Should -Contain $s.RuleId -Because "$($s.Label) must surface rule $($s.RuleId)"
             ($d | Select-Object -First 1).source | Should -BeExactly 'PSScriptAnalyzer'
         }
     }
@@ -131,6 +145,39 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
             $d.Count | Should -BeGreaterThan 0 -Because "$($s.Label) must surface a parse error"
             ($d | Select-Object -First 1).source | Should -BeExactly 'parser'
             ($d | Select-Object -First 1).severity | Should -BeExactly 'Error'
+        }
+    }
+
+    # --- measured correctness report (dispatch 000046, Gap A): the trust invariants the
+    #     published README numbers stand on, guarded in CI on all four legs. ---
+
+    It 'measured correctness: the corpus is large enough to be defensible (>= 15 known-good, >= 15 known-bad)' {
+        $script:CorpusReport.knownGood | Should -BeGreaterOrEqual 15 -Because 'a defensible false-positive rate needs a real known-good sample'
+        $script:CorpusReport.knownBad | Should -BeGreaterOrEqual 15 -Because 'a defensible true-positive coverage needs a real known-bad sample'
+    }
+
+    It 'measured correctness: zero false positives on clean code (FP rate == 0)' {
+        # The headline trust number. Every clean sample must surface NOTHING under the
+        # default config; a single false positive fails this and names the regression.
+        $script:CorpusReport.falsePositiveRate | Should -Be 0 -Because (
+            "$($script:CorpusReport.falsePositives) of $($script:CorpusReport.knownGood) clean sample(s) wrongly produced a finding")
+    }
+
+    It 'measured correctness: 100% true-positive coverage on known-bad code (TP rate == 100)' {
+        # Every curated defect must be flagged with its expected rule. A miss means the tool
+        # stopped surfacing a rule the corpus proves it once did.
+        $script:CorpusReport.truePositiveRate | Should -Be 100 -Because (
+            "$($script:CorpusReport.truePositives) of $($script:CorpusReport.knownBad) known-bad sample(s) surfaced their expected rule")
+    }
+
+    It 'measured correctness: every expected default rule is covered by a known-bad case' {
+        # Spanning the WHOLE surfaced default rule set: each distinct expected rule must be
+        # proven by at least one known-bad case (else "spanning the default set" is hollow).
+        $expected = @($script:CorpusReport.rulesExpected)
+        $covered = @($script:CorpusReport.rulesCovered)
+        $expected.Count | Should -BeGreaterThan 0
+        foreach ($rule in $expected) {
+            $covered | Should -Contain $rule -Because "$rule has a known-bad case but did not surface"
         }
     }
 }
