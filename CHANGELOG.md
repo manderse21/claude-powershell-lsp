@@ -29,6 +29,37 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.12.1] - 2026-06-22
+
+PATCH: **test-reliability hardening -- make the 000029 licensing test deterministic** (dispatch 000041).
+A flake fix with ZERO tool-behavior change: nothing under `scripts/` is modified, the diagnostics surface
+is byte-for-byte unchanged, and the 000027 contract drift-guard stays green. First buildable-now piece of
+the roadmap's release-engineering reliability gap (Gap C.1).
+
+### Fixed
+
+- **The `N_PssaDir` CI coin-flip (Gap C.1).** On the v1.11.0 push run the ubuntu-pwsh leg failed the
+  000029 licensing test (`PSScriptAnalyzer module retains its MIT LICENSE + ThirdPartyNotices`) with
+  `$script:N_PssaDir` resolving null; a re-run went green. Root cause (read from the failing run's log,
+  not guessed): PSScriptAnalyzer WAS vendored and fully functional on that run -- every other
+  PSSA-dependent test in the same run passed -- so this was never a vendoring failure. The test resolved
+  the module dir with a one-shot `Get-ChildItem -Recurse -Filter ... -ErrorAction SilentlyContinue |
+  Select -First 1`, and on Linux that enumeration intermittently returned empty (`SilentlyContinue`
+  swallowed a transient enumeration error), turning a present, importable module into a cryptic null
+  assertion. Resolution is now a bounded retry that absorbs a transient miss, and a null is classified
+  honestly via the vendoring marker (`modules/.pssa-*.ok`, written by `ensure-pssa` only after a
+  verified-importable install): a legitimately-unvendored environment SKIPS with a clear reason; a
+  vendored-but-unresolvable one FAILS LOUD with a precise message -- never a silent coin-flip. The
+  notice-preservation assertions are unchanged and keep their full teeth when the bundle is present.
+- **Sweep -- a fixed-sleep shutdown assertion (same class).** The warm-start SessionEnd test asserted the
+  daemon/PSES were gone after a fixed `Start-Sleep -Seconds 3`; on a slow runner that is the same
+  assert-on-timed-state coin-flip. It now polls (bounded) until teardown completes before asserting the
+  same final conditions -- deterministic, teeth intact.
+
+The bounded sweep also confirmed the empty-array -> `$null` collapse class (which bit the 000040 corpus
+helper) is already correctly guarded across the suite; the remaining environment-dependence (the
+integration bundle download) surfaces as a clear failure, not a coin-flip.
+
 ## [1.12.0] - 2026-06-22
 
 MINOR: **CI proof-framework -- diagnostic-correctness corpus + performance benchmark harness**

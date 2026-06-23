@@ -236,10 +236,21 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
         Invoke-PluginHook -ScriptPath (Join-Path $script:ScriptsDir 'session-end.ps1') `
             -StdinJson (@{ session_id = $script:Sid } | ConvertTo-Json -Compress) `
             -ExtraArgs @() -CapMs 8000 -DataRoot $script:DataDir | Out-Null
-        Start-Sleep -Seconds 3
+        # Wait for graceful teardown rather than assuming a fixed 3s is always enough: poll
+        # until both processes are gone AND the session file is removed, up to a generous
+        # bounded cap. A fixed sleep that is occasionally too short on a slow runner is the
+        # same assert-on-timed-state coin-flip this dispatch hardens; the bounded wait keeps
+        # the teeth (it still fails if teardown genuinely never completes) without the flake.
+        $sf = Join-Path $script:DataDir ('session/' + $script:Sid + '.json')
+        for ($i = 0; $i -lt 40; $i++) {
+            $dAlive = [bool](Get-Process -Id $daemonPid -ErrorAction SilentlyContinue)
+            $pAlive = [bool](Get-Process -Id $psesPid -ErrorAction SilentlyContinue)
+            if ((-not $dAlive) -and (-not $pAlive) -and (-not (Test-Path -LiteralPath $sf))) { break }
+            Start-Sleep -Milliseconds 250
+        }
         (Get-Process -Id $daemonPid -ErrorAction SilentlyContinue) | Should -BeNullOrEmpty
         (Get-Process -Id $psesPid -ErrorAction SilentlyContinue) | Should -BeNullOrEmpty
-        (Test-Path (Join-Path $script:DataDir ('session/' + $script:Sid + '.json'))) | Should -BeFalse
+        (Test-Path -LiteralPath $sf) | Should -BeFalse
         $script:DaemonInfo = $null   # mark handled so AfterAll does not double-reap
     }
 }
@@ -1489,8 +1500,28 @@ Describe 'Third-party MIT notices are preserved in the installed bundle (dispatc
         }
         & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:N_Scripts 'ensure-pses.ps1') 2>&1 | Out-Null
         & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:N_Scripts 'ensure-pssa.ps1') 2>&1 | Out-Null
-        $psd = Get-ChildItem -Path (Join-Path $script:N_Data 'modules') -Recurse -Filter 'PSScriptAnalyzer.psd1' -File -ErrorAction SilentlyContinue | Select-Object -First 1
-        $script:N_PssaDir = if ($psd) { $psd.Directory.FullName } else { $null }
+        # Resolve the vendored PSScriptAnalyzer module dir DETERMINISTICALLY. The prior
+        # one-shot 'Get-ChildItem -Recurse -Filter ... -ErrorAction SilentlyContinue |
+        # Select -First 1' could return empty on a transient enumeration miss even when the
+        # module WAS present and importable (SilentlyContinue swallowed the error), turning
+        # a vendored run into a cryptic null -- the v1.11.0 ubuntu-pwsh coin-flip, where
+        # every other PSSA-dependent test in the SAME run passed. Resolve with a bounded
+        # retry to absorb that transient, and capture the 'vendoring succeeded' signal:
+        # ensure-pssa drops a '.pssa-<version>.ok' marker in modules/ ONLY after a
+        # verified-importable install, so the It can tell a legitimately-unvendored
+        # environment (honest skip) from a vendored-but-unresolvable one (fail loud) --
+        # never a silent null.
+        $script:N_Modules = Join-Path $script:N_Data 'modules'
+        $script:N_PssaVendored = [bool](Get-ChildItem -LiteralPath $script:N_Modules -Filter '.pssa-*.ok' -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
+        $script:N_PssaDir = $null
+        for ($nTry = 0; ($nTry -lt 10) -and ($null -eq $script:N_PssaDir); $nTry++) {
+            if (Test-Path -LiteralPath $script:N_Modules) {
+                $psd = Get-ChildItem -LiteralPath $script:N_Modules -Recurse -Filter 'PSScriptAnalyzer.psd1' -File -ErrorAction SilentlyContinue |
+                    Sort-Object { $_.FullName.Length } | Select-Object -First 1
+                if ($psd) { $script:N_PssaDir = $psd.Directory.FullName }
+            }
+            if ($null -eq $script:N_PssaDir) { Start-Sleep -Milliseconds 200 }
+        }
     }
     It 'PSES bundle retains its MIT LICENSE + NOTICE (the 000029 ensure-pses preservation fix)' {
         $licPath = Join-Path $script:N_PsesBundle 'LICENSE'
@@ -1502,7 +1533,22 @@ Describe 'Third-party MIT notices are preserved in the installed bundle (dispatc
         (Test-Path (Join-Path $script:N_PsesBundle 'PowerShellEditorServices/Start-EditorServices.ps1')) | Should -BeTrue
     }
     It 'PSScriptAnalyzer module retains its MIT LICENSE + ThirdPartyNotices' {
-        $script:N_PssaDir | Should -Not -BeNullOrEmpty
+        if ($null -eq $script:N_PssaDir) {
+            # The module dir did not resolve. Tell apart the two honest meanings -- never a
+            # silent/cryptic null:
+            #   marker ABSENT  => PSScriptAnalyzer is genuinely not vendored in this
+            #     environment (e.g. no network to PSGallery); there is no installed bundle
+            #     to check notices on, so SKIP with a clear reason. This hides nothing -- a
+            #     real vendoring failure is surfaced loudly by the other PSSA-dependent
+            #     integration tests above and the doctor's vendored+importable check.
+            #   marker PRESENT => ensure-pssa reported a verified-importable install but the
+            #     manifest is unresolvable: a real vendoring/layout regression. FAIL LOUD.
+            if (-not $script:N_PssaVendored) {
+                Set-ItResult -Skipped -Because "PSScriptAnalyzer is not vendored under $script:N_Modules (no .pssa-*.ok marker); no installed bundle to check MIT notices on."
+                return
+            }
+            throw "PSScriptAnalyzer reports vendored (a .pssa-*.ok marker exists under $script:N_Modules) but PSScriptAnalyzer.psd1 is unresolvable -- a vendoring/layout regression, not a transient enumeration miss."
+        }
         (Test-Path (Join-Path $script:N_PssaDir 'LICENSE')) | Should -BeTrue
         (Test-Path (Join-Path $script:N_PssaDir 'ThirdPartyNotices.txt')) | Should -BeTrue
         (Get-Content -LiteralPath (Join-Path $script:N_PssaDir 'LICENSE') -Raw) | Should -Match 'Permission is hereby granted'
