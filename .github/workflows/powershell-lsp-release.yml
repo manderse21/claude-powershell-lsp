@@ -1,0 +1,243 @@
+name: powershell-lsp release
+
+# Mike-TRIGGERED, gate-validated release pipeline (dispatch 000042, roadmap Gap C.2).
+#
+# Governing principle: AUTOMATE THE MECHANICS, PRESERVE THE DECISION. This workflow
+# NEVER auto-fires on push or merge -- the ONLY trigger is a manual workflow_dispatch
+# Mike runs, choosing the version. It then makes a BAD TAG STRUCTURALLY IMPOSSIBLE:
+# it refuses to tag unless the target commit is (1) merged to main, (2) has a free
+# tag, (3) is version-matched (plugin.json == marketplace.json == the requested
+# version), and (4) is GREEN on every push-CI leg -- and only then cuts and pushes the
+# tag ITSELF, on that exact validated commit, and creates the GitHub Release. A tag can
+# never land on an unmerged, red, wrong-version, or wrong commit, because no hand-typed
+# `git tag` is in the loop. Mike keeps the release DECISION (when + which version); the
+# pipeline just makes the execution safe.
+#
+# This is a SIBLING of powershell-lsp-ci.yml, not a rewrite of it. See docs/RELEASING.md
+# for how to trigger it, what it validates, what it produces, and the manual fallback.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, MAJOR.MINOR.PATCH (e.g. 1.13.0). Must equal plugin.json on the target commit."
+        required: true
+        type: string
+      commit:
+        description: "Commit SHA on main to release. Leave blank to use the current origin/main tip."
+        required: false
+        type: string
+      dry_run:
+        description: "Validate every precondition and STOP without tagging or releasing (a safe rehearsal)."
+        required: false
+        type: boolean
+        default: false
+
+# Least-privilege by default: anything not explicitly elevated below is read-only.
+permissions:
+  contents: read
+
+# One release per version at a time; never cancel a release mid-flight.
+concurrency:
+  group: powershell-lsp-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: gated-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # cut + push the tag, create the GitHub Release, upload assets
+      actions: read         # read the CI workflow runs/jobs for the target commit (the green gate)
+      id-token: write       # OIDC token for build-provenance attestation
+      attestations: write   # write the provenance attestation
+    steps:
+      - name: Checkout (full history + tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Resolve target commit and validate the version string
+        id: resolve
+        shell: bash
+        env:
+          IN_VERSION: ${{ inputs.version }}
+          IN_COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          VERSION="${IN_VERSION#v}"            # tolerate a leading 'v'
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version '$IN_VERSION' is not MAJOR.MINOR.PATCH -- refusing."
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if [[ -n "${IN_COMMIT}" ]]; then
+            TARGET="$(git rev-parse "${IN_COMMIT}^{commit}")"
+          else
+            TARGET="$(git rev-parse origin/main)"
+          fi
+          {
+            echo "version=$VERSION"
+            echo "tag=v$VERSION"
+            echo "target=$TARGET"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved target commit $TARGET for tag v$VERSION (dry_run=${{ inputs.dry_run }})."
+
+      - name: "Gate 1 -- target commit is merged to main"
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="${{ steps.resolve.outputs.target }}"
+          if ! git merge-base --is-ancestor "$TARGET" origin/main; then
+            echo "::error::commit $TARGET is NOT an ancestor of origin/main (unmerged) -- refusing to tag."
+            exit 1
+          fi
+          echo "OK: $TARGET is merged to main."
+
+      - name: "Gate 2 -- tag does not already exist"
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.resolve.outputs.tag }}"
+          git fetch --force --tags origin
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::tag $TAG already exists -- refusing to re-release (delete the tag deliberately if a re-cut is truly intended)."
+            exit 1
+          fi
+          echo "OK: $TAG is free."
+
+      - name: "Gate 3 -- version lockstep at the target commit (plugin.json == marketplace.json == requested)"
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.resolve.outputs.version }}"
+          TARGET="${{ steps.resolve.outputs.target }}"
+          PLUGIN_V="$(git show "$TARGET:.claude-plugin/plugin.json" | jq -r '.version')"
+          MARKET_V="$(git show "$TARGET:.claude-plugin/marketplace.json" | jq -r '.metadata.version')"
+          echo "requested=$VERSION  plugin.json=$PLUGIN_V  marketplace.json=$MARKET_V"
+          if [[ "$PLUGIN_V" != "$VERSION" ]]; then
+            echo "::error::plugin.json version ($PLUGIN_V) != requested ($VERSION) at $TARGET -- refusing."
+            exit 1
+          fi
+          if [[ "$MARKET_V" != "$VERSION" ]]; then
+            echo "::error::marketplace.json version ($MARKET_V) != requested ($VERSION) at $TARGET -- lockstep drift, refusing."
+            exit 1
+          fi
+          echo "OK: version lockstep holds at the target commit."
+
+      - name: "Gate 4 -- push-CI is GREEN on every leg for the target commit"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TARGET="${{ steps.resolve.outputs.target }}"
+          CI_WORKFLOW="powershell-lsp-ci.yml"
+          # The required matrix legs MIRROR powershell-lsp-ci.yml's matrix.label set. A
+          # missing leg is treated as NOT green (refuse) -- the safe failure direction. If
+          # the CI matrix gains/loses a leg, update this list (documented in RELEASING.md).
+          REQUIRED_LEGS=("windows-pwsh" "windows-powershell" "ubuntu-pwsh" "macos-pwsh")
+
+          RUNS="$(gh api -X GET "repos/${{ github.repository }}/actions/workflows/$CI_WORKFLOW/runs" \
+                    -f head_sha="$TARGET" -f event=push --jq '.workflow_runs')"
+          COUNT="$(echo "$RUNS" | jq 'length')"
+          if [[ "$COUNT" -eq 0 ]]; then
+            echo "::error::no push-event CI run found for $TARGET -- cannot confirm green; refusing to tag."
+            exit 1
+          fi
+          RUN_ID="$(echo "$RUNS" | jq -r 'sort_by(.run_number) | last | .id')"
+          RUN_STATUS="$(echo "$RUNS" | jq -r 'sort_by(.run_number) | last | .status')"
+          RUN_CONCLUSION="$(echo "$RUNS" | jq -r 'sort_by(.run_number) | last | .conclusion')"
+          echo "Latest push-CI run for $TARGET: id=$RUN_ID status=$RUN_STATUS conclusion=$RUN_CONCLUSION"
+          if [[ "$RUN_STATUS" != "completed" || "$RUN_CONCLUSION" != "success" ]]; then
+            echo "::error::CI run $RUN_ID for $TARGET is not completed+success (status=$RUN_STATUS conclusion=$RUN_CONCLUSION) -- refusing."
+            exit 1
+          fi
+          # Defense in depth: confirm EACH required leg's job concluded success on that run.
+          JOBS="$(gh api --paginate "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
+                    --jq '.jobs[] | {name: .name, conclusion: .conclusion}')"
+          echo "Per-leg conclusions:"
+          echo "$JOBS"
+          for leg in "${REQUIRED_LEGS[@]}"; do
+            CONC="$(echo "$JOBS" | jq -r --arg n "$leg" 'select(.name==$n) | .conclusion' | head -n1)"
+            if [[ "$CONC" != "success" ]]; then
+              echo "::error::required CI leg '$leg' did not succeed (got '${CONC:-MISSING}') for $TARGET -- refusing."
+              exit 1
+            fi
+            echo "OK leg: $leg = success"
+          done
+          echo "OK: all required CI legs are green for $TARGET."
+
+      # ----- All preconditions hold past this point. -----------------------------------
+
+      - name: Check out the validated target commit
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        run: git checkout --detach "${{ steps.resolve.outputs.target }}"
+
+      - name: Build release notes, source archive, and SBOM
+        if: ${{ !inputs.dry_run }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $v = '${{ steps.resolve.outputs.version }}'
+          $target = '${{ steps.resolve.outputs.target }}'
+
+          # Release notes = the CHANGELOG entry, single-sourced (never hand-retyped).
+          & ./release/Get-ChangelogEntry.ps1 -Version $v -OutFile release-notes.md
+
+          # The meaningful release artifact for a git-distributed plugin: a deterministic
+          # source archive of the EXACT tagged tree (the bytes a consumer installs).
+          git archive --format=tar.gz --prefix="powershell-lsp-$v/" -o "powershell-lsp-$v.tar.gz" $target
+          if ($LASTEXITCODE -ne 0) { throw "git archive failed ($LASTEXITCODE)" }
+
+          # CycloneDX SBOM over the plugin + its pinned downloaded deps.
+          & ./release/New-PluginSbom.ps1 -Version $v -OutFile "powershell-lsp-$v.cdx.json"
+
+          Get-ChildItem "powershell-lsp-$v.tar.gz", "powershell-lsp-$v.cdx.json", "release-notes.md" |
+            Select-Object Name, Length | Format-Table | Out-String | Write-Host
+
+      - name: Attest build provenance (archive + SBOM)
+        if: ${{ !inputs.dry_run }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            powershell-lsp-${{ steps.resolve.outputs.version }}.tar.gz
+            powershell-lsp-${{ steps.resolve.outputs.version }}.cdx.json
+
+      - name: Cut and push the tag FROM the pipeline (on the validated commit)
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.resolve.outputs.tag }}"
+          TARGET="${{ steps.resolve.outputs.target }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "powershell-lsp $TAG" "$TARGET"
+          git push origin "refs/tags/$TAG"
+          echo "Tagged $TARGET as $TAG and pushed."
+
+      - name: Create the GitHub Release (CHANGELOG notes + SBOM + provenance-attested archive)
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          V="${{ steps.resolve.outputs.version }}"
+          TAG="${{ steps.resolve.outputs.tag }}"
+          gh release create "$TAG" \
+            --title "powershell-lsp $TAG" \
+            --notes-file release-notes.md \
+            --target "${{ steps.resolve.outputs.target }}" \
+            "powershell-lsp-$V.tar.gz" \
+            "powershell-lsp-$V.cdx.json"
+          echo "Created GitHub Release $TAG."
+
+      - name: Dry-run summary (no tag cut, no release created)
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "DRY RUN complete: every precondition validated for ${{ steps.resolve.outputs.tag }} on commit ${{ steps.resolve.outputs.target }}."
+          echo "No tag was cut and no release was created. Re-run with dry_run=false to publish."
