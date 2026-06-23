@@ -29,6 +29,36 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.14.0] - 2026-06-23
+
+MINOR: **a dogfood review tool that fills the captured `verdict` -- turning raw capture data into the
+ranked input the quality wave consumes** (dispatch 000043). The companion to the 000039 capture: it
+reads `dogfood/diagnostics.jsonl`, presents each distinct diagnostic shape that still needs a verdict,
+accepts one from a frozen enum, and persists it. **Additive offline tool only: nothing under `scripts/`
+that the daemon or hooks run changes, and the diagnostics surface + capture path are byte-for-byte
+unchanged.** It only COLLECTS verdicts; acting on them (tuning any rule) is the separate quality wave.
+The 000027 contract drift-guard stays green (no new `userConfig` knob, no new status token).
+
+### Added
+
+- **Dogfood review/annotation tool (`scripts/review-dogfood.ps1`).** Reads the capture log, collapses
+  occurrences into distinct **shapes** keyed by the capture record's existing shape-`hash` (rule id +
+  normalized offending-line shape), and lets you record a **verdict** per shape. Identical diagnostics
+  share one verdict (the same misfire seen many times is judged once); a re-run skips shapes that
+  already carry a verdict (resumable).
+- **Frozen verdict vocabulary:** `useful` / `false-positive` / `noisy` / `bad-fix` / `unsure` (a fixed
+  enum, not free text; an optional one-line rationale may accompany it). This is NOT the 000027 status
+  taxonomy and adds no `userConfig` knob.
+- **Non-destructive, hash-keyed persistence.** Verdicts are written to a **separate sibling file,
+  `dogfood/annotations.jsonl`** -- append-only, last-write-wins -- and the capture log is **never
+  rewritten** (it stays immutable evidence). The annotations file lives under the already-gitignored
+  `dogfood/` tree and is never committed (its free-text rationale could quote source).
+- **Read-only by default, with a ranked summary.** With no write action the tool lists pending shapes
+  and prints a summary -- counts by verdict, annotation coverage, and the top "actionable" rules
+  (false-positive / noisy / bad-fix) ranked by occurrence count. Writing a verdict is the explicit
+  action: `-Hash <hash> -Verdict <verdict> [-Rationale "..."]`, or the interactive `-Review` loop
+  (guarded -- a non-interactive host falls back to the listing). `-Redact` masks snippets when sharing.
+
 ## [1.13.0] - 2026-06-22
 
 MINOR: **release-engineering automation -- a gated release pipeline that makes a bad tag structurally

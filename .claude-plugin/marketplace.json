@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "PowerShell code intelligence (PowerShell Editor Services) for Claude Code -- standalone distribution of the powershell-lsp plugin.",
-    "version": "1.13.0"
+    "version": "1.14.0"
   },
   "plugins": [
     {
