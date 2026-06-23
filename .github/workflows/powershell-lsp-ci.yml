@@ -27,20 +27,20 @@ jobs:
       matrix:
         include:
           - label: windows-pwsh
-            os: windows-latest
+            os: windows-2025
             interpreter: pwsh
           - label: windows-powershell
-            os: windows-latest
+            os: windows-2025
             interpreter: powershell
           - label: ubuntu-pwsh
-            os: ubuntu-latest
+            os: ubuntu-24.04
             interpreter: pwsh
           - label: macos-pwsh
-            os: macos-latest
+            os: macos-15
             interpreter: pwsh
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Run Pester suite
         env:
@@ -54,7 +54,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pester-results-${{ matrix.label }}
           path: tests/testResults.xml
@@ -62,7 +62,7 @@ jobs:
 
       - name: Upload daemon logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: daemon-logs-${{ matrix.label }}
           path: |
@@ -76,7 +76,7 @@ jobs:
       # the (deliberately generous) regression thresholds.
       - name: Upload benchmark results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: benchmark-results-${{ matrix.label }}
           path: psls-test-data/logs/benchmark-results.json
