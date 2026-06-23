@@ -29,6 +29,25 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.14.1] - 2026-06-23
+
+PATCH: **a cross-platform test fix -- the dogfood-review annotations-path test no longer hardcodes a
+Windows `C:` drive** (dispatch 000044). The 000043 test `Get-DogfoodAnnotationsPath is annotations.jsonl
+beside the log` fed the function a `C:\...` literal; off-Windows there is no `C:` PSDrive, so PowerShell
+threw `DriveNotFoundException` before the assertion ran -- a deterministic failure on the `ubuntu-pwsh`
+and `macos-pwsh` CI legs (357 passed / 1 failed / 5 skipped each, Windows green). **Test-only change:
+nothing under `scripts/` changes** -- the tool (`review-dogfood.ps1`, `Get-DogfoodAnnotationsPath`) was
+already portable; the defect was entirely the test's hardcoded input. The diagnostics surface and capture
+path are byte-for-byte unchanged and the 000027 contract drift-guard stays green.
+
+### Fixed
+
+- **Portable annotations-path test (`tests/PowerShellLsp.Unit.Tests.ps1`).** The
+  `Get-DogfoodAnnotationsPath` beside-the-log assertion now derives its log path from `$TestDrive` (a real
+  per-platform temp dir) instead of a hardcoded `C:\d\dogfood\...` literal, so the same beside-the-log
+  derivation runs identically on all four CI legs. Same assertion, same proof (`annotations.jsonl` sits
+  beside the log) -- portable input, teeth intact, not a no-op.
+
 ## [1.14.0] - 2026-06-23
 
 MINOR: **a dogfood review tool that fills the captured `verdict` -- turning raw capture data into the
