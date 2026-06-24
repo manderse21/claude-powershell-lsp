@@ -7,12 +7,19 @@
 [![corpus false-positive rate: 0%](https://img.shields.io/badge/corpus%20false--positive%20rate-0%25-brightgreen)](#diagnostic-correctness-corpus)
 [![code signing: pending](https://img.shields.io/badge/code%20signing-pending-orange)](./TRUST.md#code-signing-status----pending-the-plugin-is-not-signed)
 
-PowerShell code intelligence for [Claude Code](https://claude.com/claude-code),
+**Per-file PowerShell diagnostics inside [Claude Code](https://claude.com/claude-code)**,
 powered by [PowerShell Editor Services](https://github.com/PowerShell/PowerShellEditorServices)
-(PSES). Real-time PowerShell diagnostics and PSScriptAnalyzer fix suggestions
-while editing `.ps1`, `.psm1`, and `.psd1` files. Hover, go-to-definition, and
-find-references are on the roadmap, pending upstream plugin LSP-server
-registration (Claude Code #66987).
+(PSES). As Claude edits a `.ps1`, `.psm1`, or `.psd1` file, the plugin runs real PSES +
+PSScriptAnalyzer over **that file** and surfaces the result -- syntax errors and lint findings
+with fix suggestions -- directly in Claude's context. That per-file diagnostic loop is what the
+plugin does well today, and it works on every supported host now.
+
+**On the roadmap, not yet active:** hover, go-to-definition, find-references, and
+**workspace-wide / multi-file analysis**. Those depend on Claude Code's native plugin LSP-server
+registration, which is unreliable for plugin-provided servers today (Claude Code #66987; see
+[Why a hook, not native registration](#why-a-hook-not-native-lspjson-registration)). The plugin
+already declares its server for when that lands; until then it delivers the per-file diagnostics
+above through a warm PostToolUse hook -- the path that works now.
 
 This is language tooling, not project tooling: a standalone plugin that carries
 ~0 always-on model-context token cost. It only spawns a language server when you
