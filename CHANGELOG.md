@@ -29,6 +29,45 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.16.0] - 2026-06-24
+
+MINOR: **a community-release readiness bundle** (dispatch 000048) -- five additive workstreams in
+one release. **Tool behavior is byte-for-byte unchanged from v1.15.0**: the daemon, hooks,
+diagnostics surface, acquisition path, pinned hashes, and status taxonomy are identical -- the diff
+is test **inputs** and **documentation** only (`scripts/**` and `plugin.json`'s hooks/lspServers are
+an empty diff vs the prior release). The MINOR is warranted by the strengthened, *published*
+correctness claim over a roughly 2x-larger corpus and the new community / trust surface, not by any
+runtime change. The 000027 contract drift-guard stays green: **no new `userConfig` knob and no new
+status token**.
+
+### Added
+
+- **Broadened diagnostic-correctness corpus (Gap A breadth).** The corpus grows from 16/18 to **34
+  known-good and 36 known-bad** cases (six per surfaced rule) spanning a deliberately diverse range
+  of real-world idioms (`begin`/`process`/`end`, classes with inheritance and static members,
+  `[Flags]` enums, validation attributes, `SecureString` / `PSCredential` parameters, splatting,
+  multi-stage pipelines, typed `try`/`catch`/`finally`, here-strings, regex, `ShouldProcess`). Every
+  snapshot remains **tool-derived** (never hand-authored). The measured **0% false-positive rate and
+  100% true-positive coverage** now stand on the wider surface; the CI guard floor rises from 15 to
+  **30** known-good / 30 known-bad, and the README numbers are updated. (WS1)
+- **Honest trust badge row + verify-your-install (Gap B, visible trust).** The README opens with a
+  badge row (CI, version, GPL-3.0-or-later, CycloneDX SBOM, the measured 0% corpus false-positive
+  rate, and the honest **signing-pending** status -- nothing claims signed or audited), plus a new
+  **Verify your install** section showing how to confirm the pinned-hash verification and read the
+  SBOM / build-provenance. (WS2)
+- **Doctor-first quickstart (time-to-value).** The Quick start now takes a new user from install to
+  a real caught diagnostic quickly, with the report-only preflight **doctor** as the explicit
+  confidence step. (WS3)
+- **Contributor on-ramp + continuity (Gap E, bus-factor).** New **`ARCHITECTURE.md`** (the
+  warm-daemon model, edit-to-banner flow), **`DEV_NOTES.md`** (the hard-won quirks), **`CONTRIBUTING.md`**
+  (build, run the suite, the test story, DCO sign-off), an honest **`CONTINUITY.md`** (the
+  single-maintainer risk, key custody, and the GPLv3 fork path -- no fabricated successor), and
+  **GitHub issue templates** including a **report-a-false-positive** path that feeds the corpus. (WS4)
+- **Right-sized positioning (Gap D).** The README lead now opens with what the tool genuinely is
+  today -- **per-file** PowerShell diagnostics inside Claude Code -- and frames workspace-wide /
+  multi-file analysis (and hover / go-to-definition / find-references) as **roadmap**, gated on the
+  upstream plugin LSP-registration fix, rather than present tense. (WS5)
+
 ## [1.15.0] - 2026-06-23
 
 MINOR: **an enterprise trust-surface and correctness-proof bundle** (dispatch 000046) -- four
