@@ -379,20 +379,25 @@ pwsh -File scripts/review-dogfood.ps1 -Hash <hash> -Verdict false-positive -Rati
 A curated corpus (`tests/corpus/`) proves the diagnostics the tool *reports* are correct -- not
 merely present, and not merely honest when it cannot analyze. Three sample categories:
 
-- **clean** (16 cases) -- expect zero findings (no false positives on clean code).
-- **known-bad** (18 cases) -- each sample trips a specific PSScriptAnalyzer rule the tool surfaces,
-  asserting the exact rule id, line, and severity; multiple cases per rule exercise varied
-  triggering constructs.
+- **clean** (34 cases) -- expect zero findings (no false positives on clean code); a deliberately
+  broad span of real-world idioms (advanced functions with `begin`/`process`/`end`, classes with
+  inheritance and static members, `[Flags]` enums, validation attributes, `SecureString` /
+  `PSCredential` parameters, splatting, multi-stage pipelines, typed `try`/`catch`/`finally`,
+  here-strings, regex, `ShouldProcess`, and more).
+- **known-bad** (36 cases) -- six cases per surfaced rule, each tripping a specific PSScriptAnalyzer
+  rule the tool surfaces, asserting the exact rule id, line, and severity; the several cases per
+  rule exercise varied triggering constructs.
 - **parser-error** (3 cases) -- expect parser diagnostics.
 
 **Measured correctness (default config, all four CI legs).** Across those curated cases the tool
-posts a **0% false-positive rate** (0 of 16 known-good cases produced any finding) and **100%
-true-positive coverage** (18 of 18 known-bad cases surfaced their expected rule), spanning every
+posts a **0% false-positive rate** (0 of 34 known-good cases produced any finding) and **100%
+true-positive coverage** (36 of 36 known-bad cases surfaced their expected rule), spanning every
 rule the default ruleset surfaces. These numbers are not prose -- they are recomputed from the live
 tool on every CI run and **guarded** (`tests/PowerShellLsp.Corpus.Tests.ps1`: the report fails CI if
-the false-positive rate rises above zero, coverage drops below 100%, or any surfaced default rule
-loses its known-bad case), and the per-run report is uploaded as a CI artifact
-(`logs/corpus-correctness-report.json`). The claim is *measured and defensible*, not *exhaustive*.
+the false-positive rate rises above zero, coverage drops below 100%, the corpus shrinks below 30
+known-good or 30 known-bad, or any surfaced default rule loses its known-bad case), and the per-run
+report is uploaded as a CI artifact (`logs/corpus-correctness-report.json`). The claim is *measured
+and defensible*, not *exhaustive*.
 
 **The invariant that makes it trustworthy:** every expected finding is *derived* by running the
 REAL tool over the sample and snapshotting exactly what it emits (through the plugin's own dogfood
