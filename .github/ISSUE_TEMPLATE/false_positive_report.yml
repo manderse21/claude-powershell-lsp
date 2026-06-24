@@ -1,0 +1,81 @@
+name: Report a false positive
+description: The tool flagged clean, idiomatic PowerShell. Confirmed reports become known-good corpus cases.
+title: "[false positive] <rule> on <short description>"
+labels: ["false-positive", "corpus"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a false positive. The diagnostic-correctness corpus grows
+        directly from real misfires: a confirmed report becomes a new **known-good** sample
+        in `tests/corpus/samples/clean/`, so the published false-positive rate is measured
+        against the code people actually write. The more self-contained your snippet, the
+        faster it can become a regression guard.
+  - type: textarea
+    id: snippet
+    attributes:
+      label: The PowerShell that was wrongly flagged
+      description: A minimal, self-contained snippet a maintainer can drop into a `.ps1` and reproduce. This may be added to the corpus verbatim, so do not include secrets or proprietary code.
+      render: powershell
+      placeholder: |
+        function Get-Example {
+            [CmdletBinding()]
+            param([Parameter(Mandatory = $true)][string]$Name)
+            Write-Output "Hello, $Name"
+        }
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: Rule that fired
+      description: The PSScriptAnalyzer rule id from the diagnostic (e.g. PSUseApprovedVerbs).
+      placeholder: PSUseApprovedVerbs
+    validations:
+      required: true
+  - type: textarea
+    id: message
+    attributes:
+      label: The exact diagnostic you saw
+      description: Copy the full banner / message text, including the line and column if shown.
+    validations:
+      required: true
+  - type: textarea
+    id: why-clean
+    attributes:
+      label: Why you believe the code is correct
+      description: What makes this idiomatic / intentional? (e.g. "this is a private helper", "the verb is approved", "the comparison is deliberate".)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: From the /plugin UI, or the version field in the installed plugin's plugin.json.
+      placeholder: 1.16.0
+    validations:
+      required: true
+  - type: dropdown
+    id: ps-host
+    attributes:
+      label: PSES host (ps_host)
+      options:
+        - pwsh (PowerShell 7+, default)
+        - powershell (Windows PowerShell 5.1)
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Preflight doctor output (optional)
+      description: 'Run from inside the enabled session: pwsh -File "$env:CLAUDE_PLUGIN_ROOT/scripts/doctor.ps1" and paste the result.'
+      render: text
+    validations:
+      required: false
+  - type: checkboxes
+    id: shareable
+    attributes:
+      label: Confirmation
+      options:
+        - label: This snippet contains no secrets, credentials, or proprietary code and may be added to the public test corpus.
+          required: true

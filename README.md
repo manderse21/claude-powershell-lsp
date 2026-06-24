@@ -1,11 +1,25 @@
 # PowerShell LSP
 
-PowerShell code intelligence for [Claude Code](https://claude.com/claude-code),
+[![CI](https://github.com/manderse21/claude-powershell-lsp/actions/workflows/powershell-lsp-ci.yml/badge.svg)](https://github.com/manderse21/claude-powershell-lsp/actions/workflows/powershell-lsp-ci.yml)
+[![version](https://img.shields.io/github/v/tag/manderse21/claude-powershell-lsp?sort=semver&label=version&color=blue)](https://github.com/manderse21/claude-powershell-lsp/tags)
+[![license: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](./LICENSE)
+[![SBOM: CycloneDX](https://img.shields.io/badge/SBOM-CycloneDX-brightgreen)](./TRUST.md#supply-chain-artifacts-sbom--build-provenance)
+[![corpus false-positive rate: 0%](https://img.shields.io/badge/corpus%20false--positive%20rate-0%25-brightgreen)](#diagnostic-correctness-corpus)
+[![code signing: pending](https://img.shields.io/badge/code%20signing-pending-orange)](./TRUST.md#code-signing-status----pending-the-plugin-is-not-signed)
+
+**Per-file PowerShell diagnostics inside [Claude Code](https://claude.com/claude-code)**,
 powered by [PowerShell Editor Services](https://github.com/PowerShell/PowerShellEditorServices)
-(PSES). Real-time PowerShell diagnostics and PSScriptAnalyzer fix suggestions
-while editing `.ps1`, `.psm1`, and `.psd1` files. Hover, go-to-definition, and
-find-references are on the roadmap, pending upstream plugin LSP-server
-registration (Claude Code #66987).
+(PSES). As Claude edits a `.ps1`, `.psm1`, or `.psd1` file, the plugin runs real PSES +
+PSScriptAnalyzer over **that file** and surfaces the result -- syntax errors and lint findings
+with fix suggestions -- directly in Claude's context. That per-file diagnostic loop is what the
+plugin does well today, and it works on every supported host now.
+
+**On the roadmap, not yet active:** hover, go-to-definition, find-references, and
+**workspace-wide / multi-file analysis**. Those depend on Claude Code's native plugin LSP-server
+registration, which is unreliable for plugin-provided servers today (Claude Code #66987; see
+[Why a hook, not native registration](#why-a-hook-not-native-lspjson-registration)). The plugin
+already declares its server for when that lands; until then it delivers the per-file diagnostics
+above through a warm PostToolUse hook -- the path that works now.
 
 This is language tooling, not project tooling: a standalone plugin that carries
 ~0 always-on model-context token cost. It only spawns a language server when you
@@ -46,12 +60,22 @@ winget install Microsoft.PowerShell
 /plugin install powershell-lsp@claude-powershell-lsp
 /plugin enable powershell-lsp
 
-# 3. Start a new session (or run /reload-plugins) so the hooks load,
-#    then open a .ps1 / .psm1 / .psd1 file to bring the language server up.
+# 3. Start a new session (or run /reload-plugins) so the hooks load and the first
+#    SessionStart bootstraps PSES + the warm daemon.
+
+# 4. Confirm it is healthy before you rely on it -- run the preflight DOCTOR from
+#    inside the enabled session (so it can see the plugin data dir):
+pwsh -File "$env:CLAUDE_PLUGIN_ROOT/scripts/doctor.ps1"
+#    All PASS (benign UNKNOWNs are fine) -> ready. A FAIL names the exact fix.
+
+# 5. See it catch something: ask Claude to edit a .ps1 -- e.g. write
+#    `function Frobnicate-Thing { Get-Process }` -- and the PostToolUse hook returns
+#    "The cmdlet 'Frobnicate-Thing' uses an unapproved verb." (PSUseApprovedVerbs).
 ```
 
-The machinery self-bootstraps, so the sequence above is the whole job. Three of its
-steps are deliberate -- documented here rather than removed:
+The machinery self-bootstraps, so the sequence above is the whole job -- from install to a
+real caught diagnostic in about five minutes. A few of its steps are deliberate, documented
+here rather than removed:
 
 - **`/plugin enable` stays an explicit step.** The plugin ships disabled by default
   (`defaultEnabled: false`) because it downloads a bundle and spawns a language server,
@@ -63,6 +87,11 @@ steps are deliberate -- documented here rather than removed:
   one warm daemon for the session. The first edit may briefly read `incomplete` while
   PSES finishes starting, then settles on the next edit (see
   [Diagnostics status](#diagnostics-status)).
+- **Run the doctor first (step 4).** It turns the worst onboarding failure -- enabled but a
+  prerequisite is missing, so diagnostics silently do nothing -- into a named, actionable
+  fix-list, and it confirms the warm daemon is actually answering before you trust a silent
+  result as "analyzed, clean". It is **report-only** (it never downloads, repairs, or starts
+  anything); fuller details under [the preflight doctor](#preflight-self-check-the-doctor).
 
 ## Configuration
 
@@ -379,20 +408,25 @@ pwsh -File scripts/review-dogfood.ps1 -Hash <hash> -Verdict false-positive -Rati
 A curated corpus (`tests/corpus/`) proves the diagnostics the tool *reports* are correct -- not
 merely present, and not merely honest when it cannot analyze. Three sample categories:
 
-- **clean** (16 cases) -- expect zero findings (no false positives on clean code).
-- **known-bad** (18 cases) -- each sample trips a specific PSScriptAnalyzer rule the tool surfaces,
-  asserting the exact rule id, line, and severity; multiple cases per rule exercise varied
-  triggering constructs.
+- **clean** (34 cases) -- expect zero findings (no false positives on clean code); a deliberately
+  broad span of real-world idioms (advanced functions with `begin`/`process`/`end`, classes with
+  inheritance and static members, `[Flags]` enums, validation attributes, `SecureString` /
+  `PSCredential` parameters, splatting, multi-stage pipelines, typed `try`/`catch`/`finally`,
+  here-strings, regex, `ShouldProcess`, and more).
+- **known-bad** (36 cases) -- six cases per surfaced rule, each tripping a specific PSScriptAnalyzer
+  rule the tool surfaces, asserting the exact rule id, line, and severity; the several cases per
+  rule exercise varied triggering constructs.
 - **parser-error** (3 cases) -- expect parser diagnostics.
 
 **Measured correctness (default config, all four CI legs).** Across those curated cases the tool
-posts a **0% false-positive rate** (0 of 16 known-good cases produced any finding) and **100%
-true-positive coverage** (18 of 18 known-bad cases surfaced their expected rule), spanning every
+posts a **0% false-positive rate** (0 of 34 known-good cases produced any finding) and **100%
+true-positive coverage** (36 of 36 known-bad cases surfaced their expected rule), spanning every
 rule the default ruleset surfaces. These numbers are not prose -- they are recomputed from the live
 tool on every CI run and **guarded** (`tests/PowerShellLsp.Corpus.Tests.ps1`: the report fails CI if
-the false-positive rate rises above zero, coverage drops below 100%, or any surfaced default rule
-loses its known-bad case), and the per-run report is uploaded as a CI artifact
-(`logs/corpus-correctness-report.json`). The claim is *measured and defensible*, not *exhaustive*.
+the false-positive rate rises above zero, coverage drops below 100%, the corpus shrinks below 30
+known-good or 30 known-bad, or any surfaced default rule loses its known-bad case), and the per-run
+report is uploaded as a CI artifact (`logs/corpus-correctness-report.json`). The claim is *measured
+and defensible*, not *exhaustive*.
 
 **The invariant that makes it trustworthy:** every expected finding is *derived* by running the
 REAL tool over the sample and snapshotting exactly what it emits (through the plugin's own dogfood
@@ -518,6 +552,34 @@ no such action. A tool that tried to circumvent enterprise security would deserv
 banned -- honest degradation, telling you exactly what is blocked and how to allow it, is
 the whole value.
 
+## Verify your install
+
+You do not have to take this plugin's integrity on trust -- you can check it. The two pinned
+dependencies it downloads on first run are each verified against a SHA-256 computed from the real
+known-good artifact *before* they are used, and a mismatch **fails closed** (the unverified bundle is
+refused and the session reads `unavailable`). The pins and their hashes live in the repo, so you can
+confirm the bytes on your machine match what this repo ships:
+
+```
+# The pinned versions + SHA-256 hashes are tabulated in TRUST.md; the pins themselves live in
+# scripts/ensure-pses.ps1 ($PsesTag / $PsesSha256) and scripts/ensure-pssa.ps1 ($PssaVersion /
+# $PssaSha256). Confirm a downloaded component matches the pin this repo ships:
+(Get-FileHash -Algorithm SHA256 -LiteralPath .\PowerShellEditorServices.zip).Hash
+```
+
+Every release cut by the **gated release pipeline** also ships a **CycloneDX SBOM**
+(`powershell-lsp-<version>.cdx.json`, generated straight from those same pins, so it cannot disagree
+with what the tool downloads) and a **SLSA build-provenance attestation** over the source archive.
+Verify the provenance of a downloaded release artifact with the GitHub CLI:
+
+```
+gh attestation verify powershell-lsp-<version>.tar.gz --repo manderse21/claude-powershell-lsp
+```
+
+The full pinned-hash table, the SBOM / provenance details, the honest signing status (**pending --
+not signed**, not independently audited), and paste-ready WDAC / AppLocker allow-list rules are all
+in **[TRUST.md](./TRUST.md)**.
+
 ## Security and trust
 
 Evaluating this plugin for a managed or locked-down Windows estate? **[TRUST.md](./TRUST.md)**
@@ -540,6 +602,16 @@ cuts the tag itself on that validated commit and publishes a GitHub Release with
 CHANGELOG-sourced notes, a CycloneDX SBOM, and a build-provenance attestation. See
 [docs/RELEASING.md](docs/RELEASING.md) for how to trigger a release, what it validates, what it
 produces, and the manual fallback.
+
+## Contributing and development
+
+Contributions are welcome. Start with **[CONTRIBUTING.md](./CONTRIBUTING.md)** (prerequisites, how
+to run the suite, the test story), **[ARCHITECTURE.md](./ARCHITECTURE.md)** (how a diagnostic flows
+from edit to banner), and **[DEV_NOTES.md](./DEV_NOTES.md)** (the quirks that bite -- ASCII
+discipline, the 5.1 traps, the pipe-first daemon, the tool-derived corpus). Found a false positive?
+The [report-a-false-positive form](./.github/ISSUE_TEMPLATE/false_positive_report.yml) feeds it
+straight into the correctness corpus. The single-maintainer bus factor and the GPLv3 continuity path
+are stated honestly in **[CONTINUITY.md](./CONTINUITY.md)**.
 
 ## License
 

@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest a capability or improvement.
+title: "[feature] <short description>"
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Some commonly-requested capabilities (hover, go-to-definition, find-references,
+        workspace-wide analysis) are already on the roadmap, gated on an upstream Claude Code
+        plugin LSP-registration fix -- see the README and `ROADMAP-powershell-lsp.md` before
+        filing, in case your idea is already tracked.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that the plugin makes hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like the plugin to do? Note if it would add or change a userConfig knob or a diagnostics status token (those surfaces are frozen -- see CONTRACT.md).
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

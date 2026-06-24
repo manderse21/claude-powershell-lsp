@@ -1,0 +1,64 @@
+name: Bug report
+description: Something the plugin does is wrong or broken (not a false positive -- use that template instead).
+title: "[bug] <short description>"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: run the preflight doctor from inside an enabled session --
+        `pwsh -File "$env:CLAUDE_PLUGIN_ROOT/scripts/doctor.ps1"` -- and check the README
+        Troubleshooting section. The doctor turns most "diagnostics silently do nothing"
+        cases into a named fix. If the tool flagged clean code, use the **false positive**
+        template instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you observe? Include the status banner text if one appeared (ok / incomplete / degraded / unavailable).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Smallest sequence that triggers it. A minimal `.ps1` and the edit that caused the misbehavior helps most.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Preflight doctor output
+      description: 'pwsh -File "$env:CLAUDE_PLUGIN_ROOT/scripts/doctor.ps1" (run inside the enabled session).'
+      render: text
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      placeholder: 1.16.0
+    validations:
+      required: true
+  - type: dropdown
+    id: ps-host
+    attributes:
+      label: PSES host (ps_host)
+      options:
+        - pwsh (PowerShell 7+, default)
+        - powershell (Windows PowerShell 5.1)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and pwsh version
+      description: Output of "pwsh -v" and your OS (e.g. Windows 11, pwsh 7.6.3).
+    validations:
+      required: true

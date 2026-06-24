@@ -1,0 +1,8 @@
+[{
+  "ruleId": "PSUseApprovedVerbs",
+  "source": "PSScriptAnalyzer",
+  "severity": "Warning",
+  "line": 2,
+  "col": 10,
+  "message": "The cmdlet 'Zizzle-Widget' uses an unapproved verb."
+}]

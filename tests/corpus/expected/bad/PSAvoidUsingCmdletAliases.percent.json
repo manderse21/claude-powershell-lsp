@@ -1,0 +1,8 @@
+[{
+  "ruleId": "PSAvoidUsingCmdletAliases",
+  "source": "PSScriptAnalyzer",
+  "severity": "Warning",
+  "line": 2,
+  "col": 8,
+  "message": "'%' is an alias of 'ForEach-Object'. Alias can introduce possible problems and make scripts hard to maintain. Please consider changing alias to its full content."
+}]

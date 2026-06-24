@@ -1,0 +1,8 @@
+[{
+  "ruleId": "PSAvoidUsingCmdletAliases",
+  "source": "PSScriptAnalyzer",
+  "severity": "Warning",
+  "line": 2,
+  "col": 15,
+  "message": "'select' is an alias of 'Select-Object'. Alias can introduce possible problems and make scripts hard to maintain. Please consider changing alias to its full content."
+}]

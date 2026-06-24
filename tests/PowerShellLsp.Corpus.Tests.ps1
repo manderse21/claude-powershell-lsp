@@ -151,9 +151,12 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
     # --- measured correctness report (dispatch 000046, Gap A): the trust invariants the
     #     published README numbers stand on, guarded in CI on all four legs. ---
 
-    It 'measured correctness: the corpus is large enough to be defensible (>= 15 known-good, >= 15 known-bad)' {
-        $script:CorpusReport.knownGood | Should -BeGreaterOrEqual 15 -Because 'a defensible false-positive rate needs a real known-good sample'
-        $script:CorpusReport.knownBad | Should -BeGreaterOrEqual 15 -Because 'a defensible true-positive coverage needs a real known-bad sample'
+    It 'measured correctness: the corpus is large enough to be defensible (>= 30 known-good, >= 30 known-bad)' {
+        # Floor raised from 15 to 30 when the corpus was broadened (dispatch 000048): a wider,
+        # idiom-diverse known-good/known-bad surface makes the published false-positive and
+        # true-positive numbers more defensible, and this guard prevents silently shrinking back.
+        $script:CorpusReport.knownGood | Should -BeGreaterOrEqual 30 -Because 'a defensible false-positive rate needs a broad, idiom-diverse known-good sample'
+        $script:CorpusReport.knownBad | Should -BeGreaterOrEqual 30 -Because 'a defensible true-positive coverage needs a broad, idiom-diverse known-bad sample'
     }
 
     It 'measured correctness: zero false positives on clean code (FP rate == 0)' {
