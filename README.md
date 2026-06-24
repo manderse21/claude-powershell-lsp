@@ -53,12 +53,22 @@ winget install Microsoft.PowerShell
 /plugin install powershell-lsp@claude-powershell-lsp
 /plugin enable powershell-lsp
 
-# 3. Start a new session (or run /reload-plugins) so the hooks load,
-#    then open a .ps1 / .psm1 / .psd1 file to bring the language server up.
+# 3. Start a new session (or run /reload-plugins) so the hooks load and the first
+#    SessionStart bootstraps PSES + the warm daemon.
+
+# 4. Confirm it is healthy before you rely on it -- run the preflight DOCTOR from
+#    inside the enabled session (so it can see the plugin data dir):
+pwsh -File "$env:CLAUDE_PLUGIN_ROOT/scripts/doctor.ps1"
+#    All PASS (benign UNKNOWNs are fine) -> ready. A FAIL names the exact fix.
+
+# 5. See it catch something: ask Claude to edit a .ps1 -- e.g. write
+#    `function Frobnicate-Thing { Get-Process }` -- and the PostToolUse hook returns
+#    "The cmdlet 'Frobnicate-Thing' uses an unapproved verb." (PSUseApprovedVerbs).
 ```
 
-The machinery self-bootstraps, so the sequence above is the whole job. Three of its
-steps are deliberate -- documented here rather than removed:
+The machinery self-bootstraps, so the sequence above is the whole job -- from install to a
+real caught diagnostic in about five minutes. A few of its steps are deliberate, documented
+here rather than removed:
 
 - **`/plugin enable` stays an explicit step.** The plugin ships disabled by default
   (`defaultEnabled: false`) because it downloads a bundle and spawns a language server,
@@ -70,6 +80,11 @@ steps are deliberate -- documented here rather than removed:
   one warm daemon for the session. The first edit may briefly read `incomplete` while
   PSES finishes starting, then settles on the next edit (see
   [Diagnostics status](#diagnostics-status)).
+- **Run the doctor first (step 4).** It turns the worst onboarding failure -- enabled but a
+  prerequisite is missing, so diagnostics silently do nothing -- into a named, actionable
+  fix-list, and it confirms the warm daemon is actually answering before you trust a silent
+  result as "analyzed, clean". It is **report-only** (it never downloads, repairs, or starts
+  anything); fuller details under [the preflight doctor](#preflight-self-check-the-doctor).
 
 ## Configuration
 
