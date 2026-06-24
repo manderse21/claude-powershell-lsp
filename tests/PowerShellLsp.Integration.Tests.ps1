@@ -1095,6 +1095,8 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
         }
 
         $script:P_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        # Deterministic serve-readiness primitive (dispatch 000050): Wait-DaemonPipeReady.
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
         # Shared data root (real PSES + PSSA bootstrapped) for the warm-start happy path.
         $script:P_Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) { $env:PSLS_TEST_DATA_DIR } else { Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data' }
         New-Item -ItemType Directory -Force -Path $script:P_Data | Out-Null
@@ -1109,6 +1111,13 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
         $script:P_SidA = 'pf-init-000028-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
         $script:P_ProcA = Start-RawDaemon -Sid $script:P_SidA -DataRoot $script:P_DataA -ExtraArgs @('-InitTimeoutMs', '120000') -ExtraEnv @{ PSES_BUNDLE_PATH = $script:P_BundleA }
         $script:P_InfoA = Wait-DaemonAnyState -DataRoot $script:P_DataA -Sid $script:P_SidA -States @('starting') -Tries 30
+        # 'starting' is written before the serve loop first accepts a connection (pses-daemon.ps1),
+        # so wait for the pipe to actually ANSWER (a 'ping' round-trip) before the It fires its
+        # request -- this removes the read-before-ready race that red sub-case A intermittently on
+        # windows-pwsh (the client raced serve-loop entry, $null'd, and the 000030 relaunch+retry
+        # path overran Invoke-PluginHook's CapMs -> empty $out). A timeout = a daemon that never
+        # served = a real failure, surfaced loudly here rather than as a flaky empty result.
+        if (-not (Wait-DaemonPipeReady -SessionId $script:P_SidA)) { throw 'dispatch 000028 sub-case A: daemon pipe never answered ping within the readiness bound' }
 
         # (B) dummy that EXITS at once (present, init fails) -> daemon stays up serving unavailable.
         $script:P_DataB = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000028-B-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -1117,6 +1126,11 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
         $script:P_SidB = 'pf-fail-000028-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
         $script:P_ProcB = Start-RawDaemon -Sid $script:P_SidB -DataRoot $script:P_DataB -ExtraArgs @('-InitTimeoutMs', '8000') -ExtraEnv @{ PSES_BUNDLE_PATH = $script:P_BundleB }
         $script:P_InfoB = Wait-DaemonAnyState -DataRoot $script:P_DataB -Sid $script:P_SidB -States @('unavailable') -Tries 60
+        # Same serve-readiness gate as sub-case A: 'unavailable' is set inside the loop one step
+        # before WaitForConnectionAsync, so prove the parked daemon ANSWERS over the pipe before
+        # the It requests -- a racing first request that $null'd would wrongly route through the
+        # 000030 relaunch path. The ping is answered in 'unavailable' too (serve loop is state-agnostic).
+        if (-not (Wait-DaemonPipeReady -SessionId $script:P_SidB)) { throw 'dispatch 000028 sub-case B: daemon pipe never answered ping within the readiness bound' }
 
         # (warm) real bundle on the shared root -> reaches ready, analyzer pre-warmed.
         $script:P_SidW = 'pf-warm-000028-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -1305,6 +1319,8 @@ Describe 'Integration: auto-relaunch the idle-stopped daemon (dispatch 000030)' 
 
         $script:RL_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         $script:RL_Client = Join-Path $script:RL_ScriptsDir 'lsp-client.ps1'
+        # Deterministic serve-readiness primitive (dispatch 000050): Wait-DaemonPipeReady.
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
         $script:RL_Sids = @{}                                          # sid -> dataRoot (reaped in AfterAll)
         $script:RL_Procs = New-Object System.Collections.Generic.List[object]
 
@@ -1460,6 +1476,11 @@ Describe 'Integration: auto-relaunch the idle-stopped daemon (dispatch 000030)' 
         $info = Wait-DaemonAnyState -DataRoot $script:RL_DummyRoot -Sid $sid -States @('unavailable') -Tries 60
         $info | Should -Not -BeNullOrEmpty
         $permPid = [int]$info.pid
+        # Same serve-readiness gate as 000028 sub-case B (dispatch 000050): prove the parked
+        # daemon ANSWERS over the pipe before the edit. Without it a first request that raced
+        # serve-loop entry could $null -> trip the client's relaunch (writing a stamp / spawning a
+        # daemon), which would FALSELY fail the "no stamp / pid unchanged" assertions below.
+        if (-not (Wait-DaemonPipeReady -SessionId $sid)) { throw 'dispatch 000030 permanent: dummy-exit daemon pipe never answered ping within the readiness bound' }
         $stamp = Join-Path $script:RL_DummyRoot ('session/' + $sid + '.relaunch')
         if (Test-Path $stamp) { Remove-Item -LiteralPath $stamp -Force }   # clean slate
 
