@@ -1,5 +1,12 @@
 # PowerShell LSP
 
+[![CI](https://github.com/manderse21/claude-powershell-lsp/actions/workflows/powershell-lsp-ci.yml/badge.svg)](https://github.com/manderse21/claude-powershell-lsp/actions/workflows/powershell-lsp-ci.yml)
+[![version](https://img.shields.io/github/v/tag/manderse21/claude-powershell-lsp?sort=semver&label=version&color=blue)](https://github.com/manderse21/claude-powershell-lsp/tags)
+[![license: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](./LICENSE)
+[![SBOM: CycloneDX](https://img.shields.io/badge/SBOM-CycloneDX-brightgreen)](./TRUST.md#supply-chain-artifacts-sbom--build-provenance)
+[![corpus false-positive rate: 0%](https://img.shields.io/badge/corpus%20false--positive%20rate-0%25-brightgreen)](#diagnostic-correctness-corpus)
+[![code signing: pending](https://img.shields.io/badge/code%20signing-pending-orange)](./TRUST.md#code-signing-status----pending-the-plugin-is-not-signed)
+
 PowerShell code intelligence for [Claude Code](https://claude.com/claude-code),
 powered by [PowerShell Editor Services](https://github.com/PowerShell/PowerShellEditorServices)
 (PSES). Real-time PowerShell diagnostics and PSScriptAnalyzer fix suggestions
@@ -522,6 +529,34 @@ administrator does deliberately (sign, allow-list, adjust policy); the plugin it
 no such action. A tool that tried to circumvent enterprise security would deserve to be
 banned -- honest degradation, telling you exactly what is blocked and how to allow it, is
 the whole value.
+
+## Verify your install
+
+You do not have to take this plugin's integrity on trust -- you can check it. The two pinned
+dependencies it downloads on first run are each verified against a SHA-256 computed from the real
+known-good artifact *before* they are used, and a mismatch **fails closed** (the unverified bundle is
+refused and the session reads `unavailable`). The pins and their hashes live in the repo, so you can
+confirm the bytes on your machine match what this repo ships:
+
+```
+# The pinned versions + SHA-256 hashes are tabulated in TRUST.md; the pins themselves live in
+# scripts/ensure-pses.ps1 ($PsesTag / $PsesSha256) and scripts/ensure-pssa.ps1 ($PssaVersion /
+# $PssaSha256). Confirm a downloaded component matches the pin this repo ships:
+(Get-FileHash -Algorithm SHA256 -LiteralPath .\PowerShellEditorServices.zip).Hash
+```
+
+Every release cut by the **gated release pipeline** also ships a **CycloneDX SBOM**
+(`powershell-lsp-<version>.cdx.json`, generated straight from those same pins, so it cannot disagree
+with what the tool downloads) and a **SLSA build-provenance attestation** over the source archive.
+Verify the provenance of a downloaded release artifact with the GitHub CLI:
+
+```
+gh attestation verify powershell-lsp-<version>.tar.gz --repo manderse21/claude-powershell-lsp
+```
+
+The full pinned-hash table, the SBOM / provenance details, the honest signing status (**pending --
+not signed**, not independently audited), and paste-ready WDAC / AppLocker allow-list rules are all
+in **[TRUST.md](./TRUST.md)**.
 
 ## Security and trust
 
