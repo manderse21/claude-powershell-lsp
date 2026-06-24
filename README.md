@@ -288,6 +288,16 @@ To bump either, change the single pin variable named above and start a fresh
 session (the ensure-step re-vendors at the new version, keyed by a per-version
 marker). See [CHANGELOG](./CHANGELOG.md#versioning) for how a bump maps to SemVer.
 
+In CI, the pinned PSScriptAnalyzer `.nupkg` is cached (`actions/cache`, keyed by the
+pinned version **and** SHA-256) and restored on a cache hit, so the PowerShell
+Gallery is contacted only on a miss -- the analyzer-acquisition step does not depend
+on live Gallery egress every run. The integrity pin is still load-bearing on every
+path: a restored `.nupkg` is run through the exact same SHA-256 verification as a
+fresh download before use, and a poisoned or stale cache entry fails closed (it is
+refused, never installed). The cache is a transport optimization, never a trust
+shortcut. For a normal install (no `POWERSHELL_LSP_PSSA_CACHE` set) acquisition is
+unchanged: download, verify against the pin, then vendor.
+
 ## Platform support
 
 As of 1.1.1 the **hooks require `pwsh` (PowerShell 7)** -- they launch the bootstrap
