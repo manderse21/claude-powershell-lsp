@@ -22,6 +22,12 @@ jobs:
   pester:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
+    env:
+      # Pinned-PSSA .nupkg cache directory (dispatch 000049). ensure-pssa.ps1 reads
+      # POWERSHELL_LSP_PSSA_CACHE and restores/saves the verified .nupkg here; actions/cache
+      # (below) persists it across runs keyed by the pin. A path under the workspace so it is
+      # per-repo and cleaned with the checkout.
+      PSSA_CACHE_DIR: ${{ github.workspace }}/.pssa-nupkg-cache
     strategy:
       fail-fast: false
       matrix:
@@ -42,6 +48,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # Pinned-PSSA .nupkg cache (dispatch 000049): the structural cure for the 000047 PowerShell
+      # Gallery / Azure-CDN egress flake. Restore the pinned, hash-verified PSScriptAnalyzer .nupkg
+      # from a cross-run cache so the Gallery is contacted ONLY on a cache miss; the in-script
+      # Test-PinnedFileHash pin verify STILL runs on the restored .nupkg before use (a poisoned or
+      # stale entry fails closed). The cache KEY binds to the pinned version AND SHA-256 -- resolved
+      # from the SINGLE source (scripts/ensure-pssa.ps1) -- so a pin bump can never draw a stale
+      # artifact. On a miss the 000047 retry + register-PSGallery fallback still vendor and then
+      # populate the cache for the next run.
+      - name: Resolve PSSA pin (cache key binds to version + SHA-256)
+        id: pin
+        shell: pwsh
+        run: ./scripts/print-pssa-pin.ps1 >> $env:GITHUB_OUTPUT
+
+      - name: Cache pinned PSScriptAnalyzer .nupkg
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.PSSA_CACHE_DIR }}
+          key: pssa-${{ runner.os }}-${{ steps.pin.outputs.version }}-${{ steps.pin.outputs.sha256 }}
+
       - name: Run Pester suite
         env:
           # Pin the integration test's data root to a workspace path so the warm
@@ -50,6 +75,10 @@ jobs:
           # CI harness never surfaces them, which is exactly what blocked debugging
           # the ubuntu-pwsh bring-up failure.
           PSLS_TEST_DATA_DIR: ${{ github.workspace }}/psls-test-data
+          # The vendoring inside the test BeforeAll blocks (& pwsh ensure-pssa.ps1) reads this and
+          # restores the pinned .nupkg from the cache above on a hit -- so on a warm cache the
+          # Gallery is not contacted, yet the pin is still verified before use (dispatch 000049).
+          POWERSHELL_LSP_PSSA_CACHE: ${{ env.PSSA_CACHE_DIR }}
         run: ${{ matrix.interpreter }} -NoProfile -ExecutionPolicy Bypass -File ./tests/run-tests.ps1 -CI
 
       - name: Upload test results

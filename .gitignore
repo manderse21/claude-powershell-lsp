@@ -5,3 +5,10 @@
 # The whole dogfood/ directory is ignored so no captured snippet can ever be
 # staged -- do not weaken this. See README -> "Dogfood diagnostic capture".
 /dogfood/
+
+# Pinned-PSSA .nupkg cache (dispatch 000049)
+# -----------------------------------------------------------------------------
+# A local restore/save dir for the pinned, hash-verified PSScriptAnalyzer .nupkg,
+# used only when POWERSHELL_LSP_PSSA_CACHE points here (CI sets it under the
+# workspace). It is a build artifact, never source -- never commit it.
+/.pssa-nupkg-cache/

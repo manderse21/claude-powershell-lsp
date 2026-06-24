@@ -961,6 +961,61 @@ Describe 'Pinned hash verification is WIRED into the bootstrap (dispatch 000046,
     }
 }
 
+# --- 000049: the pinned-.nupkg cache is verify-gated and pin-bound -----------
+Describe 'PSSA .nupkg cache is verify-gated and pin-bound (dispatch 000049)' {
+    # The cache (the structural cure for the 000047 Gallery / CDN egress flake) is a classic place
+    # to accidentally smuggle in a verification bypass. These guards read the LIVE source so the two
+    # load-bearing invariants cannot silently regress: (1) a cache HIT is verified against the pin
+    # BEFORE use, exactly like a fresh download; (2) the cache key binds to the pin so a bump can
+    # never draw a stale artifact. The behavioral fail-closed proof lives in the integration suite
+    # ('poisoned PSSA .nupkg cache FAILS CLOSED on restore'); these are the cheap source-level guards.
+    BeforeAll {
+        $script:EnsurePssaSrc = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'ensure-pssa.ps1') -Raw
+    }
+    It 'INVARIANT 1: a cache hit is copied into the verify path BEFORE the pin gate, which precedes any expand' {
+        # cache-restore copy  <  Test-PinnedFileHash  <  Expand-Archive : the restored bytes flow
+        # through the SAME gate a download does, and nothing is expanded/installed before the verify.
+        # Adversarial control: move the cache copy after the verify (or the expand before it) -> RED.
+        $restoreIdx = $script:EnsurePssaSrc.IndexOf('cache HIT')
+        $verifyIdx = $script:EnsurePssaSrc.IndexOf('Test-PinnedFileHash -Path $nupkg -ExpectedSha256 $PssaSha256')
+        $expandIdx = $script:EnsurePssaSrc.IndexOf('Expand-Archive')
+        $restoreIdx | Should -BeGreaterThan 0
+        $verifyIdx | Should -BeGreaterThan $restoreIdx
+        $expandIdx | Should -BeGreaterThan $verifyIdx
+    }
+    It 'INVARIANT 1: exactly ONE pin-verify gate guards the install, and a mismatch fails closed' {
+        # One Test-PinnedFileHash call over $nupkg guards both the cache-hit and download paths; the
+        # cache hit does NOT add a second, weaker path. The mismatch branch refuses (fail closed).
+        @([regex]::Matches($script:EnsurePssaSrc, 'Test-PinnedFileHash -Path \$nupkg')).Count | Should -Be 1
+        $script:EnsurePssaSrc | Should -Match 'integrity check failed \(hash mismatch\); refusing unverified package'
+    }
+    It 'INVARIANT 2: the cache filename binds to BOTH the pinned version and the SHA-256' {
+        # A pin bump (version OR hash) yields a different filename -> a guaranteed miss, never a stale
+        # draw. Adversarial control: drop $PssaSha256 from the cache filename and this goes RED.
+        $script:EnsurePssaSrc | Should -Match '\$PssaVersion\s*\+\s*''-''\s*\+\s*\$PssaSha256'
+    }
+    It 'is OFF by default: gated on POWERSHELL_LSP_PSSA_CACHE, and the Gallery is reached only on a miss' {
+        # When the env var is unset there is no cache and acquisition is byte-identical to 000047.
+        $script:EnsurePssaSrc | Should -Match 'POWERSHELL_LSP_PSSA_CACHE'
+        # the network fetch is gated behind the cache-miss guard
+        $guardIdx = $script:EnsurePssaSrc.IndexOf('if (-not $fromCache)')
+        $downloadIdx = $script:EnsurePssaSrc.IndexOf('Invoke-WebRequest')
+        $guardIdx | Should -BeGreaterThan 0
+        $downloadIdx | Should -BeGreaterThan $guardIdx
+    }
+    It 'print-pssa-pin.ps1 emits the LIVE pin as version + 64-hex sha256 (the CI cache-key source)' {
+        # The CI cache key is pssa-<os>-<version>-<sha256>; this script single-sources the pin from
+        # ensure-pssa.ps1 so the key binds to it. A drift here would mis-key the cache.
+        $lines = @(& (Join-Path $script:ScriptsDir 'print-pssa-pin.ps1'))
+        @($lines | Where-Object { $_ -match '^version=\d+\.\d+\.\d+$' }).Count | Should -Be 1
+        @($lines | Where-Object { $_ -match '^sha256=[0-9A-Fa-f]{64}$' }).Count | Should -Be 1
+        $vp = ([regex]'\$PssaVersion\s*=\s*''([^'']+)''').Match($script:EnsurePssaSrc).Groups[1].Value
+        $hp = ([regex]'\$PssaSha256\s*=\s*''([0-9A-Fa-f]{64})''').Match($script:EnsurePssaSrc).Groups[1].Value
+        $lines | Should -Contain ('version=' + $vp)
+        $lines | Should -Contain ('sha256=' + $hp)
+    }
+}
+
 # (d) ASCII-clean + parse over every shipped .ps1 (scripts AND tests).
 $script:AllPs1 = Get-ChildItem (Split-Path -Parent $PSScriptRoot) -Recurse -Filter *.ps1 -File
 

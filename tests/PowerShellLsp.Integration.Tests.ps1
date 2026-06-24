@@ -1645,3 +1645,82 @@ Describe 'Integration: dogfood diagnostic capture (dispatch 000039)' -Skip:$scri
         (Test-Path -LiteralPath $failLog) | Should -BeFalse
     }
 }
+
+# ===========================================================================
+# Poisoned PSSA .nupkg cache FAILS CLOSED on restore (dispatch 000049)
+# ===========================================================================
+Describe 'Integration: poisoned PSSA .nupkg cache FAILS CLOSED on restore (dispatch 000049)' -Skip:$script:SkipIntegration {
+    # The structural cure (000049) restores the pinned PSScriptAnalyzer .nupkg from a cross-run cache
+    # so the Gallery is contacted ONLY on a miss -- but a cache is a classic place to smuggle in a
+    # verification bypass. This proves the load-bearing invariant: a POISONED cache entry (the RIGHT
+    # key/filename -- version + SHA-256 -- but WRONG bytes) is REFUSED on restore by the SAME
+    # Test-PinnedFileHash pin gate a fresh download passes through. A genuine tamper via the cache is,
+    # to the verifier, indistinguishable from a tampered download: FAIL CLOSED -- non-zero exit, NO
+    # unverified install, no vendored module, no .ok marker. "It came from our cache" is NOT a trust
+    # signal; the pin is. Network-free and deterministic: the cache HIT path never reaches the Gallery
+    # (and the hash-mismatch stderr -- distinct from a download failure -- proves it was the PIN, not
+    # a blocked network, that refused it). Adversarial control: drop the verify on the cache path
+    # (install the cached bytes unconditionally) and this goes RED.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        $script:C_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+
+        # Run a script under pwsh with an explicit data root + extra env; capture exit code, stdout,
+        # and stderr separately (mirrors the 000024 Invoke-CaptureU pattern; pwsh is on PATH on every
+        # CI leg -- the other BeforeAll blocks already vendor via & pwsh).
+        function Invoke-CaptureC {
+            param([string]$ScriptPath, [string]$DataRoot, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+            Add-ProcessArguments $psi @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath)
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $outT = $p.StandardOutput.ReadToEndAsync()
+            $errT = $p.StandardError.ReadToEndAsync()
+            if (-not $p.WaitForExit(60000)) { try { $p.Kill($true) } catch { }; return @{ ExitCode = -999; Out = ''; Err = 'timeout' } }
+            [void]$outT.Wait(2000); [void]$errT.Wait(2000)
+            return @{ ExitCode = $p.ExitCode; Out = $outT.Result; Err = $errT.Result }
+        }
+
+        # Read the LIVE pin (single source) so the poisoned file lands at the EXACT cache filename
+        # ensure-pssa.ps1 looks up -- version + SHA-256 -- proving the verify (not a name miss) refuses it.
+        $ensureSrc = Get-Content -LiteralPath (Join-Path $script:C_ScriptsDir 'ensure-pssa.ps1') -Raw
+        $script:C_Version = ([regex]'\$PssaVersion\s*=\s*''([^'']+)''').Match($ensureSrc).Groups[1].Value
+        $script:C_Sha = ([regex]'\$PssaSha256\s*=\s*''([0-9A-Fa-f]{64})''').Match($ensureSrc).Groups[1].Value
+
+        $mk = {
+            param($tag)
+            $d = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000049-' + $tag + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+            return $d
+        }
+        # Fresh data root (no .ok marker -> the fast-path no-op is skipped and Method 1 runs).
+        $script:C_DataRoot = & $mk 'data'
+        # A cache dir holding a POISONED .nupkg at the RIGHT version+sha filename but WRONG bytes.
+        $script:C_CacheDir = & $mk 'cache'
+        $script:C_PoisonName = 'PSScriptAnalyzer-' + $script:C_Version + '-' + $script:C_Sha + '.nupkg'
+        $script:C_PoisonPath = Join-Path $script:C_CacheDir $script:C_PoisonName
+        [System.IO.File]::WriteAllText($script:C_PoisonPath, 'POISONED-not-the-pinned-nupkg-bytes-000049', (New-Object System.Text.ASCIIEncoding))
+
+        $script:C_Result = Invoke-CaptureC -ScriptPath (Join-Path $script:C_ScriptsDir 'ensure-pssa.ps1') `
+            -DataRoot $script:C_DataRoot -ExtraEnv @{ POWERSHELL_LSP_PSSA_CACHE = $script:C_CacheDir }
+        $script:C_Modules = Join-Path $script:C_DataRoot 'modules'
+    }
+
+    It 'refuses the poisoned cache: non-zero exit + a hash-mismatch integrity message on stderr' {
+        $script:C_Result.ExitCode | Should -Not -Be 0
+        $script:C_Result.Err | Should -Match 'integrity check failed \(hash mismatch\); refusing unverified package'
+    }
+    It 'does NOT install the unverified bytes: no vendored PSScriptAnalyzer manifest, no .ok marker' {
+        $manifest = Get-ChildItem -LiteralPath $script:C_Modules -Recurse -Filter 'PSScriptAnalyzer.psd1' -File -ErrorAction SilentlyContinue
+        @($manifest).Count | Should -Be 0
+        @(Get-ChildItem -LiteralPath $script:C_Modules -Filter '.pssa-*.ok' -Force -ErrorAction SilentlyContinue).Count | Should -Be 0
+    }
+    It 'it was the PIN that refused it: the poison sat at the exact version+sha cache key (a HIT, not a name miss)' {
+        (Test-Path -LiteralPath $script:C_PoisonPath) | Should -BeTrue
+        $script:C_PoisonName | Should -Match ([regex]::Escape($script:C_Version))
+        $script:C_PoisonName | Should -Match ([regex]::Escape($script:C_Sha))
+    }
+}
