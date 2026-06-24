@@ -48,7 +48,12 @@ existing honest `unavailable` surface.
   closed** -- the unverified bundle is refused, any prior working bundle is left intact, the
   session surfaces the existing honest `unavailable` banner, and the hook still exits 0 (editing
   is never broken). PSScriptAnalyzer now acquires via the **verified `.nupkg` download first**,
-  falling back to `Save-Module` only on a download failure (never on a hash mismatch).
+  falling back to `Save-Module` only on a download failure (never on a hash mismatch). The Gallery
+  download is hardened for CI egress (dispatch 000047): an explicit User-Agent, a bounded 3-try
+  retry so a transient PowerShell Gallery / CDN 403 self-recovers, and registration of the default
+  PSGallery repository when it is absent so the `Save-Module` fallback is reachable. The pin stays
+  load-bearing -- the retry re-attempts the download only, and a hash mismatch still fails closed
+  without any retry or fallback.
 - **Measured diagnostic-correctness proof (Gap A).** The 000040 corpus is filled to 16
   known-good and 18 known-bad cases spanning every rule the default ruleset surfaces, with a
   **measured 0% false-positive rate and 100% true-positive coverage** under the default config,
