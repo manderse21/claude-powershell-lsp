@@ -596,6 +596,16 @@ CHANGELOG-sourced notes, a CycloneDX SBOM, and a build-provenance attestation. S
 [docs/RELEASING.md](docs/RELEASING.md) for how to trigger a release, what it validates, what it
 produces, and the manual fallback.
 
+## Contributing and development
+
+Contributions are welcome. Start with **[CONTRIBUTING.md](./CONTRIBUTING.md)** (prerequisites, how
+to run the suite, the test story), **[ARCHITECTURE.md](./ARCHITECTURE.md)** (how a diagnostic flows
+from edit to banner), and **[DEV_NOTES.md](./DEV_NOTES.md)** (the quirks that bite -- ASCII
+discipline, the 5.1 traps, the pipe-first daemon, the tool-derived corpus). Found a false positive?
+The [report-a-false-positive form](./.github/ISSUE_TEMPLATE/false_positive_report.yml) feeds it
+straight into the correctness corpus. The single-maintainer bus factor and the GPLv3 continuity path
+are stated honestly in **[CONTINUITY.md](./CONTINUITY.md)**.
+
 ## License
 
 [GPL-3.0-or-later](https://spdx.org/licenses/GPL-3.0-or-later.html) (GPLv3). See [LICENSE](./LICENSE).

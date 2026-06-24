@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (report privately)
+    url: https://github.com/manderse21/claude-powershell-lsp/security/advisories/new
+    about: Do NOT file security issues publicly. Report privately via GitHub security advisories. See SECURITY.md.
+  - name: Troubleshooting and the preflight doctor
+    url: https://github.com/manderse21/claude-powershell-lsp/blob/main/README.md#troubleshooting
+    about: Before filing, check the README Troubleshooting section and run the preflight doctor (scripts/doctor.ps1).
