@@ -29,6 +29,75 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.18.0] - 2026-06-26
+
+MINOR: **supply-chain signing -- the release tag itself is now cryptographically signed** (dispatch
+000064). The gated release pipeline now cuts a **keyless gitsign-signed tag** -- a Sigstore signature
+made with a Fulcio certificate from the runner's ambient GitHub OIDC identity and logged in the public
+Rekor transparency log -- in place of the previous unsigned annotated tag. That is the genuine net-new
+trust surface, and it drops into the exact post-gate tag-cut step. **Tool behavior is byte-for-byte
+unchanged from v1.17.0**: this is a CI-workflow + documentation change only -- nothing under
+`scripts/`; the daemon, hooks, diagnostics surface, acquisition path, and pinned hashes are identical.
+The 000027 contract drift-guard stays green: **no new `userConfig` knob and no new status token**. Like
+the build-provenance attestation, the tag signature only proves out on the first real release (the
+server-issued OIDC token); see [docs/RELEASING.md](./docs/RELEASING.md).
+
+### Added
+
+- **Keyless gitsign-signed release tags.** The pipeline cuts the release tag with `git tag -s` using
+  gitsign as git's x509 signing program, authenticating via the runner's ambient GitHub OIDC identity
+  -- **keyless: no stored key, no secret, no widened permission** (it reuses the `id-token: write`
+  already present for provenance). WHEN the tag is cut is unchanged -- only on a merged +
+  all-legs-green + version-matched commit, after Gates 1-4 -- the tag now simply carries a Sigstore
+  signature, logged in Rekor.
+- **A user-facing verify path for the signature.** TRUST.md, README, and docs/RELEASING.md document how
+  to verify a gitsign-signed tag (`gitsign verify` with the workflow's certificate identity and the
+  GitHub OIDC issuer) alongside the existing `gh attestation verify` for the source-archive provenance
+  -- honest that this needs gitsign-aware tooling: a plain `git verify-tag` checks only cryptographic
+  integrity and Rekor existence, not signer identity.
+
+### Changed
+
+- **Trust docs corrected to the real signing posture.** TRUST.md, README, and CONTINUITY no longer say
+  "signing pending / not signed." They state the truth: release tags are gitsign-signed (keyless,
+  Rekor-logged); the source archive carries the existing SLSA build provenance; **Authenticode is
+  deliberately NOT pursued** -- a git-cloned plugin is not a Windows `.exe` / installer, so Windows
+  publisher-trust is moot -- and **SignPath Foundation is declined / adoption-gated**. The docs are
+  explicit about what the signature does NOT cover: the `/plugin` clone-based install path (Claude Code
+  copies source from git, not the release archive; that path's integrity rests on the signed tag +
+  commit), and the gitsign verification-tooling requirement. CONTINUITY's SignPath certificate-custody
+  governance item is retired -- keyless means there is no certificate to hold. No security audit is
+  claimed.
+
+### Not done (recorded, not built)
+
+- **cosign over the source archive -- judged redundant.** The existing `actions/attest-build-provenance`
+  already covers the archive with a Sigstore-backed SLSA provenance -- a STRONGER claim than a bare
+  signature, since it attests who built the artifact, from what source, via what workflow. A `cosign
+  sign-blob` over the same bytes would be a weaker, largely redundant signature; its only edge
+  (Rekor-direct verification) the provenance bundle already provides. Adding it would be surface without
+  a real gain, so it was deliberately not built. The net-new signature is the tag, which nothing
+  previously signed.
+- **Authenticode / Windows publisher signing -- deliberately not pursued** (above), not omitted. The
+  paid like-for-like, Azure Trusted Signing, is gated on a qualifying US / CA legal entity; not pursued
+  today.
+
+### Notes
+
+- **Correction to the v1.17.0 release notes.** The shipped 1.17.0 entry credits dispatch 000064 with a
+  "Live Sigstore build-provenance attestation" and calls 1.17.0 the project's "first verifiable Sigstore
+  build-provenance attestation." That framing is mistaken, and is corrected here rather than by
+  rewriting the dated 1.17.0 entry (shipped history stands): the **build-provenance attestation has been
+  live since v1.13.0** (dispatch 000042), so it was neither new in 1.17.0 nor 000064's deliverable.
+  000064's actual deliverable is the **keyless gitsign-signed git tag**, which did not ship in 1.17.0.
+  **v1.18.0 is the first release whose git tag itself is cryptographically signed** (keyless
+  gitsign/Sigstore: a Fulcio certificate via GitHub OIDC, Rekor-logged). The 1.17.0 tag, like every tag
+  before it, is an unsigned annotated tag.
+- **The MINOR is the additive trust surface, not a runtime change.** A verifiable signature on the
+  release tag plus the user-facing verify path is a new backward-compatible capability; as with the
+  build-provenance attestation, it is produced by the server-issued OIDC token and proves out on the
+  first real release cut after this change. No plugin runtime or diagnostics behavior changed.
+
 ## [1.17.0] - 2026-06-26
 
 MINOR: **release-pipeline completion and live supply-chain provenance** (dispatches 000063,
