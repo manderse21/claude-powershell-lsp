@@ -228,18 +228,45 @@ jobs:
             powershell-lsp-${{ steps.resolve.outputs.version }}.tar.gz
             powershell-lsp-${{ steps.resolve.outputs.version }}.cdx.json
 
-      - name: Cut and push the tag FROM the pipeline (on the validated commit)
+      - name: Install gitsign (keyless tag signing, pinned)
         if: ${{ !inputs.dry_run }}
         shell: bash
+        run: |
+          set -euo pipefail
+          # gitsign signs the release tag with the runner's ambient GitHub OIDC identity --
+          # keyless: no stored key, no secret. The certificate is issued by Fulcio and the
+          # signature is logged in the public Rekor transparency log. Pinned to a release tag
+          # (consistent with the @v-pinned actions above), built from source with the Go
+          # toolchain preinstalled on the runner.
+          go install github.com/sigstore/gitsign@v0.16.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Cut and push the gitsign-signed tag FROM the pipeline (keyless, on the validated commit)
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          # Keyless Sigstore signing via the runner's GitHub Actions OIDC identity. This REUSES the
+          # id-token: write already granted above for build provenance -- no new permission and no
+          # secret. github-actions selects the ambient-OIDC token flow (no browser, no key); the
+          # certificate comes from Fulcio and the signature is logged in the public Rekor log.
+          GITSIGN_TOKEN_PROVIDER: github-actions
+          GITSIGN_FULCIO_URL: https://fulcio.sigstore.dev
+          GITSIGN_REKOR_URL: https://rekor.sigstore.dev
         run: |
           set -euo pipefail
           TAG="${{ steps.resolve.outputs.tag }}"
           TARGET="${{ steps.resolve.outputs.target }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "powershell-lsp $TAG" "$TARGET"
+          # Use gitsign as git's x509 signing program, then cut a SIGNED (-s) annotated tag. WHEN
+          # the tag is cut is unchanged -- still only here, after Gates 1-4 -- but it now carries a
+          # keyless Sigstore signature. (A plain `git verify-tag` needs gitsign to understand this
+          # x509/Sigstore signature; see docs/RELEASING.md for the verify path.)
+          git config gpg.x509.program gitsign
+          git config gpg.format x509
+          git tag -s "$TAG" -m "powershell-lsp $TAG" "$TARGET"
           git push origin "refs/tags/$TAG"
-          echo "Tagged $TARGET as $TAG and pushed."
+          echo "Cut gitsign-signed tag $TAG on $TARGET (keyless via GitHub OIDC, Rekor-logged) and pushed."
 
       - name: Create the GitHub Release (CHANGELOG notes + SBOM + provenance-attested archive)
         if: ${{ !inputs.dry_run }}
