@@ -147,9 +147,31 @@ jobs:
             exit 1
           fi
           RUN_ID="$(echo "$RUNS" | jq -r 'sort_by(.run_number) | last | .id')"
-          RUN_STATUS="$(echo "$RUNS" | jq -r 'sort_by(.run_number) | last | .status')"
-          RUN_CONCLUSION="$(echo "$RUNS" | jq -r 'sort_by(.run_number) | last | .conclusion')"
-          echo "Latest push-CI run for $TARGET: id=$RUN_ID status=$RUN_STATUS conclusion=$RUN_CONCLUSION"
+          # Gate 4 must WAIT for the push-CI run to reach a terminal state, THEN judge it --
+          # never snapshot-and-refuse. A run still in_progress (not failed, just unfinished)
+          # is the common case right after a merge; reading status ONCE there refuses a run
+          # about to pass (the proven 28033459348 race). Poll the resolved run by id until it
+          # is completed, bounded by a generous timeout sized off the four-leg matrix wall-clock
+          # (the windows legs are the long pole); a timeout refuses HONESTLY (never a false green).
+          CI_WAIT_TIMEOUT_SECONDS=1800   # 30 min: generous headroom over the matrix wall-clock
+          CI_WAIT_POLL_SECONDS=20        # re-query the run every 20s until it reaches a terminal state
+          DEADLINE=$(( SECONDS + CI_WAIT_TIMEOUT_SECONDS ))
+          RUN_STATUS=""
+          RUN_CONCLUSION=""
+          while : ; do
+            RUN_JSON="$(gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID" 2>/dev/null || true)"
+            RUN_STATUS="$(printf '%s' "$RUN_JSON" | jq -r '.status // empty' 2>/dev/null || true)"
+            RUN_CONCLUSION="$(printf '%s' "$RUN_JSON" | jq -r '.conclusion // empty' 2>/dev/null || true)"
+            echo "push-CI run $RUN_ID for $TARGET: status=${RUN_STATUS:-unknown} conclusion=${RUN_CONCLUSION:-null} (waiting up to ${CI_WAIT_TIMEOUT_SECONDS}s for a terminal state)"
+            if [[ "$RUN_STATUS" == "completed" ]]; then
+              break
+            fi
+            if (( SECONDS >= DEADLINE )); then
+              echo "::error::push-CI run $RUN_ID for $TARGET did not conclude within ${CI_WAIT_TIMEOUT_SECONDS}s (last status=${RUN_STATUS:-unknown}) -- refusing (honest timeout, NOT a pass)."
+              exit 1
+            fi
+            sleep "$CI_WAIT_POLL_SECONDS"
+          done
           if [[ "$RUN_STATUS" != "completed" || "$RUN_CONCLUSION" != "success" ]]; then
             echo "::error::CI run $RUN_ID for $TARGET is not completed+success (status=$RUN_STATUS conclusion=$RUN_CONCLUSION) -- refusing."
             exit 1
