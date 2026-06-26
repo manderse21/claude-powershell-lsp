@@ -2,10 +2,13 @@
 
 This document is the approve-or-deny reference for a security team evaluating
 `powershell-lsp` on a managed Windows estate. It states plainly what the tool runs,
-what it downloads, how those downloads are integrity-checked, what is signed (and what
-is not yet), how to allow-list it under application-control policy, and the governance
-risks of adopting it. It claims nothing that is not true: the plugin is **not code-signed**
-and has **not had a third-party security audit** (see [Honest limits](#honest-limits)).
+what it downloads, how those downloads are integrity-checked, what is signed (release
+tags, via keyless Sigstore) and what is deliberately not (Authenticode), how to
+allow-list it under application-control policy, and the governance risks of adopting it.
+It claims nothing that is not true: the plugin's installed scripts are **not
+Authenticode-signed** -- a deliberate choice for a git-distributed plugin (see [Signing
+posture](#signing-posture)) -- and the project has **not had a third-party security audit**
+(see [Honest limits](#honest-limits)).
 
 The authoritative sources are the code and the release artifacts, not this prose. Where a
 claim is mechanically enforced, the enforcing file is named.
@@ -103,24 +106,64 @@ green on every CI leg, version-locked) and cuts the tag itself on the validated 
 See [docs/RELEASING.md](./docs/RELEASING.md). This document does not modify any of those
 generators; it points at what they already produce.
 
-## Code-signing status -- PENDING (the plugin is NOT signed)
+## Signing posture
 
-**The plugin's PowerShell scripts are not Authenticode-signed today.** An application to
-the **SignPath Foundation** (which provides free code-signing certificates for open-source
-projects) has been **submitted**; until it is approved and the signing pipeline is built,
-**no release is signed**. Plan for an unsigned tool:
+The project uses **Sigstore** -- keyless, transparency-logged supply-chain signing -- for its
+release artifacts, and **deliberately does not pursue Authenticode** publisher signing of the
+scripts. Those are two different things, and this section is precise about which is which, so you
+can approve on what is true rather than on a badge.
 
-- On a machine that requires signed scripts (GPO `AllSigned`, or WDAC/AppLocker that
-  trusts only signed code), the plugin will be **blocked** until you allow-list it by path
-  or hash (below) or until signing ships. The plugin will tell you which control blocked it
-  (see [Honest degradation](#honest-degradation-the-l3-behavior)); it will not try to get
-  around it.
-- Do **not** rely on a signature that does not yet exist. When signing ships it will be
-  announced in the CHANGELOG and this section updated.
+**What IS signed.** Every tag the release pipeline cuts is a **keyless gitsign-signed tag**: the
+GitHub Actions runner authenticates with its **ambient GitHub OIDC identity**, Sigstore's Fulcio
+issues a short-lived certificate, the tag is signed with `git tag -s`, and the signature is logged
+in the public **Rekor** transparency log. There is **no long-lived signing key and no stored
+secret** -- the same keyless model as the build-provenance attestation, which already covers the
+source archive and SBOM (see
+[Supply-chain artifacts](#supply-chain-artifacts-sbom--build-provenance)). That provenance
+attestation is itself Sigstore-backed (Fulcio + Rekor), so the source archive is already covered by
+a claim STRONGER than a bare signature -- it attests who built the artifact, from what source, via
+which workflow. A separate `cosign` signature over that same archive was evaluated and **judged
+redundant** (its only edge, Rekor-direct verification, the provenance bundle already provides), so
+it was not added.
+
+**What is NOT signed, and what the tag signature does NOT cover:**
+
+- **The installed scripts are not Authenticode-signed**, by design. `powershell-lsp` is distributed
+  as a **git-cloned plugin**, not a Windows `.exe` or installer, so a Windows Trusted-Root publisher
+  signature is **moot** for this distribution model. On a machine that requires signed scripts (GPO
+  `AllSigned`, or WDAC / AppLocker that trusts only signed code), the plugin is **blocked** until you
+  allow-list it by path or hash (below); it tells you which control blocked it (see
+  [Honest degradation](#honest-degradation-the-l3-behavior)) and never tries to get around it.
+- **The `/plugin` clone-based install path is not covered by an artifact signature.** Claude Code
+  installs the plugin by copying its **source from git**, not by downloading the signed release
+  archive, so neither the tag signature nor the archive provenance attests *that* path directly. Its
+  integrity rests on the **signed tag and the commit it points at** -- verify the tag (below), then
+  trust the tree it names.
+- **A gitsign signature needs gitsign-aware tooling to verify.** A plain `git verify-tag` without
+  gitsign cannot interpret the x509 / Sigstore signature, and even with gitsign configured it checks
+  only cryptographic integrity and Rekor existence -- **not who signed**. Use `gitsign verify` with
+  the expected identity (below) for a real verification.
+
+**Verify a release tag's signature** (needs [gitsign](https://github.com/sigstore/gitsign)
+installed; fetch tags first with `git fetch --tags`):
+
+```
+gitsign verify \
+  --certificate-identity="https://github.com/manderse21/claude-powershell-lsp/.github/workflows/powershell-lsp-release.yml@refs/heads/main" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  v<version>
+```
+
+This confirms the tag was signed by **this repository's release workflow** running under GitHub's
+OIDC issuer, with the signature anchored in Rekor. (The **SignPath Foundation** free-OSS Authenticode
+path was **declined / adoption-gated**; the keyless Sigstore approach above is the comparable the
+project adopted instead. The paid like-for-like, **Azure Trusted Signing**, is gated on a qualifying
+US / CA legal entity and is not pursued today.)
 
 ## Allow-listing on managed Windows
 
-Because the plugin is unsigned today, allow-list it by **path** or by **hash**. Its two
+Because the plugin's scripts are deliberately not Authenticode-signed (see
+[Signing posture](#signing-posture)), allow-list it by **path** or by **hash**. Its two
 trust surfaces are (1) the plugin scripts in the Claude Code plugin cache
 (`%USERPROFILE%\.claude\plugins\...\powershell-lsp\`, exposed to the scripts as
 `CLAUDE_PLUGIN_ROOT`) and (2) the downloaded components under `CLAUDE_PLUGIN_DATA`
@@ -235,7 +278,8 @@ only**; it never bypasses, disables, or modifies any control. See README
 
 ## Honest limits
 
-- **NOT code-signed** (SignPath application pending; see above).
+- **Scripts are NOT Authenticode-signed** -- a deliberate choice for a git-distributed plugin;
+  release tags ARE keyless-signed via Sigstore (see [Signing posture](#signing-posture)).
 - **NOT independently security-audited.** No third party has performed a security audit of
   this code. Treat this document and the open source as the basis for your own review.
 - Claims in this document are verifiable against the named files and the published release

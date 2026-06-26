@@ -5,7 +5,7 @@
 [![license: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](./LICENSE)
 [![SBOM: CycloneDX](https://img.shields.io/badge/SBOM-CycloneDX-brightgreen)](./TRUST.md#supply-chain-artifacts-sbom--build-provenance)
 [![corpus false-positive rate: 0%](https://img.shields.io/badge/corpus%20false--positive%20rate-0%25-brightgreen)](#diagnostic-correctness-corpus)
-[![code signing: pending](https://img.shields.io/badge/code%20signing-pending-orange)](./TRUST.md#code-signing-status----pending-the-plugin-is-not-signed)
+[![release signing: Sigstore](https://img.shields.io/badge/release%20signing-Sigstore%20keyless-brightgreen)](./TRUST.md#signing-posture)
 
 **Per-file PowerShell diagnostics inside [Claude Code](https://claude.com/claude-code)**,
 powered by [PowerShell Editor Services](https://github.com/PowerShell/PowerShellEditorServices)
@@ -579,20 +579,22 @@ confirm the bytes on your machine match what this repo ships:
 
 Every release cut by the **gated release pipeline** also ships a **CycloneDX SBOM**
 (`powershell-lsp-<version>.cdx.json`, generated straight from those same pins, so it cannot disagree
-with what the tool downloads) and a **SLSA build-provenance attestation** over the source archive --
-see **[Verifying a release](#verifying-a-release)** below for the two-step download-and-verify and
-what a pass proves.
+with what the tool downloads) and a **SLSA build-provenance attestation** over the source archive,
+and the release **tag itself is keyless-signed via Sigstore** (gitsign) -- see
+**[Verifying a release](#verifying-a-release)** below for the download-and-verify steps, the tag
+signature check, and what a pass proves.
 
-The full pinned-hash table, the SBOM / provenance details, the honest signing status (**pending --
-not signed**, not independently audited), and paste-ready WDAC / AppLocker allow-list rules are all
-in **[TRUST.md](./TRUST.md)**.
+The full pinned-hash table, the SBOM / provenance details, the **signing posture** (release tags
+keyless-signed via Sigstore; scripts deliberately not Authenticode-signed; not independently
+audited), and paste-ready WDAC / AppLocker allow-list rules are all in **[TRUST.md](./TRUST.md)**.
 
 ## Verifying a release
 
 Every tagged release is built by this repository's own gated release pipeline, which publishes a
-**SLSA v1.0 build-provenance attestation** over the release archive -- signed through GitHub's OIDC
-identity, with **no maintainer-held key** in the trust path. Anyone can verify a release in two
-steps. First download the archive for the version you want:
+**SLSA v1.0 build-provenance attestation** over the release archive and a **keyless gitsign (Sigstore)
+signature on the release tag** -- both made through GitHub's OIDC identity, with **no maintainer-held
+key** in the trust path. Anyone can verify a release. First download the archive for the version you
+want:
 
 ```
 gh release download v1.17.0 --repo manderse21/claude-powershell-lsp --pattern "*.tar.gz"
@@ -615,12 +617,31 @@ A successful verification proves that exact archive:
 - **carries SLSA v1.0 build provenance** -- a provenance predicate issued through GitHub's OIDC,
   verifiable with no key the maintainer holds or could leak.
 
+You can also verify the **signature on the release tag** itself. This needs
+[gitsign](https://github.com/sigstore/gitsign) installed -- a plain `git verify-tag` cannot read the
+x509 / Sigstore signature, and gitsign must be given the expected identity (it checks WHO signed, not
+merely that a signature exists). Fetch the tags, then verify against this repository's release
+workflow identity and the GitHub OIDC issuer:
+
+```
+git fetch --tags
+gitsign verify \
+  --certificate-identity="https://github.com/manderse21/claude-powershell-lsp/.github/workflows/powershell-lsp-release.yml@refs/heads/main" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  v1.17.0
+```
+
+A successful verify confirms the tag was signed by THIS repository's release workflow under GitHub's
+OIDC issuer, anchored in the public Rekor transparency log.
+
 **What this does and does not prove.** This is build provenance and integrity over the downloadable
 **source archive** -- it proves the release came untampered from this repository's pipeline. It is
 **not** Windows Authenticode and does **not** assert a Windows verified-publisher identity (no
-SmartScreen reputation, no signed-script trust). That is the correct boundary for a plugin
-distributed by `git clone`: the integrity of the normal `/plugin` install path rests on the **git
-commit and tag** themselves, not on the archive. See
+SmartScreen reputation, no signed-script trust) -- Authenticode signing of the scripts is deliberately
+not pursued for a git-distributed plugin. That is the correct boundary for a plugin distributed by
+`git clone`: the integrity of the normal `/plugin` install path rests on the **git commit and the
+keyless-signed tag** themselves, not on the archive -- verify the tag as shown above, then trust the
+tree it names. See
 **[SECURITY.md](./SECURITY.md#verifying-release-integrity)** for the full step-by-step walkthrough
 (with sample output), and
 **[docs/RELEASING.md](docs/RELEASING.md#provenance-what-it-covers-and-what-it-does-not)** for exactly
@@ -631,9 +652,9 @@ what the provenance covers.
 Evaluating this plugin for a managed or locked-down Windows estate? **[TRUST.md](./TRUST.md)**
 is the approve-or-deny reference: what runs locally and what never leaves the machine (no
 network service, no telemetry), the **pinned + SHA-256-verified** downloads, the CycloneDX
-SBOM and build-provenance attestation, the honest signing status (**pending -- not signed**,
-no security audit), paste-ready WDAC / AppLocker allow-list rules, and the governance /
-bus-factor posture.
+SBOM and build-provenance attestation, the **signing posture** (release tags keyless-signed via
+Sigstore; scripts deliberately not Authenticode-signed; no security audit), paste-ready WDAC /
+AppLocker allow-list rules, and the governance / bus-factor posture.
 
 Found a vulnerability? See **[SECURITY.md](./SECURITY.md)** -- report it privately via GitHub
 private vulnerability reporting (never a public issue); it covers supported versions, scope,
@@ -644,8 +665,8 @@ and what to expect.
 Releases are cut by a **maintainer-triggered, gate-validated pipeline** -- never automatically
 on push or merge. The pipeline refuses to tag unless the target commit is merged to `main`,
 green on every CI leg, and version-matched (`plugin.json` agrees with `marketplace.json`), then
-cuts the tag itself on that validated commit and publishes a GitHub Release with
-CHANGELOG-sourced notes, a CycloneDX SBOM, and a build-provenance attestation. See
+cuts the **keyless gitsign-signed** tag itself on that validated commit and publishes a GitHub
+Release with CHANGELOG-sourced notes, a CycloneDX SBOM, and a build-provenance attestation. See
 [docs/RELEASING.md](docs/RELEASING.md) for how to trigger a release, what it validates, what it
 produces, and the manual fallback.
 

@@ -102,11 +102,20 @@ structurally impossible.
 ## What the pipeline produces
 
 When all checks pass, the release pipeline produces several artifacts from the validated
-commit: an annotated git tag; a GitHub release whose body is taken verbatim from the
+commit: a **keyless gitsign-signed** annotated git tag (a Sigstore signature made with the
+runner's ambient GitHub OIDC identity -- a Fulcio certificate, logged in the public Rekor
+transparency log, no stored key); a GitHub release whose body is taken verbatim from the
 changelog entry for that version, without retyping; a source archive that contains the exact
 released tree; a Software Bill of Materials in CycloneDX format listing the plugin together
 with its two pinned downloaded dependencies, PowerShell Editor Services and PSScriptAnalyzer;
 and a build-provenance attestation that covers the archive and the bill of materials.
+
+A `cosign` signature over the source archive was evaluated and deliberately not added: the
+build-provenance attestation already covers that archive with a Sigstore-backed claim STRONGER
+than a bare signature (it attests who built it, from what source, via which workflow), so a
+separate signature over the same bytes would be redundant. The net-new signature is on the tag,
+which nothing previously signed. Authenticode / Windows publisher signing of the scripts is
+deliberately out of scope for a git-distributed plugin (see TRUST.md, "Signing posture").
 
 The two release helpers are single-sourced and locally runnable:
 
@@ -147,6 +156,23 @@ gh attestation verify powershell-lsp-1.13.0.tar.gz --repo manderse21/claude-powe
 The same steps, written for a consumer evaluating a download, are in
 [SECURITY.md](../SECURITY.md#verifying-release-integrity).
 
+The release **tag** carries its own keyless Sigstore signature. Verifying it needs
+[gitsign](https://github.com/sigstore/gitsign) (a plain `git verify-tag` cannot read the x509 /
+Sigstore signature, and even with gitsign configured it checks only cryptographic integrity and
+Rekor existence -- not signer identity, so it is not a full verification). Fetch the tags, then
+verify against the expected workflow identity and the GitHub OIDC issuer:
+
+```
+git fetch --tags
+gitsign verify \
+  --certificate-identity="https://github.com/manderse21/claude-powershell-lsp/.github/workflows/powershell-lsp-release.yml@refs/heads/main" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  v1.13.0
+```
+
+A successful verify confirms the tag was signed by THIS repository's release workflow under
+GitHub's OIDC issuer, anchored in Rekor.
+
 ## Provenance: what it covers (and what it does not)
 
 The plugin is normally installed when Claude Code copies the plugin's source from git, not by
@@ -158,19 +184,29 @@ it does and does not cover, rather than to imply the attestation guards an insta
 does not.
 
 This is the honest boundary for a git-distributed plugin: there is no compiled binary to
-attest, so the meaningful artifact is the packaged source archive. Stronger guarantees over
-the install path proper (Authenticode-signed scripts) are a separate, approval-gated track
-and are not part of this pipeline.
+attest, so the meaningful artifact is the packaged source archive. The clone-based install path
+itself is anchored not by an artifact signature but by the **keyless gitsign-signed tag** and the
+commit it points at -- verify the tag (as shown above), then trust the tree it names. Authenticode
+signing of the scripts proper -- the only thing that would give the install path a Windows
+publisher signature -- is **deliberately not pursued** for this distribution model: a git-cloned
+plugin is not a Windows `.exe` or installer, so publisher trust is moot, and the honest posture is
+to allow-list by path or hash (see TRUST.md) rather than imply a trust the project does not have.
 
 ## What only proves out on the first real release
 
 Most of the pipeline's logic is exercised before any release happens: changelog extraction,
-bill-of-materials generation, version checks, and the query that confirms the main CI was
-green were all tested directly. What can only be confirmed on the first real release is the
-end-to-end run on GitHub's own servers: the attestation step, which needs a server-issued
-identity token, and the actual tag push and release creation. The first real release is
-therefore the first complete exercise of the pipeline, and a manual fallback is documented
-below in case it misbehaves.
+bill-of-materials generation, version checks, the query that confirms the main CI was green, and
+the signing-step configuration (asserted as workflow text in `tests/PowerShellLsp.Release.Tests.ps1`)
+were all tested directly. What can only be confirmed on the first real release is the end-to-end run
+on GitHub's own servers -- everything that needs a **server-issued OIDC identity token**: the
+build-provenance attestation, the **keyless gitsign signature on the tag**, and the actual tag push
+and release creation. These keyless steps cannot be exercised locally or in a dry run; they prove out
+only when GitHub issues the runner a real OIDC token on a genuine release.
+
+So the first real release is the first complete exercise of the pipeline, and it retires three
+residuals at once: the provenance attestation (dispatch 000042), the Gate-4 wait-for-CI path
+(dispatch 000063), and the keyless tag signature (dispatch 000064) all have their first live proof
+on that one run. A manual fallback is documented below in case it misbehaves.
 
 ## Manual fallback (if the pipeline misbehaves)
 
@@ -196,15 +232,20 @@ but the gates must then be checked MANUALLY, in the same order, before tagging:
    gh release create v1.13.0 --title "powershell-lsp v1.13.0" --notes-file notes.md powershell-lsp-1.13.0.cdx.json
    ```
 
-The manual path **cannot** produce the build-provenance attestation -- that requires the
-workflow's server-issued identity. Prefer the pipeline for a fully attested release; use the
-manual fallback only to unblock, and re-run the pipeline path on the next release.
+The manual path **cannot** produce the keyless artifacts that need the workflow's server-issued
+OIDC identity: neither the build-provenance attestation nor the gitsign signature on the tag. A
+hand-cut `git tag -a` (above) is therefore **unsigned**, and a manual release carries no
+provenance. Prefer the pipeline for a fully attested, signed release; use the manual fallback only
+to unblock, and re-run the pipeline path on the next release.
 
 ## Least-privilege and secrets
 
 The workflow's default permission is `contents: read`; the release job is granted exactly
 what it needs and nothing more: `contents: write` (cut the tag, create the release, upload
 assets), `actions: read` (read the CI run status for the green gate), and `id-token: write` +
-`attestations: write` (the build-provenance attestation). It uses only the ephemeral,
-job-scoped `GITHUB_TOKEN` -- no personal access token and no repository secret is referenced
-or exposed.
+`attestations: write` (the build-provenance attestation). The **keyless gitsign tag signing reuses
+that same `id-token: write`** -- it is the runner's ambient GitHub OIDC identity that gitsign
+presents to Fulcio -- so signing added **no new permission and no new secret**. (Keyless is the
+whole point: if signing ever appeared to need a stored signing key, that would be the rejected
+key-custody path, not this one.) The workflow uses only the ephemeral, job-scoped `GITHUB_TOKEN`
+-- no personal access token and no repository secret is referenced or exposed.
