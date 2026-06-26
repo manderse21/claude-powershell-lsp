@@ -144,6 +144,9 @@ gh attestation verify powershell-lsp-1.13.0.tar.gz --repo manderse21/claude-powe
 #   powershell-lsp-1.13.0.cdx.json   (CycloneDX 1.5 JSON)
 ```
 
+The same steps, written for a consumer evaluating a download, are in
+[SECURITY.md](../SECURITY.md#verifying-release-integrity).
+
 ## Provenance: what it covers (and what it does not)
 
 The plugin is normally installed when Claude Code copies the plugin's source from git, not by
