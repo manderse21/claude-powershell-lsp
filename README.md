@@ -579,16 +579,52 @@ confirm the bytes on your machine match what this repo ships:
 
 Every release cut by the **gated release pipeline** also ships a **CycloneDX SBOM**
 (`powershell-lsp-<version>.cdx.json`, generated straight from those same pins, so it cannot disagree
-with what the tool downloads) and a **SLSA build-provenance attestation** over the source archive.
-Verify the provenance of a downloaded release artifact with the GitHub CLI:
-
-```
-gh attestation verify powershell-lsp-<version>.tar.gz --repo manderse21/claude-powershell-lsp
-```
+with what the tool downloads) and a **SLSA build-provenance attestation** over the source archive --
+see **[Verifying a release](#verifying-a-release)** below for the two-step download-and-verify and
+what a pass proves.
 
 The full pinned-hash table, the SBOM / provenance details, the honest signing status (**pending --
 not signed**, not independently audited), and paste-ready WDAC / AppLocker allow-list rules are all
 in **[TRUST.md](./TRUST.md)**.
+
+## Verifying a release
+
+Every tagged release is built by this repository's own gated release pipeline, which publishes a
+**SLSA v1.0 build-provenance attestation** over the release archive -- signed through GitHub's OIDC
+identity, with **no maintainer-held key** in the trust path. Anyone can verify a release in two
+steps. First download the archive for the version you want:
+
+```
+gh release download v1.17.0 --repo manderse21/claude-powershell-lsp --pattern "*.tar.gz"
+```
+
+Then verify its provenance (a pass prints `Verification succeeded!` and exits 0; any mismatch fails
+non-zero):
+
+```
+gh attestation verify powershell-lsp-1.17.0.tar.gz --repo manderse21/claude-powershell-lsp
+```
+
+A successful verification proves that exact archive:
+
+- **was built by this repository's release workflow**
+  (`.github/workflows/powershell-lsp-release.yml`) -- workflow identity, not another repo or a
+  hand-run command;
+- **is byte-identical to what was signed** -- its SHA-256 digest matches the attestation, so a
+  single tampered byte fails the check;
+- **carries SLSA v1.0 build provenance** -- a provenance predicate issued through GitHub's OIDC,
+  verifiable with no key the maintainer holds or could leak.
+
+**What this does and does not prove.** This is build provenance and integrity over the downloadable
+**source archive** -- it proves the release came untampered from this repository's pipeline. It is
+**not** Windows Authenticode and does **not** assert a Windows verified-publisher identity (no
+SmartScreen reputation, no signed-script trust). That is the correct boundary for a plugin
+distributed by `git clone`: the integrity of the normal `/plugin` install path rests on the **git
+commit and tag** themselves, not on the archive. See
+**[SECURITY.md](./SECURITY.md#verifying-release-integrity)** for the full step-by-step walkthrough
+(with sample output), and
+**[docs/RELEASING.md](docs/RELEASING.md#provenance-what-it-covers-and-what-it-does-not)** for exactly
+what the provenance covers.
 
 ## Security and trust
 

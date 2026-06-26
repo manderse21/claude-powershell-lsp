@@ -70,3 +70,58 @@ When you report, please include as much as you can:
   unless you ask to remain anonymous.
 - **No bug bounty:** there is no monetary reward program. Credit and our thanks are what we
   can offer.
+
+## Verifying release integrity
+
+Every tagged release is produced by this repository's gated release pipeline, which publishes a
+**SLSA v1.0 build-provenance attestation** over the release archive. The attestation is signed
+through GitHub's OIDC identity (Sigstore keyless) -- **there is no maintainer-held signing key** to
+leak or compromise -- so anyone can verify a release independently with the
+[GitHub CLI](https://cli.github.com/).
+
+**1. Download the release archive** for the version you want:
+
+```
+gh release download v1.17.0 --repo manderse21/claude-powershell-lsp --pattern "*.tar.gz"
+```
+
+**2. Verify its build provenance:**
+
+```
+gh attestation verify powershell-lsp-1.17.0.tar.gz --repo manderse21/claude-powershell-lsp
+```
+
+`gh` fetches the attestation from GitHub, checks the archive's SHA-256 digest against it, and
+enforces that the signing identity is this repository's release workflow. On success it prints
+`Verification succeeded!` and exits 0; on any mismatch -- a tampered byte, the wrong repository, an
+unexpected workflow -- it exits non-zero and the archive should not be trusted.
+
+The real v1.17.0 verification confirmed the following (abbreviated and illustrative -- not gh's
+exact console layout):
+
+```
+Verification succeeded!
+  predicate type   https://slsa.dev/provenance/v1
+  OIDC issuer      https://token.actions.githubusercontent.com
+  build / signer   .github/workflows/powershell-lsp-release.yml@refs/heads/main
+  subject digest   sha256:bfb2ba3f0c165f6c538682dc605e3ae5433f88a7eeef7950957805b4ee23c339
+```
+
+A successful check proves the archive **was built by this repository's release workflow** (workflow
+identity), is **byte-identical to what was signed** (the digest match), and carries **SLSA v1.0
+build provenance** -- with no maintainer-held key anywhere in the trust path.
+
+### What the attestation does and does not cover
+
+This is **build provenance and integrity over the downloadable source archive**: it proves the
+published `powershell-lsp-<version>.tar.gz` came untampered from this repository's pipeline. It is
+deliberately **not** Windows Authenticode and does **not** assert a Windows verified-publisher
+identity -- there is no SmartScreen reputation and no signed-script guarantee, because the plugin is
+distributed by `git clone`, not as a signed Windows binary. The integrity of the normal `/plugin`
+install path therefore rests on the **git commit and tag** themselves, not on the archive
+attestation.
+
+This boundary is intentional and matches the maintainer-facing release process. See
+[docs/RELEASING.md](./docs/RELEASING.md#provenance-what-it-covers-and-what-it-does-not) for what the
+provenance covers, and [TRUST.md](./TRUST.md#supply-chain-artifacts-sbom--build-provenance) for the
+SBOM, the pinned dependency hashes, and the current (**pending -- not signed**) code-signing status.
