@@ -12,6 +12,18 @@ Goal (Mike, confirmed): an **open tool** that is **excellent** and **findable** 
 product, NOT adoption-chasing. Platform bet: **the Claude Code LSP-registration fix lands** -- keep
 the LSP machinery ready.
 
+**Targeted reconciliation -- 2026-06-26 (dispatch 000065).** Three roadmap claims went stale this
+session and are corrected to ground truth (verified against `git log` + `CHANGELOG.md`) wherever they
+appear below: (1) release automation and the performance-benchmark guard already SHIPPED inside
+bundles -- 000042 / v1.13.0 (gated release pipeline + SBOM + provenance + RELEASING) and 000040 /
+v1.12.0 (benchmark harness) -- so they are NOT open work, and their re-issues 000053 / 000054 were
+abandoned as redundant; (2) the signing track is re-stated from "SignPath approval pending" to the
+real state (SignPath Foundation DECLINED the application, adoption-gated; Sigstore via GitHub Artifact
+Attestations chosen and already wired; paid Authenticode evaluated and declined); (3) 000063 merged,
+so the release pipeline now COMPLETES (Gate 4 waits for push-CI) -- the structural unblock for the
+first real release and therefore the first attestation. The rest of this doc still reflects its
+2026-06-22 baseline and may lag `main` (now past v1.11.0); a fuller refresh is separate work.
+
 ---
 
 ## Operating posture: how "rapid" actually works here
@@ -21,10 +33,11 @@ a fast project rebuilds the "lots of code, zero validation" problem. The fast la
 sharpens the posture rather than retiring it:
 
 1. **Go-fast NOW (engineering, not data-gated).** The original fast lane (reliability, install,
-   security-block honesty) is SHIPPED. What remains buildable-today are the DELIVERY-QUALITY gaps a
-   reviewer flags (Section 3): test-reliability hardening, release-engineering hardening, a
-   performance-benchmark guard, an SBOM, a diagnostic-correctness harness. These are engineering, not
-   data-gated -- they go now.
+   security-block honesty) is SHIPPED. Release-engineering hardening, the performance-benchmark guard,
+   and the SBOM have ALSO since shipped (000042 / v1.13.0; 000040 / v1.12.0 -- see the reconciliation
+   note above). What remains buildable-today are the other DELIVERY-QUALITY gaps a reviewer flags
+   (Section 3): test-reliability hardening and a diagnostic-correctness harness. These are engineering,
+   not data-gated -- they go now.
 
 2. **Paced by the dogfood log (cannot compress -- and that is a feature).** Diagnostic QUALITY comes
    from REAL usage surfacing REAL false-positives. The capture engine is now LIVE (000039, v1.10.0);
@@ -34,9 +47,12 @@ sharpens the posture rather than retiring it:
    log holds real entries.
 
 3. **Approval-gated / time-gated (the enterprise-trust track's slower pieces).** SignPath Foundation
-   application is SUBMITTED (the long pole, now off the critical path -- the signing dispatch queues
-   on approval). SAC/SmartScreen reputation accrues per-hash over downloads + time -- earned, not
-   bought.
+   DECLINED the application (2026-06-21, adoption-gated -- insufficient external visibility signals,
+   explicitly NOT a quality judgment; re-apply welcome once there is public traction), so Authenticode
+   script signing is gated on PUBLIC ADOPTION, not a pending approval. The chosen build-trust path --
+   Sigstore via GitHub Artifact Attestations -- is keyless and ALREADY WIRED in the release pipeline
+   (Section 5, L1/L5); it goes live on the first real release with no approval clock. SAC/SmartScreen
+   reputation still accrues per-hash over downloads + time -- earned, not bought.
 
 4. **Platform-gated (not ours to accelerate at any speed).** No dispatch velocity moves Anthropic's
    backlog. The native LSP triad (hover / go-to-def / find-references) is built and verified,
@@ -46,8 +62,9 @@ sharpens the posture rather than retiring it:
 design, and ripeness-per-track is the proven model -- lean into it. What stays a HUMAN gate, because
 that is where recent value came from: **accept (what gets built), merge, F2 verified flip, tag, and
 the product / positioning / sequencing calls.** Going fast means a fast gated path, not a removed
-gate. (Note: the gated path itself has a reliability bug -- see Gap C / the tag-before-CI-green
-pattern in Section 3 -- which is now a near-term fix.)
+gate. (Note: the tag-before-CI-green reliability bug that pattern named is now FIXED -- the gated
+release pipeline plus 000063's Gate-4 wait make tag-before-green structurally impossible; see Gap C
+and Section 4.)
 
 ---
 
@@ -95,12 +112,14 @@ The powershell-lsp build queue is now EMPTY of fast-lane feature work -- by desi
 That is the correct state after clearing the engineering lane, and it changes what "next" means:
 
 - There is no obvious "next feature to launch." The next moves are (a) the delivery-quality gaps a
-  reviewer flags (Section 3, buildable now), and (b) the reactive engines (dogfood log accumulating,
-  SignPath approval pending).
-- The two long-pole engines are both RUNNING: the dogfood log captures from today, and the SignPath
-  application is in. Their clocks started; the work they gate (quality wave, signing) is downstream.
+  reviewer flags (Section 3, buildable now), and (b) the dogfood log accumulating toward the quality
+  wave.
+- The dogfood log is the one long-pole engine still RUNNING on a clock: it captures from today, and the
+  quality wave it gates is downstream. The signing track's clock changed shape this session -- SignPath
+  declined (adoption-gated), and Sigstore attestations are already wired to go live on the first real
+  release (Section 5) -- so it is no longer an approval-pending engine but an adoption-gated one.
 - So the near-term sequence (Section 4) is front-loaded with the buildable-now gap-closers, with the
-  dogfood- and approval-gated work sequenced behind its engine.
+  dogfood-gated work sequenced behind its engine.
 
 ---
 
@@ -138,34 +157,39 @@ yet demonstrate. The honesty machinery is 5-star; the diagnostic quality is, tod
    correctness, not just honesty-when-absent. The corpus harness is buildable NOW, even before the
    dogfood log ranks the defaults; it is the proof framework the quality wave fills.
 
-**Gap B -- Enterprise TRUST is designed, not DELIVERED.** The core audience is developers on
+**Gap B -- Enterprise TRUST is designed, now partly DELIVERED.** The core audience is developers on
 locked-down Windows estates -- exactly the shops with the strictest approval processes. Today the
-tool is unsigned, has no SBOM, no release provenance/attestation, no enterprise approval document
+tool is unsigned in the Authenticode sense, has no enterprise approval document
 (TRUST.md), no fail-closed hash-verification on the executables it DOWNLOADS, and an unverified
 security-disclosure posture. L3 (honest degradation) ships, which is real and valuable -- but for a
 tool that downloads binaries and runs code, the trust SURFACE is the literal approve/ban line in a
-managed shop, and it is currently a plan rather than a product. The current roadmap's L2/L4/L5 cover
-signing and hash-verify but DO NOT mention an SBOM or SLSA-style build provenance, which a 2026
-enterprise due-diligence review now treats as table stakes for any tool that pulls executables.
--> ACTION: move the trust track from "planned" to "delivered" once SignPath lands, AND add two items
-   the current roadmap lacks -- a published **SBOM** (CycloneDX or SPDX) and **release provenance /
-   build attestation** (SLSA-style). Plus verify SECURITY.md is a real disclosure policy (contact,
+managed shop, and it is currently a plan rather than a product. An SBOM and SLSA-style build
+provenance -- which a 2026 enterprise due-diligence review treats as table stakes for any tool that
+pulls executables -- are now DELIVERED: a CycloneDX SBOM plus an `actions/attest-build-provenance`
+attestation over the release archive + SBOM, shipped in the gated release pipeline (000042 / v1.13.0).
+-> ACTION: the **SBOM** and **release provenance / build attestation** (SLSA-style) are now SHIPPED
+   (000042 / v1.13.0); the remaining trust-track delivery is gated on adoption now, not on SignPath
+   (declined -- see Section 5, L1). Plus verify SECURITY.md is a real disclosure policy (contact,
    scope, response expectation), not a stub.
 
 **Gap C -- Release engineering has avoidable reliability smells.** Three concrete tells a reviewer
 auditing the repo would catch: (1) a flaky test just shipped a RED main CI run on a release (the
-v1.11.0 `N_PssaDir` Linux flake); (2) tags have been applied BEFORE the push-event CI confirms green,
-repeatedly (the tag-after-verify rule exists precisely because this keeps happening, and this round
-it caught a genuine red run); (3) there is no performance benchmark or regression guard, and the
-version bump is a manual lockstep step. World-class tools have boring, bulletproof release pipelines
+v1.11.0 `N_PssaDir` Linux flake); (2) tags had been applied BEFORE the push-event CI confirms green,
+repeatedly -- now CLOSED: the gated release pipeline (000042) cuts the tag from the runner only after
+Gate 4 confirms a green push-CI run, and 000063 made Gate 4 WAIT for that run to conclude, so
+tag-before-green is structurally impossible; (3) the performance benchmark + regression guard is now
+SHIPPED (000040 / v1.12.0), and the version bump stays a manual step but is now guarded by the
+pipeline's version-lockstep gate (000042). World-class tools have boring, bulletproof release pipelines
 where none of this is possible. None of these threaten a FEATURE -- but collectively they read as
 process immaturity, and a reviewer cloning the repo to a red main badge docks stars on sight.
 -> ACTION: a **test-reliability hardening** pass (fix the `N_PssaDir` Linux flake, sweep for other
    non-determinism, make the suite deterministic across all four legs); **CI-gated tagging / release
-   automation** (a release workflow that tags only on green push-CI, generates notes, attaches the
-   provenance from Gap B) so tag-before-green is structurally impossible; and a **performance
-   benchmark harness** (measure cold-start and warm-path edit-to-diagnostic latency, guard against
-   regression in CI, and publish the numbers -- a claim a reviewer wants measured and defended).
+   automation** -- SHIPPED as the gated release pipeline (000042 / v1.13.0): a `workflow_dispatch`
+   release that tags only on green push-CI, generates notes from the CHANGELOG, and attaches the
+   SBOM + provenance from Gap B, so tag-before-green is structurally impossible; and a **performance
+   benchmark harness** -- SHIPPED (000040 / v1.12.0): measures cold-start and warm-path
+   edit-to-diagnostic latency, guards regression in CI on all four legs, and publishes the numbers in
+   the README.
 
 **Gap D -- "LSP" in the name vs. single-file reality.** The tool calls itself an LSP and targets
 enterprise, but analysis today is edit-scoped and effectively single-file. A real language server
@@ -191,9 +215,11 @@ will note the single point of failure even when the code is excellent.
 ### The one-line review
 
 "World-class honest-failure ARCHITECTURE attached to a linter whose diagnostic QUALITY is still
-unproven and whose enterprise TRUST surface is designed but not yet delivered. Prove the diagnostics
-are correct, deliver the signing/SBOM/approval surface, and harden the release pipeline, and this is
-a 5-star enterprise tool. The path is clear and the engineering pedigree says it will get there."
+unproven and whose enterprise TRUST surface is now partly delivered. The release pipeline is hardened
+(gated, now completing) and the SBOM + build provenance ship with it, with signing reframed to keyless
+Sigstore attestations (live on the first real release). Prove the diagnostics are correct and finish
+the rest of the trust surface (the adoption-gated reputation arc), and this is a 5-star enterprise
+tool. The path is clear and the engineering pedigree says it will get there."
 
 ---
 
@@ -210,17 +236,33 @@ its engine. CC decides implementation within each; Mike gates accept / merge / F
    and make all four legs deterministic. FIRST -- a red main on a release is the most visible ding,
    and it is freshly evidenced. (Bounded, mechanical -- a reasonable DeepSeek R1-class candidate.)
 
-2. **CI-gated tagging + release automation** (Gap C.2). A release workflow that tags ONLY on a green
-   push-event run, generates release notes from the CHANGELOG, and is the single place a version is
-   cut -- making tag-before-green structurally impossible and retiring the manual-lockstep fragility.
+2. **CI-gated tagging + release automation** (Gap C.2) -- SHIPPED: 000042 / v1.13.0. The
+   `workflow_dispatch`-only gated release pipeline (`.github/workflows/powershell-lsp-release.yml`)
+   cuts the tag from the runner ONLY after four gates pass -- merged-to-main, tag-free,
+   version-lockstep, and all four push-CI legs green by name -- with CHANGELOG-driven release notes,
+   making tag-before-green structurally impossible and retiring the manual-lockstep fragility. 000063
+   later made Gate 4 WAIT for the push-CI run to conclude before judging, so the pipeline now completes
+   instead of snapshot-refusing. (000053 was the redundant re-issue of this item -- abandoned.)
 
-3. **Performance benchmark harness** (Gap C.3). Measure cold-start and warm-path edit-to-diagnostic
-   latency as a repeatable harness; guard against regression in CI; publish the numbers in the README.
-   A measured, defended latency claim is a 5-star differentiator.
+3. **Performance benchmark harness** (Gap C.3) -- SHIPPED: 000040 / v1.12.0.
+   `tests/PowerShellLsp.Benchmark.Tests.ps1` + `tests/bench/` measure cold-start and warm-path
+   edit-to-diagnostic latency over the real daemon/pipe path, emit `benchmark-results.json`, guard each
+   median against a CI regression threshold on all four legs, and the numbers are published in the
+   README. (000054 was the redundant re-issue of this item -- abandoned.)
 
-4. **SBOM + release provenance** (Gap B, new). Generate a CycloneDX/SPDX SBOM and SLSA-style build
-   provenance, attached to releases (folds into item 2's release workflow). Closes the supply-chain
-   due-diligence gap for a tool that downloads executables.
+4. **SBOM + release provenance** (Gap B) -- SHIPPED: 000042 / v1.13.0 (same bundle as item 2). A
+   single-sourced CycloneDX SBOM over the plugin + its two pinned downloaded deps, plus an
+   `actions/attest-build-provenance@v2` (SLSA-style) attestation over the release archive + SBOM,
+   attached to the release behind all four gates. Closes the supply-chain due-diligence gap for a tool
+   that downloads executables.
+
+> **Bundle-expansion lesson (000065 reconciliation).** Items 2, 3, and 4 were tracked here as separate
+> "buildable now" work, but they had already SHIPPED as COMPONENTS of two bundles: 000040 (v1.12.0)
+> delivered the benchmark harness alongside the correctness corpus, and 000042 (v1.13.0) delivered the
+> release pipeline alongside the SBOM + provenance. The launch board mis-tracked the bundle components
+> as future work, which produced the stale "open" status the re-issues 000053 / 000054 then chased
+> before being abandoned as redundant. Re-planning must EXPAND a bundle into its components before
+> assuming a gap.
 
 5. **Diagnostic-correctness corpus harness** (Gap A, the proof framework). A curated known-good /
    known-bad PowerShell corpus with asserted expected findings, run in CI. Buildable now as the
@@ -236,10 +278,14 @@ its engine. CC decides implementation within each; Mike gates accept / merge / F
 8. **False-positive reduction** -- driven by the annotated log. After 7.
 9. **Fix-suggestion quality** -- raise the ceiling on the corrections the tool surfaces.
 
-**Approval-gated (trust track, behind SignPath):**
+**Trust track (adoption-gated; the chosen attestation path is already wired):**
 
-10. **Authenticode signing pipeline** (L1) -- once SignPath approves; wired into the release workflow
-    from item 2 so every release is signed by construction.
+10. **Script signing** (L1) -- REFRAMED. SignPath Foundation declined the application (adoption-gated,
+    2026-06-21; see Section 5, L1), so Authenticode script signing is parked until public traction.
+    The build-trust path actually wired is Sigstore via GitHub Artifact Attestations
+    (`actions/attest-build-provenance@v2`), keyless and already in the release pipeline (item 4) -- it
+    goes live, with NO approval clock, on the first real release. (Paid Authenticode was evaluated and
+    declined -- see Section 5, L1.)
 11. **Hash-verify the downloaded deps** (L2) -- fail-closed verification of PSES/PSSA against pinned
     known-good hashes.
 12. **TRUST.md / enterprise-readiness doc** (L4) -- the approve-or-deny document: what it executes
@@ -267,11 +313,31 @@ is blocked" into "my security team approved it."
 
 **The six layers -- current state:**
 
-- **L1 -- Sign the plugin's PowerShell scripts (foundational).** Authenticode-sign every shipped
-  `.ps1`/`.psm1`/`.psd1` via **SignPath Foundation (FREE for qualifying OSS)**. Clears ExecutionPolicy
-  outright; prerequisite for WDAC/CLM trust. STATUS: application SUBMITTED; the signing dispatch
-  queues on approval and wires into the release workflow (Section 4, item 2). (Alt: Azure Trusted
-  Signing ~$9.99/mo. Do NOT buy EV -- it lost SmartScreen instant-bypass in 2024.)
+- **L1 -- Build-trust signing: Sigstore attestations now, Authenticode parked (REFRAMED 2026-06-26).**
+  The chosen path is **Sigstore via GitHub Artifact Attestations** (`actions/attest-build-provenance@v2`),
+  ALREADY WIRED in the release pipeline (000042): the release job carries `id-token: write` +
+  `attestations: write`, and the attest step signs the release archive + SBOM behind all four gates. It
+  is **keyless / workflow-identity** signing -- no account, no key custody, no email, nothing personal
+  published -- and it goes live on the first real release (now unblocked by 000063). Honest boundary:
+  this is **build-provenance + integrity** (verifiable with `gh attestation verify`), NOT Windows
+  Authenticode -- it does not assert a verified-publisher identity, which is CORRECT here because the
+  plugin is distributed by **git clone**, so SmartScreen / SAC never fires on a downloaded installer.
+  - **SignPath Foundation (Authenticode for OSS) -- DECLINED, adoption-gated.** The free-for-OSS
+    application was DECLINED on 2026-06-21 for insufficient external visibility signals (GitHub
+    stars/forks, independent references, sustained engagement) -- explicitly NOT a quality judgment,
+    with an open invitation to re-apply once the project has public traction. So Authenticode script
+    signing (which would clear ExecutionPolicy outright and underpin WDAC/CLM trust) is gated on PUBLIC
+    ADOPTION -- a months-long, different-kind-of-work clock -- not on a pending approval.
+  - **Paid Authenticode -- EVALUATED and DECLINED as wrong for this distribution model.** SSL.com EV
+    Sole Proprietor (~$359/yr cert) + eSigner cloud (Tier 1 ~$900/yr) ~= $1,259/yr buys a Windows
+    verified-publisher badge the git-clone model never surfaces to users. Azure Trusted Signing
+    (~$120/yr, the closest paid like-for-like to SignPath) is INELIGIBLE -- it requires a US/Canada
+    organization with 3+ years of verifiable history. Recorded so the option is not re-litigated from
+    scratch next session.
+  - **Follow-on (named, NOT built here).** A short "Verifying a release" doc (README / SECURITY.md)
+    showing the `gh attestation verify` command -- best authored AFTER the first real release so it can
+    show real verify output -- plus optional **gitsign on tags** (Sigstore-signed git tags) as a
+    recorded nice-to-have.
 - **L2 -- Pin + hash-verify the downloaded deps.** Fail-closed verification against pinned known-good
   hashes so a tampered bundle is refused, not run. STATUS: planned (Section 4, item 11).
 - **L3 -- Honest degradation on a security-control block.** DELIVERED (000038, v1.9.0). Names
@@ -280,18 +346,22 @@ is blocked" into "my security team approved it."
 - **L4 -- Enterprise-readiness doc (TRUST.md).** What gets the tool APPROVED. STATUS: planned
   (Section 4, item 12); now also carries the Gap E governance posture and the Gap B SBOM/provenance
   pointers.
-- **L5 -- Signed, provenance-tracked releases.** Signing + SBOM + SLSA provenance wired into the
-  release pipeline so every release is trustworthy by construction. STATUS: the release-automation
-  scaffold (Section 4, item 2/4) is built first, then signing (item 10) drops into it.
+- **L5 -- Signed, provenance-tracked releases.** SBOM + SLSA-style build provenance + a keyless
+  Sigstore attestation are wired into the gated release pipeline so every release is trustworthy by
+  construction. STATUS: BUILT (000042 / v1.13.0); 000063's Gate-4 wait made the pipeline complete, so
+  it goes live on the first real release. Authenticode script signing would layer on later if SignPath
+  re-opens on adoption (L1).
 - **L6 -- The reputation play (longer arc).** SAC/SmartScreen reputation accrues per file hash over
   downloads + time; signing starts the clock, adoption advances it. Longer-term: winget (signed,
   reputable channel) and, if ever in scope, the Microsoft Store (Store apps bypass SAC entirely).
 
-**Honest limits (designed around, not hidden):** signing is NECESSARY but NOT SUFFICIENT for SAC --
-even signed files are blocked until reputation accrues, so the posture is sign + build-reputation +
-degrade-honestly + document, not "sign and done." Constrained Language Mode is the hardest enterprise
-case. And this is a strong engineering plan, not a security AUDIT -- a serious public posture benefits
-from a real third-party security review (itself a 5-star signal), and the cert/identity choices have
+**Honest limits (designed around, not hidden):** Authenticode signing (if SignPath ever re-opens on
+adoption) is NECESSARY but NOT SUFFICIENT for SAC -- even signed files are blocked until reputation
+accrues -- and note SAC/SmartScreen does not even fire on the git-clone install path (L1), so today's
+posture is attest (Sigstore) + degrade-honestly + document, with Authenticode + reputation deferred to
+adoption, not "sign and done." Constrained Language Mode is the hardest enterprise case. And this is a
+strong engineering plan, not a security AUDIT -- a serious public posture benefits from a real
+third-party security review (itself a 5-star signal), and the cert/identity choices have
 organizational implications.
 
 ---
@@ -301,10 +371,11 @@ organizational implications.
 - **Write now:** the upstream good-citizen posts (PSES PR #2299, the LSP-registration refutation).
   Build reputation while the tool gets excellent. `gh`-only, no CC.
 - **Amplify later (gated on the quality wave + enterprise-trust):** the "here is my tool" write-up +
-  community push + polished, signed, enterprise-documented listing. One first impression -- spend it
-  after it is earned (excellent AND trustworthy on managed Windows). A measured-latency claim
-  (Section 4, item 3) and a real correctness corpus (item 5) are exactly the evidence that makes the
-  write-up credible rather than promotional.
+  community push + polished, attestation-backed, enterprise-documented listing. One first impression --
+  spend it after it is earned (excellent AND trustworthy on managed Windows). The measured-latency
+  claim (now shipped -- Section 4, item 3) and a real correctness corpus (item 5) are exactly the
+  evidence that makes the write-up credible rather than promotional. (Note: the public traction this
+  amplification builds is also what could re-open the SignPath Authenticode path -- Section 5, L1.)
 
 ---
 
@@ -340,8 +411,9 @@ which matter.
 
 ## 8. Parked / conditional / cleanup
 
-- **Tags:** caught up through v1.11.0. The CI-gated release workflow (Section 4, item 2) retires the
-  manual-tag fragility going forward.
+- **Tags:** the gated release workflow (Section 4, item 2 -- 000042, with 000063's Gate-4 wait) is
+  BUILT and now completes, retiring the manual-tag fragility; the first real release will be the first
+  cut through the pipeline (and the first Sigstore attestation).
 - **Option B -- cross-repo plugin-code `dispatch ship --pr`.** 000130 fixed the HUB's own ship; making
   `dispatch ship --pr` target the external plugin repo was deferred, so every plugin-code PR is still
   hand-rolled (worktree off origin/main -> commit -> push -> `gh pr create`). A recurring tax now
@@ -366,25 +438,30 @@ which matter.
 ```
 DONE:  launch-readiness + licensing (GPLv3) + hub ship-tax + reliability + install-friction
         + security-block honesty (L3) + dogfood capture engine        [v1.7.0 -> v1.11.0, all verified]
-NOW:   the dogfood log accumulates  ||  the SignPath application is in        [both engines RUNNING]
-GAPS-NOW (buildable, Section 3):
-        test-reliability hardening -> CI-gated tagging + release automation
-        -> perf-benchmark guard -> SBOM + provenance -> correctness-corpus harness
+        + release pipeline + SBOM + provenance (000042/v1.13.0) + benchmark guard (000040/v1.12.0)
+        + Gate-4 wait so the pipeline completes (000063)              [release-engineering SHIPPED]
+NOW:   the dogfood log accumulates                                    [the one engine still RUNNING]
+GAPS-NOW (buildable, Section 3):  test-reliability hardening -> correctness-corpus harness
+        [release automation + perf-benchmark + SBOM/provenance SHIPPED -- see Section 4 notes]
 PACED: dogfood annotation tool -> rule curation -> false-positives -> fix-quality   [follows the log]
-TRUST: L3 done -> [SignPath approval] -> sign scripts -> hash-verify -> TRUST.md (+ SBOM, governance)
+TRUST: L3 done + SBOM/provenance/Sigstore-attestation WIRED (live on first release, 000042+000063)
+        -> hash-verify -> TRUST.md ;  Authenticode parked (SignPath declined, adoption-gated)
         -> reputation/winget                                  [ADOPTION-CRITICAL: managed-Windows core]
 LATER: amplify/promote (once excellent AND trusted, with measured latency + a correctness corpus)
 HORIZON: => platform fixes registration => LSP triad flips on (MILESTONE) => further LSP surface
          => project-aware analysis (elevated) => rule profiles / custom rules / fix-apply   [validated]
 ```
 
-**One-liner:** world-class honest-failure ARCHITECTURE is already here; the road to a 5-star
-ENTERPRISE verdict is three deliveries -- prove the diagnostics are CORRECT (dogfood + a correctness
-corpus), deliver the TRUST surface (sign + SBOM + TRUST.md + hash-verify), and harden the RELEASE
-pipeline (kill the flakes, gate the tags, benchmark the latency). The engineering pedigree says it
-gets there; this roadmap is the sequence.
+**One-liner:** world-class honest-failure ARCHITECTURE is already here; the RELEASE pipeline is now
+hardened (gated tags + the benchmark guard shipped, and 000063 made it complete) with the SBOM + build
+provenance + a keyless Sigstore attestation riding it. The road to a 5-star ENTERPRISE verdict is now
+two deliveries -- prove the diagnostics are CORRECT (dogfood + a correctness corpus) and finish the
+rest of the TRUST surface (hash-verify, TRUST.md, and the adoption-gated reputation/Authenticode arc).
+The engineering pedigree says it gets there; this roadmap is the sequence.
 
-**The two engines to keep fed RIGHT NOW:** the **dogfood log** (running -- the quality wave is only as
-good as the data it accumulates) and the **SignPath application** (in -- the trust track's long pole).
-Everything else sequences behind one of those two clocks or is buildable today in the gap-closing
-lane.
+**The engine to keep fed RIGHT NOW:** the **dogfood log** (running -- the quality wave is only as good
+as the data it accumulates). The trust track's old second engine, the SignPath application, is RETIRED
+as an approval clock (declined -- Section 5, L1): build-trust is already wired via Sigstore
+attestations (live on the first real release), and Authenticode now waits on PUBLIC ADOPTION, the same
+clock that gates amplification. Everything else sequences behind the dogfood clock or is buildable
+today in the gap-closing lane.
