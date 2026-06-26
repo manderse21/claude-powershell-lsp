@@ -29,6 +29,55 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.17.0] - 2026-06-26
+
+MINOR: **release-pipeline completion and live supply-chain provenance** (dispatches 000063,
+000064, 000065). The gated release pipeline introduced in v1.13.0 now **completes a real release
+reliably**, and every release now carries a **verifiable Sigstore build-provenance attestation**
+(`gh attestation verify`). This is a CI/release-machinery and docs release: **nothing under
+`scripts/` changes**, the plugin runtime and the diagnostics surface are **byte-for-byte unchanged
+from v1.16.0** (the daemon, hooks, diagnostics output, status taxonomy, and pinned dependency
+hashes are identical), and the 000027 contract drift-guard stays green -- **no new `userConfig`
+knob and no new status token**. No plugin runtime or diagnostics behavior changed in 1.17.0; the
+headline is trust and release mechanics, not features.
+
+### Added
+
+- **Live Sigstore build-provenance attestation on every release (dispatch 000064).** The release
+  job's provenance wiring is finalized: `actions/attest-build-provenance@v2` produces a **keyless**
+  (GitHub OIDC -- no maintainer-held signing key) build-provenance attestation over the release
+  source archive and the CycloneDX SBOM, **live starting with this release** and verifiable with
+  `gh attestation verify`. The honest boundary from v1.13.0 still holds: the attestation covers the
+  downloadable source archive, not the `/plugin` clone-based install path, whose integrity rests on
+  the git commit and tag themselves.
+
+### Fixed
+
+- **Release pipeline Gate 4 waits for the push-CI run to conclude before judging (dispatch 000063).**
+  Gate 4 (the green-CI precondition) previously took a single snapshot of the push-event CI run for
+  the target commit and refused unless it was already `success` -- so triggering a release before
+  that run reached a terminal state failed the gate even when CI went green moments later
+  (snapshot-and-refuse, the common case right after a merge). Gate 4 now **waits for the run to
+  reach a terminal state** (bounded poll, honest timeout) before judging its per-leg result, so the
+  gated pipeline completes a real release instead of racing CI. The gate's safety is unchanged: a
+  non-success run, any non-success required leg, or a wait timeout still refuses (never a false
+  green).
+
+### Docs
+
+- **Roadmap ground-truth reconciliation (dispatch 000065).** Docs-only: corrected stale `ROADMAP`
+  entries (release-engineering status, the signing posture, and the 000063 Gate-4 item) to match
+  what actually shipped. No code, workflow, or behavior change.
+
+### Notes
+
+- **First release produced by the pipeline.** v1.13.0 was the last release cut the old manual way;
+  1.17.0 is the first produced by the gated pipeline end-to-end -- the proof-out the v1.13.0 notes
+  anticipated -- and it carries the project's first verifiable Sigstore build-provenance
+  attestation. The MINOR is warranted by that additive, consumer-facing trust surface (a verifiable
+  attestation on every release), consistent with shipping additive CI/trust capability as MINOR
+  (v1.12.0, v1.13.0) -- not by any runtime change.
+
 ## [1.16.0] - 2026-06-24
 
 MINOR: **a community-release readiness bundle** (dispatch 000048) -- five additive workstreams in
