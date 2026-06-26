@@ -148,3 +148,73 @@ Describe 'Version lockstep -- the invariant the release tag-gate re-checks (disp
         $marketV | Should -BeExactly $pluginV
     }
 }
+
+Describe 'Release workflow Gate-4 -- WAITS for CI to conclude, then judges (dispatch 000063)' {
+    # The Gate-4 fix wraps the run-status read in a bounded poll so a still-in_progress CI run
+    # is WAITED ON, not snapshot-and-refused (the proven 28033459348 timing race). The poll
+    # stays inline in the workflow's bash step (rewriting it as a tested PowerShell helper would
+    # have to rewrite the byte-for-byte-frozen REQUIRED_LEGS set + per-leg loop, which the
+    # dispatch forbids), so what the Pester suite can reach WITHOUT a network or a YAML parser is
+    # the workflow TEXT. These assert exactly what would regress silently there: the named
+    # timeout/interval, the bounded poll, every refuse path, the honest timeout, the
+    # workflow_dispatch-only trigger, and the untouched REQUIRED_LEGS. The full parse-and-execute
+    # proof is GitHub's own -- the YAML is parsed by Actions and the embedded ${{ ... }} only
+    # resolves on a runner -- demonstrated by a dry_run against a real merged+green commit
+    # (docs/RELEASING.md), not re-implemented here.
+    BeforeAll {
+        $script:ReleaseWf = Join-Path $script:PluginRoot '.github/workflows/powershell-lsp-release.yml'
+        $script:WfText    = [System.IO.File]::ReadAllText($script:ReleaseWf)
+        $script:WfLines   = $script:WfText -split "\r?\n"
+    }
+
+    It 'the release stays workflow_dispatch-only (never auto-triggers on push / pull_request)' {
+        # The 000042 governing principle: automate the mechanics, preserve Mike's decision. This
+        # fix must NOT make the release fire on a push event.
+        $script:WfText | Should -Match '(?m)^\s+workflow_dispatch:'
+        @($script:WfLines | Where-Object { $_ -match '^\s*push:\s*$' }).Count | Should -Be 0
+        @($script:WfLines | Where-Object { $_ -match '^\s*pull_request:\s*$' }).Count | Should -Be 0
+    }
+
+    It 'Gate 4 names a positive timeout and poll interval, and the timeout is a real wait' {
+        $script:WfText | Should -Match 'CI_WAIT_TIMEOUT_SECONDS=\d+'
+        $script:WfText | Should -Match 'CI_WAIT_POLL_SECONDS=\d+'
+        $to = [int]([regex]::Match($script:WfText, 'CI_WAIT_TIMEOUT_SECONDS=(\d+)').Groups[1].Value)
+        $iv = [int]([regex]::Match($script:WfText, 'CI_WAIT_POLL_SECONDS=(\d+)').Groups[1].Value)
+        $iv | Should -BeGreaterThan 0
+        $to | Should -BeGreaterThan $iv   # a generous bound, not a disguised one-shot
+    }
+
+    It 'Gate 4 polls the resolved run by id, bounded by an enforced deadline' {
+        # Re-queries the SAME run id, and enforces the timeout so a stuck CI run cannot hang the
+        # release job indefinitely.
+        $script:WfText | Should -Match 'actions/runs/\$RUN_ID'
+        $script:WfText | Should -Match 'DEADLINE='
+        $script:WfText | Should -Match 'SECONDS >= DEADLINE'
+    }
+
+    It 'the workflow indents with spaces only (no tabs -- YAML indentation safety)' {
+        $script:WfText | Should -Not -Match "`t"
+    }
+
+    It 'every Gate-4 refuse path is intact (no-run / timeout / not-success / failed-leg) and the timeout is honest' {
+        # The fix makes the gate WAIT; it must never become permissive. All four refuses stand,
+        # and the timeout refuse reports a timeout -- it is never reported as green.
+        $script:WfText | Should -Match 'no push-event CI run found'             # no run found
+        $script:WfText | Should -Match 'did not conclude within'                # the NEW timeout refuse
+        $script:WfText | Should -Match 'is not completed\+success'              # non-success conclusion
+        $script:WfText | Should -Match "required CI leg '.+' did not succeed"   # a failed / missing leg
+        $script:WfText | Should -Match 'honest timeout, NOT a pass'             # the timeout is honest
+        # ...and the single all-green line is still the only success.
+        $script:WfText | Should -Match 'all required CI legs are green'
+    }
+
+    It 'REQUIRED_LEGS is unchanged -- the four CI matrix legs, byte-for-byte' {
+        $script:WfText | Should -Match 'REQUIRED_LEGS=\("windows-pwsh" "windows-powershell" "ubuntu-pwsh" "macos-pwsh"\)'
+    }
+
+    It 'all four gates remain present (none removed by this change)' {
+        foreach ($g in 1..4) {
+            $script:WfText | Should -Match ('Gate {0} --' -f $g)
+        }
+    }
+}

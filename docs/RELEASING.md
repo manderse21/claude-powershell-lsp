@@ -40,11 +40,14 @@ release. The exact steps and the exact checks follow below.
    green and reviewed. (Tagging is intentionally NOT done here -- the bump helper prints the
    tag command for reference but never runs it; the pipeline cuts the tag.)
 
-4. **Wait for the push CI on main to go green.** After the merge, the
+4. **(Optional) Wait for the push CI on main to go green.** After the merge, the
    [`powershell-lsp CI`](../.github/workflows/powershell-lsp-ci.yml) workflow runs on the
-   merge commit. Wait until it is **green on all four legs** (`windows-pwsh`,
-   `windows-powershell`, `ubuntu-pwsh`, `macos-pwsh`). The release pipeline will refuse to
-   tag until this is true, so there is no point triggering it earlier.
+   merge commit on all four legs (`windows-pwsh`, `windows-powershell`, `ubuntu-pwsh`,
+   `macos-pwsh`). You no longer have to hand-time the next step to the window after CI
+   finishes: Gate 4 now **waits** for this run to reach a terminal state (up to a generous
+   timeout) before it judges, so triggering the release while CI is still in progress makes the
+   release job **wait** for CI rather than refuse. Waiting here yourself is therefore optional --
+   it just lets you confirm green before you trigger.
 
 5. **Trigger the release workflow** with the version you just merged:
 
@@ -75,10 +78,18 @@ with a clear error and **tags nothing** -- the safe direction is always to refus
 - **Gate 3 -- version lockstep.** At the target commit, `plugin.json` and
   `marketplace.json` must BOTH read exactly the requested version. Any drift between the two
   manifests, or between either manifest and the requested version, is refused.
-- **Gate 4 -- CI is green on every leg.** The pipeline finds the push-event run of the CI
-  workflow for the exact target commit and requires that it completed with `success` and that
-  every required leg (`windows-pwsh`, `windows-powershell`, `ubuntu-pwsh`, `macos-pwsh`)
-  concluded `success`. No run, an incomplete run, a failed run, or a missing leg is refused.
+- **Gate 4 -- CI is green on every leg (waits for CI to finish).** The pipeline finds the
+  push-event run of the CI workflow for the exact target commit and **waits for that run to
+  reach a terminal state** -- it polls the run every 20 seconds until it is `completed`, up to a
+  generous 30-minute timeout -- and only THEN judges it: the run must have concluded `success`
+  and every required leg (`windows-pwsh`, `windows-powershell`, `ubuntu-pwsh`, `macos-pwsh`)
+  must have concluded `success`. A still-running run is **waited on, not refused**; but no run
+  found, a non-`success` conclusion, a failed or missing leg, or the timeout elapsing (CI did
+  not conclude within 30 minutes) each still refuses -- the timeout refuses **honestly** (it is
+  reported as a timeout, never as green). This wait removes the old timing race in which
+  triggering the release before CI had finished refused a run that was about to pass. (The two
+  values are set as `CI_WAIT_TIMEOUT_SECONDS` and `CI_WAIT_POLL_SECONDS` in the release
+  workflow's Gate 4 step.)
 
 Because the tag is cut by the pipeline only after all four gates pass -- never by a
 hand-typed `git tag` -- a tag on an unmerged, red, wrong-version, or wrong commit is
