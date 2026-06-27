@@ -191,6 +191,16 @@ jobs:
           done
           echo "OK: all required CI legs are green for $TARGET."
 
+      - name: "Gate 5 -- tree-vs-published parity (the marketplace-resolved manifest is not behind the release)"
+        shell: pwsh
+        run: |
+          # Build on dispatch 000042: before cutting the tag, assert the PUBLISHED version -- the
+          # .claude-plugin/plugin.json on origin/main, the default-branch tip the marketplace resolves
+          # (source "./", no ref pin) -- is NOT behind the version being released. This is the
+          # tree-vs-published divergence guard (dispatch 000076): it makes the silent drift that served
+          # a stale 1.3.0 while the tree was 1.18.x a STRUCTURAL refusal here, not a later surprise.
+          ./release/Test-PublishedParity.ps1 -TreeRef "${{ steps.resolve.outputs.target }}" -Ref origin/main
+
       # ----- All preconditions hold past this point. -----------------------------------
 
       - name: Check out the validated target commit
