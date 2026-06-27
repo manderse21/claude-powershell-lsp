@@ -218,3 +218,61 @@ Describe 'Release workflow Gate-4 -- WAITS for CI to conclude, then judges (disp
         }
     }
 }
+
+Describe 'Release workflow signing -- keyless gitsign-signed tags (dispatch 000064)' {
+    # The signing addition is POST-GATE and ADDITIVE: the tag-cut step becomes a keyless
+    # gitsign-signed `git tag -s` authenticating via the runner's ambient GitHub OIDC
+    # identity (Fulcio cert, Rekor-logged), and NOTHING else moves. Like the Gate-4 block
+    # above, the YAML only parses + executes on a real runner, so what Pester can reach
+    # without a network or a real release is the workflow TEXT. These assert exactly what
+    # would regress silently: the signed tag, the gitsign config, the keyless ambient-OIDC
+    # flow, the version pin, and that signing introduced NO secret and did NOT disturb the
+    # existing SBOM / SLSA provenance or the least-privilege permission set. The signatures
+    # themselves only prove out on the first real release (the server-issued OIDC token),
+    # documented in docs/RELEASING.md -- not faked here.
+    BeforeAll {
+        $script:ReleaseWf = Join-Path $script:PluginRoot '.github/workflows/powershell-lsp-release.yml'
+        $script:WfText    = [System.IO.File]::ReadAllText($script:ReleaseWf)
+    }
+
+    It 'cuts a SIGNED tag (git tag -s), not an unsigned annotated tag (git tag -a)' {
+        $script:WfText | Should -Match 'git tag -s "\$TAG"'
+        $script:WfText | Should -Not -Match 'git tag -a "\$TAG"'
+    }
+
+    It 'configures gitsign as git''s x509 signing program (keyless Sigstore)' {
+        $script:WfText | Should -Match 'gpg\.x509\.program gitsign'
+        $script:WfText | Should -Match 'gpg\.format x509'
+    }
+
+    It 'signs keyless via the ambient GitHub Actions OIDC token provider (no browser, no key)' {
+        $script:WfText | Should -Match 'GITSIGN_TOKEN_PROVIDER: github-actions'
+    }
+
+    It 'pins the gitsign version (no @latest float)' {
+        $script:WfText | Should -Match 'sigstore/gitsign@v\d+\.\d+\.\d+'
+        $script:WfText | Should -Not -Match 'sigstore/gitsign@latest'
+    }
+
+    It 'introduces NO repository secret -- keyless is the whole point (least-privilege)' {
+        # If signing ever appeared to need a stored key, that is the rejected key-custody path.
+        # Keyless reuses the id-token: write already granted for provenance; guard that no secret
+        # reference and no stored-key file crept in.
+        $script:WfText | Should -Not -Match '(?i)secrets\.'
+        $script:WfText | Should -Not -Match '(?i)cosign\.key'
+        $script:WfText | Should -Not -Match '(?i)user\.signingkey'
+    }
+
+    It 'leaves the existing SBOM + SLSA provenance steps byte-for-byte (signing is ADDITIVE)' {
+        $script:WfText | Should -Match 'actions/attest-build-provenance@v2'
+        $script:WfText | Should -Match 'New-PluginSbom\.ps1'
+    }
+
+    It 'keeps id-token: write as the identity permission signing reuses (not a new/widened one)' {
+        $script:WfText | Should -Match 'id-token: write'
+    }
+
+    It 'signing stays gated on !dry_run (post-gate, never a new trigger)' {
+        $script:WfText | Should -Match 'Cut and push the gitsign-signed tag'
+    }
+}

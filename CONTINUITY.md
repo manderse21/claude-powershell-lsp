@@ -27,8 +27,10 @@ Even with no maintainer activity, the shipped artifacts remain auditable and rep
 - **A gate-validated, reproducible release pipeline.** Releases are cut by a
   maintainer-triggered GitHub Actions workflow that refuses to tag unless the commit is
   merged, green on every leg, and version-locked (see [docs/RELEASING.md](./docs/RELEASING.md)).
-- **SBOM + build provenance.** Each release publishes a CycloneDX SBOM and a SLSA
-  build-provenance attestation, so a downstream consumer can verify what they have.
+- **SBOM, build provenance, and keyless-signed tags.** Each release publishes a CycloneDX SBOM
+  and a SLSA build-provenance attestation, and the release tag is keyless-signed via Sigstore
+  (Rekor-logged) -- all reproducible by a fork under its own GitHub identity, with no key to lose.
+  A downstream consumer can verify what they have (see [TRUST.md](./TRUST.md#signing-posture)).
 - **A real disclosure policy.** [SECURITY.md](./SECURITY.md) documents private
   vulnerability reporting independent of any single person's inbox.
 - **The full source and history**, under an irrevocable open-source license (below).
@@ -57,7 +59,7 @@ What a successor (or a fork) would need, and the honest current state of each:
 | **Source + history** | The public GitHub repository | Already public; a fork needs nothing from the maintainer. |
 | **Repo / marketplace ownership** | The maintainer's GitHub account (`manderse21`) | Transfer of repo admin, or a fork that publishes its own marketplace entry. |
 | **Release provenance identity** | GitHub Actions **OIDC** (ephemeral) -- there is **no long-lived signing secret** stored for provenance | Nothing to hand off; a fork's pipeline attests under its own GitHub identity. |
-| **Code-signing certificate** | **Does not exist yet** -- a SignPath Foundation application is **pending** (the plugin is **not** code-signed today; see [TRUST.md](./TRUST.md#code-signing-status----pending-the-plugin-is-not-signed)) | When/if issued, the certificate becomes a custody item; until then there is no signing key to lose or transfer. |
+| **Release signing / certificate** | Keyless **Sigstore** -- the gitsign tag signature uses the runner's ephemeral GitHub OIDC identity (a short-lived Fulcio certificate, nothing stored), exactly like the provenance above. There is **no long-lived signing certificate or key** to hold; Authenticode is deliberately not pursued (see [TRUST.md](./TRUST.md#signing-posture)). | Nothing to hand off; a fork signs under its own GitHub identity. |
 | **Dependency pins** | `scripts/ensure-pses.ps1` / `scripts/ensure-pssa.ps1` (single pin variables) | Self-contained in-repo; a successor bumps the pin and re-verifies the hash. |
 
 Because there is no signing key and no long-lived release secret today, the **only**
@@ -72,10 +74,14 @@ the maintainer to resolve:
 
 - Whether to designate a **backup repository administrator** (a second GitHub account with
   admin rights) to reduce the single-account dependency.
-- The **custody plan for the SignPath certificate** once the application is approved (who
-  holds it, where it is stored, how it is rotated).
 - Whether the marketplace listing should have a **documented fallback owner**.
 
-Until those are decided, the GPLv3 fork path above is the guaranteed continuity mechanism:
+An earlier open item -- a **custody plan for a SignPath code-signing certificate** -- is now
+**retired, not pending a decision**: the project signs releases **keyless** via Sigstore (the
+gitsign-signed tag), so no signing certificate or key exists to hold, store, or rotate, and
+Authenticode is deliberately not pursued (see [TRUST.md](./TRUST.md#signing-posture)). The keyless
+model removes the cert-custody concern entirely rather than answering it.
+
+Until the items above are decided, the GPLv3 fork path is the guaranteed continuity mechanism:
 the project can always be carried forward by the community, even if no individual handoff
 is arranged.
