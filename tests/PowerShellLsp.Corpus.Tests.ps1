@@ -60,10 +60,9 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
         $script:Derived = @{ }
         if ($null -ne $script:DaemonInfo) {
             foreach ($spec in (Get-CorpusSampleSpec)) {
-                $content = [System.IO.File]::ReadAllText($spec.SourcePath)
                 $script:Derived[$spec.Label] = @(Invoke-CorpusDerivation -ScriptsDir $script:ScriptsDir `
                         -DataRoot $script:DataDir -SessionId $script:Sid -ScratchDir $script:ScratchDir `
-                        -ScratchName $spec.ScratchName -Content $content)
+                        -ScratchName $spec.ScratchName -Bytes ([System.IO.File]::ReadAllBytes($spec.SourcePath)))
             }
         }
 
@@ -145,6 +144,17 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
             $d.Count | Should -BeGreaterThan 0 -Because "$($s.Label) must surface a parse error"
             ($d | Select-Object -First 1).source | Should -BeExactly 'parser'
             ($d | Select-Object -First 1).severity | Should -BeExactly 'Error'
+        }
+    }
+
+    It 'pre-pssa samples each surface a powershell-lsp-sourced NonAsciiChar diagnostic' {
+        $prepssa = @(Get-CorpusSampleSpec | Where-Object { $_.Category -eq 'pre-pssa' })
+        $prepssa.Count | Should -BeGreaterThan 0
+        foreach ($s in $prepssa) {
+            $d = @($script:Derived[$s.Label])
+            $d.Count | Should -BeGreaterThan 0 -Because "$($s.Label) must surface at least one non-ASCII finding"
+            ($d | Select-Object -First 1).source | Should -BeExactly 'powershell-lsp'
+            ($d | Select-Object -First 1).ruleId | Should -BeExactly 'NonAsciiChar'
         }
     }
 

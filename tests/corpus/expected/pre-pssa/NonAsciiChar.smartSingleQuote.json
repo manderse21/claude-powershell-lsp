@@ -1,0 +1,18 @@
+[
+  {
+    "ruleId": "NonAsciiChar",
+    "source": "powershell-lsp",
+    "severity": "Warning",
+    "line": 1,
+    "col": 13,
+    "message": "Non-ASCII smart-punctuation character (left single quote) detected. This file has no UTF-8 BOM, so PowerShell 5.1 will misinterpret it as Windows-1252."
+  },
+  {
+    "ruleId": "NonAsciiChar",
+    "source": "powershell-lsp",
+    "severity": "Warning",
+    "line": 1,
+    "col": 18,
+    "message": "Non-ASCII smart-punctuation character (right single quote) detected. This file has no UTF-8 BOM, so PowerShell 5.1 will misinterpret it as Windows-1252."
+  }
+]

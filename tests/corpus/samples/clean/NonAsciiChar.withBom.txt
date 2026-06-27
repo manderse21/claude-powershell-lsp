@@ -1,0 +1,2 @@
+﻿# This file has a UTF-8 BOM and an em-dash — it must NOT flag
+Get-Process

@@ -1,0 +1,8 @@
+[{
+  "ruleId": "NonAsciiChar",
+  "source": "powershell-lsp",
+  "severity": "Warning",
+  "line": 1,
+  "col": 11,
+  "message": "Non-ASCII arrow glyph (right arrow) detected. This file has no UTF-8 BOM, so PowerShell 5.1 will misinterpret it as Windows-1252."
+}]

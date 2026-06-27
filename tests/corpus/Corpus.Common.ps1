@@ -37,6 +37,7 @@ function Get-CorpusPaths {
         CleanDir    = (Join-Path $script:CorpusCommonDir 'samples/clean')
         BadDir      = (Join-Path $script:CorpusCommonDir 'samples/bad')
         ParserDir   = (Join-Path $script:CorpusCommonDir 'parser-samples')
+        PrePssaDir  = (Join-Path $script:CorpusCommonDir 'samples/pre-pssa')
         ExpectedDir = (Join-Path $script:CorpusCommonDir 'expected')
     }
 }
@@ -52,8 +53,10 @@ function Get-CorpusSampleSpec {
     $specs = @()
     $sources = @(
         @{ Category = 'clean';  Dir = $p.CleanDir;  Filter = '*.ps1' },
+        @{ Category = 'clean';  Dir = $p.CleanDir;  Filter = '*.txt' },
         @{ Category = 'bad';    Dir = $p.BadDir;    Filter = '*.ps1' },
-        @{ Category = 'parser'; Dir = $p.ParserDir; Filter = '*.txt' }
+        @{ Category = 'parser'; Dir = $p.ParserDir; Filter = '*.txt' },
+        @{ Category = 'pre-pssa'; Dir = $p.PrePssaDir; Filter = '*.txt' }
     )
     foreach ($s in $sources) {
         if (-not (Test-Path -LiteralPath $s.Dir)) { continue }
@@ -67,7 +70,7 @@ function Get-CorpusSampleSpec {
             # and the expected rule is the FIRST dot-segment of the base. A legacy single-segment
             # name (PSUseApprovedVerbs.ps1) yields RuleId == base unchanged, so existing samples
             # keep working. Only 'bad' uses RuleId; 'clean'/'parser' carry the base for symmetry.
-            $ruleId = if ($s.Category -eq 'bad') { ($base -split '\.')[0] } else { $base }
+            $ruleId = if ($s.Category -eq 'bad' -or $s.Category -eq 'pre-pssa') { ($base -split '\.')[0] } else { $base }
             # Hashtables (not PSCustomObjects): Pester 5 -ForEach exposes each key as a
             # named variable inside the test; dot access ($spec.Label) still works for the
             # generator's foreach. One spec shape, used by both call sites.
@@ -168,12 +171,15 @@ function Invoke-CorpusDerivation {
         [string]$SessionId,
         [string]$ScratchDir,
         [string]$ScratchName,
-        [string]$Content,
+        [byte[]]$Bytes,
         [int]$CapMs = 25000
     )
     if (-not (Test-Path -LiteralPath $ScratchDir)) { New-Item -ItemType Directory -Force -Path $ScratchDir | Out-Null }
     $scriptPath = Join-Path $ScratchDir ($ScratchName + '.ps1')
-    [System.IO.File]::WriteAllText($scriptPath, $Content, (New-Object System.Text.ASCIIEncoding))
+    # Write the exact source bytes verbatim. Using raw bytes preserves BOM markers
+    # and non-ASCII content that a text round-trip (ReadAllText/WriteAllText) would
+    # strip or corrupt (dispatch 000060, Byte-order-mark regression).
+    [System.IO.File]::WriteAllBytes($scriptPath, $Bytes)
     $log = Join-Path $ScratchDir ($ScratchName + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.jsonl')
 
     $stdin = (@{ session_id = $SessionId; tool_input = @{ file_path = $scriptPath }; cwd = $ScratchDir } | ConvertTo-Json -Compress)
