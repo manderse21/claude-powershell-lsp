@@ -1442,6 +1442,104 @@ Describe 'CONTRACT.md freezes exactly the diagnostics status-token taxonomy (dis
     }
 }
 
+Describe 'lspServers manifest declares only registrar-supported fields (dispatch 000075)' {
+    # 000069 proved (on Claude Code 2.1.195) that the runtime LSP registrar SILENTLY DROPS
+    # any lspServers server entry declaring restartOnCrash or shutdownTimeout. Both fields
+    # are accepted by the plugin-manifest JSON schema, so the drop has NO diagnostic -- and
+    # either field present means .ps1/.psm1/.psd1 -> powershell is never registered ("No LSP
+    # server available for file type: .ps1"). This guard turns that silent registrar drop
+    # into a LOUD test failure: every lspServers entry may declare ONLY the registrar-
+    # supported allowlist, with the two known breakers named explicitly so a re-add is
+    # unambiguous, and a future hostile key is caught by the closed allowlist.
+    BeforeAll {
+        # Single source of truth for "allowed" -- each field proven to REGISTER by the
+        # 000069 probe matrix (GJ/GJT1/GJT4/GJenv/Text register; command+args register).
+        $script:LspAllowlist = @(
+            'command', 'args', 'extensionToLanguage', 'transport',
+            'startupTimeout', 'maxRestarts', 'env'
+        )
+        # The two fields 000069 isolated as registrar-hostile, named per the dispatch so a
+        # regression reads as "a known breaker came back", not a generic unknown key.
+        $script:LspKnownBreakers = @('restartOnCrash', 'shutdownTimeout')
+
+        # ONE checker, applied to the real manifest AND the adversarial fixtures below:
+        # given a parsed lspServers entry, return the keys OUTSIDE the allowlist. No second
+        # copy of the rule to drift; the allowlist is passed in (no closure ambiguity).
+        $script:GetRegistrarHostileKeys = {
+            param($Entry, $Allowlist)
+            @($Entry.PSObject.Properties.Name | Where-Object { $Allowlist -notcontains $_ })
+        }
+
+        $manifestPath = Join-Path $script:PluginRoot '.claude-plugin/plugin.json'
+        $manifest = (Get-Content -LiteralPath $manifestPath -Raw) | ConvertFrom-Json
+        $script:LspServers = $manifest.lspServers
+        $script:LspEntryNames = @($script:LspServers.PSObject.Properties.Name)
+    }
+
+    It 'has at least one lspServers entry and a non-empty allowlist (no vacuous pass)' {
+        $script:LspEntryNames.Count | Should -BeGreaterThan 0
+        $script:LspAllowlist.Count | Should -BeGreaterThan 0
+    }
+
+    It 'every shipped lspServers entry declares ONLY registrar-supported fields' {
+        foreach ($name in $script:LspEntryNames) {
+            $entry = $script:LspServers.$name
+            $hostile = & $script:GetRegistrarHostileKeys $entry $script:LspAllowlist
+            $because = "lspServers.$name declares registrar-hostile field(s): $($hostile -join ', ')"
+            ($hostile -join ',') | Should -BeExactly '' -Because $because
+        }
+    }
+
+    It 'declares NEITHER restartOnCrash NOR shutdownTimeout on any entry (the two breakers)' {
+        foreach ($name in $script:LspEntryNames) {
+            $keys = @($script:LspServers.$name.PSObject.Properties.Name)
+            foreach ($breaker in $script:LspKnownBreakers) {
+                $keys | Should -Not -Contain $breaker -Because "CC's registrar silently drops $breaker (000069)"
+            }
+        }
+    }
+
+    It 'the powershell entry still declares the working registrar-supported fields (no over-delete)' {
+        $ps = $script:LspServers.powershell
+        $ps | Should -Not -BeNullOrEmpty
+        $keys = @($ps.PSObject.Properties.Name)
+        foreach ($want in $script:LspAllowlist) {
+            $keys | Should -Contain $want -Because "the fix removed ONLY the two breakers; $want must remain"
+        }
+    }
+
+    # Adversarial controls -- the guard MUST go red when a breaker (or any future hostile
+    # field) is re-introduced. Synthetic entries, not the manifest: this is what makes a
+    # green run on the real manifest meaningful rather than vacuous.
+    It 'FLAGS a fixture that re-adds restartOnCrash' {
+        $fx = [pscustomobject]@{ command = 'pwsh'; args = @('-File', 'x.ps1'); restartOnCrash = $true }
+        @(& $script:GetRegistrarHostileKeys $fx $script:LspAllowlist) | Should -Contain 'restartOnCrash'
+    }
+
+    It 'FLAGS a fixture that re-adds shutdownTimeout' {
+        $fx = [pscustomobject]@{ command = 'pwsh'; args = @('-File', 'x.ps1'); shutdownTimeout = 5000 }
+        @(& $script:GetRegistrarHostileKeys $fx $script:LspAllowlist) | Should -Contain 'shutdownTimeout'
+    }
+
+    It 'FLAGS a fixture with a future unknown field outside the allowlist (closed allowlist)' {
+        $fx = [pscustomobject]@{ command = 'pwsh'; args = @('-File', 'x.ps1'); someFutureKnob = $true }
+        @(& $script:GetRegistrarHostileKeys $fx $script:LspAllowlist) | Should -Contain 'someFutureKnob'
+    }
+
+    It 'PASSES a fixture declaring only allowlisted fields (no false positive)' {
+        $fx = [pscustomobject]@{
+            command             = 'pwsh'
+            args                = @('-File', 'x.ps1')
+            extensionToLanguage = @{ '.ps1' = 'powershell' }
+            transport           = 'stdio'
+            startupTimeout      = 30000
+            maxRestarts         = 3
+            env                 = @{ X = 'y' }
+        }
+        @(& $script:GetRegistrarHostileKeys $fx $script:LspAllowlist) | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'License metadata is single-sourced and consistent (dispatch 000029)' {
     # The 000027 docs-honesty / single-source discipline applied to the LICENSE: the SPDX id has ONE
     # source of truth -- plugin.json's `license` (the same manifest the version stamp reads, 000025) --

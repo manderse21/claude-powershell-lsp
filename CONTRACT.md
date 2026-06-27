@@ -230,6 +230,19 @@ cold. None is a contract change; each is banked here deliberately.
   internal pre-warm does NOT count as activity -- so a session that never edits still
   self-terminates after `idleTtlMin`, and `idleTtlMin` keeps its frozen meaning. No knob
   rename or taxonomy change; recorded here as closed, not open.
+- **`lspServers` manifest block (NOT a Tier-1 frozen surface) -- dispatch 000075.** The native
+  LSP-server declaration in `.claude-plugin/plugin.json` (`lspServers.powershell`) is a manifest
+  surface but is **not** part of the frozen Tier-1 contract: only the userConfig knob **names**
+  (1.1) and the diagnostics status **tokens** (1.2) are enumerated and drift-guarded. Dispatch
+  000075 removed two fields -- `restartOnCrash` and `shutdownTimeout` -- that Claude Code's runtime
+  LSP registrar silently drops (the fields blocked registration rather than doing anything; their
+  removal is **behavior-neutral** and breaks no consumer), and shipped it as a **PATCH (1.18.1)**.
+  The block is now held to a registrar-supported allowlist `{command, args, extensionToLanguage,
+  transport, startupTimeout, maxRestarts, env}`, guarded by a test
+  (`tests/PowerShellLsp.Unit.Tests.ps1`). Recorded here as a **note, not an amendment**: the
+  lspServers fields are not a semver-protected surface, so removing two inert ones is not a contract
+  change. (If a future change makes native serve a real, user-visible feature, *that* is the
+  contract-relevant event to adjudicate -- not this field cleanup.)
 
 ---
 

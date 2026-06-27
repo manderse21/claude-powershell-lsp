@@ -15,11 +15,14 @@ with fix suggestions -- directly in Claude's context. That per-file diagnostic l
 plugin does well today, and it works on every supported host now.
 
 **On the roadmap, not yet active:** hover, go-to-definition, find-references, and
-**workspace-wide / multi-file analysis**. Those depend on Claude Code's native plugin LSP-server
-registration, which is unreliable for plugin-provided servers today (Claude Code #66987; see
-[Why a hook, not native registration](#why-a-hook-not-native-lspjson-registration)). The plugin
-already declares its server for when that lands; until then it delivers the per-file diagnostics
-above through a warm PostToolUse hook -- the path that works now.
+**workspace-wide / multi-file analysis**. v1.18.1 removes a manifest-side blocker that had kept
+the plugin's native LSP server from **registering** with Claude Code (see
+[Why a hook, not native registration](#why-a-hook-not-native-lspjson-registration)); what remains
+gated is end-to-end **serve** -- once registered, Claude Code launches the server but its LSP
+client currently times out during initialization (an upstream Claude Code handshake gap,
+#1359-class), so these operations do not complete yet. Until they do, the plugin delivers the
+per-file diagnostics above through a warm PostToolUse hook -- the path that works now, independent
+of native registration.
 
 This is language tooling, not project tooling: a standalone plugin that carries
 ~0 always-on model-context token cost. It only spawns a language server when you
@@ -203,79 +206,71 @@ path, and keep all state, logs, and pids under `CLAUDE_PLUGIN_DATA` only.
 
 ## Why a hook, not native `.lsp.json` registration
 
-Claude Code declares plugin language servers through a per-plugin
-[`.lsp.json`](https://code.claude.com/docs/en/plugins-reference#lsp-servers) file
-(or an equivalent inline `lspServers` block, which this plugin's `plugin.json`
-carries). That is the intended path. In practice it has been unreliable for
-plugin-provided servers, for two independent reasons:
+Claude Code declares plugin language servers through an inline `lspServers` block in
+`plugin.json` (or a standalone per-plugin
+[`.lsp.json`](https://code.claude.com/docs/en/plugins-reference#lsp-servers) file). This plugin
+carries the inline block. As of v1.18.1 the manifest-side blocker that kept it from registering
+is removed -- so native **registration** is no longer the obstacle. The plugin still ships
+diagnostics over a **warm PostToolUse hook** for one reason: **registration is restored, but
+end-to-end serve is not.**
 
-1. **Marketplace plugins can install without their `.lsp.json`.** Claude Code
-   copies a plugin's source directory into its cache; an `lspServers` block that
-   lives only in `marketplace.json` is not written out, so the installed plugin
-   registers **0 servers**. Tracked (open) at
-   [claude-plugins-official#379](https://github.com/anthropics/claude-plugins-official/issues/379).
-   A proposed fix, [PR #378](https://github.com/anthropics/claude-plugins-official/pull/378)
-   (add a real `.lsp.json` to each official LSP plugin), was **closed unmerged**
-   (2026-02-11), so #379 remains open and unaddressed.
-2. **A registration race.** `LspServerManager` can initialize before plugins
-   finish loading, registering 0 servers even when a `.lsp.json` is present.
+Once the server is registered, Claude Code launches it and PSES reaches "Starting Language
+Server", but Claude Code's LSP client currently times out during initialization (the
+`#1359`-class server->client init handshake). So a native `goToDefinition` / `hover` /
+`findReferences` on a `.ps1` does not complete yet -- it is gated **upstream**, on the Claude
+Code side, not on this plugin's launcher (which is provably stdout-clean: its first stdout line
+is a valid `Content-Length:` LSP header). The warm hook, by contrast, works on every supported
+host today and does not depend on the native path at all. The hook is the product; native
+registration is the bonus, now one upstream fix away from serving.
+
+### What used to block registration, and what fixed it
+
+For a long stretch (Claude Code 2.1.167 through 2.1.183) the native path looked **inert** -- every
+probe returned `No LSP server available for file type: .ps1` -- and two upstream issues were the
+leading suspects:
+
+1. **A marketplace packaging gap.** A marketplace install copies only the plugin's source
+   directory, so an `lspServers` block living **solely** in `marketplace.json` is dropped and the
+   installed plugin registers **0 servers**. Tracked (open) at
+   [claude-plugins-official#379](https://github.com/anthropics/claude-plugins-official/issues/379);
+   the proposed fix [PR #378](https://github.com/anthropics/claude-plugins-official/pull/378) was
+   **closed unmerged** (2026-02-11). This plugin sidesteps it by declaring the server inline in
+   `plugin.json`, which the installer does copy.
+2. **A registration race.** `LspServerManager` could initialize before plugins finished loading.
    First reported in
-   [claude-code#14803](https://github.com/anthropics/claude-code/issues/14803)
-   (fixed) and analyzed in detail in
-   [claude-code#29858](https://github.com/anthropics/claude-code/issues/29858);
-   the symptom remains open at
-   [#15168](https://github.com/anthropics/claude-code/issues/15168) and
-   [#15148](https://github.com/anthropics/claude-code/issues/15148).
+   [claude-code#14803](https://github.com/anthropics/claude-code/issues/14803) (**fixed**) and
+   analyzed in [#29858](https://github.com/anthropics/claude-code/issues/29858);
+   [#15168](https://github.com/anthropics/claude-code/issues/15168) /
+   [#15148](https://github.com/anthropics/claude-code/issues/15148) track the residual symptom.
 
-So rather than depend on native registration, this plugin delivers diagnostics
-through a **warm PostToolUse hook** that always works, on every supported host,
-today. The hook is the product; native registration is a bonus you can opt into.
+On Claude Code 2.1.195, a controlled single-field probe matrix (dispatch 000069) showed neither of
+those was what blocked **this** plugin: the official `typescript` control plugin registers and
+serves, and a clean known-good `lspServers` block in a `plugin.json` registers too -- so the
+platform path is effective. The real blocker was **two fields in our own manifest**:
 
-### Native registration (`.lsp.json`) -- not active upstream yet
+> Claude Code's runtime LSP registrar **silently drops** any `lspServers` entry that declares
+> **`restartOnCrash`** or **`shutdownTimeout`**. Both are accepted by the plugin-manifest JSON
+> schema (so `plugin.json` validates), but the registrar rejects them with no diagnostic -- and our
+> block declared both, so `.ps1 -> powershell` was never registered.
 
-The plugin already declares its server (the `lspServers` block in `plugin.json`), and
-a standalone copy ships at [`docs/lsp.json.template`](docs/lsp.json.template). Both are
-the *intended* native path -- but **as of Claude Code 2.1.183 neither activates**. The
-detailed three-configuration test below was run on 2026-06-06 against Claude Code 2.1.167
-(dispatch 000008); the inertness has since been **re-confirmed through 2.1.183
-(2026-06-19)**, with no registration fix landing in the 2.1.167 -> 2.1.183 window:
+Removing those two fields (v1.18.1) clears the obstacle; a CI guard
+(`tests/PowerShellLsp.Unit.Tests.ps1`) now fails if any `lspServers` entry re-declares a field
+outside the registrar-supported set `{command, args, extensionToLanguage, transport,
+startupTimeout, maxRestarts, env}`. Full methodology and the 23-probe matrix are in
+[`docs/upstream/claude-code-lsp-registration.md`](docs/upstream/claude-code-lsp-registration.md).
 
-- a clean top-level-map `.lsp.json` with **literal** commands (no `${CLAUDE_PLUGIN_ROOT}`
-  / `${user_config.*}` template variables), loaded into a **freshly started** process
-  (`--plugin-dir`, a full restart, not `/reload-plugins`) -> `No LSP server available
-  for file type: .ps1`;
-- that same literal `.lsp.json` shipped inside a throwaway plugin and **installed through
-  the real `/plugin` flow**, so the installer placed the file in the plugin cache (the
-  exact installed-cache setup some users report working, reached without hand-writing the
-  cache) -> still `No LSP server available`, after a full restart;
-- the installed real plugin, whose cache already carries a template-var `.lsp.json` ->
-  inert the same way.
+### The standalone `.lsp.json` template
 
-So the inertness is not a reload-vs-restart, template-variable, or
-`--plugin-dir`-vs-installed-cache artifact -- a plugin `.lsp.json` simply does not
-register on 2.1.167, and the canonical probe re-confirms it inert through 2.1.183. This
-finally tests the installed-cache path a prior re-test had to leave open, **closing** that
-caveat rather than narrowing it. Native registration is not
-something this plugin can rely on today -- which is why diagnostics ride the PostToolUse
-hook, the path that works on every host now. (Methodology and evidence in
-[`docs/upstream/claude-code-lsp-registration.md`](docs/upstream/claude-code-lsp-registration.md),
-held for review.)
+The plugin's `plugin.json` already carries the registrar-clean `lspServers` block, so native
+registration needs no extra step once the plugin is enabled -- there is nothing to copy in. A
+standalone copy of the declaration also ships at
+[`docs/lsp.json.template`](docs/lsp.json.template) for reference and for any setup that wants a
+root-level `.lsp.json`; it is deliberately **not** live at the repo root, because a second,
+duplicate declaration would risk double registration.
 
-The template ships as `docs/lsp.json.template` (not live at the root) on purpose: a
-root `.lsp.json` adds nothing while registration is broken, and would risk duplicate
-diagnostics the moment a future release fixes it. When that release lands, copy it in
-to opt into the native path:
-
-```
-cp docs/lsp.json.template .lsp.json
-# then FULLY restart Claude Code -- a new process. /reload-plugins is not enough:
-# re-probes confirmed a plugin-root .lsp.json stays inert even after a full restart,
-# through 2.1.183 (2026-06-19), so this is for a future release that fixes registration.
-```
-
-> **Heads-up once it does activate -- duplicate diagnostics.** If native registration
-> ever turns on while the PostToolUse hook is also enabled, each diagnostic arrives
-> twice. Use one path or the other.
+> **Heads-up for when serve lands -- duplicate diagnostics.** If native serving ever completes
+> (the upstream init handshake is fixed) while the PostToolUse hook is also enabled, each
+> diagnostic could arrive twice. Use one path or the other.
 
 ## Pinned versions
 
