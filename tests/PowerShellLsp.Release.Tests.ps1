@@ -219,6 +219,63 @@ Describe 'Release workflow Gate-4 -- WAITS for CI to conclude, then judges (disp
     }
 }
 
+Describe 'Test-PublishedParity.ps1 -- tree-vs-published divergence guard (dispatch 000076)' {
+    # The guard FAILS when the published version (the .claude-plugin/plugin.json version on the
+    # default-branch tip the marketplace resolves -- source "./", no ref pin) LAGS the tree
+    # version. It exists to prevent the silent drift that served a stale 1.3.0 while the tree was
+    # 1.18.x. Pure version logic: no network, fixtures only (runs on all four CI legs).
+    BeforeAll {
+        $script:Parity = Join-Path $script:ReleaseDir 'Test-PublishedParity.ps1'
+
+        # Minimal manifests carrying only the "version" the guard reads -- exactly the field the
+        # marketplace resolves from the default-branch manifest.
+        function script:New-VersionManifest([string]$Version) {
+            $p = Join-Path $TestDrive ("plugin-" + $Version + ".json")
+            ('{ "version": "' + $Version + '" }') | Set-Content -LiteralPath $p -Encoding ascii
+            return $p
+        }
+        $script:Tree1181 = script:New-VersionManifest '1.18.1'
+        $script:Pub130   = script:New-VersionManifest '1.3.0'
+        $script:Pub1190  = script:New-VersionManifest '1.19.0'
+    }
+
+    It 'PASSES when published == tree (parity -- the post-publish steady state)' {
+        { & $script:Parity -TreeManifest $script:Tree1181 -PublishedManifest $script:Tree1181 } | Should -Not -Throw
+    }
+    It 'PASSES when published is AHEAD of tree (a newer release already out)' {
+        { & $script:Parity -TreeManifest $script:Tree1181 -PublishedManifest $script:Pub1190 } | Should -Not -Throw
+    }
+    It 'FAILS (throws) when published LAGS tree -- the 1.3.0-vs-1.18.x drift this guard exists to catch' {
+        { & $script:Parity -TreeManifest $script:Tree1181 -PublishedManifest $script:Pub130 } |
+            Should -Throw -ExpectedMessage '*DIVERGENCE*1.3.0*1.18.1*'
+    }
+    It 'accepts an explicit -PublishedVersion (the CI-passes-a-resolved-value path), both directions' {
+        { & $script:Parity -TreeManifest $script:Tree1181 -PublishedVersion '1.18.1' } | Should -Not -Throw
+        { & $script:Parity -TreeManifest $script:Tree1181 -PublishedVersion '1.3.0' }  | Should -Throw
+    }
+    It 'SAFE-FAILS (throws) on a published manifest with no version field -- refuse, never pass' {
+        $bad = Join-Path $TestDrive 'no-version.json'
+        '{ "name": "x" }' | Set-Content -LiteralPath $bad -Encoding ascii
+        { & $script:Parity -TreeManifest $script:Tree1181 -PublishedManifest $bad } | Should -Throw
+    }
+    It 'SAFE-FAILS (throws) on a non-semver published version -- refuse, never pass' {
+        { & $script:Parity -TreeManifest $script:Tree1181 -PublishedVersion 'latest' } | Should -Throw
+    }
+    It 'holds self-parity on the REAL shipped manifest (couples to the live tree, not a literal)' {
+        $real = Join-Path $script:PluginRoot '.claude-plugin/plugin.json'
+        { & $script:Parity -TreeManifest $real -PublishedManifest $real } | Should -Not -Throw
+    }
+    It 'is wired into the release workflow as a parity gate (build on 000042, not a rebuild)' {
+        $wf = [System.IO.File]::ReadAllText((Join-Path $script:PluginRoot '.github/workflows/powershell-lsp-release.yml'))
+        $wf | Should -Match 'Gate 5 --'
+        $wf | Should -Match 'Test-PublishedParity\.ps1'
+    }
+    It 'is ASCII-only (PS 5.1 em-dash trap)' {
+        $bytes = [System.IO.File]::ReadAllBytes($script:Parity)
+        (@($bytes | Where-Object { $_ -gt 127 }).Count) | Should -Be 0
+    }
+}
+
 Describe 'Release workflow signing -- keyless gitsign-signed tags (dispatch 000064)' {
     # The signing addition is POST-GATE and ADDITIVE: the tag-cut step becomes a keyless
     # gitsign-signed `git tag -s` authenticating via the runner's ambient GitHub OIDC
