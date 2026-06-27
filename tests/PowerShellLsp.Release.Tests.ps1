@@ -264,7 +264,7 @@ Describe 'Release workflow signing -- keyless gitsign-signed tags (dispatch 0000
     }
 
     It 'leaves the existing SBOM + SLSA provenance steps byte-for-byte (signing is ADDITIVE)' {
-        $script:WfText | Should -Match 'actions/attest-build-provenance@v2'
+        $script:WfText | Should -Match 'actions/attest-build-provenance@v3'
         $script:WfText | Should -Match 'New-PluginSbom\.ps1'
     }
 
