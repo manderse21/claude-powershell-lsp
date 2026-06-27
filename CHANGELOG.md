@@ -29,6 +29,51 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [1.18.1] - 2026-06-27
+
+PATCH: **native LSP registration restored -- the two registrar-hostile manifest fields are removed**
+(dispatch 000075, fixing what 000069 isolated). Claude Code's runtime LSP registrar silently drops
+any `lspServers` entry that declares `restartOnCrash` or `shutdownTimeout` -- both are accepted by
+the plugin-manifest JSON schema (so `plugin.json` validates), but the registrar rejects them with no
+diagnostic. Our `lspServers.powershell` block declared both, so `.ps1/.psm1/.psd1 -> powershell` was
+never registered ("No LSP server available for file type: .ps1"). Removing the two fields restores
+**registration** (re-proven on the fixed tree via the persisted 000069 probe harness on Claude Code
+2.1.195). **End-to-end serve is still gated upstream**: once registered, Claude Code launches PSES
+but its LSP client times out during initialization (the #1359-class server->client handshake), so
+native hover / go-to-definition / find-references do not complete yet. The plugin's real surface --
+per-file diagnostics over the warm PostToolUse hook -- is **byte-for-byte unchanged**: nothing under
+`scripts/` changed, and no daemon/diagnostics behavior moved. The 000027 contract drift-guard stays
+green (**no new userConfig knob, no new status token**).
+
+### Changed
+
+- **`lspServers.powershell` no longer declares `restartOnCrash` or `shutdownTimeout`.** The two
+  fields are optional restart/shutdown tuning the registrar refuses; PSES manages its own lifecycle,
+  and their absence does not affect the diagnostics path. The block keeps `command`, `args`,
+  `extensionToLanguage`, `transport`, `startupTimeout`, `maxRestarts`, and `env` -- all proven
+  registrar-clean by the 000069 single-field probe matrix.
+- **Docs corrected to the accurate framing.** `README.md` and
+  `docs/upstream/claude-code-lsp-registration.md` no longer call native registration
+  "platform-inert": the platform path is effective on 2.1.195, our blocker was the two manifest
+  fields, registration is restored, and end-to-end serve remains gated on the upstream Claude Code
+  init handshake. No hover/goto/find-references-as-working claim.
+
+### Added
+
+- **A registrar-field-allowlist guard.** `tests/PowerShellLsp.Unit.Tests.ps1` parses `plugin.json`
+  and fails CI if any `lspServers` entry declares a field outside `{command, args,
+  extensionToLanguage, transport, startupTimeout, maxRestarts, env}`, naming `restartOnCrash` and
+  `shutdownTimeout` as known-hostile. A silent registrar drop becomes a loud test failure if either
+  field (or a future hostile one) is ever re-added; adversarial fixtures demonstrate the guard goes
+  red on a re-add.
+
+### Notes
+
+- **Registration is restored; native serve is not enabled as a working feature.** Native LSP
+  operations on `.ps1` do not complete until the upstream init handshake (#1359-class) is fixed
+  Claude-Code-side -- tracked separately and out of scope here. Diagnostics continue to ride the
+  warm PostToolUse hook, unchanged.
+
 ## [1.18.0] - 2026-06-26
 
 MINOR: **supply-chain signing -- the release tag itself is now cryptographically signed** (dispatch

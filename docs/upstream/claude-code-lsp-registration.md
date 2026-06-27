@@ -1,153 +1,142 @@
-# Upstream draft -- Claude Code: plugin LSP registration (definitive negative datapoint)
+# Claude Code plugin LSP registration -- root cause (corrected record)
 
-**Target:** a comment on an open registration thread -- best fits
-[`anthropics/claude-code#15168`](https://github.com/anthropics/claude-code/issues/15168)
-("LSP plugin system not connecting ... always 'No LSP server available'") or
-[`#15148`](https://github.com/anthropics/claude-code/issues/15148)
-("lspServers config not being processed from marketplace.json"). The related
-`.lsp.json` packaging gap is tracked (open) at
-[`anthropics/claude-plugins-official#379`](https://github.com/anthropics/claude-plugins-official/issues/379).
+**What this is:** the corrected internal record of why this plugin's native LSP server did not
+register, and what actually fixes it. **Not posted upstream.** Any upstream comment (the
+`#66987`-class registrar-field-rejection report) is a separate Mike-gated draft.
 
-**Status:** DRAFT for Mike's review. **Not posted.** This supersedes the earlier
-"narrowed-gap" draft: the one configuration that draft left untested -- a `.lsp.json`
-**file** inside an already-*installed* plugin's cache directory -- has now been tested
-(reached through the real `/plugin` install flow, so the installer placed the file in the
-cache; no hand-writing of the cache). It is **inert too**. The finding is therefore a
-definitive refutation, for Claude Code 2.1.167, of the reports that a plugin `.lsp.json`
-registers a server -- including the installed-cache configuration. Post only on Mike's
-say-so.
+**Status (2026-06-27, dispatch 000069 -> 000075) -- root cause ISOLATED; the earlier
+"platform-inert" framing is SUPERSEDED.** This document previously argued that a plugin-provided
+LSP server "does not register in any configuration" -- a blanket platform-inertness claim drawn
+from probes on Claude Code 2.1.167 through 2.1.183. Dispatch 000069 re-probed on **Claude Code
+2.1.195** with a controlled single-field matrix and found the real cause is **declaration-specific,
+not platform-wide**:
 
-**Currency note (2026-06-07, dispatch 000009 Track C) -- re-confirmed inert on 2.1.168.**
-Re-tested on Claude Code **2.1.168** (now current). A hard re-probe of configuration (1)
-above -- a clean top-level-map `.lsp.json` with **literal** commands, loaded via
-`--plugin-dir` into a fresh `claude -p` (`--allowedTools LSP --strict-mcp-config
---output-format stream-json --verbose`) -- emitted a real `LSP` `tool_use` and returned its
-`tool_result` (not a prompt echo):
+- **Control plugins register and serve.** The official `typescript` LSP plugin registers and
+  answers `goToDefinition`; a clean, known-good `lspServers` block placed in a `plugin.json`
+  registers too. So the platform-level registration path is **effective** on 2.1.195 -- the
+  registration-race symptom this document used to lead with (`claude-code#14803`, fixed) is no
+  longer the blocker.
+- **Our specific blocker was two manifest fields.** Claude Code's runtime LSP registrar
+  **silently drops any `lspServers` server entry that declares `restartOnCrash` or
+  `shutdownTimeout`.** Both are accepted by the plugin-manifest JSON schema (our `plugin.json`
+  validates in CI), so this is a **schema-permits / registrar-rejects** mismatch with **no
+  diagnostic** in the event stream. Our block declared **both**, so `.ps1/.psm1/.psd1 ->
+  powershell` was never registered and every probe returned `No LSP server available for file
+  type: .ps1`.
+- **Removing the two fields restores REGISTRATION.** Proven on the real tree: the shipped tree
+  (both fields present) fails; the same tree with both fields removed registers and Claude Code
+  launches `plugin:powershell-lsp:powershell`.
+- **End-to-end SERVE is still gated, upstream-side.** Once registered, Claude Code launches the
+  PSES launcher and PSES reaches "Starting Language Server", but the LSP client times out at
+  initialization (the `#1359`-class server->client init handshake). The launcher is provably
+  stdout-clean (its first stdout line is a valid `Content-Length:` header), so the remaining gap
+  is the **Claude Code LSP client**, not our launcher. Registration is restored here; serve is
+  tracked separately and is not this plugin's to fix.
 
-```
-tool_use   : {"operation":"goToDefinition","filePath":"./test.ps1","line":5,"character":6}
-tool_result: No LSP server available for file type: .ps1
-```
-
-So the `.lsp.json`-**file** path is **empirically inert on 2.1.168**, not merely
-changelog-inferred. This is consistent with 2.1.168's changelog (bug-fixes / reliability
-only; no registration entry -- the most recent registration-related line is 2.1.142, "show
-LSP servers a plugin provides"). `claude-code#15168` / `#15148` and
-`claude-plugins-official#379` remain open and untouched since the 2.1.167 test, and PR #378
-is still closed-unmerged. The refutation now holds across **2.1.167 and 2.1.168**.
-
-**Currency note (2026-06-19) -- re-confirmed inert on 2.1.183.** Re-probed on Claude
-Code **2.1.183** (now current). The canonical probe -- builtin `LSP` `goToDefinition` on
-`./test.ps1` at line 5, char 6, via a fresh `claude -p` (`--allowedTools LSP
---strict-mcp-config --output-format stream-json --verbose`) -- again emitted a real `LSP`
-`tool_use` and returned its `tool_result` (not a prompt echo):
-
-```
-tool_use   : {"operation":"goToDefinition","filePath":"./test.ps1","line":5,"character":6}
-tool_result: No LSP server available for file type: .ps1
-```
-
-No registration fix landed in the **2.1.168 -> 2.1.183** window: `claude-code#15168` /
-`#15148` and `claude-plugins-official#379` remain open and untouched, and PR #378 is still
-closed-unmerged. The refutation now holds across **2.1.167, 2.1.168, and 2.1.183**.
-
-The harness checks **file existence before server availability** -- the probed `.ps1` must
-exist on disk to reach the registration check at all (a missing path short-circuits to
-`<tool_use_error>File does not exist: ...</tool_use_error>` and never reaches the LSP
-registrar; confirmed 2026-06-19).
-
-**Good-path confirmed on 2.1.183.** In the same build, an interactive `.ps1` edit fired the
-PostToolUse hook and the warm per-session PSES returned a PSScriptAnalyzer diagnostic
-(`PSUseApprovedVerbs`) via `additionalContext` -- a clean "native LSP dead / hook alive"
-pair.
+**Fix (shipped under dispatch 000075):** delete `restartOnCrash` and `shutdownTimeout` from
+`plugin.json` `lspServers.powershell`; keep `command`, `args`, `extensionToLanguage`, `transport`,
+`startupTimeout`, `maxRestarts`, `env` (all proven registrar-clean). A regression guard
+(`tests/PowerShellLsp.Unit.Tests.ps1`) fails CI if any `lspServers` entry ever re-declares a field
+outside that allowlist.
 
 ---
 
-## Comment body (draft)
+## Evidence (dispatch 000069, Claude Code 2.1.195)
 
-A third-party datapoint from outside the official marketplace: **powershell-lsp**, a
-PowerShell Editor Services (PSES) plugin for `.ps1/.psm1/.psd1` --
-https://github.com/manderse21/claude-powershell-lsp.
+Every probe drove a single builtin-`LSP` `goToDefinition` through a fresh non-interactive
+`claude -p` against an **installed local-dir marketplace plugin** (never `--plugin-dir`). The 23
+recorded probes and the harness live under
+`projects/powershell-lsp/outbox/000069-artifacts/` in the Strategic Dispatch Hub
+(`raw-probes/`, `harness/run-lsp-probe.ps1`, `expected-signals.txt`). Verdict strings:
 
-**The server itself works.** The PSES stdio handshake, `publishDiagnostics` on a parse
-error, hover, and go-to-definition are verified on `pwsh` 7 and Windows PowerShell 5.1,
-on Windows and (as of this release) Linux CI.
+- `No LSP server available for file type: .ps1` -> the ext->server mapping was **NOT** registered.
+- `No definition found` / `Defined in ...` -> **REGISTERED and served** (a known-good command).
+- `... timed out after 30000ms during initialization` -> **REGISTERED**; Claude Code launched the
+  server, PSES init did not complete (the serve track, not registration).
 
-**A plugin-provided `.lsp.json` does not register on 2.1.167 -- in any configuration I
-could test, including the installed-plugin-cache path.** Every `LSP` tool call below was
-confirmed real via `--output-format stream-json` (a single `LSP` `tool_use` + its
-`tool_result`, not a prompt echo).
+Single-field isolation in `plugin.json` (known-good block = GJ):
 
-1. **`--plugin-dir` session-load, literal `.lsp.json`** (clean top-level map; literal
-   `pwsh` + absolute script path + literal `PSES_BUNDLE_PATH`; no
-   `${CLAUDE_PLUGIN_ROOT}`/`${user_config.*}` variables; full restart, not
-   `/reload-plugins`):
+| Variant | Block delta | `.ps1` result |
+|---------|-------------|---------------|
+| GJ knowngood-in-pluginjson | clean block, no restart/shutdown fields | REGISTER (served) |
+| GJ + `transport` / `maxRestarts` / `env` | each added alone | REGISTER (served) |
+| GJ + `restartOnCrash` (alone) | **breaker** | FAIL (no server) |
+| GJ + `shutdownTimeout` (alone) | **breaker** | FAIL (no server) |
+| A baseline (shipped tree) | real block: both breakers present | FAIL (no server) |
+| RFX2 real minus `restartOnCrash` | one breaker removed, `shutdownTimeout` remains | FAIL (no server) |
+| RFX3 real minus **both** breakers | **the fix** | REGISTER (launch; init timeout) |
 
-   ```
-   tool_use   : {"operation":"goToDefinition","filePath":"./test.ps1","line":5,"character":6}
-   tool_result: No LSP server available for file type: .ps1
-   ```
+So **both** fields must be removed (RFX2 with only one removed still fails), and the dispatch's
+original top suspect -- the `env` / `${CLAUDE_PLUGIN_DATA}` block -- is **refuted** (GJ + env
+registers).
 
-2. **Installed-cache, literal `.lsp.json` (the previously-untested path).** A throwaway
-   plugin whose *source* ships the same clean literal `.lsp.json` was installed through
-   the real `/plugin` flow (`claude plugin marketplace add` + `claude plugin install`),
-   so the **installer** copied the file into the cache --
-   `~/.claude/plugins/cache/<marketplace>/<plugin>/0.0.1/.lsp.json` -- reaching the exact
-   reported-working setup with zero hand-writes. After a full restart (a fresh
-   `claude -p`, no `--plugin-dir`), probing a unique extension only this plugin declared:
+### Which manifest Claude Code reads
 
-   ```
-   tool_use   : {"operation":"goToDefinition","filePath":"./test.ps1x","line":5,"character":6}
-   tool_result: No LSP server available for file type: .ps1x
-   ```
+When a plugin ships a `plugin.json`, Claude Code registers `lspServers` from **`plugin.json`** and
+**ignores** the `marketplace.json` entry. The `marketplace.json` `lspServers` is consulted only for
+plugins that ship **no** `plugin.json` -- which is how the official LSP plugins work (they ship only
+`LICENSE` + `README`, and register from the marketplace entry). A plugin that needs a `plugin.json`
+(for hooks / userConfig, as this one does) must therefore carry a **registrar-clean** `lspServers`
+in `plugin.json`; putting it only in `marketplace.json` is inert while a `plugin.json` exists.
 
-3. **The installed real plugin** (its cache already carries a template-var `.lsp.json`)
-   is inert the same way: `goToDefinition` on a `.ps1` returns
-   `No LSP server available for file type: .ps1`.
+### Relationship to the upstream issues
 
-So the inertness of a plugin `.lsp.json` file is **not** a reload-vs-restart artifact,
-**not** a template-variable artifact, and **not** a `--plugin-dir`-vs-installed-cache
-artifact. On 2.1.167 a `.lsp.json` file shipped in a plugin does not register a server,
-in any configuration I could reach.
+- **`claude-code#14803` (registration race, fixed) / `#15168` / `#15148`.** The
+  `LspServerManager` init-ordering race these track is **not** what blocked this plugin on 2.1.195:
+  the control plugins register, so the registrar runs. Our miss was the two-field drop, a distinct
+  defect.
+- **`claude-plugins-official#379` (marketplace packaging gap).** Still real and still open: a
+  marketplace install copies only the source directory, so an `lspServers` block living **solely**
+  in `marketplace.json` is dropped. It does not affect us once the `plugin.json` block is
+  registrar-clean (we register from `plugin.json`, which the installer does copy).
+- **`#1359`-class server->client init handshake.** The remaining **serve** gap after registration
+  is restored. Upstream / Claude-Code-side.
+- **`#66987`.** The plugin-manifest LSP-registration tracking issue this plugin cites. The accurate
+  reframing: the platform registration path is effective; the registrar **silently rejects**
+  schema-valid `restartOnCrash` / `shutdownTimeout`, which is the report worth filing (separate,
+  Mike-gated, not posted here).
 
-**Relationship to the packaging gap (#379).** #379 documents that installing a
-marketplace LSP plugin copies only the source directory into the cache, so an
-`lspServers` block living solely in `marketplace.json` is dropped and the installed
-plugin ships with nothing but `README.md` (0 servers). The proposed fix,
-[PR #378](https://github.com/anthropics/claude-plugins-official/pull/378) (add a real
-`.lsp.json` to each official plugin directory), was **closed unmerged (2026-02-11)**, so
-#379 is still open and unaddressed. The installed-cache re-test above puts a real
-`.lsp.json` physically in the installed plugin's cache and registration *still* fails --
-which points past the packaging gap toward the registration path itself (the
-`LspServerManager` init-ordering / "0 servers" symptom in #15168 / #15148).
+---
 
-**Open sub-question (not tested here):** whether `${CLAUDE_PLUGIN_ROOT}` /
-`${user_config.*}` template variables expand inside `.lsp.json` `command`/`args`/`env`.
-This testing deliberately used literal paths to isolate the registration question; the
-substitution question is moot while registration is inert, but it matters the moment
-registration is fixed.
+## Historical record -- the symptom before the root cause was isolated
 
-**Workaround in shipping use.** Because native registration cannot be relied on, the
-plugin delivers diagnostics through a warm, per-session **PostToolUse hook** (one PSES
-stays hot for the session; each edit is a pipe round-trip, ~2 s, vs a ~6 s cold start).
-That works today on every supported host and is independent of the registration path --
-but it is a workaround for this bug, not a replacement for a fix.
+The probes below are retained for provenance. They captured the **symptom** (`No LSP server
+available`) on Claude Code 2.1.167 through 2.1.183, before the 2.1.195 single-field matrix isolated
+the cause. They remain accurate for those builds; they are **not** evidence of blanket platform
+inertness, which 000069 refuted. (The probes varied a plugin-provided `.lsp.json` file; the 000069
+work later established that with a `plugin.json` present, `plugin.json`'s `lspServers` is
+authoritative and the standalone `.lsp.json` path is moot for this plugin.)
 
-**On the "it works" reports.** Reports of a `.lsp.json` file in an installed plugin's
-cache working are most likely a **Claude Code version difference** -- this datapoint is
-2.1.167 specifically; the registrar behavior may differ in other builds. If a maintainer
-can name the build where the installed-cache `.lsp.json` path registered, that would
-localize the regression.
+The canonical probe -- builtin `LSP` `goToDefinition` on `./test.ps1`, via a fresh `claude -p`
+(`--allowedTools LSP --strict-mcp-config --output-format stream-json --verbose`) -- returned, on
+2.1.167, 2.1.168, and 2.1.183:
+
+```
+tool_use   : {"operation":"goToDefinition","filePath":"./test.ps1","line":5,"character":6}
+tool_result: No LSP server available for file type: .ps1
+```
+
+across three configurations: a `--plugin-dir` session-load with a literal top-level-map `.lsp.json`;
+that same `.lsp.json` shipped inside a throwaway plugin and installed through the real `/plugin`
+flow (so the installer placed it in the cache); and the installed real plugin (whose cache carried
+a template-var `.lsp.json`). The harness checks **file existence before server availability** -- the
+probed `.ps1` must exist on disk to reach the registration check (a missing path short-circuits to
+`File does not exist: ...` and never reaches the registrar; confirmed 2026-06-19).
+
+**Good path, unaffected throughout.** In every build, an interactive `.ps1` edit fired the
+PostToolUse hook and the warm per-session PSES returned a PSScriptAnalyzer diagnostic
+(`PSUseApprovedVerbs`) via `additionalContext`. The plugin's real value -- per-file diagnostics over
+the warm hook -- never depended on native registration and is untouched by this fix.
 
 ### Environment
 
-- Claude Code: 2.1.167 (2026-06-06) through 2.1.183 (2026-06-19); native LSP
-  registration inert across the span
-- Plugin: powershell-lsp (standalone repo); server declared in `plugin.json` `lspServers`
-  + `docs/lsp.json.template`
-- PSES `v4.6.0`, PSScriptAnalyzer `1.25.0`; Windows 11
-- Harness: `claude -p --allowedTools LSP --strict-mcp-config --mcp-config '{"mcpServers":{}}'
-  --output-format stream-json`; builtin `LSP` tool invoked; `tool_use`/`tool_result`
-  read from the event stream (not a prompt echo). Installed-cache case reached via
-  `claude plugin marketplace add` + `claude plugin install` (the installer populated the
-  cache), then a fresh `claude -p` with no `--plugin-dir`.
+- Claude Code: 2.1.167 (2026-06-06) through 2.1.183 (2026-06-19) for the historical symptom record;
+  **2.1.195 (2026-06-26) for the 000069 root-cause isolation**.
+- Plugin: powershell-lsp (standalone repo); server declared in `plugin.json` `lspServers` (the
+  authoritative surface) + a standalone `docs/lsp.json.template`.
+- PSES `v4.6.0`, PSScriptAnalyzer `1.25.0`; Windows 11.
+- Harness: `claude -p --allowedTools LSP ToolSearch --strict-mcp-config --mcp-config
+  '{"mcpServers":{}}' --output-format stream-json --verbose`; builtin `LSP` tool invoked;
+  `tool_use` / `tool_result` read from the event stream (not a prompt echo). Installed-plugin cases
+  reached via `claude plugin marketplace add <local-dir>` + `claude plugin install` (the installer
+  populated the cache), then a fresh `claude -p` with no `--plugin-dir`.
