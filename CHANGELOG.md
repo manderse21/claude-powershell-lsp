@@ -29,7 +29,7 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
-## [next MINOR -- 000060/000062/000061 merge train]
+## [Unreleased]
 
 MINOR: **the AI-era rule pack, slice 1 -- non-ASCII smuggling pre-PSSA byte pass,
 always-on additive, no knob/token**. A new pre-PSSA diagnostic source (`powershell-lsp`)
@@ -46,10 +46,6 @@ are untouched (this is a pre-PSSA pass and needs none of that). The corpus is ex
 with 5 known-bad (smart-punctuation cases) and 1 known-good (a UTF-8-with-BOM file
 containing non-ASCII that must NOT flag); the measured **0% false-positive rate and
 100% true-positive coverage** hold on the wider set.
-
-**Version deferral:** the single MINOR version cut happens after slices 2 (000062) and
-3 (000061) merge; the version number and plugin.json/marketplace.json are NOT updated
-here. Merge order: 000060 (this) -> 000062 -> 000061, then one MINOR cut.
 
 ### Added
 
@@ -83,9 +79,8 @@ here. Merge order: 000060 (this) -> 000062 -> 000061, then one MINOR cut.
   in the existing scripts; it does not load PSScriptAnalyzer, install a custom rule,
   or touch `ensure-pssa.ps1` / the pinned hash. The 000046 L2 integrity story is
   preserved unchanged.
-- **No version bump.** This entry is numbered at merge time when the three-slice
-  merge train (000060 -> 000062 -> 000061) is cut as a single MINOR release. Until
-  then `plugin.json` and `marketplace.json` stay at their existing versions.
+
+## [1.18.1] - 2026-06-27
 
 PATCH: **native LSP registration restored -- the two registrar-hostile manifest fields are removed**
 (dispatch 000075, fixing what 000069 isolated). Claude Code's runtime LSP registrar silently drops
