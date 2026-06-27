@@ -200,6 +200,23 @@ try {
     if (@('.ps1', '.psm1', '.psd1') -notcontains $ext) { Write-CLog ('skip non-PS file: ' + $path); exit 0 }
     if (-not (Test-Path -LiteralPath $path)) { Write-CLog ('file gone: ' + $path); exit 0 }
 
+    # Track C -- pre-PSSA byte pass (dispatch 000060): scan for non-ASCII
+    # smart-punctuation characters (em/en dash, smart quotes, arrow glyphs) that
+    # would mojibake under PS 5.1 reading UTF-8 without BOM as Windows-1252.
+    # Runs BEFORE the parser pre-pass so it catches the mojibake case even when
+    # the file no longer parses. Wrapped so any failure degrades gracefully and
+    # never blocks the edit.
+    $prePssaFindings = $null
+    try {
+        $prePssaFindings = @(Find-NonAsciiSmuggling -Path $path)
+        if ($null -ne $prePssaFindings -and $prePssaFindings.Count -gt 0) {
+            Write-CLog ('pre-PSSA (non-ASCII) found ' + $prePssaFindings.Count + ' finding(s)')
+        }
+    } catch {
+        Write-CLog ('pre-PSSA scan threw (degrading gracefully): ' + $_.Exception.Message)
+        $prePssaFindings = $null
+    }
+
     # Track B -- in-process parser pre-pass. A syntax error means PSScriptAnalyzer
     # cannot run anyway (the file does not parse), so PSES would only return parser
     # errors too: emit them straight from the in-process parser and SKIP the warm
@@ -216,37 +233,59 @@ try {
         Write-CLog ('parser pre-pass threw (falling through to daemon): ' + $_.Exception.Message)
         $parseErrors = $null
     }
-    if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
+    $hasParseErrors = ($null -ne $parseErrors -and $parseErrors.Count -gt 0)
+    $hasPrePssa = ($null -ne $prePssaFindings -and $prePssaFindings.Count -gt 0)
+    if ($hasParseErrors -or $hasPrePssa) {
         $cap = Get-PluginOptionInt 'perFileCap' 20
-        $total = $parseErrors.Count
-        $shown = if ($cap -gt 0 -and $total -gt $cap) { @($parseErrors[0..($cap - 1)]) } else { @($parseErrors) }
+        # Collect all items: pre-PSSA findings first, then parse errors.
+        $allItems = New-Object System.Collections.ArrayList
+        if ($hasPrePssa) { foreach ($f in $prePssaFindings) { [void]$allItems.Add($f) } }
+        if ($hasParseErrors) { foreach ($pe in $parseErrors) { [void]$allItems.Add($pe) } }
+        $total = $allItems.Count
+        $shown = if ($cap -gt 0 -and $total -gt $cap) { @($allItems[0..($cap - 1)]) } else { @($allItems.ToArray()) }
         $sb = New-Object System.Text.StringBuilder
         [void]$sb.AppendLine('PowerShell diagnostics (' + @($shown).Count + ') for ' + $path + ':')
-        foreach ($pe in $shown) {
-            $ln = [string]$pe.Extent.StartLineNumber
-            $cl = [string]$pe.Extent.StartColumnNumber
-            $m = ($pe.Message -replace "[`r`n`t]", ' ').Trim()
-            [void]$sb.AppendLine('  [Error] line ' + $ln + ', col ' + $cl + ' -- ' + $m + ' (parser)')
+        foreach ($item in $shown) {
+            $src = [string](Get-Prop $item 'source')
+            $cd = [string](Get-Prop $item 'code')
+            if ($src -eq 'powershell-lsp') {
+                $ln = [string](Get-Prop $item 'line'); $cl = [string](Get-Prop $item 'col')
+                $m = ((Get-Prop $item 'message') -replace "[`r`n`t]", ' ').Trim()
+                $lbl = if ($cd) { $src + '/' + $cd } else { $src }
+                [void]$sb.AppendLine('  [Warning] line ' + $ln + ', col ' + $cl + ' -- ' + $m + ' (' + $lbl + ')')
+            } else {
+                $ln = [string]$item.Extent.StartLineNumber
+                $cl = [string]$item.Extent.StartColumnNumber
+                $m = ($item.Message -replace "[`r`n`t]", ' ').Trim()
+                [void]$sb.AppendLine('  [Error] line ' + $ln + ', col ' + $cl + ' -- ' + $m + ' (parser)')
+            }
         }
         if ($cap -gt 0 -and $total -gt $cap) { [void]$sb.AppendLine('  ... and ' + ($total - $cap) + ' more (per-file cap)') }
         Write-HookContext ($sb.ToString().TrimEnd())
-        Write-CLog ('parse error -> emitted ' + @($shown).Count + ' parse diagnostic(s); skipped daemon round-trip')
-        # Dogfood capture (000039): tee the surfaced parser diagnostics into the local
-        # append-only log. STRICTLY after the emit, fully wrapped, and piped to Out-Null --
-        # a pure side-channel that can never alter the surface above or the exit 0 below
-        # (the invisible-side-channel fence). $shown is the exact set just surfaced.
-        try {
-            $capRecords = @($shown | ForEach-Object { New-CaptureRecordFromParseError $_ })
-            Add-DiagnosticCaptureEntries -File $path -Records $capRecords | Out-Null
-        } catch { Write-CLog ('dogfood capture (parser path) failed -- swallowed: ' + $_.Exception.Message) }
-        # Track A: telemetry for the parser-prepass short-circuit -- no daemon was
-        # contacted, so connect/analysis/codeAction are null; records = parse errors
-        # found (pre-cap). Strictly after the emit; file-only; never throws.
+        Write-CLog ('pre-PSSA/parse errors -> emitted ' + @($shown).Count + ' diagnostic(s); skipped daemon round-trip')
+        # Dogfood capture (000039): tee the surfaced diagnostics into the local
+        # append-only log. Pre-PSSA findings are captured as daemon-like records
+        # (using New-CaptureRecordFromDiag with source='powershell-lsp') so the
+        # corpus derivation sees them. Parse errors use the existing ParseError
+        # path. Both capture blocks are wrapped and fail-safe.
+        if ($hasPrePssa) {
+            try {
+                $capRecords = @($prePssaFindings | ForEach-Object { New-CaptureRecordFromDiag $_ })
+                Add-DiagnosticCaptureEntries -File $path -Records $capRecords | Out-Null
+            } catch { Write-CLog ('dogfood capture (pre-PSSA path) failed -- swallowed: ' + $_.Exception.Message) }
+        }
+        if ($hasParseErrors) {
+            try {
+                $capRecords = @($parseErrors | ForEach-Object { New-CaptureRecordFromParseError $_ })
+                Add-DiagnosticCaptureEntries -File $path -Records $capRecords | Out-Null
+            } catch { Write-CLog ('dogfood capture (parser path) failed -- swallowed: ' + $_.Exception.Message) }
+        }
+        # Track A: telemetry. Strictly after the emit; file-only; never throws.
         if ($StatsOn) {
-            Write-StatsLine @{ ts = (Get-Date -Format 'o'); path = $path; ext = $ext; taken = 'parser-prepass'
+            Write-StatsLine @{ ts = (Get-Date -Format 'o'); path = $path; ext = $ext; taken = 'pre-pssa-or-parse'
                 connectMs = $null; analysisMs = $null; codeActionMs = $null; totalMs = [int]$swTotal.ElapsedMilliseconds
                 records = $total; corrections = 0; cached = $false
-                scopeApplied = $false; scopeTotal = $total; scopeSurfaced = $total }
+                scopeApplied = $false; scopeTotal = $total; scopeSurfaced = @($shown).Count }
         }
         exit 0
     }
@@ -320,6 +359,13 @@ try {
 
     $diags = @(Get-Prop $resp 'diagnostics')
     $omitted = [int](Get-Prop $resp 'omitted')
+    # Merge pre-PSSA (non-ASCII smuggling) findings into the diagnostics stream
+    # (dispatch 000060). These are client-side byte-level findings, independent of
+    # the daemon. They appear alongside daemon diagnostics; the existing rendering
+    # loop handles their source/code/severity fields correctly.
+    if ($null -ne $prePssaFindings -and $prePssaFindings.Count -gt 0) {
+        $diags = @($prePssaFindings) + @($diags)
+    }
     # Analysis status (dispatch 000022/000024): '' / 'ok' = a clean, settled pass (behave
     # exactly as before); 'incomplete' = the pass did NOT settle (this edit was not checked);
     # 'degraded' = a settled but parser-only pass (PSScriptAnalyzer unavailable); 'unavailable'

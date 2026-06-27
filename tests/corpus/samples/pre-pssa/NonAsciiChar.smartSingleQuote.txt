@@ -1,0 +1,2 @@
+# Note: the ‘test’ value uses smart quotes
+Get-Service

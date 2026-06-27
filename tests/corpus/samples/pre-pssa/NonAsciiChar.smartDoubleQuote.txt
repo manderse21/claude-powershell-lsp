@@ -1,0 +1,2 @@
+# The “result” was captured
+Get-ChildItem

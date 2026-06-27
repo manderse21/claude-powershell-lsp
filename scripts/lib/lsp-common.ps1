@@ -1001,6 +1001,110 @@ function Select-DiagnosticsInRange {
     return @($out)
 }
 
+# --- pre-PSSA pack: non-ASCII smuggling detection (dispatch 000060) ----------
+# A byte-level scan for smart-punctuation characters that PowerShell 5.1,
+# reading a UTF-8-without-BOM file as Windows-1252, would silently mojibake.
+# Scoped to the smart-punctuation set (em/en dash, smart quotes, arrow glyphs)
+# and gated to fire ONLY on files without a UTF-8 BOM. This is a PURE function
+# that returns findings independently of PSES/PSSA; it runs BEFORE the parser
+# pre-pass in lsp-client.ps1 so it catches the mojibake case even when the
+# file no longer parses.
+
+function Find-NonAsciiSmuggling {
+    <#
+    .SYNOPSIS
+        Scan a file for non-ASCII smart-punctuation characters that would
+        mojibake under PS 5.1 reading UTF-8-without-BOM as Windows-1252.
+    .DESCRIPTION
+        Reads raw bytes. Returns findings only when the file has NO UTF-8 BOM
+        AND contains smart-punctuation characters. BOM files are always safe.
+        Returns @() for clean/absent/BOM files. Finding source = 'powershell-lsp',
+        ruleId = 'NonAsciiChar'.
+    #>
+    param([string]$Path)
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -eq 0) { return @() }
+
+    # UTF-8 BOM = 0xEF 0xBB 0xBF at position 0. Presence means the file
+    # encoding is explicit and PowerShell 5.1 reads it correctly.
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        return @()
+    }
+
+    $findings = New-Object System.Collections.ArrayList
+    $line = 1; $col = 1; $i = 0; $n = $bytes.Length
+
+    while ($i -lt $n) {
+        $b = $bytes[$i]
+
+        # Line tracking: LF
+        if ($b -eq 0x0A) { $line++; $col = 1; $i++; continue }
+        # CR (bare or part of CRLF): advance col only
+        if ($b -eq 0x0D) { $col++; $i++; continue }
+
+        # Smart punctuation is always a 3-byte UTF-8 sequence: 0xE2 0x<p2> 0x<p3>
+        if ($b -eq 0xE2 -and $i + 2 -lt $n) {
+            $b2 = $bytes[$i + 1]; $b3 = $bytes[$i + 2]
+
+            # Group: 0xE2 0x80 ... dashes and quotes (U+2013, U+2014, U+2018,
+            # U+2019, U+201C, U+201D). These are the most common AI-paste tell.
+            if ($b2 -eq 0x80) {
+                $name = switch ($b3) {
+                    0x93 { 'en-dash' }
+                    0x94 { 'em-dash' }
+                    0x98 { 'left single quote' }
+                    0x99 { 'right single quote' }
+                    0x9C { 'left double quote' }
+                    0x9D { 'right double quote' }
+                    default { $null }
+                }
+                if ($null -ne $name) {
+                    [void]$findings.Add([pscustomobject]@{
+                        ruleId = 'NonAsciiChar'; code = 'NonAsciiChar'
+                        source = 'powershell-lsp'
+                        severity = 'Warning'; line = $line; col = $col
+                        message = "Non-ASCII smart-punctuation character ($name) " +
+                            "detected. This file has no UTF-8 BOM, so PowerShell " +
+                            "5.1 will misinterpret it as Windows-1252."
+                    })
+                    $i += 3; $col++; continue
+                }
+            }
+            # Group: 0xE2 0x86 0x92 -- right arrow (U+2192)
+            if ($b2 -eq 0x86 -and $b3 -eq 0x92) {
+                [void]$findings.Add([pscustomobject]@{
+                    ruleId = 'NonAsciiChar'; code = 'NonAsciiChar'
+                    source = 'powershell-lsp'
+                    severity = 'Warning'; line = $line; col = $col
+                    message = "Non-ASCII arrow glyph (right arrow) " +
+                        "detected. This file has no UTF-8 BOM, so PowerShell " +
+                        "5.1 will misinterpret it as Windows-1252."
+                })
+                $i += 3; $col++; continue
+            }
+            # Other 3-byte sequence (e.g. other Unicode), skip
+            $i += 3; $col++; continue
+        }
+
+        # Multi-byte UTF-8 lead bytes that are NOT the smart-punctuation prefix:
+        # 2-byte (0xC0-0xDF), other 3-byte (0xE0-0xEF excluding 0xE2 handled
+        # above), 4-byte (0xF0-0xF7). Skip correctly so col stays in sync.
+        if ($b -ge 0xC0) {
+            if ($b -le 0xDF) { $i += 2 }
+            elseif ($b -le 0xEF) { $i += 3 }
+            elseif ($b -le 0xF7) { $i += 4 }
+            else { $i++ }
+            $col++; continue
+        }
+
+        # ASCII byte or continuation byte (0x80-0xBF)
+        $i++; $col++
+    }
+
+    return @($findings)
+}
+
 function Get-ScopedCappedResult {
     # Apply edit-range scoping THEN the per-file cap, in that order (000019 acceptance:
     # scope first, then cap). $Records are already ordered + severity/rule filtered.

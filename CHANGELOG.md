@@ -29,7 +29,63 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
-## [1.18.1] - 2026-06-27
+## [next MINOR -- 000060/000062/000061 merge train]
+
+MINOR: **the AI-era rule pack, slice 1 -- non-ASCII smuggling pre-PSSA byte pass,
+always-on additive, no knob/token**. A new pre-PSSA diagnostic source (`powershell-lsp`)
+scans for smart-punctuation characters (em/en dash, curly quotes, arrow glyphs) that
+would mojibake under Windows PowerShell 5.1 reading a UTF-8-without-BOM file as
+Windows-1252 -- the project's own signature pain. Gated to fire ONLY on files without
+a UTF-8 BOM (a BOM'd file is safe). This is the first slice of the PL-3 rule pack
+characterized by dispatch 000055's survey; it builds the reusable pre-PSSA source
+category (its own source label + corpus It-block, mirroring the existing `parser`
+category) that later slices 2 (5.1-vs-7 via the settings channel) and 3 (bash-isms
+AST pass) will reuse. Always-on additive: **no new `userConfig` knob, no new status
+token** (the 000027 drift-guard stays green). PSSA acquisition and the pinned hash
+are untouched (this is a pre-PSSA pass and needs none of that). The corpus is extended
+with 5 known-bad (smart-punctuation cases) and 1 known-good (a UTF-8-with-BOM file
+containing non-ASCII that must NOT flag); the measured **0% false-positive rate and
+100% true-positive coverage** hold on the wider set.
+
+**Version deferral:** the single MINOR version cut happens after slices 2 (000062) and
+3 (000061) merge; the version number and plugin.json/marketplace.json are NOT updated
+here. Merge order: 000060 (this) -> 000062 -> 000061, then one MINOR cut.
+
+### Added
+
+- **Pre-PSSA source category (`source = 'powershell-lsp'`).** A new in-process,
+  pre-PSSA byte/text pass in `scripts/lib/lsp-common.ps1` (`Find-NonAsciiSmuggling`)
+  and `scripts/lsp-client.ps1` that scans for non-ASCII smart-punctuation characters
+  BEFORE the PSES/PSSA analyzer pass. The scan fires on every `.ps1`/`.psm1`/`.psd1`
+  edit; findings carry the distinct source label `powershell-lsp`, analogous to how
+  parser errors carry `parser` and PSSA diagnostics carry `PSScriptAnalyzer`. The
+  corpus test has a new `pre-pssa` category It-block asserting the source label,
+  mirroring the `parser` assertion.
+- **Non-ASCII smuggling rule (`NonAsciiChar`).** Detects em-dashes (U+2014), en-dashes
+  (U+2013), smart single quotes (U+2018/2019), smart double quotes (U+201C/201D), and
+  right-arrow glyphs (U+2192) in files that have NO UTF-8 BOM. A file with a UTF-8 BOM
+  is treated as encoding-safe and never flags. Severity `Warning`. Smart-punctuation
+  scoping means an intentional CJK / Unicode literal (which uses different byte
+  sequences) is never flagged.
+- **Corpus coverage extended.** 5 known-bad `pre-pssa` samples (one per smart-
+  punctuation character type) and 1 known-good `clean` sample (a UTF-8-with-BOM file
+  containing an em-dash that must NOT flag). Every sample is tool-derived and never
+  hand-authored. The measured 0% FP / 100% TP holds on the wider corpus.
+
+### Notes
+
+- **Always-on additive discipline.** No `userConfig` knob exposes or suppresses this
+  rule -- it is always active. No new status token is added. The 000027 drift-guard
+  is unchanged (the existing 13 knobs and 4 tokens are untouched). CONTRACT.md is
+  unchanged (the source label `powershell-lsp` is an output field, not a frozen
+  userConfig knob or status token).
+- **No PSSA pin or acquisition touched.** The pre-PSSA pass is pure byte-level code
+  in the existing scripts; it does not load PSScriptAnalyzer, install a custom rule,
+  or touch `ensure-pssa.ps1` / the pinned hash. The 000046 L2 integrity story is
+  preserved unchanged.
+- **No version bump.** This entry is numbered at merge time when the three-slice
+  merge train (000060 -> 000062 -> 000061) is cut as a single MINOR release. Until
+  then `plugin.json` and `marketplace.json` stay at their existing versions.
 
 PATCH: **native LSP registration restored -- the two registrar-hostile manifest fields are removed**
 (dispatch 000075, fixing what 000069 isolated). Claude Code's runtime LSP registrar silently drops
