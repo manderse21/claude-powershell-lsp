@@ -12,3 +12,4 @@
 # used only when POWERSHELL_LSP_PSSA_CACHE points here (CI sets it under the
 # workspace). It is a build artifact, never source -- never commit it.
 /.pssa-nupkg-cache/
+_ci-logs-5.1/
