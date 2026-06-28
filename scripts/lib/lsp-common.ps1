@@ -1143,10 +1143,14 @@ function Find-ModuleManifest {
                 $data = Import-PowerShellDataFile -LiteralPath $f.FullName -ErrorAction SilentlyContinue
                 if ($null -ne $data) {
                     # Recognise a module manifest: declares any export list or has a RootModule.
-                    $hasExports = ($null -ne $data.FunctionsToExport) -or `
-                        ($null -ne $data.CmdletsToExport) -or `
-                        ($null -ne $data.AliasesToExport) -or `
-                        (-not [string]::IsNullOrWhiteSpace([string]$data.RootModule))
+                    # Index, never dot-access: $data is a Hashtable and a missing key via dot
+                    # access throws under StrictMode (see Get-ModuleManifestExports). The catch
+                    # would swallow that, but it would skip an otherwise-valid manifest that
+                    # merely omits one of these keys -- so use the null-safe indexer.
+                    $hasExports = ($null -ne $data['FunctionsToExport']) -or `
+                        ($null -ne $data['CmdletsToExport']) -or `
+                        ($null -ne $data['AliasesToExport']) -or `
+                        (-not [string]::IsNullOrWhiteSpace([string]$data['RootModule']))
                     if ($hasExports) { return $f.FullName }
                 }
             } catch { }
@@ -1167,10 +1171,16 @@ function Get-ModuleManifestExports {
     try {
         $data = Import-PowerShellDataFile -LiteralPath $ManifestPath -ErrorAction Stop
         if ($null -eq $data) { return $null }
-        $fto = $data.FunctionsToExport
-        $cto = $data.CmdletsToExport
-        $ato = $data.AliasesToExport
-        $rootModule = [string]$data.RootModule
+        # Index, never dot-access: Import-PowerShellDataFile returns a Hashtable, and under
+        # Set-StrictMode -Version Latest a MISSING key via $data.CmdletsToExport THROWS
+        # ("property cannot be found"), whereas the indexer $data['CmdletsToExport'] returns
+        # $null. Most real manifests omit CmdletsToExport/AliasesToExport, so dot-access here
+        # made the whole parse throw -> caught -> $null -> the daemon reported "could not
+        # parse manifest" (a false indeterminate) for any manifest lacking all three lists.
+        $fto = $data['FunctionsToExport']
+        $cto = $data['CmdletsToExport']
+        $ato = $data['AliasesToExport']
+        $rootModule = [string]$data['RootModule']
         # Normalise export lists to string arrays.
         $fnArr = if ($null -eq $fto) { @() } elseif ($fto -is [array]) { @($fto | ForEach-Object { [string]$_ }) } else { @([string]$fto) }
         $cmdArr = if ($null -eq $cto) { @() } elseif ($cto -is [array]) { @($cto | ForEach-Object { [string]$_ }) } else { @([string]$cto) }

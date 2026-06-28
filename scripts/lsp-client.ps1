@@ -370,7 +370,21 @@ try {
     # the daemon's module surface cache into the diagnostics stream. Uses the same
     # `powershell-lsp` source label. Non-determinate findings (wildcard/dynamic/dot-source)
     # carry an _indeterminate flag and are rendered as prose notes instead of diagnostics.
-    $projectFinds = @(Get-Prop $resp 'projectFindings')
+    # $indeterminateMsg MUST be initialized unconditionally here: it is read below at the
+    # status/banner stage (the 'Project intelligence:' note), which runs on EVERY file. Under
+    # Set-StrictMode -Version Latest + $ErrorActionPreference='Stop' (top of this script),
+    # reading it unset is a TERMINATING error that aborts the emit before any diagnostic is
+    # surfaced -- which silently wiped the whole diagnostics path for every file without
+    # indeterminate project findings (i.e. every non-module file). Same init-then-guard idiom
+    # as $prePssaFindings above. $null = no indeterminate shape (the guard short-circuits).
+    $indeterminateMsg = $null
+    # Filter nulls: @(Get-Prop ...) on an ABSENT property yields @($null) -- a one-element
+    # array holding a single $null -- because the daemon omits projectFindings entirely for
+    # every non-module file (no manifest in scope). Left unfiltered that lone $null has
+    # Count 1, so the block below runs; Get-Prop on $null returns $null so it reads as
+    # "determinate" and gets prepended to $diags as a phantom all-empty diagnostic, surfaced
+    # and dogfood-captured on EVERY edit. Filtering makes an absent property an empty set.
+    $projectFinds = @(@(Get-Prop $resp 'projectFindings') | Where-Object { $null -ne $_ })
     if ($projectFinds.Count -gt 0) {
         $determinate = @($projectFinds | Where-Object { -not [bool](Get-Prop $_ '_indeterminate') })
         $indeterminate = @($projectFinds | Where-Object { [bool](Get-Prop $_ '_indeterminate') })
