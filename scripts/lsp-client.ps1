@@ -366,6 +366,19 @@ try {
     if ($null -ne $prePssaFindings -and $prePssaFindings.Count -gt 0) {
         $diags = @($prePssaFindings) + @($diags)
     }
+    # Project findings (PL-6, dispatch 000062): merge manifest-consistency findings from
+    # the daemon's module surface cache into the diagnostics stream. Uses the same
+    # `powershell-lsp` source label. Non-determinate findings (wildcard/dynamic/dot-source)
+    # carry an _indeterminate flag and are rendered as prose notes instead of diagnostics.
+    $projectFinds = @(Get-Prop $resp 'projectFindings')
+    if ($projectFinds.Count -gt 0) {
+        $determinate = @($projectFinds | Where-Object { -not [bool](Get-Prop $_ '_indeterminate') })
+        $indeterminate = @($projectFinds | Where-Object { [bool](Get-Prop $_ '_indeterminate') })
+        if ($determinate.Count -gt 0) { $diags = @($determinate) + @($diags) }
+        if ($indeterminate.Count -gt 0) {
+            $indeterminateMsg = @($indeterminate | ForEach-Object { [string](Get-Prop $_ 'message') })
+        }
+    }
     # Analysis status (dispatch 000022/000024): '' / 'ok' = a clean, settled pass (behave
     # exactly as before); 'incomplete' = the pass did NOT settle (this edit was not checked);
     # 'degraded' = a settled but parser-only pass (PSScriptAnalyzer unavailable); 'unavailable'
@@ -382,6 +395,11 @@ try {
     # an analyzed edit, so it gets a stats line below.
     $sb = New-Object System.Text.StringBuilder
     if ($status -eq 'degraded') { [void]$sb.AppendLine((Get-DiagnosticsStatusBanner 'degraded' $path)) }
+    # Project intelligence note (PL-6, dispatch 000062): indeterminate shape message
+    # rendered as a separate note before any diagnostic findings.
+    if ($null -ne $indeterminateMsg -and $indeterminateMsg.Count -gt 0) {
+        [void]$sb.AppendLine('Project intelligence: ' + ($indeterminateMsg -join '; '))
+    }
     if ($diags.Count -gt 0) {
         [void]$sb.AppendLine('PowerShell diagnostics (' + $diags.Count + ') for ' + $path + ':')
         foreach ($d in $diags) {

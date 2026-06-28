@@ -60,9 +60,11 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
         $script:Derived = @{ }
         if ($null -ne $script:DaemonInfo) {
             foreach ($spec in (Get-CorpusSampleSpec)) {
+                $modDir = if ($spec.Contains('ModuleDir')) { [string]$spec.ModuleDir } else { '' }
                 $script:Derived[$spec.Label] = @(Invoke-CorpusDerivation -ScriptsDir $script:ScriptsDir `
                         -DataRoot $script:DataDir -SessionId $script:Sid -ScratchDir $script:ScratchDir `
-                        -ScratchName $spec.ScratchName -Bytes ([System.IO.File]::ReadAllBytes($spec.SourcePath)))
+                        -ScratchName $spec.ScratchName -Bytes ([System.IO.File]::ReadAllBytes($spec.SourcePath)) `
+                        -ModuleDir $modDir)
             }
         }
 
@@ -155,6 +157,38 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
             $d.Count | Should -BeGreaterThan 0 -Because "$($s.Label) must surface at least one non-ASCII finding"
             ($d | Select-Object -First 1).source | Should -BeExactly 'powershell-lsp'
             ($d | Select-Object -First 1).ruleId | Should -BeExactly 'NonAsciiChar'
+        }
+    }
+
+    It 'module samples: consistent/wildcard/dynamic produce zero findings; orphan/typo surface ManifestConsistency' {
+        $module = @(Get-CorpusSampleSpec | Where-Object { $_.Category -eq 'module' })
+        $module.Count | Should -BeGreaterThan 0
+        foreach ($s in $module) {
+            $d = @($script:Derived[$s.Label])
+            switch ($s.Name) {
+                'consistent-module' {
+                    $d.Count | Should -Be 0 -Because "$($s.Label) is a consistent module with matching exports"
+                }
+                'orphan-export' {
+                    $d.Count | Should -BeGreaterThan 0 -Because "$($s.Label) has an orphan export in FunctionsToExport"
+                    ($d | Select-Object -First 1).source | Should -BeExactly 'powershell-lsp'
+                    ($d | Select-Object -First 1).ruleId | Should -BeExactly 'ManifestConsistency'
+                }
+                'typo-export' {
+                    $d.Count | Should -BeGreaterThan 0 -Because "$($s.Label) has a typo export in FunctionsToExport"
+                    ($d | Select-Object -First 1).source | Should -BeExactly 'powershell-lsp'
+                    ($d | Select-Object -First 1).ruleId | Should -BeExactly 'ManifestConsistency'
+                }
+                'wildcard-export' {
+                    $d.Count | Should -Be 0 -Because "$($s.Label) uses wildcard '*' export (honest degrade, no false orphan)"
+                }
+                'dynamic-export' {
+                    $d.Count | Should -Be 0 -Because "$($s.Label) uses dynamic Export-ModuleMember (honest degrade, no false orphan)"
+                }
+                default {
+                    $true | Should -BeFalse -Because "$($s.Label) is not a known module fixture type"
+                }
+            }
         }
     }
 

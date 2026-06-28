@@ -80,6 +80,85 @@ containing non-ASCII that must NOT flag); the measured **0% false-positive rate 
   or touch `ensure-pssa.ps1` / the pinned hash. The 000046 L2 integrity story is
   preserved unchanged.
 
+MINOR: **project-intelligence, slice 1 -- deterministic .psd1 static manifest-consistency
+(orphan/typo export detection), always-on additive, no knob/token**. The daemon caches
+the module surface ONCE per session (walks up from the edited file to find the nearest
+`.psd1`, parses FunctionsToExport/CmdletsToExport/AliasesToExport with
+Import-PowerShellDataFile, AST-enumerates the RootModule for defined function names),
+then per-edit is a cheap cache lookup + cross-reference that flags two classes of
+manifest inconsistency: (1) an ORPHAN export -- a name in FunctionsToExport that has
+no matching function definition in the module (e.g. a typo'd name), and (2) an
+UNDER-DECLARED export -- a function defined AND exported by the module but absent from
+the manifest's export list. The check surfaces ONLY when the edited file is the manifest
+(.psd1) or the root module (.psm1), so unrelated edits never spam project findings (the
+000058 touch-triggered discipline). On a wildcard '&#42;' export, a runtime/dynamic
+Export-ModuleMember, or dot-sourcing the static pass cannot follow, the tool honestly
+says 'cannot determine the module export surface' rather than guessing -- **never a false
+positive from an indeterminable shape**. This is the first slice of PL-6, characterized
+by the 000058 survey. **unused-export detection is explicitly NOT in slice 1** (the
+survey ranked it down as wrong-by-design: a public export's purpose IS external callers,
+so "unused within the module" is the normal state). The corpus is extended with **5
+multi-file module fixtures** (3 good/indeterminate + 2 bad) in a new `module` category;
+the measured **0% false-positive rate** holds on the wider set. Always-on additive: **no
+new `userConfig` knob, no new status token** (the 000027 drift-guard stays green). PSSA
+acquisition and the pinned hash are untouched.
+
+### Added
+
+- **Daemon-side module surface cache (`scripts/pses-daemon.ps1`).** New
+  `Update-ModuleSurfaceCache` function that resolves the nearest `.psd1` (walked up from
+  the edited file, bounded at the filesystem root), parses it with
+  `Import-PowerShellDataFile`, AST-enumerates the RootModule (`.psm1`) for
+  `FunctionDefinitionAst` + explicit `Export-ModuleMember`, and caches the result keyed
+  by manifest path + content hash. Per-edit invalidation is a SHA-256 content-hash
+  compare -- a no-op when the manifest is unchanged. The cache stores both the manifest
+  export lists and the module's defined function names, plus a degrade reason when the
+  shape is indeterminate.
+- **Manifest-consistency helpers (`scripts/lib/lsp-common.ps1`).** New pure-data
+  extraction functions: `Find-ModuleManifest` (walk-up to locate a .psd1),
+  `Get-ModuleManifestExports` (safe Import-PowerShellDataFile wrapper),
+  `Get-ModuleDefinedFunctionNames` (AST enumeration with dynamic Export-ModuleMember
+  detection), `Test-ManifestConsistency` (the cross-reference that finds orphan and
+  under-declared exports), and `Get-ProjectIntelligenceFindings` (the top-level entry
+  point). Honest degrade: degrades on wildcard `'*'`, runtime/dynamic
+  Export-ModuleMember, dot-sourcing, and missing/`$null` FunctionsToExport (which means
+  "export all" in some PS versions).
+- **Project-finding surface (`scripts/lsp-client.ps1`).** The diagnostics client now
+  requests and renders manifest-consistency findings from the daemon's module surface
+  cache. Deterministic findings appear as `powershell-lsp`/`ManifestConsistency`
+  diagnostics; indeterminate shapes render a "cannot determine" prose note. Both appear
+  alongside the existing PSSA/parser diagnostics and carry no new status token.
+- **Multi-file corpus fixtures (new `module` category).** 5 module fixtures under
+  `tests/corpus/samples/module/`, each a directory with a `.psd1` + `.psm1`:
+  `consistent-module` (a well-formed module -- must surface NOTHING), `orphan-export`
+  (a name in FunctionsToExport with no matching function -- must surface
+  ManifestConsistency), `typo-export` (a mis-spelled exported name -- must surface
+  ManifestConsistency), `wildcard-export` (FunctionsToExport=`'*'` -- must NOT produce
+  a false orphan), and `dynamic-export` (Export-ModuleMember with a variable argument --
+  must NOT produce a false orphan). The corpus harness is extended to copy multi-file
+  fixture directories to scratch during derivation. Expected snapshots are committed and
+  a new `module` assertion `It` block guards them. The measured 0% FP holds on the wider
+  set.
+
+### Notes
+
+- **Always-on additive discipline.** No `userConfig` knob exposes or suppresses this
+  project-intelligence check -- it is always active. No new status token is added. The
+  000027 drift-guard is unchanged (the existing 13 knobs and 4 tokens are untouched).
+  CONTRACT.md is unchanged (the new `powershell-lsp`/`ManifestConsistency` finding uses
+  an existing source label and is an output field, not a frozen userConfig knob or status
+  token).
+- **No PSSA pin or acquisition touched.** The module surface cache is pure AST-level
+  code in the existing scripts; it does not load PSScriptAnalyzer, install a custom rule,
+  or touch `ensure-pssa.ps1` / the pinned hash. The 000046 L2 integrity story is
+  preserved unchanged.
+- **unused-export detection is NOT in slice 1.** The 000058 survey ranked it down as
+  wrong-by-design: a public export's purpose IS external callers, so "unused within the
+  module" is the normal state, and flagging it would be HIGH FP. Slice 1 is only the
+  deterministic manifest-consistency check. The broader workspace-awareness phase
+  (cross-file symbol resolution, dead-private-function detection) is named as roadmap
+  and not scoped here.
+
 ## [1.18.1] - 2026-06-27
 
 PATCH: **native LSP registration restored -- the two registrar-hostile manifest fields are removed**

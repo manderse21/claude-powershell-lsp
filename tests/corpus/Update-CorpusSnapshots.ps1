@@ -56,8 +56,10 @@ $changed = 0; $unchanged = 0; $total = 0
 try {
     foreach ($spec in $specs) {
         $total++
+        $modDir = if ($spec.Contains('ModuleDir')) { [string]$spec.ModuleDir } else { '' }
         $findings = Invoke-CorpusDerivation -ScriptsDir $scriptsDir -DataRoot $dataRoot -SessionId $sid `
-            -ScratchDir $scratchDir -ScratchName $spec.ScratchName -Bytes ([System.IO.File]::ReadAllBytes($spec.SourcePath))
+            -ScratchDir $scratchDir -ScratchName $spec.ScratchName -Bytes ([System.IO.File]::ReadAllBytes($spec.SourcePath)) `
+            -ModuleDir $modDir
         $json = Format-CorpusSnapshotJson -Findings $findings
         $ruleSummary = if (@($findings).Count -eq 0) { '(no findings)' } else { (@($findings) | ForEach-Object { $_.ruleId } | Where-Object { $_ } | Select-Object -Unique) -join ', ' }
         $expectedDir = Split-Path -Parent $spec.ExpectedPath

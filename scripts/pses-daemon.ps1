@@ -130,6 +130,18 @@ $script:pssaAvailable = $true
 $script:psesState     = 'initializing'
 $script:initSentAt    = [DateTime]::MinValue
 $script:warmDone      = $false
+# Module surface cache (PL-6, dispatch 000062): the module surface is parsed ONCE per
+# session and cached in the daemon (the only per-session-persistent component). Per-edit
+# is then a cache lookup + cheap cross-reference, never a re-parse. Invalidation: the
+# cache is refreshed when the manifest file's content hash changes.
+$script:moduleCacheManifest = ''    # path to the cached .psd1
+$script:moduleCacheHash = ''        # SHA-256 hex of the manifest content (for invalidation)
+$script:moduleCacheDegrade = ''     # non-empty = cached indeterminate state (wildcard/dynamic/etc)
+$script:moduleCacheFnExports = @()  # FunctionsToExport from the manifest
+$script:moduleCacheCmdExports = @() # CmdletsToExport
+$script:moduleCacheAliasExports = @()  # AliasesToExport
+$script:moduleCacheDefinedNames = @()  # defined function names from the module
+$script:moduleCacheExportedNames = $null  # $null = implicitly all; @(...) = explicit list
 
 function Get-ContentHash([string]$text) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -595,11 +607,169 @@ function Initialize-PssaSettings {
     Write-DLog ('PSSA settings: honoring ' + $resolved)
 }
 
+# --- module surface cache (PL-6, dispatch 000062) ----------------------------
+# THE COST MODEL: the module surface is parsed ONCE per session and cached in the
+# daemon (the only per-session-persistent component). Per-edit is then a cache lookup
+# + cheap cross-reference, never a re-parse. Invalidation: the cache is refreshed when
+# the manifest (.psd1) content changes (content-hash compare).
+#
+# The cache stores BOTH the manifest export lists AND the module's defined function
+# names, plus a degrade reason when the shape is indeterminate (wildcard '*', dynamic
+# Export-ModuleMember, dot-sourcing, etc.).
+#
+# Surface trigger: project findings are returned ONLY when the edited file is a .psd1
+# or a .psm1 (the manifest or the root module file), so unrelated edits never spam
+# project findings (the 000058 touch-triggered surfacing).
+
+function Update-ModuleSurfaceCache {
+    # Build or refresh the module surface cache from an edited file path. Walks up to
+    # find the nearest .psd1, parses exports + RootModule, AST-enumerates defined
+    # functions, and caches the result. If the manifest hasn't changed since last cache,
+    # this is a no-op. Logs cache state changes.
+    param([string]$FilePath)
+    $manifestPath = Find-ModuleManifest -FilePath $FilePath
+    if ([string]::IsNullOrWhiteSpace($manifestPath)) { return }   # not inside a module tree
+    # Check invalidation: refresh only when the manifest file content changed.
+    $currentHash = ''
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($manifestPath)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try { $currentHash = [System.BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '' } finally { $sha.Dispose() }
+    } catch { return }
+    if ($script:moduleCacheManifest -eq $manifestPath -and $script:moduleCacheHash -eq $currentHash) {
+        return   # cache is still fresh
+    }
+    # Parse the manifest.
+    $exports = Get-ModuleManifestExports -ManifestPath $manifestPath
+    if ($null -eq $exports) {
+        Write-DLog ('module cache: could not parse manifest ' + $manifestPath)
+        $script:moduleCacheManifest = $manifestPath
+        $script:moduleCacheHash = $currentHash
+        $script:moduleCacheDegrade = 'could not parse manifest'
+        $script:moduleCacheFnExports = @()
+        $script:moduleCacheCmdExports = @()
+        $script:moduleCacheAliasExports = @()
+        $script:moduleCacheDefinedNames = @()
+        $script:moduleCacheExportedNames = $null
+        return
+    }
+    # Check wildcard -> cache as indeterminate.
+    $fnExport = @($exports.FunctionsToExport)
+    $cmdExport = @($exports.CmdletsToExport)
+    $aliasExport = @($exports.AliasesToExport)
+    if ($fnExport -contains '*' -or $cmdExport -contains '*' -or $aliasExport -contains '*') {
+        $script:moduleCacheManifest = $manifestPath
+        $script:moduleCacheHash = $currentHash
+        $script:moduleCacheDegrade = 'wildcard export (*)'
+        $script:moduleCacheFnExports = $fnExport
+        $script:moduleCacheCmdExports = $cmdExport
+        $script:moduleCacheAliasExports = $aliasExport
+        $script:moduleCacheDefinedNames = @()
+        $script:moduleCacheExportedNames = $null
+        Write-DLog ('module cache: ' + $manifestPath + ' uses wildcard exports (indeterminate)')
+        return
+    }
+    # Resolve RootModule and AST-enumerate it.
+    $manifestDir = [System.IO.Path]::GetDirectoryName($manifestPath)
+    $rootModulePath = Resolve-ModuleRootModulePath -ManifestDir $manifestDir -RootModule ([string]$exports.RootModule)
+    if ([string]::IsNullOrWhiteSpace($rootModulePath)) {
+        Write-DLog ('module cache: ' + $manifestPath + ' has no RootModule to cross-reference')
+        $script:moduleCacheManifest = $manifestPath
+        $script:moduleCacheHash = $currentHash
+        $script:moduleCacheDegrade = 'no RootModule to inspect'
+        $script:moduleCacheFnExports = $fnExport
+        $script:moduleCacheCmdExports = $cmdExport
+        $script:moduleCacheAliasExports = $aliasExport
+        $script:moduleCacheDefinedNames = @()
+        $script:moduleCacheExportedNames = $null
+        return
+    }
+    $moduleInfo = Get-ModuleDefinedFunctionNames -ModuleFilePath $rootModulePath
+    if (-not [string]::IsNullOrWhiteSpace($moduleInfo.Degrade)) {
+        Write-DLog ('module cache: ' + $rootModulePath + ' is indeterminate (' + $moduleInfo.Degrade + ')')
+        $script:moduleCacheManifest = $manifestPath
+        $script:moduleCacheHash = $currentHash
+        $script:moduleCacheDegrade = $moduleInfo.Degrade
+        $script:moduleCacheFnExports = $fnExport
+        $script:moduleCacheCmdExports = $cmdExport
+        $script:moduleCacheAliasExports = $aliasExport
+        $script:moduleCacheDefinedNames = $moduleInfo.DefinedNames
+        $script:moduleCacheExportedNames = $moduleInfo.ExportedNames
+        return
+    }
+    # Cache the fully determinate surface.
+    $script:moduleCacheManifest = $manifestPath
+    $script:moduleCacheHash = $currentHash
+    $script:moduleCacheDegrade = ''
+    $script:moduleCacheFnExports = $fnExport
+    $script:moduleCacheCmdExports = $cmdExport
+    $script:moduleCacheAliasExports = $aliasExport
+    $script:moduleCacheDefinedNames = $moduleInfo.DefinedNames
+    $script:moduleCacheExportedNames = $moduleInfo.ExportedNames
+    Write-DLog ('module cache: cached surface for ' + $manifestPath + ' (' + $fnExport.Count + ' exports, ' + $moduleInfo.DefinedNames.Count + ' defined functions)')
+}
+
+function Get-CachedProjectFindings {
+    # Use the cached module surface to compute manifest-consistency findings for the
+    # current edited file. Only returns findings when the file is a manifest or root
+    # module file. Returns @() for unrelated edits or indeterminate surfaces.
+    #
+    # DETERMINATE surface -> returns findings (orphan/typo/under-declared) or empty
+    #   if consistent.
+    # INDETERMINATE (wildcard/dynamic/dot-source) -> returns a single descriptive
+    #   entry that the client renders as PROSE, NOT a diagnostic finding.
+    param([string]$FilePath)
+    if ([string]::IsNullOrWhiteSpace($script:moduleCacheManifest)) { return @() }
+    # Surface trigger: only .psd1 (the manifest itself) or .psm1 (the root module).
+    $ext = [System.IO.Path]::GetExtension($FilePath).ToLowerInvariant()
+    if ($ext -ne '.psd1' -and $ext -ne '.psm1') { return @() }
+    # On a .psm1 edit, also verify the file is the root module (not an unrelated .psm1).
+    if ($ext -eq '.psm1') {
+        $full = [System.IO.Path]::GetFullPath($FilePath)
+        if ($full -ne [System.IO.Path]::GetFullPath($script:moduleCacheManifest)) {
+            $manifestDir = [System.IO.Path]::GetDirectoryName($script:moduleCacheManifest)
+            # Check if the edited .psm1 IS the RootModule referenced by the manifest.
+            $exports = Get-ModuleManifestExports -ManifestPath $script:moduleCacheManifest
+            $rmPath = ''
+            if ($null -ne $exports) {
+                $rmPath = Resolve-ModuleRootModulePath -ManifestDir $manifestDir -RootModule ([string]$exports.RootModule)
+            }
+            if ([string]::IsNullOrWhiteSpace($rmPath) -or $full -ne [System.IO.Path]::GetFullPath($rmPath)) {
+                return @()   # .psm1 that is NOT the root module -> skip
+            }
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($script:moduleCacheDegrade)) {
+        # Indeterminate shape: return a single honest-degrade item (rendered as prose
+        # by the client, NOT a diagnostic finding).
+        return @([pscustomobject]@{
+            ruleId = 'ManifestConsistency'; code = 'ManifestConsistency'
+            source = 'powershell-lsp'
+            severity = 'Information'; line = 1; col = 1
+            message = 'Module export surface cannot be determined (' + $script:moduleCacheDegrade + '); manifest-consistency not checked.'
+            _indeterminate = $true
+        })
+    }
+    # Determinate: cross-reference.
+    $result = Test-ManifestConsistency `
+        -FunctionsToExport $script:moduleCacheFnExports `
+        -CmdletsToExport $script:moduleCacheCmdExports `
+        -AliasesToExport $script:moduleCacheAliasExports `
+        -DefinedNames $script:moduleCacheDefinedNames `
+        -ExportedNames $script:moduleCacheExportedNames `
+        -ManifestPath $script:moduleCacheManifest
+    return @($result.Findings)
+}
+
 function Get-Diagnostics([string]$filePath, [string]$cwd = '') {
     $full = [System.IO.Path]::GetFullPath($filePath)
     if (-not (Test-Path -LiteralPath $full)) { return @{ ok = $false; error = 'file not found' } }
     $uri = ConvertTo-FileUri $full
     $key = ConvertTo-UriKey $uri
+    # Module surface cache (PL-6, dispatch 000062): update the cache on every
+    # diagnostics request. This is a cheap no-op when the cache is already fresh
+    # (only walks up + parses once per session); per-edit is a hash compare.
+    Update-ModuleSurfaceCache -FilePath $full
 
     # Pipe-first serve gate (dispatch 000028, generalizing the 000022/000024 seam). The pipe is
     # open before PSES is ready, so a request can arrive while PSES is still starting, after it
@@ -854,6 +1024,15 @@ try {
                             # (incomplete/degraded), so the warm happy-path payload is
                             # byte-identical to before. The client renders it visibly.
                             if ($res.Contains('status')) { $payload['status'] = [string]$res.status }
+                            # Project findings (PL-6, dispatch 000062): manifest-consistency
+                            # check from the cached module surface. Only surfaces when the
+                            # edited file is the manifest or root module. Additive to the
+                            # payload, never replaces diagnostics.
+                            $projectFinds = Get-CachedProjectFindings -FilePath $file
+                            if ($null -ne $projectFinds -and @($projectFinds).Count -gt 0) {
+                                $payload['projectFindings'] = @($projectFinds)
+                                Write-DLog ('project findings: ' + @($projectFinds).Count + ' for ' + $file)
+                            }
                         } else {
                             $payload = [ordered]@{ ok = $false; action = 'diagnostics'; error = $res.error }
                         }
