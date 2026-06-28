@@ -4,16 +4,16 @@
     "name": "Mike Andersen"
   },
   "metadata": {
-    "description": "PowerShell code intelligence (PowerShell Editor Services) for Claude Code -- standalone distribution of the powershell-lsp plugin.",
+    "description": "Real-time PowerShell diagnostics for Claude Code -- standalone distribution of the powershell-lsp plugin.",
     "version": "1.18.1"
   },
   "plugins": [
     {
       "name": "powershell-lsp",
       "source": "./",
-      "description": "PowerShell diagnostics and PSScriptAnalyzer fix suggestions as Claude edits .ps1/.psm1/.psd1 files, via PowerShell Editor Services. Hover, go-to-definition, and find-references are on the roadmap, pending Claude Code plugin LSP-server registration (#66987).",
+      "description": "Real-time PowerShell diagnostics in Claude Code: as Claude edits a .ps1/.psm1/.psd1, it runs PowerShell Editor Services + PSScriptAnalyzer over that file and surfaces syntax errors and lint fixes inline. Hover/definition/references are on the roadmap.",
       "category": "development",
-      "tags": ["powershell", "lsp", "editor-services", "diagnostics"]
+      "tags": ["powershell", "lsp", "editor-services", "diagnostics", "psscriptanalyzer", "claude-code", "linter"]
     }
   ]
 }

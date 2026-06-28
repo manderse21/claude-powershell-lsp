@@ -1,4 +1,4 @@
-# PowerShell LSP
+# PowerShell diagnostics for Claude Code
 
 [![CI](https://github.com/manderse21/claude-powershell-lsp/actions/workflows/powershell-lsp-ci.yml/badge.svg)](https://github.com/manderse21/claude-powershell-lsp/actions/workflows/powershell-lsp-ci.yml)
 [![version](https://img.shields.io/github/v/tag/manderse21/claude-powershell-lsp?sort=semver&label=version&color=blue)](https://github.com/manderse21/claude-powershell-lsp/tags)
@@ -7,27 +7,48 @@
 [![corpus false-positive rate: 0%](https://img.shields.io/badge/corpus%20false--positive%20rate-0%25-brightgreen)](#diagnostic-correctness-corpus)
 [![release signing: Sigstore](https://img.shields.io/badge/release%20signing-Sigstore%20keyless-brightgreen)](./TRUST.md#signing-posture)
 
-**Per-file PowerShell diagnostics inside [Claude Code](https://claude.com/claude-code)**,
-powered by [PowerShell Editor Services](https://github.com/PowerShell/PowerShellEditorServices)
-(PSES). As Claude edits a `.ps1`, `.psm1`, or `.psd1` file, the plugin runs real PSES +
-PSScriptAnalyzer over **that file** and surfaces the result -- syntax errors and lint findings
-with fix suggestions -- directly in Claude's context. That per-file diagnostic loop is what the
-plugin does well today, and it works on every supported host now.
+As Claude edits a `.ps1`, `.psm1`, or `.psd1`, this plugin runs real PowerShell
+Editor Services + PSScriptAnalyzer over that file and feeds the result -- syntax
+errors and lint findings, with fix suggestions -- straight back into Claude's
+context, so a mistake gets caught and corrected in the same turn. It is language
+tooling, not project tooling: near-zero always-on token cost, a language server
+spawns only when a PowerShell file is open, and one warm process serves the whole
+session, so each edit pays a fast pipe round-trip instead of a cold start.
 
-**On the roadmap, not yet active:** hover, go-to-definition, find-references, and
-**workspace-wide / multi-file analysis**. v1.18.1 removes a manifest-side blocker that had kept
-the plugin's native LSP server from **registering** with Claude Code (see
-[Why a hook, not native registration](#why-a-hook-not-native-lspjson-registration)); what remains
-gated is end-to-end **serve** -- once registered, Claude Code launches the server but its LSP
-client currently times out during initialization (an upstream Claude Code handshake gap,
-#1359-class), so these operations do not complete yet. Until they do, the plugin delivers the
-per-file diagnostics above through a warm PostToolUse hook -- the path that works now, independent
-of native registration.
+<!-- DEMO: drop a GIF or asciinema cast here -- this is the single highest-impact
+     addition you can make. Suggested capture: Claude writes a function with an
+     unapproved verb, the diagnostic appears inline, Claude fixes it on the next
+     turn. Then reference it:  ![demo](docs/media/demo.gif) -->
 
-This is language tooling, not project tooling: a standalone plugin that carries
-~0 always-on model-context token cost. It only spawns a language server when you
-open a PowerShell file, and a single warm PSES serves the whole session so each
-edit pays a pipe round-trip (~2 s) instead of a cold start (~6 s).
+**See it catch something.** Ask Claude to write:
+
+```powershell
+function Frobnicate-Thing { Get-Process }
+```
+
+and the PostToolUse hook returns, right in Claude's context:
+
+> The cmdlet 'Frobnicate-Thing' uses an unapproved verb. (PSUseApprovedVerbs)
+
+Claude sees its own mistake and corrects it without you switching tools.
+
+**Install in under a minute.** Requires `pwsh` (PowerShell 7+) on your PATH; then,
+in Claude Code:
+
+```text
+/plugin marketplace add manderse21/claude-powershell-lsp
+/plugin install powershell-lsp@claude-powershell-lsp
+/plugin enable powershell-lsp
+```
+
+Start a new session and you are running. The full prerequisites, the self-bootstrap
+sequence, and the preflight doctor are in [Quick start](#quick-start) below.
+
+> **What works today vs. what is coming.** The per-file diagnostic loop above is live
+> on every supported host right now. Hover, go-to-definition, find-references, and
+> workspace-wide analysis are on the roadmap -- native LSP serve is gated on an upstream
+> Claude Code initialization handshake, not on this plugin. Details:
+> [Why a hook, not native registration](#why-a-hook-not-native-lspjson-registration).
 
 ## Prerequisites
 
