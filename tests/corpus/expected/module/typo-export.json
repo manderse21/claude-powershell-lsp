@@ -1,0 +1,18 @@
+[
+  {
+    "ruleId": "ManifestConsistency",
+    "source": "powershell-lsp",
+    "severity": "Warning",
+    "line": 1,
+    "col": 1,
+    "message": "Function 'Get-TypoThing' is listed in FunctionsToExport but no matching function definition was found in the module."
+  },
+  {
+    "ruleId": "ManifestConsistency",
+    "source": "powershell-lsp",
+    "severity": "Warning",
+    "line": 1,
+    "col": 1,
+    "message": "Function 'Get-TypoThingg' is defined and exported by the module but is missing from FunctionsToExport in the manifest."
+  }
+]

@@ -38,6 +38,7 @@ function Get-CorpusPaths {
         BadDir      = (Join-Path $script:CorpusCommonDir 'samples/bad')
         ParserDir   = (Join-Path $script:CorpusCommonDir 'parser-samples')
         PrePssaDir  = (Join-Path $script:CorpusCommonDir 'samples/pre-pssa')
+        ModuleDir   = (Join-Path $script:CorpusCommonDir 'samples/module')
         ExpectedDir = (Join-Path $script:CorpusCommonDir 'expected')
     }
 }
@@ -58,6 +59,32 @@ function Get-CorpusSampleSpec {
         @{ Category = 'parser'; Dir = $p.ParserDir; Filter = '*.txt' },
         @{ Category = 'pre-pssa'; Dir = $p.PrePssaDir; Filter = '*.txt' }
     )
+    <#
+    Multi-file module fixtures (PL-6, dispatch 000062): each fixture is a DIRECTORY
+    containing a .psd1 manifest and a .psm1 root module (and optionally function .ps1
+    files). The SourcePath points to the .psd1; the derivation copies the ENTIRE module
+    directory to scratch so the daemon's module surface cache can walk up and find the
+    .psm1. The expected snapshot records the ManifestConsistency findings or empty for
+    indeterminate/consistent cases.
+    #>
+    $moduleDir = $p.ModuleDir
+    if (Test-Path -LiteralPath $moduleDir) {
+        foreach ($sub in (Get-ChildItem -LiteralPath $moduleDir -Directory | Sort-Object Name)) {
+            $psd1 = Get-ChildItem -LiteralPath $sub.FullName -Filter '*.psd1' -File | Select-Object -First 1
+            if ($null -eq $psd1) { continue }
+            $base = $sub.Name
+            $specs += @{
+                Category     = 'module'
+                Name         = $base
+                RuleId       = 'ManifestConsistency'
+                Label        = ('module/' + $base)
+                SourcePath   = $psd1.FullName
+                ExpectedPath = (Join-Path (Join-Path $p.ExpectedDir 'module') ($base + '.json'))
+                ScratchName  = ('module__' + $base)
+                ModuleDir    = $sub.FullName    # the directory to copy to scratch
+            }
+        }
+    }
     foreach ($s in $sources) {
         if (-not (Test-Path -LiteralPath $s.Dir)) { continue }
         foreach ($f in (Get-ChildItem -LiteralPath $s.Dir -Filter $s.Filter -File | Sort-Object Name)) {
@@ -165,6 +192,10 @@ function Invoke-CorpusDerivation {
     # real lsp-client.ps1 with the dogfood log redirected to a throwaway file and
     # whole-file scoping, then reads back the structured records the tool teed. Returns
     # an array of finding objects { ruleId; source; severity; line; col; message }.
+    #
+    # For multi-file MODULE fixtures (PL-6, dispatch 000062), pass an optional $ModuleDir
+    # -- the ENTIRE directory is copied to scratch (preserving .psd1 + .psm1 structure)
+    # and the analysis runs on the .psd1 within it.
     param(
         [string]$ScriptsDir,
         [string]$DataRoot,
@@ -172,14 +203,28 @@ function Invoke-CorpusDerivation {
         [string]$ScratchDir,
         [string]$ScratchName,
         [byte[]]$Bytes,
-        [int]$CapMs = 25000
+        [int]$CapMs = 25000,
+        [string]$ModuleDir = ''       # optional: copy entire module dir to scratch
     )
     if (-not (Test-Path -LiteralPath $ScratchDir)) { New-Item -ItemType Directory -Force -Path $ScratchDir | Out-Null }
-    $scriptPath = Join-Path $ScratchDir ($ScratchName + '.ps1')
-    # Write the exact source bytes verbatim. Using raw bytes preserves BOM markers
-    # and non-ASCII content that a text round-trip (ReadAllText/WriteAllText) would
-    # strip or corrupt (dispatch 000060, Byte-order-mark regression).
-    [System.IO.File]::WriteAllBytes($scriptPath, $Bytes)
+    $scratchNameBase = $ScratchName
+    if (-not [string]::IsNullOrWhiteSpace($ModuleDir) -and (Test-Path -LiteralPath $ModuleDir)) {
+        # Multi-file module fixture: copy the entire directory to scratch.
+        $moduleScratch = Join-Path $ScratchDir $scratchNameBase
+        New-Item -ItemType Directory -Force -Path $moduleScratch | Out-Null
+        Get-ChildItem -LiteralPath $ModuleDir -File | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $moduleScratch $_.Name) -Force
+        }
+        $scriptPath = Join-Path $moduleScratch ($scratchNameBase + '.psd1')
+        # Overwrite the .psd1 with the exact bytes (preserves encoding).
+        [System.IO.File]::WriteAllBytes($scriptPath, $Bytes)
+    } else {
+        $scriptPath = Join-Path $ScratchDir ($scratchNameBase + '.ps1')
+        # Write the exact source bytes verbatim. Using raw bytes preserves BOM markers
+        # and non-ASCII content that a text round-trip (ReadAllText/WriteAllText) would
+        # strip or corrupt (dispatch 000060, Byte-order-mark regression).
+        [System.IO.File]::WriteAllBytes($scriptPath, $Bytes)
+    }
     $log = Join-Path $ScratchDir ($ScratchName + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.jsonl')
 
     $stdin = (@{ session_id = $SessionId; tool_input = @{ file_path = $scriptPath }; cwd = $ScratchDir } | ConvertTo-Json -Compress)

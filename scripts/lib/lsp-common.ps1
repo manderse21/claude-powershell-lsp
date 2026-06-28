@@ -1105,6 +1105,321 @@ function Find-NonAsciiSmuggling {
     return @($findings)
 }
 
+# --- module surface / project intelligence (PL-6, dispatch 000062) -----------
+# Manifest-consistency helpers for the daemon-side module surface cache. The daemon
+# caches the module surface ONCE per session keyed by manifest path + content hash;
+# per-edit is a cache lookup + cheap cross-reference. These helpers are the PURE
+# data-extraction layer and are also unit-testable independent of the cache.
+#
+# HONEST DEGRADE (never guess): on a wildcard '*' export, a runtime/dynamic
+# Export-ModuleMember, dot-sourcing the static pass cannot follow, or a native
+# (binary) RootModule, the check says "cannot determine the module export surface;
+# manifest-consistency not checked" rather than emitting a false orphan. A
+# missing/$null FunctionsToExport (means "export all" in some PS versions) is also
+# treated as indeterminate.
+#
+# unused-export is EXPLICITLY NOT in slice 1 (the survey ranked it down as
+# wrong-by-design: a public export's purpose IS external callers, so "unused within
+# the module" is the normal state). See 000058 outbox for the full FP analysis.
+
+function Find-ModuleManifest {
+    # Walk UP from $FilePath to locate the nearest module manifest (.psd1) that
+    # declares FunctionsToExport, CmdletsToExport, AliasesToExport, or RootModule.
+    # Returns the absolute path of the manifest, or '' if none found. Bounded at
+    # the filesystem root (same walking pattern as Resolve-PssaSettingsPath).
+    param([string]$FilePath)
+    if ([string]::IsNullOrWhiteSpace($FilePath)) { return '' }
+    $full = [System.IO.Path]::GetFullPath($FilePath)
+    $dir = [System.IO.Path]::GetDirectoryName($full)
+    if ([string]::IsNullOrWhiteSpace($dir)) { return '' }
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $alt = [System.IO.Path]::AltDirectorySeparatorChar
+    $cur = $dir
+    while (-not [string]::IsNullOrWhiteSpace($cur)) {
+        $candidates = @()
+        try { $candidates = @(Get-ChildItem -LiteralPath $cur -Filter '*.psd1' -File -ErrorAction SilentlyContinue) } catch { }
+        foreach ($f in $candidates) {
+            try {
+                $data = Import-PowerShellDataFile -LiteralPath $f.FullName -ErrorAction SilentlyContinue
+                if ($null -ne $data) {
+                    # Recognise a module manifest: declares any export list or has a RootModule.
+                    # Index, never dot-access: $data is a Hashtable and a missing key via dot
+                    # access throws under StrictMode (see Get-ModuleManifestExports). The catch
+                    # would swallow that, but it would skip an otherwise-valid manifest that
+                    # merely omits one of these keys -- so use the null-safe indexer.
+                    $hasExports = ($null -ne $data['FunctionsToExport']) -or `
+                        ($null -ne $data['CmdletsToExport']) -or `
+                        ($null -ne $data['AliasesToExport']) -or `
+                        (-not [string]::IsNullOrWhiteSpace([string]$data['RootModule']))
+                    if ($hasExports) { return $f.FullName }
+                }
+            } catch { }
+        }
+        $parent = [System.IO.Path]::GetDirectoryName($cur)
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $cur) { break }
+        $cur = $parent
+    }
+    return ''
+}
+
+function Get-ModuleManifestExports {
+    # Extract export lists from a module manifest (.psd1) via Import-PowerShellDataFile.
+    # Returns a hashtable with the string arrays for each export type, or $null on
+    # failure. The caller determines if the export is determinate (not '*') or wildcard.
+    param([string]$ManifestPath)
+    if ([string]::IsNullOrWhiteSpace($ManifestPath) -or -not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) { return $null }
+    try {
+        $data = Import-PowerShellDataFile -LiteralPath $ManifestPath -ErrorAction Stop
+        if ($null -eq $data) { return $null }
+        # Index, never dot-access: Import-PowerShellDataFile returns a Hashtable, and under
+        # Set-StrictMode -Version Latest a MISSING key via $data.CmdletsToExport THROWS
+        # ("property cannot be found"), whereas the indexer $data['CmdletsToExport'] returns
+        # $null. Most real manifests omit CmdletsToExport/AliasesToExport, so dot-access here
+        # made the whole parse throw -> caught -> $null -> the daemon reported "could not
+        # parse manifest" (a false indeterminate) for any manifest lacking all three lists.
+        $fto = $data['FunctionsToExport']
+        $cto = $data['CmdletsToExport']
+        $ato = $data['AliasesToExport']
+        $rootModule = [string]$data['RootModule']
+        # Normalise export lists to string arrays.
+        $fnArr = if ($null -eq $fto) { @() } elseif ($fto -is [array]) { @($fto | ForEach-Object { [string]$_ }) } else { @([string]$fto) }
+        $cmdArr = if ($null -eq $cto) { @() } elseif ($cto -is [array]) { @($cto | ForEach-Object { [string]$_ }) } else { @([string]$cto) }
+        $aliasArr = if ($null -eq $ato) { @() } elseif ($ato -is [array]) { @($ato | ForEach-Object { [string]$_ }) } else { @([string]$ato) }
+        # Resolve RootModule to an absolute path (relative to the manifest directory).
+        $rootModulePath = ''
+        if (-not [string]::IsNullOrWhiteSpace($rootModule)) {
+            $rootModulePath = $rootModule
+            if (-not [System.IO.Path]::IsPathRooted($rootModulePath)) {
+                $rootModulePath = [System.IO.Path]::GetFullPath((Join-Path ([System.IO.Path]::GetDirectoryName($ManifestPath)) $rootModulePath))
+            }
+        }
+        return @{
+            ManifestPath = $ManifestPath
+            FunctionsToExport = $fnArr
+            CmdletsToExport = $cmdArr
+            AliasesToExport = $aliasArr
+            RootModule = $rootModulePath
+            Data = $data
+        }
+    } catch { return $null }
+}
+
+function Resolve-ModuleRootModulePath {
+    # Resolve the RootModule declared by a manifest to an absolute file path.
+    # Returns the path, or '' if none/missing/binary (a .dll or .exe).
+    param([string]$ManifestDir, [string]$RootModule)
+    if ([string]::IsNullOrWhiteSpace($RootModule)) { return '' }
+    $path = $RootModule
+    if (-not [System.IO.Path]::IsPathRooted($path)) {
+        $path = [System.IO.Path]::GetFullPath((Join-Path $ManifestDir $path))
+    }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return '' }
+    $ext = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
+    if ($ext -eq '.psm1' -or $ext -eq '.ps1') { return $path }
+    return ''   # binary module (dll/exe) or unknown -> cannot inspect
+}
+
+function Get-ModuleDefinedFunctionNames {
+    # AST-enumerate a .psm1/.ps1 for FunctionDefinitionAst names and detect
+    # Export-ModuleMember. Returns a hashtable:
+    #   @{ DefinedNames = @(...);    # sorted unique function names
+    #      ExportedNames = $null|@()  # $null = all defined are exported (no explicit Export-ModuleMember)
+    #                                 # @(...) = explicitly exported names
+    #      Degrade = ''               # non-empty when the shape is indeterminate
+    #      HasDotSource = $bool       # whether the file contains dot-source operations
+    #    }
+    param([string]$ModuleFilePath)
+    if ([string]::IsNullOrWhiteSpace($ModuleFilePath) -or -not (Test-Path -LiteralPath $ModuleFilePath -PathType Leaf)) {
+        return @{ DefinedNames = @(); ExportedNames = $null; Degrade = ''; HasDotSource = $false }
+    }
+    $defined = New-Object System.Collections.Generic.HashSet[string]
+    $exported = New-Object System.Collections.Generic.List[string]
+    $degrade = ''
+    $hasDotSource = $false
+    try {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($ModuleFilePath, [ref]$null, [ref]$null)
+        # Collect all function definition names.
+        $fnNodes = @($ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
+        foreach ($fn in $fnNodes) { [void]$defined.Add($fn.Name) }
+        # Detect dot-sourcing (. ./file.ps1).
+        $cmdNodes = @($ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true))
+        foreach ($cmd in $cmdNodes) {
+            $elems = @(Get-Prop $cmd 'CommandElements')
+            if ($elems.Count -ge 1) {
+                $first = [string]$elems[0]
+                if ($first -eq '.' -or $first -eq '.source') { $hasDotSource = $true; break }
+            }
+        }
+        # Scan for Export-ModuleMember (skip if dot-sourced -> indeterminate shape).
+        if (-not $hasDotSource) {
+            foreach ($cmd in $cmdNodes) {
+                $elems = @(Get-Prop $cmd 'CommandElements')
+                if ($elems.Count -ge 1) {
+                    $first = [string]$elems[0]
+                    if ($first -eq 'Export-ModuleMember') {
+                        # Check for dynamic/runtime arguments.
+                        $hasDynamic = $false
+                        foreach ($ce in $elems) {
+                            if ($ce -is [System.Management.Automation.Language.VariableExpressionAst] -or
+                                $ce -is [System.Management.Automation.Language.InvokeMemberExpressionAst]) {
+                                $hasDynamic = $true; break
+                            }
+                        }
+                        if ($hasDynamic) { $degrade = 'dynamic Export-ModuleMember'; break }
+                        # Extract static -Function / -Cmdlet / -Alias names.
+                        $i = 0
+                        while ($i -lt $elems.Count) {
+                            $ceStr = [string]$elems[$i]
+                            if ($ceStr -eq '-Function' -or $ceStr -eq '-Cmdlet' -or $ceStr -eq '-Alias') {
+                                $i++
+                                while ($i -lt $elems.Count) {
+                                    $val = $elems[$i]
+                                    $valStr = [string]$val
+                                    if ($valStr.StartsWith('-')) { break }
+                                    if ($val -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                                        $exported.Add($val.Value)
+                                    } elseif ($val -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                                        $hasDynamic = $true; break
+                                    }
+                                    $i++
+                                }
+                                if ($hasDynamic) { break }
+                            } else { $i++ }
+                        }
+                        if ($hasDynamic) { $degrade = 'dynamic Export-ModuleMember'; break }
+                    }
+                }
+            }
+        }
+        if ($hasDotSource) { $degrade = 'dot-sourced definitions; shape is indeterminate' }
+    } catch {
+        $degrade = 'could not parse module file: ' + $_.Exception.Message
+    }
+    if (-not [string]::IsNullOrWhiteSpace($degrade)) {
+        return @{ DefinedNames = @($defined | Sort-Object); ExportedNames = $null; Degrade = $degrade; HasDotSource = $hasDotSource }
+    }
+    if ($exported.Count -gt 0) {
+        return @{ DefinedNames = @($defined | Sort-Object); ExportedNames = @($exported); Degrade = ''; HasDotSource = $hasDotSource }
+    }
+    # No explicit Export-ModuleMember found: by default everything defined is exported.
+    return @{ DefinedNames = @($defined | Sort-Object); ExportedNames = $null; Degrade = ''; HasDotSource = $hasDotSource }
+}
+
+function Test-ManifestConsistency {
+    # Core manifest-consistency check (PURE over injected data). Given the manifest
+    # export lists and the module's defined/exported function names, return findings
+    # for orphan/typo exports and under-declared exports.
+    #
+    # Returns @{ Findings = @(...); Degrade = '' } for determinate shapes.
+    # Returns @{ Findings = @(); Degrade = '<reason>' } for indeterminate (wildcard,
+    #   dynamic, dot-source, etc.) -- the caller surfaces "cannot determine" as prose.
+    #
+    # orphan-export: a name in FunctionsToExport/CmdletsToExport/AliasesToExport
+    #   that does not match any defined function name in the module.
+    # under-declared-export: a function defined AND exported (stated or implicitly)
+    #   but absent from the manifest's export lists.
+    param(
+        [string[]]$FunctionsToExport,
+        [string[]]$CmdletsToExport,
+        [string[]]$AliasesToExport,
+        [string[]]$DefinedNames,
+        $ExportedNames,              # $null = implicitly all defined are exported
+        [string]$ManifestPath
+    )
+    $findings = New-Object System.Collections.ArrayList
+    # Check for wildcard -- '*' means "export all" and cannot be inconsistent.
+    $isWildcard = ($FunctionsToExport -contains '*') -or ($CmdletsToExport -contains '*') -or ($AliasesToExport -contains '*')
+    if ($isWildcard) {
+        return @{ Findings = @(); Degrade = 'wildcard export (*)' }
+    }
+    # Treat missing/$null FunctionsToExport as indeterminate (means "export all" in some PS versions).
+    $functionsIndeterminate = ($null -eq $FunctionsToExport) -or ($FunctionsToExport.Count -eq 0 -and @($FunctionsToExport).Count -eq 0)
+    if ($functionsIndeterminate) {
+        return @{ Findings = @(); Degrade = 'FunctionsToExport is empty/null (may mean export-all)' }
+    }
+    # Build the set of exported names we expect to find in the module.
+    # Only FunctionsToExport is checked in slice 1 (CmdletsToExport and AliasesToExport
+    # are recorded but not cross-referenced -- the survey's deterministic subset
+    # focuses on function exports).
+    $namedSet = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($n in $FunctionsToExport) { [void]$namedSet.Add($n) }
+    # Determine what the module actually defines and exports.
+    $moduleDefinedSet = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($n in $DefinedNames) { [void]$moduleDefinedSet.Add($n) }
+    # Which exported names does the module claim?
+    $moduleExportedSet = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    if ($null -eq $ExportedNames) {
+        # No explicit Export-ModuleMember: everything defined is implicitly exported.
+        foreach ($n in $DefinedNames) { [void]$moduleExportedSet.Add($n) }
+    } else {
+        foreach ($n in $ExportedNames) { [void]$moduleExportedSet.Add($n) }
+    }
+    # 1. ORPHAN EXPORT: manifest names that do NOT match any defined function.
+    foreach ($name in $FunctionsToExport) {
+        $nn = [string]$name
+        if (-not $moduleDefinedSet.Contains($nn)) {
+            [void]$findings.Add([pscustomobject]@{
+                ruleId = 'ManifestConsistency'; code = 'ManifestConsistency'
+                source = 'powershell-lsp'
+                severity = 'Warning'; line = 1; col = 1
+                message = "Function '$nn' is listed in FunctionsToExport but no matching function definition was found in the module."
+            })
+        }
+    }
+    # 2. UNDER-DECLARED EXPORT: a function defined AND exported by the module but
+    #    absent from the manifest export list.
+    foreach ($name in @($moduleExportedSet)) {
+        if (-not $namedSet.Contains($name)) {
+            [void]$findings.Add([pscustomobject]@{
+                ruleId = 'ManifestConsistency'; code = 'ManifestConsistency'
+                source = 'powershell-lsp'
+                severity = 'Warning'; line = 1; col = 1
+                message = "Function '$name' is defined and exported by the module but is missing from FunctionsToExport in the manifest."
+            })
+        }
+    }
+    return @{ Findings = @($findings); Degrade = '' }
+}
+
+function Get-ProjectIntelligenceFindings {
+    # Top-level project-intelligence entry point: given the edited file path, walk
+    # up to find the module manifest, parse exports, AST-enumerate the RootModule,
+    # and cross-reference. Returns the findings array (empty = no issues OR
+    # indeterminate). The daemon calls this and caches the module surface so the
+    # expensive walk/parse is one-shot per session.
+    #
+    # Returns @{ Findings = @(...); Degrade = '' } for determinate findings, or
+    # @{ Findings = @(); Degrade = '<reason>' } for indeterminate.
+    param([string]$EditedFilePath)
+    $manifestPath = Find-ModuleManifest -FilePath $EditedFilePath
+    if ([string]::IsNullOrWhiteSpace($manifestPath)) {
+        return @{ Findings = @(); Degrade = 'no module manifest found' }
+    }
+    $exports = Get-ModuleManifestExports -ManifestPath $manifestPath
+    if ($null -eq $exports) {
+        return @{ Findings = @(); Degrade = 'could not parse module manifest' }
+    }
+    # Resolve RootModule (.psm1).
+    $manifestDir = [System.IO.Path]::GetDirectoryName($manifestPath)
+    $rootModulePath = Resolve-ModuleRootModulePath -ManifestDir $manifestDir -RootModule ([string]$exports.RootModule)
+    if ([string]::IsNullOrWhiteSpace($rootModulePath)) {
+        # No module file to cross-reference -- either no RootModule declared, or binary.
+        return @{ Findings = @(); Degrade = 'no RootModule to inspect; manifest exports cannot be cross-referenced' }
+    }
+    $moduleInfo = Get-ModuleDefinedFunctionNames -ModuleFilePath $rootModulePath
+    if (-not [string]::IsNullOrWhiteSpace($moduleInfo.Degrade)) {
+        return @{ Findings = @(); Degrade = $moduleInfo.Degrade }
+    }
+    # Cross-reference.
+    return Test-ManifestConsistency `
+        -FunctionsToExport $exports.FunctionsToExport `
+        -CmdletsToExport $exports.CmdletsToExport `
+        -AliasesToExport $exports.AliasesToExport `
+        -DefinedNames $moduleInfo.DefinedNames `
+        -ExportedNames $moduleInfo.ExportedNames `
+        -ManifestPath $manifestPath
+}
+
 function Get-ScopedCappedResult {
     # Apply edit-range scoping THEN the per-file cap, in that order (000019 acceptance:
     # scope first, then cap). $Records are already ordered + severity/rule filtered.
