@@ -243,6 +243,16 @@ cold. None is a contract change; each is banked here deliberately.
   lspServers fields are not a semver-protected surface, so removing two inert ones is not a contract
   change. (If a future change makes native serve a real, user-visible feature, *that* is the
   contract-relevant event to adjudicate -- not this field cleanup.)
+- **Closed-loop correction lifecycle fields (NOT a Tier-1 frozen surface) -- dispatch 000061.** The
+  daemon's diagnostics response MAY carry two additive output fields, `cleared[]` and `stillPresent[]`,
+  reporting whether a previously-surfaced finding cleared or is still present after an edit (the PL-4
+  closed loop). Like the `powershell-lsp` source label, these are **output fields, not part of the
+  frozen Tier-1 contract**: only the userConfig knob **names** (1.1) and the diagnostics status
+  **tokens** (1.2) are enumerated and drift-guarded. They are additive and backward-compatible -- a
+  consumer that ignores them is unaffected -- and they deliberately do **not** introduce a new status
+  token: finding-lifecycle is a different axis from the analyzer-health taxonomy, so it rides an
+  additive field (a drift-guard-green MINOR under the semver policy), never the token set. Recorded
+  here as a **note, not an amendment**: an additive output field is not a semver-protected surface.
 
 ---
 

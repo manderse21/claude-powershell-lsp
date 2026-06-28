@@ -1439,3 +1439,146 @@ function Get-ScopedCappedResult {
     }
     return @{ shown = @($shown); omitted = $omitted; total = $total; surfaced = $surfaced; scopeApplied = $scopeApplied }
 }
+
+# --- closed-loop agentic correction (dispatch 000061, PL-4 slice 1) -----------
+# After Claude applies a fix, the daemon re-checks the same range on the NEXT edit turn and
+# reports whether a previously-surfaced finding CLEARED (a fix landed) or is STILL-PRESENT
+# (the edit did not clear it) -- instead of passively handing context back. The prior-surfaced
+# memory lives in the warm daemon (the only per-session-persistent component, per the 000056
+# survey); these helpers are the PURE, unit-testable core of the diff so the daemon stays thin.
+#
+# Range identity is by CONTENT SHAPE, not line number: Get-DiagnosticShapeHash (ruleId +
+# normalized offending line, already used by the dogfood capture). An edit that inserts/deletes
+# lines above a finding leaves its offending text -- and so its shape-hash -- unchanged, so the
+# finding is tracked as still-present (or moved), never mistaken for cleared.
+#
+# MOVED folds into still-present for slice 1 (the 000056 outbox governs over the 000061 inbox's
+# four-way CLEARED/STILL-PRESENT/MOVED/NEW summary: the survey's first slice says "MOVED can fold
+# into still-present for slice 1", and the inbox's OQ3 pre-authorization prefers the conservative
+# signal over a confident-but-wrong MOVED label). A moved finding has the SAME shape-hash at a new
+# line, so it reads as still-present, never as a false cleared.
+#
+# NO new status token and NO new userConfig knob: the signal rides the existing surface as additive
+# output fields (cleared[]/stillPresent[]) plus client prose -- finding-lifecycle is a different
+# axis from the analyzer-health taxonomy (ok/incomplete/degraded/unavailable), so folding it into a
+# token would muddy the frozen clean-empty property. An additive field is a drift-guard-green MINOR.
+
+function New-LifecycleFinding {
+    # Project ONE daemon diagnostic record to its lifecycle shape: { hash; ruleId; line; message }.
+    # ruleId mirrors the dogfood derivation (the rule code when present and not '0', else ''); the
+    # offending line is read from the post-edit file at the record's 1-based line (or '' when out of
+    # range). StrictMode-safe: every local is initialized before use, and record fields are read via
+    # the null-safe indexer (records are ordered hashtables from ConvertTo-DiagRecord; a dot-access
+    # on a missing key throws under StrictMode -- the 000062 class of bug).
+    param($Record, [string[]]$Lines)
+    $line = 0
+    if ($null -ne $Record) { $lv = $Record['line']; if ($null -ne $lv) { $line = [int]$lv } }
+    $code = ''
+    if ($null -ne $Record) { $cv = $Record['code']; if ($null -ne $cv) { $code = [string]$cv } }
+    $ruleId = if ($code -and $code -ne '0') { $code } else { '' }
+    $msg = ''
+    if ($null -ne $Record) { $mv = $Record['message']; if ($null -ne $mv) { $msg = [string]$mv } }
+    $offending = ''
+    if ($null -ne $Lines -and $line -ge 1 -and $line -le $Lines.Count) { $offending = [string]$Lines[$line - 1] }
+    $hash = Get-DiagnosticShapeHash -RuleId $ruleId -OffendingLine $offending
+    return [pscustomobject]@{ hash = $hash; ruleId = $ruleId; line = $line; message = $msg }
+}
+
+function Get-FindingLifecycleDiff {
+    # PURE diff of this pass's findings against what was SURFACED for the same document last turn.
+    # Inputs (all projected to { hash; ruleId; line; message } by New-LifecycleFinding):
+    #   PriorMap        -- shapeHash -> @{ ruleId; line; message; attempts } surfaced last turn.
+    #   CurrentFull     -- EVERY finding from this turn's whole-file pass (the cleared probe).
+    #   CurrentSurfaced -- the findings SURFACED this turn (scoped to the touched range R).
+    #   ScopeApplied    -- $true only when a determinate range R was scoped (else whole-file, so we
+    #                      cannot say the edit "touched" any one finding -> no still-present escalation).
+    #   MaxAttempts (K) -- escalate still-present at most K times (attempts 1..K), then ONE neutral
+    #                      downgrade (attempt K+1), then silence -- the 000056 bounded-escalation rule.
+    # Returns @{ Cleared=@(...); StillPresent=@(...); NewMap=@{...} }. StrictMode-safe throughout
+    # (every collection initialized before use; hashtable access via ContainsKey + indexer).
+    #
+    # CLEARED        = a prior-surfaced shape-hash ABSENT from CurrentFull (genuinely gone).
+    # STILL-PRESENT  = a prior-surfaced shape-hash still in CurrentSurfaced (present AND re-touched).
+    # NEW            = a surfaced shape-hash not seen last turn -> rides the normal surface (no entry).
+    # Carry-forward  = a prior shape-hash still in CurrentFull but NOT surfaced this turn (present, not
+    #                  touched) is kept in NewMap with its attempts unchanged, so a later clear is still
+    #                  seen across an intervening edit that did not touch it.
+    param(
+        [hashtable]$PriorMap = @{},
+        [object[]]$CurrentFull = @(),
+        [object[]]$CurrentSurfaced = @(),
+        [bool]$ScopeApplied = $false,
+        [int]$MaxAttempts = 2
+    )
+    if ($null -eq $PriorMap) { $PriorMap = @{} }
+    $curFull = @(@($CurrentFull) | Where-Object { $null -ne $_ })
+    $curSurf = @(@($CurrentSurfaced) | Where-Object { $null -ne $_ })
+
+    $fullHashes = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($r in $curFull) { [void]$fullHashes.Add([string]$r.hash) }
+
+    # ArrayList, not List[object]: under StrictMode, @($genericList) inside a hashtable-literal
+    # value throws "Argument types do not match" -- the house pattern here is ArrayList (see
+    # Find-NonAsciiSmuggling / Test-ManifestConsistency), which round-trips cleanly through @().
+    $cleared = New-Object System.Collections.ArrayList
+    $stillPresent = New-Object System.Collections.ArrayList
+    $newMap = @{}
+
+    # 1. CLEARED: prior-surfaced findings absent from the whole-file pass.
+    foreach ($h in @($PriorMap.Keys)) {
+        $hk = [string]$h
+        if (-not $fullHashes.Contains($hk)) {
+            $meta = $PriorMap[$hk]
+            [void]$cleared.Add([pscustomobject]@{
+                ruleId  = [string]$meta['ruleId']
+                line    = [int]$meta['line']
+                message = [string]$meta['message']
+            })
+        }
+    }
+
+    # 2. Findings surfaced THIS turn -> new memory + still-present escalation (bounded).
+    foreach ($r in $curSurf) {
+        $hk = [string]$r.hash
+        if ($newMap.ContainsKey($hk)) { continue }   # de-dupe within this turn's surfaced set
+        $wasPrior = $PriorMap.ContainsKey($hk)
+        if ($wasPrior) {
+            $priorAttempts = [int]$PriorMap[$hk]['attempts']
+            if ($ScopeApplied) {
+                # A DETERMINATE touch of R that did not clear the finding -> a counted attempt.
+                $attempts = $priorAttempts + 1
+                if ($attempts -le $MaxAttempts) {
+                    [void]$stillPresent.Add([pscustomobject]@{
+                        ruleId = [string]$r.ruleId; line = [int]$r.line; message = [string]$r.message
+                        attempts = $attempts; downgraded = $false })
+                } elseif ($attempts -eq ($MaxAttempts + 1)) {
+                    [void]$stillPresent.Add([pscustomobject]@{
+                        ruleId = [string]$r.ruleId; line = [int]$r.line; message = [string]$r.message
+                        attempts = $attempts; downgraded = $true })
+                }   # attempts > MaxAttempts + 1 -> emit nothing (stop re-reporting; never an infinite nag)
+            } else {
+                # No determinate R (whole-file fail-open): the edit cannot be attributed to this one
+                # finding, so it is NOT a counted attempt and is NOT escalated -- attempts carries over.
+                $attempts = $priorAttempts
+            }
+            $newMap[$hk] = @{ ruleId = [string]$r.ruleId; line = [int]$r.line; message = [string]$r.message; attempts = $attempts }
+        } else {
+            # NEW this turn -> rides the normal diagnostics surface; attempts starts at 0 so the FIRST
+            # re-surfacing next turn reads as attempt 1.
+            $newMap[$hk] = @{ ruleId = [string]$r.ruleId; line = [int]$r.line; message = [string]$r.message; attempts = 0 }
+        }
+    }
+
+    # 3. Carry forward prior findings still present (in full) but NOT surfaced this turn (untouched).
+    foreach ($h in @($PriorMap.Keys)) {
+        $hk = [string]$h
+        if ($newMap.ContainsKey($hk)) { continue }
+        if ($fullHashes.Contains($hk)) {
+            $meta = $PriorMap[$hk]
+            $newMap[$hk] = @{ ruleId = [string]$meta['ruleId']; line = [int]$meta['line']; message = [string]$meta['message']; attempts = [int]$meta['attempts'] }
+        }
+        # else: absent from full -> cleared (already reported) -> drop from memory
+    }
+
+    return @{ Cleared = @($cleared); StillPresent = @($stillPresent); NewMap = $newMap }
+}

@@ -1761,3 +1761,202 @@ Describe 'Integration: poisoned PSSA .nupkg cache FAILS CLOSED on restore (dispa
         $script:C_PoisonName | Should -Match ([regex]::Escape($script:C_Sha))
     }
 }
+
+Describe 'Integration: closed-loop agentic correction (dispatch 000061)' -Skip:$script:SkipIntegration {
+    # End to end over the REAL warm daemon with REAL PostToolUse payloads carrying a
+    # structuredPatch: drive turn N (a finding), then turn N+1 (the fix / a failed fix / a
+    # line shift), and assert the additive cleared / still-present lifecycle signal in the
+    # client's additionalContext. Each scenario uses its OWN fixture file so the per-URI daemon
+    # memory ($script:lastSurfaced) never crosses tests. DETERMINISTIC readiness only: a real
+    # diagnostics round-trip gates the first request (Wait-DaemonRequestReady, the 000050/000051
+    # lesson), never a wall-clock sleep. Content differs every turn so no turn is a cache-hit.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Wait-DaemonRequestReady (deterministic gate)
+
+        function Invoke-PluginHook {
+            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+            if ($StdinJson) {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
+                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
+            }
+            $p.StandardInput.Close()
+            $script:LastHookExit = $null
+            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            $script:LastHookExit = $p.ExitCode
+            [void]$stdoutTask.Wait(1500)
+            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+        }
+
+        # Talk to the daemon pipe DIRECTLY (never via lsp-client) for the wire-level no-token
+        # assertion -- returns the parsed response object, or $null on timeout.
+        function Send-DaemonReq {
+            param([string]$Sid, [hashtable]$Req, [int]$TimeoutMs = 20000)
+            $pipeName = 'powershell-lsp-' + $Sid
+            $client = $null
+            try {
+                $client = New-Object System.IO.Pipes.NamedPipeClientStream('.', $pipeName,
+                    [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::Asynchronous)
+                $client.Connect(3000)
+                $writer = New-Object System.IO.StreamWriter($client, (New-Object System.Text.UTF8Encoding($false)), 4096, $true)
+                $writer.NewLine = "`n"; $writer.AutoFlush = $true
+                $reader = New-Object System.IO.StreamReader($client, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+                $writer.WriteLine(($Req | ConvertTo-Json -Depth 8 -Compress)); $writer.Flush()
+                $readTask = $reader.ReadLineAsync()
+                if (-not $readTask.Wait($TimeoutMs)) { return $null }
+                $line = $readTask.Result
+                if ([string]::IsNullOrWhiteSpace($line)) { return $null }
+                return ($line | ConvertFrom-Json)
+            } catch { return $null } finally {
+                if ($null -ne $client) { try { $client.Dispose() } catch { } }
+            }
+        }
+
+        $script:L_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:L_Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $env:PSLS_TEST_DATA_DIR
+        } else {
+            Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data'
+        }
+        New-Item -ItemType Directory -Force -Path $script:L_Data | Out-Null
+        $env:CLAUDE_PLUGIN_DATA = $script:L_Data
+        $script:L_Fixtures = Join-Path $script:L_Data 'loop-000061'
+        if (Test-Path -LiteralPath $script:L_Fixtures) { Remove-Item -LiteralPath $script:L_Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Force -Path $script:L_Fixtures | Out-Null
+
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:L_ScriptsDir 'ensure-pses.ps1') 2>&1 | Out-Null
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:L_ScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+
+        # A single hunk covering [Start, Start+Lines-1] -- the structuredPatch a PostToolUse
+        # tool_response carries. ConvertTo-TouchedRanges reads only newStart/newLines.
+        function New-Hunk { param([int]$Start, [int]$Lines)
+            @(@{ oldStart = $Start; oldLines = $Lines; newStart = $Start; newLines = $Lines; lines = @() }) }
+
+        # One edit turn: write the new content, then fire the PostToolUse client with the patch.
+        function Invoke-LoopTurn {
+            param([string]$File, [string[]]$Lines, $Patch)
+            Set-Content -LiteralPath $File -Value ($Lines -join "`n") -Encoding ascii
+            $tr = @{ filePath = $File; structuredPatch = $Patch }
+            $stdin = (@{ session_id = $script:L_Sid; tool_input = @{ file_path = $File }; cwd = $script:L_Fixtures; tool_response = $tr } | ConvertTo-Json -Depth 8 -Compress)
+            return (Invoke-PluginHook -ScriptPath (Join-Path $script:L_ScriptsDir 'lsp-client.ps1') `
+                -StdinJson $stdin -ExtraArgs @() -CapMs 25000 -DataRoot $script:L_Data `
+                -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' })
+        }
+
+        $script:L_Sid = 'loop-000061-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        Invoke-PluginHook -ScriptPath (Join-Path $script:L_ScriptsDir 'session-start.ps1') `
+            -StdinJson (@{ session_id = $script:L_Sid } | ConvertTo-Json -Compress) `
+            -ExtraArgs @('-PreferredHost', 'pwsh') -CapMs 60000 -DataRoot $script:L_Data -ExtraEnv @{ } | Out-Null
+        $sf = Join-Path $script:L_Data ('session/' + $script:L_Sid + '.json')
+        $script:L_Info = $null
+        for ($i = 0; $i -lt 60; $i++) {
+            if (Test-Path $sf) { $o = Get-Content $sf -Raw | ConvertFrom-Json; if ($o.state -eq 'ready') { $script:L_Info = $o; break } }
+            Start-Sleep -Milliseconds 500
+        }
+        # DETERMINISTIC request-readiness: a real diagnostics round-trip has completed over the pipe
+        # (not just a session-file 'ready' marker, which precedes serve-loop entry) -- the 000051 gate.
+        $script:L_Ready = Wait-DaemonRequestReady -SessionId $script:L_Sid -DataRoot $script:L_Data
+    }
+
+    AfterAll {
+        if ($null -ne $script:L_Info) {
+            foreach ($pidVal in @($script:L_Info.pid, $script:L_Info.psesPid)) {
+                if ($pidVal) { Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue }
+            }
+        }
+        $sf = Join-Path $script:L_Data ('session/' + $script:L_Sid + '.json')
+        if (Test-Path -LiteralPath $sf) { Remove-Item -LiteralPath $sf -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $script:L_Fixtures) { Remove-Item -LiteralPath $script:L_Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'brings up the daemon and is request-ready for the loop session' {
+        $script:L_Info | Should -Not -BeNullOrEmpty
+        $script:L_Ready | Should -BeTrue
+    }
+
+    It 'CLEARED: a fix on the touched range confirms the prior finding resolved next turn' {
+        $f = Join-Path $script:L_Fixtures 'cleared.ps1'
+        # turn N: an alias on line 2 -> PSAvoidUsingCmdletAliases, surfaced (edit touched line 2).
+        $out1 = Invoke-LoopTurn -File $f -Lines @('# cleared turn 1', 'gci') -Patch (New-Hunk 2 1)
+        $out1 | Should -Match 'PSAvoidUsingCmdletAliases'
+        $out1 | Should -Not -Match 'resolved:'                 # nothing to clear on the first turn
+        # turn N+1: the alias is fixed; the edit touches line 2 again -> CLEARED confirmation.
+        $out2 = Invoke-LoopTurn -File $f -Lines @('# cleared turn 2', 'Get-ChildItem') -Patch (New-Hunk 2 1)
+        $out2 | Should -Match 'resolved: PSAvoidUsingCmdletAliases'
+        $out2 | Should -Match 'cleared after your last edit'
+        $script:LastHookExit | Should -Be 0                    # fail-safe spine: the hook still exits 0
+    }
+
+    It 'STILL-PRESENT: a touching edit that does NOT clear the finding escalates once (attempt 1 of 2)' {
+        $f = Join-Path $script:L_Fixtures 'still.ps1'
+        # gci on line 1 (the offending line, unchanged across turns); line 2 changes so the content
+        # differs (no cache-hit). The hunk covers lines 1-2, so the line-1 finding overlaps R.
+        $out1 = Invoke-LoopTurn -File $f -Lines @('gci', '# still turn 1') -Patch (New-Hunk 1 2)
+        $out1 | Should -Match 'PSAvoidUsingCmdletAliases'
+        $out2 = Invoke-LoopTurn -File $f -Lines @('gci', '# still turn 2') -Patch (New-Hunk 1 2)
+        $out2 | Should -Match 'still present: PSAvoidUsingCmdletAliases'
+        $out2 | Should -Match 'attempt 1 of 2'
+    }
+
+    It 'MOVED folds into still-present: a line-shifting edit is NOT a false cleared (shape-hash survives the shift)' {
+        $f = Join-Path $script:L_Fixtures 'moved.ps1'
+        $out1 = Invoke-LoopTurn -File $f -Lines @('gci', '# moved pad') -Patch (New-Hunk 1 2)
+        $out1 | Should -Match 'PSAvoidUsingCmdletAliases'
+        # Insert a line ABOVE -> gci shifts to line 2; the edit's hunk covers lines 1-2 (the moved gci).
+        $out2 = Invoke-LoopTurn -File $f -Lines @('# inserted above', 'gci', '# moved pad') -Patch (New-Hunk 1 2)
+        $out2 | Should -Not -Match 'resolved:'                          # NOT a false cleared
+        $out2 | Should -Match 'still present: PSAvoidUsingCmdletAliases' # tracked as still-present
+        $out2 | Should -Match 'at line 2'                               # at the new (moved) line
+    }
+
+    It 'NEW rides the normal surface: a finding unseen last turn is a diagnostic, never labelled still-present' {
+        $f = Join-Path $script:L_Fixtures 'newf.ps1'
+        # turn N: only the alias finding.
+        Invoke-LoopTurn -File $f -Lines @('gci') -Patch (New-Hunk 1 1) | Out-Null
+        # turn N+1: the alias is still there (still-present) AND a NEW unapproved-verb function appears.
+        $lines = @('gci', 'function Frobnicate-New {', '    Get-Process', '}')
+        $out2 = Invoke-LoopTurn -File $f -Lines $lines -Patch (New-Hunk 1 4)
+        $out2 | Should -Match 'PSUseApprovedVerbs'                       # the NEW finding is a normal diagnostic
+        $out2 | Should -Match 'still present: PSAvoidUsingCmdletAliases' # the prior alias is escalated
+        $out2 | Should -Not -Match 'still present: PSUseApprovedVerbs'   # but the NEW finding is NOT labelled still-present
+    }
+
+    It 'BOUNDED escalation (K=2): escalate twice, downgrade once, then go silent -- no indefinite nag' {
+        $f = Join-Path $script:L_Fixtures 'kbound.ps1'
+        Invoke-LoopTurn -File $f -Lines @('gci', '# k 1') -Patch (New-Hunk 1 2) | Out-Null   # establish memory
+        $a1 = Invoke-LoopTurn -File $f -Lines @('gci', '# k 2') -Patch (New-Hunk 1 2)
+        $a2 = Invoke-LoopTurn -File $f -Lines @('gci', '# k 3') -Patch (New-Hunk 1 2)
+        $a3 = Invoke-LoopTurn -File $f -Lines @('gci', '# k 4') -Patch (New-Hunk 1 2)
+        $a4 = Invoke-LoopTurn -File $f -Lines @('gci', '# k 5') -Patch (New-Hunk 1 2)
+        $a1 | Should -Match 'attempt 1 of 2'                   # first failed fix
+        $a2 | Should -Match 'attempt 2 of 2'                   # second failed fix (the K=2 ceiling)
+        $a3 | Should -Match 'unchanged after 3 edits'          # ONE neutral downgrade past the ceiling
+        $a3 | Should -Not -Match 'attempt 3 of 2'              # never an over-the-ceiling escalation
+        $a4 | Should -Not -Match 'still present'               # then SILENCE -- stops re-reporting (no nag)
+        $a4 | Should -Match 'PSAvoidUsingCmdletAliases'        # but it reverts to an ORDINARY finding, still surfaced
+    }
+
+    It 'rides the existing surface with an ADDITIVE field -- the daemon response carries cleared[] and NO status token' {
+        # Wire-level proof of the contract crux: lifecycle is a different axis from analyzer-health,
+        # so it ships as an additive output field, never a new status token (drift-guard stays green).
+        $f = Join-Path $script:L_Fixtures 'notoken.ps1'
+        Set-Content -LiteralPath $f -Value 'gci' -Encoding ascii
+        $r1 = Send-DaemonReq -Sid $script:L_Sid -Req @{ action = 'diagnostics'; file = $f; cwd = $script:L_Fixtures; touchedRanges = @(@{ start = 1; end = 1 }) }
+        $r1 | Should -Not -BeNullOrEmpty
+        [bool](Get-Prop $r1 'ok') | Should -BeTrue
+        Set-Content -LiteralPath $f -Value 'Get-ChildItem' -Encoding ascii   # fixed -> cleared next pass
+        $r2 = Send-DaemonReq -Sid $script:L_Sid -Req @{ action = 'diagnostics'; file = $f; cwd = $script:L_Fixtures; touchedRanges = @(@{ start = 1; end = 1 }) }
+        $r2 | Should -Not -BeNullOrEmpty
+        (Test-Prop $r2 'cleared') | Should -BeTrue             # the additive lifecycle field is present
+        @(Get-Prop $r2 'cleared').Count | Should -BeGreaterThan 0
+        (Test-Prop $r2 'status') | Should -BeFalse             # and NO status token rode along (a clean ok pass)
+    }
+}
