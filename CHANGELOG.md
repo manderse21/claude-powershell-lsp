@@ -159,6 +159,76 @@ acquisition and the pinned hash are untouched.
   (cross-file symbol resolution, dead-private-function detection) is named as roadmap
   and not scoped here.
 
+MINOR: **closed-loop agentic correction, slice 1 -- the daemon re-checks the touched range on
+the next edit turn and confirms whether a prior finding CLEARED or is STILL-PRESENT, additive,
+no knob/token**. This is the bet only a server inside the agent can make (PL-4, characterized by
+the 000056 survey): instead of passively handing diagnostics back, after Claude applies a fix the
+warm daemon re-checks the SAME range on the next edit and tells the agent whether the finding it
+just tried to fix actually went away. The prior-finding-for-range memory lives in the daemon (the
+only per-session-persistent component); range identity reuses the existing `Get-DiagnosticShapeHash`
+(rule id + normalized offending line), so a line-shifting edit never mistakes a MOVED finding for a
+cleared one. The signal rides the EXISTING surface as additive output fields (`cleared[]` /
+`stillPresent[]`) plus a distinct client "Correction check" note -- **no new status token**, because
+finding-lifecycle is a different axis from the analyzer-health taxonomy (`ok` / `incomplete` /
+`degraded` / `unavailable`); folding it into a token would muddy the frozen clean-empty property.
+Escalation is BOUNDED (the 000056 K=2 rule): a still-present finding the edit touched escalates at
+most twice, then a single neutral "unchanged after N edits" downgrade, then silence -- never an
+indefinite nag. The next-turn re-check is **~free** (an in-memory diff plus one file read; it rides
+the diagnostics pass the next edit already pays for -- no second settled-publish wait, no cold
+start). Always-on additive: **no new `userConfig` knob, no new status token** (the 000027 drift-guard
+stays green).
+
+### Added
+
+- **Daemon-resident prior-finding memory (`scripts/pses-daemon.ps1`).** A per-URI
+  `$script:lastSurfaced` map holds the shape-hashes surfaced last turn (with rule id / line /
+  message / a per-finding attempt count). `Add-LifecycleSignal` diffs each fresh, settled, ok pass
+  against it and attaches the additive `cleared[]` / `stillPresent[]` fields to the response. It runs
+  ONLY on a fresh settled ok pass (never a cache-hit, never `incomplete` / `degraded` / `unavailable`
+  -- on any other pass "absent" does not mean "cleared", so it is skipped and the memory is
+  preserved), and it is wrapped fail-open so any failure leaves the core diagnostics byte-identical.
+- **Pure lifecycle-diff helpers (`scripts/lib/lsp-common.ps1`).** `Get-FindingLifecycleDiff` (the
+  unit-testable set logic: CLEARED = a prior-surfaced shape-hash absent from the whole-file pass;
+  STILL-PRESENT = a prior-surfaced shape-hash still in the touched-range surfaced set, bounded at
+  K=2; NEW = an unseen surfaced hash that rides the normal surface; plus carry-forward of a
+  still-present-but-untouched finding so a later clear is still seen) and `New-LifecycleFinding`
+  (projects a diagnostic record to its `{ hash; ruleId; line; message }` shape via the existing
+  `Get-DiagnosticShapeHash`).
+- **Client "Correction check" note (`scripts/lsp-client.ps1`).** The PostToolUse client renders the
+  additive `cleared[]` / `stillPresent[]` fields as their own labelled section, kept visibly distinct
+  from the diagnostics block so a lifecycle signal is never confused with a correctness finding. A
+  CLEARED confirmation can fire on a now-clean file (with no diagnostics block at all); a
+  STILL-PRESENT note escalates a finding the edit did not clear.
+- **Deterministic loop coverage.** New integration `It` blocks (`tests/PowerShellLsp.Integration.Tests.ps1`)
+  drive the real warm daemon turn-by-turn -- cleared, still-present, moved (folds into still-present),
+  new, the K=2 escalation bound, and a wire-level assertion that the response carries `cleared[]`
+  with NO status token -- gated on a real diagnostics round-trip (`Wait-DaemonRequestReady`), never a
+  wall-clock sleep (the 000028/000050/000051 lesson). New unit `It` blocks
+  (`tests/PowerShellLsp.Unit.Tests.ps1`) cover the pure diff and the shape-hash projection, including
+  StrictMode-safety on empty/null inputs.
+
+### Notes
+
+- **MOVED folds into still-present for slice 1.** The 000061 inbox summarized the signal as
+  CLEARED / STILL-PRESENT / MOVED / NEW, but the authoritative 000056 outbox (which governs where the
+  two differ) folds MOVED into still-present for the first slice, and the inbox's own pre-authorization
+  prefers the conservative signal over a confident-but-wrong MOVED label. A moved finding keeps the
+  same shape-hash at a new line, so it reads as still-present (at the new line), never as a false
+  cleared -- the robustness the shape-hash buys. A distinct MOVED signal is a documented follow-on.
+- **Latency claim HELD on the PL-2 dependency.** The re-check's latency is meant to be measured
+  against PL-2's published baseline (000054), which has NOT landed. Per the inbox pre-authorization,
+  the loop is measured against the documented warm-path expectation instead and the hard latency
+  claim is HELD: structurally the re-check adds only an O(findings) in-memory diff plus one file read
+  and reuses the warm pass (no second settle, no cold start), so it is ~free next-turn -- to be
+  restated as measured once 000054 lands.
+- **Always-on additive discipline.** No `userConfig` knob exposes or suppresses the loop -- it is
+  always active. No new status token is added; the 000027 drift-guard is unchanged (the existing 13
+  knobs and 4 tokens are untouched). CONTRACT.md gains only a forward-compatibility note: `cleared[]`
+  / `stillPresent[]` are additive, backward-compatible output fields, not a frozen Tier-1 surface.
+- **Single-file edit-range scope (slice 1).** The loop is per-edit-range and single-file; it does
+  not drive Claude's in-agent fix prompting (the tool surfaces the honest signal; how the agent
+  consumes it is out of scope) and does not fold in project-wide analysis (PL-6 territory).
+
 ## [1.18.1] - 2026-06-27
 
 PATCH: **native LSP registration restored -- the two registrar-hostile manifest fields are removed**

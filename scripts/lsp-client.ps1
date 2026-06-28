@@ -393,6 +393,14 @@ try {
             $indeterminateMsg = @($indeterminate | ForEach-Object { [string](Get-Prop $_ 'message') })
         }
     }
+    # Closed-loop agentic correction (dispatch 000061): the daemon's additive cleared[]/
+    # stillPresent[] lifecycle fields. Init-then-guard + null-filter, exactly like $projectFinds
+    # above -- @(Get-Prop ...) on an ABSENT property is @($null) (Count 1, a lone $null), which
+    # left unfiltered would make the render loop dereference $null and (under StrictMode +
+    # ErrorActionPreference=Stop) abort the whole emit on every edit with no lifecycle event
+    # (the 000062 read-before-assign / @($null) phantom class). Filtering makes absent == empty.
+    $clearedItems = @(@(Get-Prop $resp 'cleared') | Where-Object { $null -ne $_ })
+    $stillPresentItems = @(@(Get-Prop $resp 'stillPresent') | Where-Object { $null -ne $_ })
     # Analysis status (dispatch 000022/000024): '' / 'ok' = a clean, settled pass (behave
     # exactly as before); 'incomplete' = the pass did NOT settle (this edit was not checked);
     # 'degraded' = a settled but parser-only pass (PSScriptAnalyzer unavailable); 'unavailable'
@@ -444,6 +452,35 @@ try {
         # The primitive owns the wording; pass $status so each renders its distinct message --
         # a broken install ('unavailable') never reads as a retryable miss ('incomplete').
         [void]$sb.AppendLine((Get-DiagnosticsStatusBanner $status $path))
+    }
+    # Closed-loop agentic correction note (dispatch 000061): the cleared / still-present lifecycle
+    # signal in its OWN labelled section, kept VISIBLY DISTINCT from the diagnostics block so the
+    # agent never confuses a lifecycle signal with a correctness finding. CLEARED is a positive
+    # confirmation and may fire on a now-clean file (no diagnostics block at all); STILL-PRESENT
+    # escalates a finding the edit did not clear, bounded at K=2 attempts then ONE neutral downgrade
+    # then silence. The daemon only emits these on a fresh, settled, ok pass, so they never co-occur
+    # with an incomplete/unavailable banner. Absent (the common case) -> nothing added -> byte-identical.
+    if ($clearedItems.Count -gt 0 -or $stillPresentItems.Count -gt 0) {
+        [void]$sb.AppendLine('Correction check (since your last edit):')
+        foreach ($c in $clearedItems) {
+            $cr = [string](Get-Prop $c 'ruleId')
+            $cm = ((Get-Prop $c 'message') -replace "[`r`n`t]", ' ').Trim()
+            $crLbl = if ($cr) { $cr } else { 'finding' }
+            [void]$sb.AppendLine('  resolved: ' + $crLbl + ' cleared after your last edit -- ' + $cm)
+        }
+        foreach ($s in $stillPresentItems) {
+            $sr = [string](Get-Prop $s 'ruleId')
+            $sl = [string](Get-Prop $s 'line')
+            $sm = ((Get-Prop $s 'message') -replace "[`r`n`t]", ' ').Trim()
+            $sa = [int](Get-Prop $s 'attempts')
+            $sd = [bool](Get-Prop $s 'downgraded')
+            $srLbl = if ($sr) { $sr } else { 'finding' }
+            if ($sd) {
+                [void]$sb.AppendLine('  still present: ' + $srLbl + ' at line ' + $sl + ' unchanged after ' + $sa + ' edits -- ' + $sm)
+            } else {
+                [void]$sb.AppendLine('  still present: ' + $srLbl + ' at line ' + $sl + ' not resolved by your edit (attempt ' + $sa + ' of 2) -- ' + $sm)
+            }
+        }
     }
     $context = $sb.ToString().TrimEnd()
 

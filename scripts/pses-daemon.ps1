@@ -97,6 +97,14 @@ $script:initDone  = $false
 $script:diag      = @{}   # uri -> @{ records=@(); at=DateTime; seq=int }
 $script:openDocs  = @{}   # uri -> version int
 $script:lastHash  = @{}   # uri -> content hash string
+# Closed-loop agentic correction (dispatch 000061, PL-4 slice 1): per-URI memory of what was
+# SURFACED last turn, so the NEXT edit turn can diff this pass against it and confirm a prior
+# finding CLEARED or escalate that it is STILL-PRESENT. uri-key -> @{ shapeHash -> @{ ruleId;
+# line; message; attempts } }. The daemon is the ONLY per-session-persistent component, so this
+# memory can only live here (the PostToolUse client is a fresh process per edit). NOT cleared on
+# a PSES respawn (Reset-PsesState) -- it tracks findings about the file, not PSES lifecycle state,
+# so a respawn must not wipe the closed-loop memory.
+$script:lastSurfaced = @{}
 $script:respSeen  = @{}   # request id -> $true once a response arrives
 $script:respResult = @{}  # request id -> response result body (for codeAction)
 $script:reqId     = 1000  # monotonic id for daemon-initiated requests (codeAction)
@@ -761,6 +769,50 @@ function Get-CachedProjectFindings {
     return @($result.Findings)
 }
 
+# --- closed-loop agentic correction (dispatch 000061, PL-4 slice 1) ----------
+function Add-LifecycleSignal {
+    # Diff THIS pass's findings for the edited URI against what was SURFACED for it last turn
+    # ($script:lastSurfaced) and attach two ADDITIVE fields to the response payload:
+    #   cleared[]      -- prior-surfaced findings now ABSENT from the whole-file pass (a fix landed).
+    #   stillPresent[] -- prior-surfaced findings still present AND overlapping the touched range R
+    #                     (the edit tried but did not clear them), bounded at K=2 attempts then ONE
+    #                     neutral downgrade, then silence (no indefinite nag). MOVED folds in here.
+    # Range identity = Get-DiagnosticShapeHash (ruleId + normalized offending line), reused from the
+    # dogfood path, so a line-shifting edit never reads a moved finding as cleared. NEW findings ride
+    # the normal diagnostics surface (no lifecycle entry).
+    #
+    # GATING: runs ONLY on a FRESH, SETTLED, OK pass -- never a cache-hit (identical content re-fire),
+    # never incomplete/degraded/unavailable. On any other pass "absent" does NOT mean "cleared", so we
+    # skip AND leave the prior memory intact for the next ok pass. The caller wraps this in try/catch,
+    # so a throw leaves the payload's core diagnostics byte-identical: the closed loop is strictly
+    # additive and can never block or zero a diagnostics pass (the fail-open spine; the 000062 lesson).
+    param($Payload, [string]$FilePath, $Res, [object[]]$Surfaced, [bool]$ScopeApplied)
+    if ($null -eq $Res) { return }
+    if (-not [bool]$Res['ok']) { return }
+    if ([bool]$Res['cached']) { return }        # identical content re-fire -> no new lifecycle event
+    if ($Res.Contains('status')) { return }     # non-ok pass (incomplete/degraded/unavailable) -> skip
+    $full = [System.IO.Path]::GetFullPath($FilePath)
+    $key = ConvertTo-UriKey (ConvertTo-FileUri $full)
+    # Read the post-edit file ONCE for offending-line snippets (the dogfood path reads it the same way).
+    $lines = $null
+    try { $lines = [System.IO.File]::ReadAllLines($full) } catch { $lines = $null }
+    $fullRecs = @($Res['records'])
+    $surf = @(@($Surfaced) | Where-Object { $null -ne $_ })
+    $curFull = @($fullRecs | ForEach-Object { New-LifecycleFinding -Record $_ -Lines $lines })
+    $curSurf = @($surf | ForEach-Object { New-LifecycleFinding -Record $_ -Lines $lines })
+    $prior = if ($script:lastSurfaced.ContainsKey($key)) { $script:lastSurfaced[$key] } else { @{} }
+    $diff = Get-FindingLifecycleDiff -PriorMap $prior -CurrentFull $curFull -CurrentSurfaced $curSurf -ScopeApplied $ScopeApplied -MaxAttempts 2
+    # Persist the new memory ALWAYS (even when both signals are empty) so a later clear is still seen.
+    $script:lastSurfaced[$key] = $diff.NewMap
+    $clearedArr = @($diff.Cleared)
+    $stillArr = @($diff.StillPresent)
+    if ($clearedArr.Count -gt 0) { $Payload['cleared'] = $clearedArr }
+    if ($stillArr.Count -gt 0) { $Payload['stillPresent'] = $stillArr }
+    if ($clearedArr.Count -gt 0 -or $stillArr.Count -gt 0) {
+        Write-DLog ('lifecycle: ' + $clearedArr.Count + ' cleared, ' + $stillArr.Count + ' still-present for ' + $full)
+    }
+}
+
 function Get-Diagnostics([string]$filePath, [string]$cwd = '') {
     $full = [System.IO.Path]::GetFullPath($filePath)
     if (-not (Test-Path -LiteralPath $full)) { return @{ ok = $false; error = 'file not found' } }
@@ -1032,6 +1084,15 @@ try {
                             if ($null -ne $projectFinds -and @($projectFinds).Count -gt 0) {
                                 $payload['projectFindings'] = @($projectFinds)
                                 Write-DLog ('project findings: ' + @($projectFinds).Count + ' for ' + $file)
+                            }
+                            # Closed-loop agentic correction (dispatch 000061): diff this pass
+                            # against last turn's surfaced set for this URI -> additive cleared[]/
+                            # stillPresent[] fields. FAIL-OPEN: any failure leaves $payload's core
+                            # diagnostics byte-identical -- the loop never blocks or zeroes a pass.
+                            try {
+                                Add-LifecycleSignal -Payload $payload -FilePath $file -Res $res -Surfaced @($sc.shown) -ScopeApplied ([bool]$sc.scopeApplied)
+                            } catch {
+                                Write-DLog ('lifecycle signal error (ignored, additive): ' + $_.Exception.Message)
                             }
                         } else {
                             $payload = [ordered]@{ ok = $false; action = 'diagnostics'; error = $res.error }

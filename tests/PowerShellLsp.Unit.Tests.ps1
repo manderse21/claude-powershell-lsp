@@ -2059,3 +2059,139 @@ Describe 'Get-SecurityBlockEvidence + Resolve-SecurityBlock -- ALL probes mocked
         $r.Confidence | Should -BeExactly 'none'
     }
 }
+
+Describe 'Closed-loop agentic correction -- New-LifecycleFinding (dispatch 000061)' {
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        # A diagnostic record the way ConvertTo-DiagRecord builds it (an ordered hashtable).
+        function New-Rec { param([int]$Line, [string]$Code, [string]$Msg = 'm')
+            [ordered]@{ severity = 'Warning'; line = $Line; endLine = $Line; col = 1; source = 'PSScriptAnalyzer'; code = $Code; message = $Msg } }
+    }
+
+    It 'derives the shape-hash from ruleId + the offending file line at the record line' {
+        $rec = New-Rec -Line 1 -Code 'PSUseApprovedVerbs'
+        $lines = @('function Frob-X {', '    Get-Process', '}')
+        $lf = New-LifecycleFinding -Record $rec -Lines $lines
+        $lf.ruleId | Should -BeExactly 'PSUseApprovedVerbs'
+        $lf.line | Should -Be 1
+        $lf.hash | Should -BeExactly (Get-DiagnosticShapeHash -RuleId 'PSUseApprovedVerbs' -OffendingLine 'function Frob-X {')
+    }
+
+    It 'is line-position independent: the same offending text at a different line has the SAME hash (MOVED survives a shift)' {
+        $top = New-LifecycleFinding -Record (New-Rec -Line 1 -Code 'R') -Lines @('gci', '# pad')
+        $shifted = New-LifecycleFinding -Record (New-Rec -Line 2 -Code 'R') -Lines @('# inserted above', 'gci')
+        $shifted.line | Should -Be 2                     # the line MOVED
+        $shifted.hash | Should -BeExactly $top.hash      # but the identity (hash) is unchanged
+    }
+
+    It 'maps an absent/zero rule code to an empty ruleId (mirrors the dogfood derivation)' {
+        (New-LifecycleFinding -Record (New-Rec -Line 1 -Code '0') -Lines @('x')).ruleId | Should -BeExactly ''
+        (New-LifecycleFinding -Record (New-Rec -Line 1 -Code '') -Lines @('x')).ruleId | Should -BeExactly ''
+    }
+
+    It 'tolerates an out-of-range line (offending line empty, never throws)' {
+        $lf = New-LifecycleFinding -Record (New-Rec -Line 99 -Code 'R') -Lines @('only one line')
+        $lf.hash | Should -BeExactly (Get-DiagnosticShapeHash -RuleId 'R' -OffendingLine '')
+    }
+}
+
+Describe 'Closed-loop agentic correction -- Get-FindingLifecycleDiff (dispatch 000061)' {
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        # A projected lifecycle finding ({ hash; ruleId; line; message }) with an EXPLICIT hash, so
+        # the set logic is exercised in isolation from the hashing (which its own tests cover).
+        function LF { param([string]$Hash, [string]$Rule = 'R', [int]$Line = 1, [string]$Msg = 'm')
+            [pscustomobject]@{ hash = $Hash; ruleId = $Rule; line = $Line; message = $Msg } }
+        # A prior-map entry the way the daemon stores it.
+        function PriorEntry { param([string]$Rule = 'R', [int]$Line = 1, [string]$Msg = 'm', [int]$Attempts = 0)
+            @{ ruleId = $Rule; line = $Line; message = $Msg; attempts = $Attempts } }
+    }
+
+    It 'NEW finding (empty prior): no cleared, no still-present; recorded in memory at attempts 0' {
+        $diff = Get-FindingLifecycleDiff -PriorMap @{} -CurrentFull @((LF 'h1')) -CurrentSurfaced @((LF 'h1')) -ScopeApplied $true
+        @($diff.Cleared).Count | Should -Be 0
+        @($diff.StillPresent).Count | Should -Be 0
+        $diff.NewMap.ContainsKey('h1') | Should -BeTrue
+        [int]$diff.NewMap['h1']['attempts'] | Should -Be 0
+    }
+
+    It 'CLEARED: a prior-surfaced finding absent from the whole-file pass is reported cleared and dropped from memory' {
+        $prior = @{ 'h1' = (PriorEntry -Rule 'PSAvoidUsingCmdletAliases' -Msg 'gci alias') }
+        $diff = Get-FindingLifecycleDiff -PriorMap $prior -CurrentFull @() -CurrentSurfaced @() -ScopeApplied $true
+        @($diff.Cleared).Count | Should -Be 1
+        $diff.Cleared[0].ruleId | Should -BeExactly 'PSAvoidUsingCmdletAliases'
+        @($diff.StillPresent).Count | Should -Be 0
+        $diff.NewMap.ContainsKey('h1') | Should -BeFalse   # cleared -> forgotten
+    }
+
+    It 'STILL-PRESENT (attempt 1): a prior finding still surfaced under a determinate R escalates once, not downgraded' {
+        $prior = @{ 'h1' = (PriorEntry -Attempts 0) }
+        $diff = Get-FindingLifecycleDiff -PriorMap $prior -CurrentFull @((LF 'h1')) -CurrentSurfaced @((LF 'h1')) -ScopeApplied $true
+        @($diff.Cleared).Count | Should -Be 0
+        @($diff.StillPresent).Count | Should -Be 1
+        [int]$diff.StillPresent[0].attempts | Should -Be 1
+        [bool]$diff.StillPresent[0].downgraded | Should -BeFalse
+        [int]$diff.NewMap['h1']['attempts'] | Should -Be 1
+    }
+
+    It 'BOUNDED escalation: attempts 1..2 escalate, attempt 3 downgrades ONCE, attempt 4+ goes silent (K=2)' {
+        # attempt 2 (prior 1) -> escalate, not downgraded
+        $d2 = Get-FindingLifecycleDiff -PriorMap @{ 'h1' = (PriorEntry -Attempts 1) } -CurrentFull @((LF 'h1')) -CurrentSurfaced @((LF 'h1')) -ScopeApplied $true
+        @($d2.StillPresent).Count | Should -Be 1
+        [int]$d2.StillPresent[0].attempts | Should -Be 2
+        [bool]$d2.StillPresent[0].downgraded | Should -BeFalse
+        # attempt 3 (prior 2) -> ONE neutral downgrade
+        $d3 = Get-FindingLifecycleDiff -PriorMap @{ 'h1' = (PriorEntry -Attempts 2) } -CurrentFull @((LF 'h1')) -CurrentSurfaced @((LF 'h1')) -ScopeApplied $true
+        @($d3.StillPresent).Count | Should -Be 1
+        [int]$d3.StillPresent[0].attempts | Should -Be 3
+        [bool]$d3.StillPresent[0].downgraded | Should -BeTrue
+        # attempt 4 (prior 3) -> SILENCE (no entry), but memory keeps counting
+        $d4 = Get-FindingLifecycleDiff -PriorMap @{ 'h1' = (PriorEntry -Attempts 3) } -CurrentFull @((LF 'h1')) -CurrentSurfaced @((LF 'h1')) -ScopeApplied $true
+        @($d4.StillPresent).Count | Should -Be 0
+        [int]$d4.NewMap['h1']['attempts'] | Should -Be 4
+    }
+
+    It 'NO determinate R (ScopeApplied false): a still-present finding is NOT escalated and NOT counted as an attempt' {
+        $prior = @{ 'h1' = (PriorEntry -Attempts 0) }
+        $diff = Get-FindingLifecycleDiff -PriorMap $prior -CurrentFull @((LF 'h1')) -CurrentSurfaced @((LF 'h1')) -ScopeApplied $false
+        @($diff.StillPresent).Count | Should -Be 0
+        [int]$diff.NewMap['h1']['attempts'] | Should -Be 0   # unchanged: a whole-file pass is not a counted attempt
+    }
+
+    It 'MOVED folds into still-present: the same hash at a new line is still-present (never a false cleared)' {
+        # prior recorded the finding at line 5; this turn the same hash surfaces at line 8 (shifted).
+        $prior = @{ 'h1' = (PriorEntry -Line 5 -Attempts 0) }
+        $diff = Get-FindingLifecycleDiff -PriorMap $prior -CurrentFull @((LF 'h1' 'R' 8)) -CurrentSurfaced @((LF 'h1' 'R' 8)) -ScopeApplied $true
+        @($diff.Cleared).Count | Should -Be 0                 # NOT a false cleared
+        @($diff.StillPresent).Count | Should -Be 1
+        [int]$diff.StillPresent[0].line | Should -Be 8        # reported at the new (moved) line
+    }
+
+    It 'CARRY-FORWARD: a prior finding still present but NOT surfaced this turn is kept in memory (so a later clear is still seen)' {
+        # h1 present in full but not in the surfaced (touched) set this turn -> carried, attempts unchanged.
+        $prior = @{ 'h1' = (PriorEntry -Attempts 1) }
+        $diff = Get-FindingLifecycleDiff -PriorMap $prior -CurrentFull @((LF 'h1')) -CurrentSurfaced @() -ScopeApplied $true
+        @($diff.Cleared).Count | Should -Be 0
+        @($diff.StillPresent).Count | Should -Be 0
+        $diff.NewMap.ContainsKey('h1') | Should -BeTrue
+        [int]$diff.NewMap['h1']['attempts'] | Should -Be 1
+    }
+
+    It 'mixed turn: one finding clears while a new one appears (both signals correct in one pass)' {
+        $prior = @{ 'hOld' = (PriorEntry -Rule 'PSUseApprovedVerbs' -Msg 'bad verb') }
+        $diff = Get-FindingLifecycleDiff -PriorMap $prior -CurrentFull @((LF 'hNew' 'PSAvoidUsingCmdletAliases')) -CurrentSurfaced @((LF 'hNew' 'PSAvoidUsingCmdletAliases')) -ScopeApplied $true
+        @($diff.Cleared).Count | Should -Be 1
+        $diff.Cleared[0].ruleId | Should -BeExactly 'PSUseApprovedVerbs'
+        @($diff.StillPresent).Count | Should -Be 0          # hNew is NEW, rides the normal surface
+        $diff.NewMap.ContainsKey('hNew') | Should -BeTrue
+        $diff.NewMap.ContainsKey('hOld') | Should -BeFalse
+    }
+
+    It 'StrictMode-safe on empty/null inputs (no read-before-assign, no @($null) phantom -- the 000062 class)' {
+        { Get-FindingLifecycleDiff -PriorMap @{} -CurrentFull @() -CurrentSurfaced @() -ScopeApplied $true } | Should -Not -Throw
+        $diff = Get-FindingLifecycleDiff -PriorMap @{} -CurrentFull @() -CurrentSurfaced @() -ScopeApplied $true
+        @($diff.Cleared).Count | Should -Be 0
+        @($diff.StillPresent).Count | Should -Be 0
+        $diff.NewMap.Count | Should -Be 0
+    }
+}
