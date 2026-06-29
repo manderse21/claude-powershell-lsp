@@ -13,12 +13,34 @@ $script:OnLinux = (Test-Path 'Variable:\IsLinux') -and [bool]$IsLinux
 $script:OnMacOS = (Test-Path 'Variable:\IsMacOS') -and [bool]$IsMacOS
 $script:SkipIntegration = -not ($script:OnWindows -or $script:OnLinux -or $script:OnMacOS)
 
+Describe 'Integration: suite-start daemon census (dispatch 000078)' -Skip:$script:SkipIntegration {
+    # WARN-not-FAIL guard (dispatch 000078 OQ3 recommendation). A read-only census of any
+    # pre-existing suite-owned daemon at suite-start. On a multi-tenant host a strict FAIL is
+    # too disruptive (a co-developer's interrupted run would block the whole suite), and the
+    # real cure is the per-block + suite-final reap, not a gate -- so this only REPORTS. It
+    # never kills here (no per-run record yet to scope a kill precisely; the suite-final
+    # backstop does the verified sweep). Flip the It to a failing assertion if Mike prefers strict.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
+        $script:Pre000078 = @(Get-IntegrationDaemonLeak)
+        foreach ($d in $script:Pre000078) {
+            Write-Warning ('dispatch 000078: pre-existing suite-owned daemon at suite-start (pid=' + $d.Id +
+                ' session=' + $d.SessionId + '); a prior run leaked it -- the suite-final backstop will sweep it.')
+        }
+    }
+    It 'the read-only daemon census runs without error (informational; pre-existing leaks are WARNed, never failed)' {
+        { Get-IntegrationDaemonLeak } | Should -Not -Throw
+    }
+}
+
 Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$script:SkipIntegration {
 
     BeforeAll {
         # Shared helpers (Add-ProcessArguments is cross-version: ArgumentList on
         # pwsh, quoted .Arguments on Windows PowerShell 5.1).
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Stop-IntegrationDaemon (info-independent reap, dispatch 000078)
 
         # Helpers must be defined in the run phase (a top-level function would only
         # exist during discovery and be invisible here). Defined in BeforeAll, they
@@ -77,11 +99,10 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
     }
 
     AfterAll {
-        if ($null -ne $script:DaemonInfo) {
-            foreach ($pidVal in @($script:DaemonInfo.pid, $script:DaemonInfo.psesPid)) {
-                if ($pidVal) { Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue }
-            }
-        }
+        # Reap by recorded session id, reading the session file FRESH so a daemon that
+        # reached 'ready' after the bounded BeforeAll wait timed out is still reaped --
+        # the dispatch 000078 leak vector the old `if ($null -ne $info)` guard missed.
+        [void](Stop-IntegrationDaemon -SessionId $script:Sid -DataRoot $script:DataDir)
     }
 
     It 'brings up exactly one ready daemon' {
@@ -266,6 +287,7 @@ Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -S
     # per-session, one analysis engine), so honoring cannot be toggled within one daemon.
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Stop-IntegrationDaemon (info-independent reap, dispatch 000078)
 
         function Invoke-PluginHook {
             param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
@@ -343,15 +365,6 @@ Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -S
                 -StdinJson (@{ session_id = $Sid } | ConvertTo-Json -Compress) `
                 -ExtraArgs @('-PreferredHost', 'pwsh') -CapMs 60000 -DataRoot $script:H_Data -ExtraEnv $ExtraEnv | Out-Null
         }
-        function Wait-HonorDaemon {
-            param([string]$Sid)
-            $sf = Join-Path $script:H_Data ('session/' + $Sid + '.json')
-            for ($i = 0; $i -lt 60; $i++) {
-                if (Test-Path $sf) { $o = Get-Content $sf -Raw | ConvertFrom-Json; if ($o.state -eq 'ready') { return $o } }
-                Start-Sleep -Milliseconds 500
-            }
-            return $null
-        }
         # Raise the CLIENT hard cap for these calls: the FIRST analyzed file pushes the
         # settings and PSES rebuilds its analysis engine, which can exceed the 5s default.
         function Get-HonorDiag {
@@ -360,29 +373,65 @@ Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -S
                 -StdinJson (@{ session_id = $Sid; tool_input = @{ file_path = $File }; cwd = $Cwd } | ConvertTo-Json -Compress) `
                 -ExtraArgs @() -CapMs 25000 -DataRoot $script:H_Data -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
         }
+        function Wait-HonorDiagReady {
+            # Deterministic It-time serve-readiness gate for the honor daemons (dispatch 000078).
+            # Replaces the old Wait-HonorDaemon, which polled the session-file 'ready' marker -- a
+            # lifecycle signal written BEFORE serve-loop entry, and (when it timed out under the
+            # process-leak contention this dispatch fixes) the source of the $null $script:GreenInfo
+            # the GREEN It fast-failed on with "Expected a value, but got $null or empty".
+            #
+            # Gate on the REAL request the assertion fires -- a diagnostics round-trip for the
+            # scenario's OWN file + cwd -- polled until the daemon returns a SETTLED analysis (the
+            # response carries a real PSSA rule id; an empty '' is the overrun/not-ready symptom).
+            # PSUseApprovedVerbs is emitted only by the settled PSSA publish, never the parser pass,
+            # and the honor daemon LOCKS its settings on that first analyzed file, so a response
+            # carrying a rule id proves the daemon is fully warm AND has applied the scenario's
+            # settings -- exactly what the assertion depends on. This is why the generic
+            # Wait-DaemonRequestReady is NOT reused here: its probe analyzes a throwaway file under
+            # the DATA ROOT (no settings in its walk-up), which would lock the WRONG resolution and
+            # corrupt the GREEN/OVERRIDE assertions. Returns the diagnostics text; THROWS a clear,
+            # bounded message on timeout -- never a bare $null/'' for an assertion to trip on.
+            param(
+                [Parameter(Mandatory = $true)][scriptblock]$GetDiag,
+                [string]$Scenario = 'honor',
+                [string]$ReadyPattern = 'PSUseApprovedVerbs|PSAvoidUsingCmdletAliases',
+                [int]$TimeoutMs = 90000
+            )
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $lastLen = -1
+            while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
+                $out = & $GetDiag
+                if (-not [string]::IsNullOrWhiteSpace($out) -and ($out -match $ReadyPattern)) { return $out }
+                $lastLen = ([string]$out).Length
+                Start-Sleep -Milliseconds 500
+            }
+            throw ("honor daemon '" + $Scenario + "' did not return analysis within " + $TimeoutMs +
+                "ms (daemon not ready / process-leak contention; dispatch 000078); last response length=" + $lastLen)
+        }
 
         $script:GreenSid = 'honor-green-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
         $script:RedSid = 'honor-red-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
         $script:OvrSid = 'honor-ovr-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
 
-        # Launch all three detached, then wait -- overlaps the PSES warm-starts. GREEN
+        # Launch all three detached -- the PSES warm-starts overlap in the background. GREEN
         # and RED carry an EMPTY settingsPath option (no override); OVERRIDE carries the
-        # absolute path. Distinct session ids => distinct daemons (no cross-reap).
+        # absolute path. Distinct session ids => distinct daemons (no cross-reap). NO BeforeAll
+        # readiness wait: the session-file 'ready' marker precedes serve-loop entry and, when it
+        # timed out under process-leak contention, produced the $null the It fast-failed on
+        # (dispatch 000078). Each It instead gates on a real serviced diagnostics round-trip at
+        # the point of use via Wait-HonorDiagReady (the dispatch 000051 It-time-real-request rule).
         Start-HonorDaemon -Sid $script:GreenSid -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_settingsPath = '' }
         Start-HonorDaemon -Sid $script:RedSid -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_settingsPath = '' }
         Start-HonorDaemon -Sid $script:OvrSid -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_settingsPath = $script:OvrCfg }
-        $script:GreenInfo = Wait-HonorDaemon -Sid $script:GreenSid
-        $script:RedInfo = Wait-HonorDaemon -Sid $script:RedSid
-        $script:OvrInfo = Wait-HonorDaemon -Sid $script:OvrSid
     }
 
     AfterAll {
-        foreach ($info in @($script:GreenInfo, $script:RedInfo, $script:OvrInfo)) {
-            if ($null -ne $info) {
-                foreach ($pidVal in @($info.pid, $info.psesPid)) {
-                    if ($pidVal) { Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue }
-                }
-            }
+        # Reap the suite's OWN daemons by recorded session id, reading each session file
+        # FRESH (info-independent) so a daemon that warmed up AFTER any wait is still reaped --
+        # the dispatch 000078 leak vector the old `if ($null -ne $info)` guard missed when the
+        # readiness wait timed out under contention. Verify-before-kill (Stop-IntegrationDaemon).
+        foreach ($sid in @($script:GreenSid, $script:RedSid, $script:OvrSid)) {
+            [void](Stop-IntegrationDaemon -SessionId $sid -DataRoot $script:H_Data)
         }
         # Clean only OUR fixtures + session files -- never the shared data root (it
         # holds the bootstrapped PSES/PSSA bundle reused across runs).
@@ -394,21 +443,23 @@ Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -S
     }
 
     It 'GREEN: a rule excluded by PSScriptAnalyzerSettings.psd1 is suppressed, and a non-excluded rule still fires' {
-        $script:GreenInfo | Should -Not -BeNullOrEmpty
-        $out = Get-HonorDiag -Sid $script:GreenSid -File $script:GreenFile -Cwd $script:GreenDir
+        # Deterministic readiness: wait for a SETTLED analysis of the GREEN file (carries the
+        # non-excluded verb rule) -- never assert on a bare $null from a not-yet-warm daemon (000078).
+        $out = Wait-HonorDiagReady -Scenario 'GREEN' -ReadyPattern 'PSUseApprovedVerbs' `
+            -GetDiag { Get-HonorDiag -Sid $script:GreenSid -File $script:GreenFile -Cwd $script:GreenDir }
         $out | Should -Match 'PSUseApprovedVerbs'              # NOT excluded -> still fires (we did not silence everything)
         $out | Should -Not -Match 'PSAvoidUsingCmdletAliases'  # excluded by the repo settings -> suppressed
     }
 
     It 'RED control: the SAME file with NO settings honored shows the excluded rule (honoring is load-bearing)' {
-        $script:RedInfo | Should -Not -BeNullOrEmpty
-        $out = Get-HonorDiag -Sid $script:RedSid -File $script:RedFile -Cwd $script:RedDir
+        $out = Wait-HonorDiagReady -Scenario 'RED' -ReadyPattern 'PSAvoidUsingCmdletAliases' `
+            -GetDiag { Get-HonorDiag -Sid $script:RedSid -File $script:RedFile -Cwd $script:RedDir }
         $out | Should -Match 'PSAvoidUsingCmdletAliases'    # reappears without honoring -> RED to GREEN's absence
     }
 
     It 'explicit absolute settingsPath override is applied (points PSES at a settings file elsewhere)' {
-        $script:OvrInfo | Should -Not -BeNullOrEmpty
-        $out = Get-HonorDiag -Sid $script:OvrSid -File $script:OvrFile -Cwd $script:OvrDir
+        $out = Wait-HonorDiagReady -Scenario 'OVERRIDE' -ReadyPattern 'PSUseApprovedVerbs' `
+            -GetDiag { Get-HonorDiag -Sid $script:OvrSid -File $script:OvrFile -Cwd $script:OvrDir }
         $out | Should -Match 'PSUseApprovedVerbs'              # analysis ran (verb rule not excluded)
         $out | Should -Not -Match 'PSAvoidUsingCmdletAliases'  # excluded via the override settings file
     }
@@ -416,9 +467,20 @@ Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -S
     It 'no-config non-regression: with no settings and no override, default diagnostics are unchanged' {
         # The RED daemon honors nothing; the default rules must fire -- nothing is
         # silently suppressed, so behavior matches the pre-honoring default.
-        $out = Get-HonorDiag -Sid $script:RedSid -File $script:RedFile -Cwd $script:RedDir
+        $out = Wait-HonorDiagReady -Scenario 'no-config' -ReadyPattern 'PSAvoidUsingCmdletAliases' `
+            -GetDiag { Get-HonorDiag -Sid $script:RedSid -File $script:RedFile -Cwd $script:RedDir }
         $out | Should -Match 'PSAvoidUsingCmdletAliases'
         $out | Should -Match 'PSUseApprovedVerbs'
+    }
+
+    It 'adversarial: the readiness gate FAILS LOUD with a clear bounded message, never a silent $null (dispatch 000078)' {
+        # RED control for the gate itself (mirrors the 000014/000018 RED/GREEN discipline):
+        # when the underlying request never yields a serviced analysis -- here a stub standing
+        # in for a daemon that returns '' under contention -- Wait-HonorDiagReady must THROW a
+        # clear, bounded message, NOT return $null/'' for an assertion to trip on with the
+        # opaque "Expected a value, but got $null or empty" the original 000018 flake produced.
+        { Wait-HonorDiagReady -Scenario 'never-ready' -TimeoutMs 1500 -GetDiag { '' } } |
+            Should -Throw -ExpectedMessage '*did not return analysis within 1500ms*'
     }
 }
 
@@ -432,6 +494,7 @@ Describe 'Integration: edit-range diagnostic scoping (dispatch 000019)' -Skip:$s
     # string/empty tool_response, and the surfaced-vs-total telemetry.
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Stop-IntegrationDaemon (info-independent reap, dispatch 000078)
 
         function Invoke-PluginHook {
             param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
@@ -516,11 +579,9 @@ Describe 'Integration: edit-range diagnostic scoping (dispatch 000019)' -Skip:$s
     }
 
     AfterAll {
-        if ($null -ne $script:S_Info) {
-            foreach ($pidVal in @($script:S_Info.pid, $script:S_Info.psesPid)) {
-                if ($pidVal) { Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue }
-            }
-        }
+        # Info-independent reap by recorded session id (dispatch 000078): reads the session
+        # file fresh, so a daemon that warmed up after the bounded wait timed out is reaped.
+        [void](Stop-IntegrationDaemon -SessionId $script:S_Sid -DataRoot $script:S_Data)
         $sf = Join-Path $script:S_Data ('session/' + $script:S_Sid + '.json')
         if (Test-Path -LiteralPath $sf) { Remove-Item -LiteralPath $sf -Force -ErrorAction SilentlyContinue }
         if (Test-Path -LiteralPath $script:S_Fixtures) { Remove-Item -LiteralPath $script:S_Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
@@ -592,6 +653,7 @@ Describe 'Integration: supervised restart + incomplete/degraded status (dispatch
     # vendored PSSA -- without touching any user-facing default.
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Stop-IntegrationDaemon (info-independent reap, dispatch 000078)
 
         function Invoke-PluginHook {
             param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
@@ -693,7 +755,12 @@ Describe 'Integration: supervised restart + incomplete/degraded status (dispatch
     }
 
     AfterAll {
-        # Reap every daemon + its PSES child (by recorded pid, and the raw Process handles).
+        # Reap every daemon + its PSES child. Daemon (a) is launched DETACHED via session-start
+        # (no Process handle), so reap it info-independently by recorded session id, reading the
+        # session file fresh -- the dispatch 000078 leak vector the null-gated $infos loop missed
+        # when Wait-DaemonReady timed out under contention. Daemons (b)/(d)/(e) are raw launches
+        # whose Process handles Kill($true) the tree below (already leak-safe).
+        [void](Stop-IntegrationDaemon -SessionId $script:R_SidA -DataRoot $script:R_Data)
         $infos = @($script:R_InfoA, $script:R_InfoB, $script:R_InfoD, $script:R_InfoE)
         foreach ($info in $infos) {
             if ($null -ne $info) {
@@ -1867,11 +1934,9 @@ Describe 'Integration: closed-loop agentic correction (dispatch 000061)' -Skip:$
     }
 
     AfterAll {
-        if ($null -ne $script:L_Info) {
-            foreach ($pidVal in @($script:L_Info.pid, $script:L_Info.psesPid)) {
-                if ($pidVal) { Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue }
-            }
-        }
+        # Info-independent reap by recorded session id (dispatch 000078): reads the session
+        # file fresh, so the daemon is reaped even if the BeforeAll 'ready' wait timed out.
+        [void](Stop-IntegrationDaemon -SessionId $script:L_Sid -DataRoot $script:L_Data)
         $sf = Join-Path $script:L_Data ('session/' + $script:L_Sid + '.json')
         if (Test-Path -LiteralPath $sf) { Remove-Item -LiteralPath $sf -Force -ErrorAction SilentlyContinue }
         if (Test-Path -LiteralPath $script:L_Fixtures) { Remove-Item -LiteralPath $script:L_Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
@@ -1958,5 +2023,35 @@ Describe 'Integration: closed-loop agentic correction (dispatch 000061)' -Skip:$
         (Test-Prop $r2 'cleared') | Should -BeTrue             # the additive lifecycle field is present
         @(Get-Prop $r2 'cleared').Count | Should -BeGreaterThan 0
         (Test-Prop $r2 'status') | Should -BeFalse             # and NO status token rode along (a clean ok pass)
+    }
+}
+
+Describe 'Integration: suite-final daemon-leak backstop (dispatch 000078)' -Skip:$script:SkipIntegration {
+    # The teardown guarantee + in-suite proof. After every daemon block's AfterAll has run its
+    # info-independent per-session reap (Stop-IntegrationDaemon), sweep any STRAGGLER suite-owned
+    # daemon -- one whose block AfterAll was somehow bypassed, or a leak carried over from a prior
+    # interrupted run -- and PROVE zero remain, so a run cannot leave a daemon that contends the
+    # next (the dispatch 000078 root cause). Verify-before-kill, scoped to processes whose command
+    # line references pses-daemon.ps1 AND a suite-owned -SessionId: it can NEVER match a
+    # co-developer's editor host or the operator's interactive shell (the 000078 hard line).
+    # Placed LAST in the file so it runs after every daemon Describe.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
+    }
+    It 'leaves ZERO leaked suite-owned daemon processes (sweeps stragglers, verify-before-kill)' {
+        $before = @(Get-IntegrationDaemonLeak)
+        foreach ($d in $before) {
+            # Verify-before-kill: the scanned pid must STILL be our daemon for that exact sid
+            # (immune to PID reuse; never an editor/shell). Re-read the session file to also
+            # retire its PSES child when resolvable; otherwise the next session-start reap does.
+            if (Test-IsOurIntegrationDaemon -ProcessIdValue $d.Id -SessionId $d.SessionId) {
+                try { Stop-Process -Id $d.Id -Force -ErrorAction SilentlyContinue } catch { }
+            }
+        }
+        if ($before.Count -gt 0) { Start-Sleep -Milliseconds 800 }   # let the OS retire the killed processes
+        $after = @(Get-IntegrationDaemonLeak)
+        $after.Count | Should -Be 0 -Because ('no suite-owned daemon may survive a full run (dispatch 000078); swept ' +
+            $before.Count + ', remaining sessions: ' + (($after | ForEach-Object { $_.SessionId }) -join ', '))
     }
 }
