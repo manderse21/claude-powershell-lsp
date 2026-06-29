@@ -29,8 +29,7 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
-## [Unreleased]
-
+## [1.19.0] - 2026-06-29
 MINOR: **SARIF + standalone CI mode -- run the SAME engine over a path, emit SARIF
 2.1.0 for GitHub code scanning, additive (no knob, no token)**. A new non-agent entry
 point, `scripts/lsp-scan.ps1`, runs the diagnostics engine over a file or directory and
