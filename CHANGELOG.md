@@ -31,6 +31,64 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+MINOR: **SARIF + standalone CI mode -- run the SAME engine over a path, emit SARIF
+2.1.0 for GitHub code scanning, additive (no knob, no token)**. A new non-agent entry
+point, `scripts/lsp-scan.ps1`, runs the diagnostics engine over a file or directory and
+emits SARIF 2.1.0 (for GitHub code scanning) or a human-readable text report. It bridges
+the in-agent linter to in-CI use WITHOUT forking the analysis logic: the entry point is a
+SIBLING invocation that brings up the same warm PSES daemon and runs the same
+`scripts/lsp-client.ps1` per file, so a finding is identical whether it surfaces in-agent
+or in-CI. The output format is a CLI PARAMETER (`-Format sarif|text`), deliberately NOT a
+new `userConfig` knob -- so the 000027 contract drift-guard is untouched and stays green
+(no CONTRACT amendment). The existing pinned-hash-verified PSScriptAnalyzer (000046 L2) is
+the ONLY acquisition path; no second path, no hash change. The in-agent PostToolUse surface
+is byte-for-byte unchanged (additive only).
+
+### Added
+
+- **Standalone scan entry point (`scripts/lsp-scan.ps1`).** Runs over a PATH: a single
+  `.ps1`/`.psm1`/`.psd1` file, or a directory (recursed by default; `-NoRecurse` limits to
+  the top level). Only the PowerShell file types the tool already handles are analyzed;
+  every other file is skipped (counted in text mode). `-Format sarif` (default) emits SARIF
+  2.1.0 for code scanning; `-Format text` emits a human-readable report mirroring the
+  in-agent rendering. `-OutputPath` writes to a file (UTF-8, no BOM); `-FailOn
+  note|warning|error` gates the exit code for CI use. Exit codes: 0 = completed (clean or
+  under the `-FailOn` threshold), 2 = `-FailOn` threshold met, 3 = usage error, 4 = scan
+  incomplete (the analyzer was not reachable -- an unanalyzed file never reads as a clean
+  one).
+- **One-engine derivation library (`scripts/lib/lsp-scan-common.ps1`).** Target
+  enumeration, the honest severity-to-SARIF-level mapping, SARIF 2.1.0 assembly + text
+  rendering, and the per-file derivation that drives the real `lsp-client.ps1` and reads
+  back the structured records the tool tees -- the SAME derivation channel the
+  diagnostic-correctness corpus uses, redirected to a hermetic throwaway file (never the
+  repo dogfood log).
+- **Finding-identity test + SARIF schema validation
+  (`tests/PowerShellLsp.SarifScan.Tests.ps1`).** Runs every committed corpus sample through
+  the SCAN entry point and asserts its findings match the in-agent corpus snapshot exactly
+  -- the same measured 0% false-positive rate / 100% true-positive coverage via the CI path
+  -- proving the CI and in-agent paths share one engine (a divergence goes RED). The emitted
+  SARIF is validated against the vendored official SARIF 2.1.0 JSON Schema
+  (`tests/sarif/sarif-2.1.0.json`) on every pwsh leg.
+
+### Notes
+
+- **Honest severity-to-SARIF-level mapping.** `Error -> error`, `Warning -> warning`,
+  `Information -> note`, `Hint -> note`. SARIF 2.1.0 defines exactly four result levels
+  (error, warning, note, none); the only fold is Information AND Hint -> note, because SARIF
+  has no separate "info"/"hint" level below warning -- note is its least-alarming
+  non-suppressed level. Nothing maps to `none` (which suppresses a result) and an unknown
+  severity maps to `warning`, so a finding is never silently dropped: no inflation, no
+  deflation.
+- **Additive, no contract change.** No new `userConfig` knob and no new status token (the
+  output format is a CLI parameter -- decisions as parameters). The 000027 drift-guard is
+  unchanged (the existing 13 knobs and 4 tokens are untouched) and CONTRACT.md needs no
+  amendment; a new entry point is additive surface the contract does not freeze. The
+  in-agent PostToolUse diagnostics surface is byte-for-byte unchanged -- the CI mode is
+  purely additive.
+- **Same PSScriptAnalyzer, one acquisition path.** The scan brings up the daemon via the
+  existing `session-start.ps1` -> `ensure-pssa.ps1` bootstrap (the pinned, SHA-256-verified
+  vendor, 000046 L2); it adds no second acquisition path and does not touch the pinned hash.
+
 MINOR: **the AI-era rule pack, slice 1 -- non-ASCII smuggling pre-PSSA byte pass,
 always-on additive, no knob/token**. A new pre-PSSA diagnostic source (`powershell-lsp`)
 scans for smart-punctuation characters (em/en dash, curly quotes, arrow glyphs) that
