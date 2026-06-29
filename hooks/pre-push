@@ -1,0 +1,53 @@
+#!/bin/sh
+# powershell-lsp pre-push guard (dispatch 000080).
+#
+# Refuses a push that would UPDATE refs/heads/main on origin (the PR-and-HOLD discipline);
+# every other push -- a feature branch, a tag, a delete, a fork remote -- passes through.
+# An audited override exists: POWERSHELL_LSP_ALLOW_PUSH_TO_MAIN=<non-empty reason>.
+#
+# This is a thin POSIX sh shim. The decision, the origin/override rules, and the audit-log
+# write live in scripts/pre-push-guard.ps1 (which the suite test drives directly). git runs
+# this hook with the push refspec on stdin and the remote name/url in argv:
+#   $1 = remote name (e.g. origin)   $2 = remote URL
+#
+# Installed by pointing core.hooksPath at the tracked hooks/ dir (scripts/install-git-hooks.ps1)
+# so it fires from a linked worktree too, not only the primary checkout. See CONTRIBUTING.md.
+
+set -u
+
+# Resolve the guard relative to THIS hook's own directory (core.hooksPath is absolute, so
+# "$0" is absolute), not the current worktree -- so the hook and guard are always one pair.
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+guard="$hook_dir/../scripts/pre-push-guard.ps1"
+
+remote_name="${1:-}"
+remote_url="${2:-}"
+
+# Read the push refspec once: we both inspect it (to decide if PowerShell is needed at all)
+# and forward it. $(...) trims trailing newlines; we re-add a newline when forwarding.
+spec=$(cat)
+
+# Fast path -- NO PowerShell required: if no refspec line targets refs/heads/main, allow.
+# This keeps every non-main push working even where PowerShell is not on PATH. Field 3 of a
+# pre-push line is the remote ref, so " refs/heads/main " (space-bounded) matches it exactly
+# and never matches refs/heads/main-foo or refs/heads/feature/main.
+if ! printf '%s\n' "$spec" | grep -q ' refs/heads/main '; then
+    exit 0
+fi
+
+# A main-targeting push: hand the precise origin / delete / override / audit decision to the
+# PowerShell guard.
+if command -v pwsh >/dev/null 2>&1; then
+    ps=pwsh
+elif command -v powershell >/dev/null 2>&1; then
+    ps=powershell
+else
+    echo "powershell-lsp pre-push guard: this push updates refs/heads/main but neither pwsh nor" >&2
+    echo "powershell is on PATH to evaluate the origin/override rules, so it is refused (fail-closed)." >&2
+    echo "Install PowerShell 7+ (a project prerequisite). A deliberate override is evaluated and" >&2
+    echo "audited by the guard, so it also needs PowerShell: POWERSHELL_LSP_ALLOW_PUSH_TO_MAIN=<reason>." >&2
+    exit 1
+fi
+
+printf '%s\n' "$spec" | "$ps" -NoProfile -ExecutionPolicy Bypass -File "$guard" -RemoteName "$remote_name" -RemoteUrl "$remote_url"
+exit $?

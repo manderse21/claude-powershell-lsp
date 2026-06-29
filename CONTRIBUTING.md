@@ -51,6 +51,43 @@ CI runs all five on a four-leg matrix: Windows `pwsh` 7, Windows PowerShell 5.1,
 paths cannot be reproduced on a Windows dev box, so CI is the cross-platform arbiter --
 expect to iterate against it for anything touching process launch or transport.
 
+## Git hooks
+
+This repo ships its git hooks **tracked** under `hooks/`, wired by pointing `core.hooksPath` at
+that directory. Enable them once per clone:
+
+```
+pwsh -File scripts/install-git-hooks.ps1
+```
+
+That is the only manual step -- git does not run tracked hooks until you point it at them. The
+installer is idempotent and resolves the **primary** working tree, so the hooks also fire from a
+linked worktree (`git worktree add ...`), not only the primary checkout. Uninstall with
+`git config --unset core.hooksPath`.
+
+### pre-push: no direct push to `origin/main`
+
+The hook shipped today (`hooks/pre-push`, a POSIX sh shim over `scripts/pre-push-guard.ps1`)
+**refuses a push that updates `refs/heads/main` on origin.** `main` lands via a reviewed, merged PR
+-- the PR-and-HOLD discipline -- never a direct local push. Every other push is untouched: feature
+branches, tags, branch deletes, and pushes to a fork remote all pass through.
+
+**Deliberate one-off override (audited).** For the genuine exception, set a non-empty reason:
+
+```
+POWERSHELL_LSP_ALLOW_PUSH_TO_MAIN="why this push is intentional" git push origin <ref>
+```
+
+The push is then allowed **and** an audit line -- UTC timestamp, reason, pushed sha, target ref --
+is appended to a bypass log. An unset, empty, or whitespace-only reason does **not** override. The
+log defaults to `<git-common-dir>/powershell-lsp-push-to-main-bypass.log` (inside `.git`, so it is
+never committed and is shared across every linked worktree of the clone); relocate it with
+`POWERSHELL_LSP_PUSH_AUDIT_LOG=<absolute path>`.
+
+The guard is **local** -- it protects a checkout that has installed it. The machine-independent
+complement is GitHub branch protection on `main` (require a PR, forbid direct pushes); that is
+recommended but is a separate repo-settings change, not part of the hook.
+
 ## Good first issues
 
 - **Report a false positive.** If the tool flags clean, idiomatic PowerShell, open a
