@@ -168,3 +168,122 @@ function Wait-DaemonRequestReady {
         try { if (Test-Path -LiteralPath $probeFile) { Remove-Item -LiteralPath $probeFile -Force -ErrorAction SilentlyContinue } } catch { }
     }
 }
+
+# ===========================================================================
+# Process-leak reap (dispatch 000078)
+# ===========================================================================
+# WHY: the integration daemon fixtures that launch DETACHED via session-start.ps1
+# (Start-PsesDaemonDetached -- no OS Process handle ever returned to the test) reap
+# their daemon ONLY by reading the session file's recorded pid AFTER a bounded
+# readiness wait, behind a `if ($null -ne $info)` guard. Under process-leak
+# contention (the dispatch 000078 evidence: 7 leaked PSES/daemon processes from
+# prior runs slowed a verify to ~2x and fast-failed the 000018 GREEN test), the
+# daemon's warm-start exceeds that bounded wait, the wait returns $null, the guard
+# SKIPS, and the daemon -- which comes up moments later -- is never reaped. Each
+# leaked daemon then contends the next run, a vicious cycle. (The raw-launch
+# fixtures that hold a [Diagnostics.Process] and call $p.Kill($true) on the tree are
+# already leak-safe; so is the benchmark, which routes teardown through the
+# production session-end.ps1 hook. Only the detached session-start fixtures leak.)
+#
+# CURE: reap the daemon by reading the session file FRESH at teardown (so it works
+# even when the test's readiness wait timed out and never captured $info -- the leak
+# vector), keyed on the suite's OWN recorded session id, and VERIFY-BEFORE-KILL.
+# This mirrors the production reap discipline EXACTLY (session-start.ps1 Invoke-Reap
+# / session-end.ps1 Test-IsOurDaemon + Stop-OrphanPses): never a broad pwsh match,
+# never a name-only kill -- the host is multi-tenant (a co-developer's editor host,
+# the operator's interactive shell, other pwsh work must all survive). The signature
+# here is even TIGHTER than production's: the daemon's command line must reference
+# BOTH pses-daemon.ps1 AND the suite's own -SessionId <sid> (guid-unique, suite-owned),
+# which is immune to PID reuse and can never match a co-tenant process.
+#
+# Requires Get-ProcessCommandLine (scripts/lib/lsp-common.ps1), dot-sourced by every caller.
+
+function Test-IsOurIntegrationDaemon {
+    # Verify-before-kill predicate for a recorded daemon pid: a PowerShell host whose
+    # command line references pses-daemon.ps1 AND carries this suite's own -SessionId
+    # <sid>. The sid is guid-unique and suite-owned, so a match is unambiguously OUR
+    # daemon -- never a co-tenant editor host / operator shell, and immune to PID reuse
+    # (a reused pid would carry a different command line). Returns $false on any doubt.
+    param([Parameter(Mandatory = $true)][int]$ProcessIdValue, [Parameter(Mandatory = $true)][string]$SessionId)
+    try {
+        $proc = Get-Process -Id $ProcessIdValue -ErrorAction SilentlyContinue
+        if ($null -eq $proc) { return $false }
+        if (@('pwsh', 'powershell') -notcontains $proc.ProcessName.ToLowerInvariant()) { return $false }
+        $cl = Get-ProcessCommandLine $ProcessIdValue
+        if ([string]::IsNullOrWhiteSpace($cl)) { return $false }
+        return (($cl -match 'pses-daemon\.ps1') -and ($cl -match ('-SessionId\s+' + [regex]::Escape($SessionId) + '(\s|"|$)')))
+    } catch { return $false }
+}
+
+function Test-IsOurIntegrationPses {
+    # Verify-before-kill predicate for a recorded PSES child pid (mirrors the
+    # production session-end.ps1 Stop-OrphanPses check). The pid is read from OUR
+    # session file (written by OUR daemon for OUR sid), so it is our PSES; the
+    # command-line check that it is a Start-EditorServices.ps1 host guards PID reuse.
+    # PSES's command line does not carry the sid (it is launched by the daemon), so
+    # the daemon-side sid match above is what scopes the pair to us.
+    param([Parameter(Mandatory = $true)][int]$ProcessIdValue)
+    try {
+        $proc = Get-Process -Id $ProcessIdValue -ErrorAction SilentlyContinue
+        if ($null -eq $proc) { return $false }
+        if (@('pwsh', 'powershell') -notcontains $proc.ProcessName.ToLowerInvariant()) { return $false }
+        return ((Get-ProcessCommandLine $ProcessIdValue) -match 'Start-EditorServices\.ps1')
+    } catch { return $false }
+}
+
+function Stop-IntegrationDaemon {
+    # Robust, info-INDEPENDENT teardown of ONE detached daemon the suite spawned,
+    # keyed on the suite's OWN recorded session id. Reads <DataRoot>/session/<sid>.json
+    # FRESH (the daemon writes its pid there at 'starting', before serve-loop entry, so
+    # the pid is resolvable even when the test's readiness wait timed out -- the dispatch
+    # 000078 leak vector that the old `if ($null -ne $info)` reap missed), resolves the
+    # daemon pid + the PSES child pid, and kills ONLY processes that VERIFY as ours
+    # (Test-IsOurIntegrationDaemon / Test-IsOurIntegrationPses). Never a broad/name kill.
+    # Returns the array of pids actually killed (for the leak-scan assertion).
+    param([Parameter(Mandatory = $true)][string]$SessionId, [Parameter(Mandatory = $true)][string]$DataRoot)
+    $killed = New-Object System.Collections.ArrayList
+    $sf = Join-Path $DataRoot ('session/' + $SessionId + '.json')
+    $recPid = 0; $psesPid = 0
+    if (Test-Path -LiteralPath $sf) {
+        try {
+            $obj = (Get-Content -LiteralPath $sf -Raw) | ConvertFrom-Json
+            $recPid = [int](Get-Prop $obj 'pid')
+            $psesPid = [int](Get-Prop $obj 'psesPid')
+        } catch { }
+    }
+    if ($recPid -gt 0 -and (Test-IsOurIntegrationDaemon -ProcessIdValue $recPid -SessionId $SessionId)) {
+        try { Stop-Process -Id $recPid -Force -ErrorAction Stop; [void]$killed.Add($recPid) } catch { }
+    }
+    if ($psesPid -gt 0 -and (Test-IsOurIntegrationPses -ProcessIdValue $psesPid)) {
+        try { Stop-Process -Id $psesPid -Force -ErrorAction Stop; [void]$killed.Add($psesPid) } catch { }
+    }
+    return $killed.ToArray()
+}
+
+function Get-IntegrationDaemonLeak {
+    # READ-ONLY census of LIVE suite-owned daemons: PowerShell hosts whose command line
+    # references pses-daemon.ps1 AND carries a -SessionId matching the suite's own naming
+    # scheme (the prefixes the fixtures mint their sids from). Never kills -- used by the
+    # suite-start guard (report a contaminated environment) and the suite-final backstop
+    # (PROVE zero suite daemons survived). The pses-daemon.ps1 + sid-prefix signature can
+    # never match a co-tenant editor host or the operator's shell. Returns objects with
+    # .Id and .SessionId so a caller can verify-before-kill a straggler if it chooses.
+    param(
+        [string]$SessionIdPattern = '^(pester|honor|scope|restart|incomplete|degraded|exhaust|unavail|ss-surface|pf|rl|loop|bench|no-daemon)-'
+    )
+    $leaks = New-Object System.Collections.ArrayList
+    try {
+        $procs = @(Get-Process -Name 'pwsh', 'powershell' -ErrorAction SilentlyContinue)
+        foreach ($p in $procs) {
+            $cl = Get-ProcessCommandLine $p.Id
+            if ([string]::IsNullOrWhiteSpace($cl)) { continue }
+            if ($cl -notmatch 'pses-daemon\.ps1') { continue }
+            $m = [regex]::Match($cl, '-SessionId\s+(\S+)')
+            if (-not $m.Success) { continue }
+            $sid = $m.Groups[1].Value.Trim('"')
+            if ($sid -notmatch $SessionIdPattern) { continue }
+            [void]$leaks.Add([pscustomobject]@{ Id = $p.Id; SessionId = $sid })
+        }
+    } catch { }
+    return $leaks.ToArray()
+}
