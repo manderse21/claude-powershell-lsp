@@ -225,6 +225,74 @@ SessionEnd    -> scripts/session-end.ps1
 All scripts run `-NoLogo -NoProfile`, write nothing to stdout on the daemon/LSP
 path, and keep all state, logs, and pids under `CLAUDE_PLUGIN_DATA` only.
 
+## CI mode: SARIF + standalone scanning
+
+The same diagnostics engine that runs in-agent is also a standalone gate you can wire into
+CI. `scripts/lsp-scan.ps1` runs over a path -- a single file or a whole directory -- and
+emits **SARIF 2.1.0** for GitHub code scanning, or a human-readable text report. (The first
+run bootstraps PSES + the pinned PSScriptAnalyzer, exactly as a session does.)
+
+```powershell
+# Scan a directory, emit SARIF for code scanning (the default format):
+pwsh -File scripts/lsp-scan.ps1 ./src -OutputPath results.sarif
+
+# Scan a single file, human-readable text:
+pwsh -File scripts/lsp-scan.ps1 ./build.ps1 -Format text
+
+# Fail the build (exit 2) if any warning-or-worse finding is present:
+pwsh -File scripts/lsp-scan.ps1 ./src -Format text -FailOn warning
+```
+
+**One engine, in-agent and in-CI.** The scan is a *sibling* invocation of the exact same
+path the PostToolUse hook uses: it brings up the same warm PSES daemon and runs the same
+`scripts/lsp-client.ps1` over each file, so a finding is identical whether it surfaces while
+Claude edits or in your CI. This is not a re-implementation -- a test
+(`tests/PowerShellLsp.SarifScan.Tests.ps1`) runs the whole diagnostic-correctness corpus
+through the scan entry point and asserts its findings match the in-agent snapshots exactly
+(the same measured 0% false-positive / 100% true-positive numbers). PSScriptAnalyzer is the
+same pinned, SHA-256-verified vendor; there is no second acquisition path.
+
+**What is scanned.** Only the file types the tool handles -- `.ps1`, `.psm1`, `.psd1`. A
+directory is **recursed by default** (`-NoRecurse` limits to the top level); every
+non-PowerShell file is skipped (and counted in the text summary). The repository's own
+`PSScriptAnalyzerSettings.psd1` is honored, exactly as in-agent.
+
+**Severity mapping (honest -- no inflation, no deflation).** The tool's diagnostic
+severities map to SARIF result levels as:
+
+| Tool severity | SARIF level |
+|---------------|-------------|
+| Error         | `error`     |
+| Warning       | `warning`   |
+| Information   | `note`      |
+| Hint          | `note`      |
+
+SARIF 2.1.0 has exactly four levels (`error`, `warning`, `note`, `none`). The only fold is
+Information **and** Hint to `note`, because SARIF has no separate info/hint level below
+warning; nothing is mapped to `none` (which would suppress it from code-scanning views), and
+an unknown severity maps to `warning`, so a finding is never silently dropped. The emitted
+SARIF is validated against the official SARIF 2.1.0 JSON Schema in CI.
+
+**Output format is a CLI parameter, not a config knob.** `-Format sarif|text` is an
+entry-point parameter -- the CI invocation is explicit, so the choice is a parameter, not a
+`userConfig` knob. (The 1.x contract freezes the knob names and status tokens; this entry
+point adds neither, so `CONTRACT.md` is unchanged.)
+
+**Exit codes.** `0` = completed (clean, or under the `-FailOn` threshold); `2` = `-FailOn`
+threshold met; `3` = usage error (no PowerShell host, or the path does not exist); `4` =
+scan incomplete (the analyzer was not reachable -- an unanalyzed file is never reported as a
+clean one).
+
+A minimal GitHub Actions step that uploads the results to code scanning:
+
+```yaml
+- shell: pwsh
+  run: ./scripts/lsp-scan.ps1 . -OutputPath results.sarif
+- uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: results.sarif
+```
+
 ## Why a hook, not native `.lsp.json` registration
 
 Claude Code declares plugin language servers through an inline `lspServers` block in
