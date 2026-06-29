@@ -696,6 +696,14 @@ The [report-a-false-positive form](./.github/ISSUE_TEMPLATE/false_positive_repor
 straight into the correctness corpus. The single-maintainer bus factor and the GPLv3 continuity path
 are stated honestly in **[CONTINUITY.md](./CONTINUITY.md)**.
 
+**Git hooks (contributors).** This repo ships a tracked pre-push guard that refuses a direct push to
+`origin/main` -- main lands via a reviewed, merged PR (the PR-and-HOLD discipline), never a local
+push. Enable it once per clone with `pwsh -File scripts/install-git-hooks.ps1`; it sets
+`core.hooksPath`, so the guard fires from linked worktrees too, not only the primary checkout. A
+deliberate one-off is allowed and audited:
+`POWERSHELL_LSP_ALLOW_PUSH_TO_MAIN="<reason>" git push ...`. See
+[CONTRIBUTING.md](./CONTRIBUTING.md#git-hooks) for the override, the audit log, and the rationale.
+
 ## License
 
 [GPL-3.0-or-later](https://spdx.org/licenses/GPL-3.0-or-later.html) (GPLv3). See [LICENSE](./LICENSE).

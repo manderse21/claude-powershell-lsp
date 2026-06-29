@@ -2195,3 +2195,142 @@ Describe 'Closed-loop agentic correction -- Get-FindingLifecycleDiff (dispatch 0
         $diff.NewMap.Count | Should -Be 0
     }
 }
+
+# ===========================================================================
+# pre-push guard -- refuse a direct push to origin/main (dispatch 000080)
+# ===========================================================================
+# The guard (scripts/pre-push-guard.ps1) makes the PR-and-HOLD discipline a refusal on the
+# developer's machine: a push that UPDATES refs/heads/main on origin is refused; every other
+# push (a feature branch, a tag, a delete, a fork remote) passes through; a deliberate
+# override (a non-empty reason) is allowed AND audited. The script is dot-source safe (the
+# doctor.ps1 pattern), so these drive the PURE decision and the audit writer directly -- no
+# git, no network, I/O only into TestDrive. The git hook hooks/pre-push is the thin POSIX sh
+# shim that forwards the push refspec (stdin) + remote name/url (argv) into this guard; that
+# the hook fires from a LINKED worktree is proven end-to-end outside the suite (it needs a
+# real `git push`), and this asserts the decision the shim trusts.
+
+Describe 'pre-push guard refuses a direct push to origin/main (dispatch 000080)' {
+    BeforeAll {
+        . (Join-Path $script:ScriptsDir 'pre-push-guard.ps1')
+        $script:GuardOriginUrl = 'https://github.com/manderse21/claude-powershell-lsp.git'
+        $script:GuardZeroSha = '0000000000000000000000000000000000000000'
+
+        # One pre-push stdin line: "<localref> <localsha> <remoteref> <remotesha>".
+        function New-PushSpecLine {
+            param(
+                [string] $RemoteRef,
+                [string] $LocalSha = 'aaaa111122223333444455556666777788889999',
+                [string] $RemoteSha = '0000000000000000000000000000000000000000',
+                [string] $LocalRef = 'refs/heads/work'
+            )
+            return ('{0} {1} {2} {3}' -f $LocalRef, $LocalSha, $RemoteRef, $RemoteSha)
+        }
+    }
+
+    Context 'refuse-on-main' {
+        It 'refuses a push that updates refs/heads/main on origin (matched by remote NAME)' {
+            $r = Resolve-PushToMainGuard -RemoteName 'origin' -RemoteUrl $script:GuardOriginUrl `
+                -OriginUrl $script:GuardOriginUrl `
+                -PushSpecLines @((New-PushSpecLine -RemoteRef 'refs/heads/main')) -OverrideReason ''
+            $r.Decision | Should -BeExactly 'refuse'
+            $r.IsOrigin | Should -BeTrue
+            $r.TargetsMain | Should -BeTrue
+            $r.Blocks | Should -BeTrue
+            $r.Sha | Should -BeExactly 'aaaa111122223333444455556666777788889999'
+            $r.TargetRef | Should -BeExactly 'refs/heads/main'
+        }
+        It 'refuses when the remote is named by origin URL even though the NAME is not "origin"' {
+            # `git push <origin-url> main` -- name match misses, URL match catches it.
+            $r = Resolve-PushToMainGuard -RemoteName $script:GuardOriginUrl -RemoteUrl $script:GuardOriginUrl `
+                -OriginUrl $script:GuardOriginUrl `
+                -PushSpecLines @((New-PushSpecLine -RemoteRef 'refs/heads/main')) -OverrideReason ''
+            $r.Decision | Should -BeExactly 'refuse'
+            $r.IsOrigin | Should -BeTrue
+        }
+    }
+
+    Context 'pass-throughs -- the refusal stays narrow (every other push is untouched)' {
+        It 'allows a push to a feature branch on origin (the dispatch own branch is the live example)' {
+            $r = Resolve-PushToMainGuard -RemoteName 'origin' -RemoteUrl $script:GuardOriginUrl `
+                -OriginUrl $script:GuardOriginUrl `
+                -PushSpecLines @((New-PushSpecLine -RemoteRef 'refs/heads/dispatch-000080-pre-push-guard')) -OverrideReason ''
+            $r.Decision | Should -BeExactly 'allow'
+            $r.TargetsMain | Should -BeFalse
+        }
+        It 'allows a tag push on origin' {
+            $r = Resolve-PushToMainGuard -RemoteName 'origin' -RemoteUrl $script:GuardOriginUrl `
+                -OriginUrl $script:GuardOriginUrl `
+                -PushSpecLines @((New-PushSpecLine -RemoteRef 'refs/tags/v1.2.3')) -OverrideReason ''
+            $r.Decision | Should -BeExactly 'allow'
+            $r.TargetsMain | Should -BeFalse
+        }
+        It 'allows a DELETE of origin/main -- an all-zero local sha is a delete, not an update' {
+            $r = Resolve-PushToMainGuard -RemoteName 'origin' -RemoteUrl $script:GuardOriginUrl `
+                -OriginUrl $script:GuardOriginUrl `
+                -PushSpecLines @((New-PushSpecLine -RemoteRef 'refs/heads/main' -LocalSha $script:GuardZeroSha -LocalRef '(delete)')) `
+                -OverrideReason ''
+            $r.Decision | Should -BeExactly 'allow'
+            $r.TargetsMain | Should -BeFalse
+        }
+        It 'allows a push of main to a FORK remote (a different NAME and a different URL)' {
+            $r = Resolve-PushToMainGuard -RemoteName 'fork' -RemoteUrl 'https://example.com/fork.git' `
+                -OriginUrl $script:GuardOriginUrl `
+                -PushSpecLines @((New-PushSpecLine -RemoteRef 'refs/heads/main')) -OverrideReason ''
+            $r.Decision | Should -BeExactly 'allow'
+            $r.IsOrigin | Should -BeFalse
+        }
+    }
+
+    Context 'allow-with-override (+ audit line written)' {
+        It 'allows the push to origin/main when a non-empty reason is set, and marks it overridden' {
+            $r = Resolve-PushToMainGuard -RemoteName 'origin' -RemoteUrl $script:GuardOriginUrl `
+                -OriginUrl $script:GuardOriginUrl `
+                -PushSpecLines @((New-PushSpecLine -RemoteRef 'refs/heads/main')) `
+                -OverrideReason 'deliberate one-off: ship the v1.18.1 hotfix'
+            $r.Decision | Should -BeExactly 'allow'
+            $r.Blocks | Should -BeTrue        # it WOULD refuse...
+            $r.Overridden | Should -BeTrue    # ...but the explicit reason flips it to allow
+        }
+        It 'does NOT override on an unset / empty / whitespace-only reason (the refusal stands)' {
+            foreach ($reason in @('', '   ', "`t")) {
+                $r = Resolve-PushToMainGuard -RemoteName 'origin' -RemoteUrl $script:GuardOriginUrl `
+                    -OriginUrl $script:GuardOriginUrl `
+                    -PushSpecLines @((New-PushSpecLine -RemoteRef 'refs/heads/main')) -OverrideReason $reason
+                $r.Decision | Should -BeExactly 'refuse' -Because "reason '$reason' is empty-ish and must not override"
+            }
+        }
+        It 'writes an audit line (UTC time, reason, sha, target ref) to the bypass log' {
+            $log = Join-Path $TestDrive ('bypass-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.log')
+            $line = Add-PushToMainAuditLine -Path $log -Reason 'ship v1.18.1 hotfix' `
+                -Sha 'aaaa111122223333' -TargetRef 'refs/heads/main' -RemoteName 'origin'
+            Test-Path -LiteralPath $log | Should -BeTrue
+            $written = Get-Content -LiteralPath $log -Raw
+            $written | Should -Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z'   # leading UTC timestamp
+            $written | Should -Match 'OVERRIDE'
+            $written | Should -Match 'ship v1\.18\.1 hotfix'                   # reason
+            $written | Should -Match 'aaaa111122223333'                        # sha
+            $written | Should -Match 'origin refs/heads/main'                  # remote + target ref
+            $line | Should -BeExactly ($written.TrimEnd("`r", "`n"))           # returns exactly what it wrote
+        }
+        It 'appends (never overwrites) and flattens a multi-line reason to ONE record (no log forging)' {
+            $log = Join-Path $TestDrive ('bypass-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.log')
+            Add-PushToMainAuditLine -Path $log -Reason 'first push' -Sha 'sha1' -TargetRef 'refs/heads/main' -RemoteName 'origin' | Out-Null
+            # A newline in the reason must NOT forge a second audit record.
+            Add-PushToMainAuditLine -Path $log -Reason "second push`ninjected-second-line" -Sha 'sha2' -TargetRef 'refs/heads/main' -RemoteName 'origin' | Out-Null
+            $lines = @(Get-Content -LiteralPath $log | Where-Object { $_ -ne '' })
+            $lines.Count | Should -Be 2
+            $lines[1] | Should -Match 'second push injected-second-line'       # flattened onto one line
+        }
+    }
+
+    Context 'audit log path resolution' {
+        It 'honors the POWERSHELL_LSP_PUSH_AUDIT_LOG override path verbatim' {
+            Get-PushAuditLogPath -GitCommonDir '/x/.git' -OverridePath '/tmp/custom-bypass.log' |
+                Should -BeExactly '/tmp/custom-bypass.log'
+        }
+        It 'defaults to the bypass log inside the git common dir when no override is set' {
+            Get-PushAuditLogPath -GitCommonDir '/x/.git' -OverridePath '' |
+                Should -Match 'powershell-lsp-push-to-main-bypass\.log$'
+        }
+    }
+}
