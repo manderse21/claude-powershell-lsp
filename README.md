@@ -15,10 +15,7 @@ tooling, not project tooling: near-zero always-on token cost, a language server
 spawns only when a PowerShell file is open, and one warm process serves the whole
 session, so each edit pays a fast pipe round-trip instead of a cold start.
 
-<!-- DEMO: drop a GIF or asciinema cast here -- this is the single highest-impact
-     addition you can make. Suggested capture: Claude writes a function with an
-     unapproved verb, the diagnostic appears inline, Claude fixes it on the next
-     turn. Then reference it:  ![demo](docs/media/demo.gif) -->
+![demo: Claude writes an unapproved-verb function, the diagnostic appears inline, Claude fixes it next turn](docs/media/demo.gif)
 
 **See it catch something.** Ask Claude to write:
 
