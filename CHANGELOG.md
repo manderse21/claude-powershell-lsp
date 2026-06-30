@@ -29,6 +29,40 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [Unreleased]
+MINOR: **Off-by-default format-on-edit suggestions -- the warm daemon runs PSScriptAnalyzer's
+Invoke-Formatter on the edited file (honoring the repo's PSScriptAnalyzerSettings.psd1) and
+surfaces the formatted result as a SUGGESTION (a unified diff) via additionalContext; the hook
+NEVER rewrites your file**. A new off-by-default `userConfig` knob, `formatOnEdit`, closes the
+ROADMAP "format-on-edit" gap WITHOUT giving up the never-break-editing spine: when set to
+`suggest`, each edit triggers a SEPARATE warm-daemon round-trip that runs Invoke-Formatter --
+honoring the repo's own `PSScriptAnalyzerSettings.psd1` formatter rules when present (the 000018
+repo-local-settings precedent) -- and the reformatted result is surfaced as a suggestion, clearly
+labelled and distinct from a diagnostic, stating that the file was NOT modified. Suggest-not-apply
+is the WHOLE safety posture: the hook only suggests and never writes the user's file (an actual
+apply mode is left to a separate, higher-risk dispatch). The formatter runs on the already-warm
+daemon, so NO cold-start is added, and the existing pinned-hash-verified PSScriptAnalyzer (000046
+L2) is the ONLY acquisition path -- it is imported once into the daemon process; no second path, no
+hash change. A formatting failure (no settings, a malformed settings file, a formatter error)
+degrades honestly: no suggestion is surfaced and the hook still exits 0 -- editing is never broken.
+With the knob OFF (the default) NOTHING changes: no `format` request is sent and the diagnostics
+surface is byte-for-byte unchanged. This is a DELIBERATE MINOR with a CONTRACT amendment for the new
+knob (the 000027 drift-guard passes because the contract was updated, not bypassed); no new status
+token (dispatch 000059).
+
+### Added
+
+- **`formatOnEdit` userConfig knob (off by default).** An enum (`off` | `suggest`, default `off`).
+  `suggest` surfaces a unified-diff formatting suggestion via the existing `additionalContext`
+  channel; `off` does nothing. `apply` is reserved for a possible future release and is treated as
+  `off` today -- the enum shape lets a future apply mode be added as an additive value without a
+  breaking knob change. Declared in `.claude-plugin/plugin.json`, frozen in `CONTRACT.md`
+  (FROZEN-KNOBS), and documented in `README.md` (`## Configuration` + a Format-on-edit subsection).
+- **Warm-daemon `format` action.** A new request action on the per-session daemon runs
+  Invoke-Formatter (honoring the resolved repo settings path) and returns a capped unified-diff
+  SUGGESTION; it is independent of PSES (formatting is pure PSScriptAnalyzer), so it works even when
+  the analyzer is degraded/unavailable, and it NEVER writes the file.
+
 ## [1.19.0] - 2026-06-29
 MINOR: **SARIF + standalone CI mode -- run the SAME engine over a path, emit SARIF
 2.1.0 for GitHub code scanning, additive (no knob, no token)**. A new non-agent entry

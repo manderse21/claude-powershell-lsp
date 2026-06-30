@@ -150,6 +150,10 @@ $script:moduleCacheCmdExports = @() # CmdletsToExport
 $script:moduleCacheAliasExports = @()  # AliasesToExport
 $script:moduleCacheDefinedNames = @()  # defined function names from the module
 $script:moduleCacheExportedNames = $null  # $null = implicitly all; @(...) = explicit list
+# Format-on-edit (dispatch 000059, PL-8): the vendored PSScriptAnalyzer is imported into THIS
+# daemon process ONCE (lazy, on the first format request) so Invoke-Formatter runs on the warm
+# path with no cold-start. Latched here so the import cost is paid at most once per daemon.
+$script:formatterReady = $false
 
 function Get-ContentHash([string]$text) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -943,6 +947,77 @@ function Get-Diagnostics([string]$filePath, [string]$cwd = '') {
     return $result
 }
 
+# --- format-on-edit: suggest, never rewrite (dispatch 000059, PL-8) ----------
+function Initialize-FormatterModule {
+    # Import the vendored, pinned-hash PSScriptAnalyzer into THIS daemon process ONCE so
+    # Invoke-Formatter is callable on the warm path (no cold-start). Reuses the SAME module
+    # ensure-pssa.ps1 vendored (Find-VendoredPssaManifest, lib) -- NO second acquisition path,
+    # NO download here. Idempotent and latched: returns $true when Invoke-Formatter is callable,
+    # $false otherwise (the caller then degrades honestly). Importing PSSA into the daemon is
+    # independent of the PSES child (which gets PSSA via its PSModulePath), so format works even
+    # when PSES is down.
+    if ($script:formatterReady -and $null -ne (Get-Command Invoke-Formatter -ErrorAction SilentlyContinue)) { return $true }
+    if ($null -ne (Get-Command Invoke-Formatter -ErrorAction SilentlyContinue)) { $script:formatterReady = $true; return $true }
+    $manifest = Find-VendoredPssaManifest
+    if ([string]::IsNullOrWhiteSpace($manifest)) { Write-DLog 'format: vendored PSSA manifest not found (cannot import Invoke-Formatter)'; return $false }
+    try {
+        Import-Module $manifest -Force -ErrorAction Stop
+        $script:formatterReady = ($null -ne (Get-Command Invoke-Formatter -ErrorAction SilentlyContinue))
+        if ($script:formatterReady) { Write-DLog ('format: imported vendored PSSA for Invoke-Formatter from ' + $manifest) }
+        return $script:formatterReady
+    } catch {
+        Write-DLog ('format: vendored PSSA import failed: ' + $_.Exception.Message)
+        return $false
+    }
+}
+
+function Get-FormatSuggestion {
+    # Run Invoke-Formatter over the edited file on the WARM daemon (no cold-start), honoring the
+    # repo's PSScriptAnalyzerSettings.psd1 formatter rules (the SAME resolver diagnostics uses --
+    # Resolve-PssaSettingsPath, 000018), and return a SUGGESTION shape (a capped unified diff).
+    # NEVER writes the file -- suggest-not-apply is the whole safety posture. Independent of PSES
+    # (formatting is pure PSScriptAnalyzer), so it works even when PSES is unavailable/degraded.
+    # FAIL-SAFE: every failure returns an honest non-ok formatStatus (the client surfaces nothing)
+    # and this never throws past its own frame. The response is ADDITIVE -- a separate action, so
+    # the diagnostics path is untouched and (knob off) never sends a 'format' request at all.
+    param([string]$filePath, [string]$cwd = '')
+    $resp = [ordered]@{ ok = $true; action = 'format'; file = $filePath
+        changed = $false; diff = ''; removed = 0; added = 0; truncated = $false
+        settingsPath = ''; formatStatus = 'ok' }
+    try {
+        $full = [System.IO.Path]::GetFullPath($filePath)
+        if (-not (Test-Path -LiteralPath $full)) { $resp['formatStatus'] = 'error'; $resp['error'] = 'file not found'; return $resp }
+        if (-not (Initialize-FormatterModule)) {
+            $resp['formatStatus'] = 'unavailable'; $resp['error'] = 'formatter unavailable'; return $resp
+        }
+        # Honor the repo settings: explicit absolute override ($SettingsPath, the daemon param) >
+        # nearest PSScriptAnalyzerSettings.psd1 walked up from the file, bounded at the project
+        # root (cwd) > '' (default style). Same precedence diagnostics applies (000018).
+        $root = if (-not [string]::IsNullOrWhiteSpace($cwd)) { $cwd } else { (Get-Location).Path }
+        $settings = ''
+        try { $settings = Resolve-PssaSettingsPath -EditedFilePath $full -ProjectRoot $root -Override $SettingsPath } catch { $settings = '' }
+        $resp['settingsPath'] = $settings
+        $text = [System.IO.File]::ReadAllText($full)
+        $fmt = Invoke-RepoFormatter -Text $text -SettingsPath $settings
+        if (-not $fmt.ok) {
+            Write-DLog ('format: formatter degraded (' + [string]$fmt.reason + '): ' + [string]$fmt.error)
+            $resp['formatStatus'] = 'error'; $resp['error'] = [string]$fmt.error; return $resp
+        }
+        $diffRes = Get-FormatDiffResult -Original $text -Formatted ([string]$fmt.formatted)
+        $resp['changed'] = [bool]$diffRes.changed
+        $resp['diff'] = [string]$diffRes.diff
+        $resp['removed'] = [int]$diffRes.removed
+        $resp['added'] = [int]$diffRes.added
+        $resp['truncated'] = [bool]$diffRes.truncated
+        Write-DLog ('format: ' + $full + ' changed=' + $resp['changed'] + ' -' + $resp['removed'] + '/+' + $resp['added'] +
+            ' settings=' + $(if ($settings) { $settings } else { '(default)' }))
+        return $resp
+    } catch {
+        Write-DLog ('format: unexpected error (degrading): ' + $_.Exception.Message)
+        $resp['formatStatus'] = 'error'; $resp['error'] = $_.Exception.Message; return $resp
+    }
+}
+
 # --- session file / heartbeat ----------------------------------------------
 function Write-SessionFile([string]$pipeName, [string]$state) {
     $obj = [ordered]@{
@@ -1098,6 +1173,18 @@ try {
                             $payload = [ordered]@{ ok = $false; action = 'diagnostics'; error = $res.error }
                         }
                         $writer.WriteLine(($payload | ConvertTo-Json -Depth 8 -Compress))
+                    }
+                    'format' {
+                        # Format-on-edit suggestion (dispatch 000059, PL-8). A SEPARATE action from
+                        # 'diagnostics' -- the client sends it only when the formatOnEdit knob is on,
+                        # so with the knob off (the default) this branch is never reached and the
+                        # diagnostics surface is byte-for-byte unchanged. Runs Invoke-Formatter on the
+                        # warm daemon honoring the repo settings; the response carries a unified-diff
+                        # SUGGESTION, never a rewritten file.
+                        $file = [string](Get-Prop $req 'file')
+                        $reqCwd = [string](Get-Prop $req 'cwd')
+                        $payload = Get-FormatSuggestion $file $reqCwd
+                        $writer.WriteLine(($payload | ConvertTo-Json -Depth 6 -Compress))
                     }
                     'ping' {
                         $psesPidVal = if (Test-PsesAlive) { $script:proc.Id } else { $null }
