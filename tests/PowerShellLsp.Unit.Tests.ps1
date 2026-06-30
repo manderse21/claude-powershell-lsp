@@ -1016,6 +1016,90 @@ Describe 'PSSA .nupkg cache is verify-gated and pin-bound (dispatch 000049)' {
     }
 }
 
+# ===========================================================================
+# Format-on-edit: suggest, never rewrite (dispatch 000059, PL-8) -- pure helpers
+# ===========================================================================
+# The PSSA-touching parts (real Invoke-Formatter, repo-settings honoring, failure
+# degrade, suggest-not-rewrite, knob-off byte-compare) are proven end to end in the
+# integration suite (which bootstraps PSSA + a real daemon). These unit tests pin the
+# PURE logic: the off-by-default knob parse, the unified-diff shaping, and the surface
+# wording -- no PSSA, no daemon, no network.
+
+Describe 'ConvertTo-FormatOnEditMode -- off-by-default knob parse (dispatch 000059)' {
+    It 'maps suggest (and boolean-truthy aliases) to suggest' {
+        foreach ($v in @('suggest', 'SUGGEST', ' Suggest ', 'true', 'on', '1', 'yes')) {
+            (ConvertTo-FormatOnEditMode $v) | Should -BeExactly 'suggest'
+        }
+    }
+    It 'maps off / blank / unexpanded token / unknown (and reserved apply) to off -- never silently on' {
+        # The feature is opt-in: anything not explicitly an ON value is OFF. 'apply' is reserved
+        # for a future dispatch and must NOT do anything today. Adversarial control: make the
+        # default branch return 'suggest' and these go RED (the knob would default ON).
+        foreach ($v in @('off', '', '   ', '${user_config.formatOnEdit}', 'apply', 'garbage', 'false', '0')) {
+            (ConvertTo-FormatOnEditMode $v) | Should -BeExactly 'off'
+        }
+    }
+}
+
+Describe 'Get-FormatDiffResult -- unified diff + counts (dispatch 000059)' {
+    It 'reports no change for identical text (the clean-edit-emits-nothing property)' {
+        $r = Get-FormatDiffResult -Original "a`nb`n" -Formatted "a`nb`n"
+        $r.changed | Should -BeFalse
+        $r.diff | Should -BeExactly ''
+        $r.removed | Should -Be 0
+        $r.added | Should -Be 0
+    }
+    It 'treats a pure CRLF/LF delta as no change (newline-normalized)' {
+        (Get-FormatDiffResult -Original "a`nb`n" -Formatted "a`r`nb`r`n").changed | Should -BeFalse
+    }
+    It 'produces a unified diff with correct -removed/+added counts and hunk header' {
+        $orig = "function T {`nGet-Process`n}`n"
+        $fmt = "function T {`n    Get-Process`n}`n"
+        $r = Get-FormatDiffResult -Original $orig -Formatted $fmt
+        $r.changed | Should -BeTrue
+        $r.removed | Should -Be 1
+        $r.added | Should -Be 1
+        $r.diff | Should -Match '@@ -\d+,\d+ \+\d+,\d+ @@'
+        $r.diff | Should -Match '(?m)^-Get-Process$'
+        $r.diff | Should -Match '(?m)^\+    Get-Process$'
+        # Unchanged lines are context (leading space), never +/-.
+        $r.diff | Should -Match '(?m)^ function T \{$'
+    }
+    It 'flags a casing-only change (case-sensitive line compare)' {
+        (Get-FormatDiffResult -Original "get-process`n" -Formatted "Get-Process`n").changed | Should -BeTrue
+    }
+    It 'caps the diff body and flags truncation for a large reflow' {
+        $orig = (1..200 | ForEach-Object { "x$_" }) -join "`n"
+        $fmt = (1..200 | ForEach-Object { "    y$_" }) -join "`n"
+        $r = Get-FormatDiffResult -Original $orig -Formatted $fmt -MaxLines 20
+        $r.changed | Should -BeTrue
+        $r.truncated | Should -BeTrue
+        (@($r.diff -split "`n").Count) | Should -BeLessOrEqual 21
+    }
+}
+
+Describe 'Format-FormattingSuggestionBlock -- the suggest-not-rewrite surface (dispatch 000059)' {
+    It 'is empty when there is nothing to suggest (no diff)' {
+        (Format-FormattingSuggestionBlock -Path 'x.ps1' -Diff '' -Removed 0 -Added 0 -Truncated $false -SettingsPath '') |
+            Should -BeExactly ''
+    }
+    It 'states the file was NOT modified and is visibly distinct from a diagnostic' {
+        $b = Format-FormattingSuggestionBlock -Path 'x.ps1' -Diff "@@ -1,1 +1,1 @@`n-a`n+ a" -Removed 1 -Added 1 -Truncated $false -SettingsPath ''
+        $b | Should -Match 'formatting suggestion'
+        $b | Should -Match 'NOT modified'
+        $b | Should -Not -Match 'PowerShell diagnostics \('   # never reads as a correctness finding
+        $b | Should -Match 'default PSScriptAnalyzer style'
+    }
+    It 'names the repo settings file when one was honored' {
+        $b = Format-FormattingSuggestionBlock -Path 'x.ps1' -Diff "@@ -1,1 +1,1 @@`n-a`n+ a" -Removed 1 -Added 1 -Truncated $false -SettingsPath 'C:\repo\PSScriptAnalyzerSettings.psd1'
+        $b | Should -Match 'repo style \(PSScriptAnalyzerSettings\.psd1\)'
+    }
+    It 'appends a truncation marker when the diff was capped' {
+        $b = Format-FormattingSuggestionBlock -Path 'x.ps1' -Diff "@@ -1,1 +1,1 @@`n-a`n+ a" -Removed 9 -Added 9 -Truncated $true -SettingsPath ''
+        $b | Should -Match 'formatting diff truncated'
+    }
+}
+
 # (d) ASCII-clean + parse over every shipped .ps1 (scripts AND tests).
 $script:AllPs1 = Get-ChildItem (Split-Path -Parent $PSScriptRoot) -Recurse -Filter *.ps1 -File
 

@@ -86,6 +86,12 @@
       "title": "Edit-scope context lines",
       "description": "Extra lines of context above and below the touched range kept when scopeToEdit is on. The edit's structured patch already includes a few context lines, so the default is 0; raise it to widen the window.",
       "default": "0"
+    },
+    "formatOnEdit": {
+      "type": "string",
+      "title": "Format-on-edit suggestion",
+      "description": "When 'suggest', after an edit the warm daemon runs PSScriptAnalyzer's Invoke-Formatter on the edited file (honoring the repo's PSScriptAnalyzerSettings.psd1 formatter rules) and surfaces the formatted result as a SUGGESTION (a unified diff) -- it NEVER rewrites your file. 'off' (default) does nothing and the diagnostics surface is unchanged. Values: 'off' (default), 'suggest'. 'apply' is reserved for a future release and is treated as 'off' today.",
+      "default": "off"
     }
   },
   "lspServers": {

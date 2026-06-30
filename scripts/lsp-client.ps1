@@ -47,6 +47,13 @@ $script:StatConnectMs = $null   # client->daemon connect ms; set on a successful
 $ScopeToEdit = Get-PluginOptionBool 'scopeToEdit' $true
 $EditContextLines = Get-PluginOptionInt 'editContextLines' 0
 
+# Format-on-edit (000059, PL-8): OFF by default. When 'suggest', AFTER the diagnostics pass the
+# client asks the warm daemon to format the edited file (Invoke-Formatter honoring the repo
+# settings) and surfaces the result as a SUGGESTION -- never rewriting the file. Read ONCE.
+# 'off' (the default, and any unrecognized value) skips the format path entirely below, so the
+# diagnostics surface is byte-for-byte unchanged. No apply path exists (suggest-only).
+$FormatMode = ConvertTo-FormatOnEditMode (Get-PluginOption 'formatOnEdit' 'off')
+
 # Auto-relaunch cooldown (dispatch 000030): the BOUND. After this client fires a relaunch of an
 # idle-stopped daemon, suppress any further relaunch for this long. A pipe-first daemon that launched
 # STAYS UP once it owns the pipe, so a fresh unreachable inside the window means the prior launch is
@@ -115,6 +122,38 @@ function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, 
         return ($line | ConvertFrom-Json)
     } catch {
         Write-CLog ('client error: ' + $_.Exception.Message)
+        return $null
+    } finally {
+        try { if ($null -ne $client) { $client.Dispose() } } catch { }
+    }
+}
+
+function Get-FormatResponse([string]$pipeName, [string]$filePath, [int]$connectMs, [int]$hardCapMs, [string]$cwd = '') {
+    # Format-on-edit (000059): ask the warm daemon to format the edited file (a SEPARATE 'format'
+    # action from diagnostics). Returns the parsed response object, or $null on any connect/read/
+    # timeout failure -- the caller then surfaces no suggestion (degrade honestly). Deliberately
+    # separate from Get-Diagnostics so the diagnostics path is untouched; one bounded connect +
+    # read within the remaining hard cap. NEVER writes the file.
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $client = $null
+    try {
+        $client = New-Object System.IO.Pipes.NamedPipeClientStream('.', $pipeName,
+            [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::Asynchronous)
+        $remaining = [Math]::Max(1, $hardCapMs - [int]$sw.ElapsedMilliseconds)
+        $client.Connect([Math]::Min($connectMs, $remaining))
+        $writer = New-Object System.IO.StreamWriter($client, (New-Object System.Text.UTF8Encoding($false)), 4096, $true)
+        $writer.NewLine = "`n"; $writer.AutoFlush = $true
+        $reader = New-Object System.IO.StreamReader($client, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+        $reqObj = [ordered]@{ action = 'format'; file = $filePath; cwd = $cwd }
+        $writer.WriteLine(($reqObj | ConvertTo-Json -Compress)); $writer.Flush()
+        $remaining = [Math]::Max(1, $hardCapMs - [int]$sw.ElapsedMilliseconds)
+        $readTask = $reader.ReadLineAsync()
+        if (-not $readTask.Wait($remaining)) { Write-CLog 'format response timed out (hard cap)'; return $null }
+        $line = $readTask.Result
+        if ([string]::IsNullOrWhiteSpace($line)) { Write-CLog 'empty format response'; return $null }
+        return ($line | ConvertFrom-Json)
+    } catch {
+        Write-CLog ('format request error: ' + $_.Exception.Message)
         return $null
     } finally {
         try { if ($null -ne $client) { $client.Dispose() } } catch { }
@@ -480,6 +519,35 @@ try {
             } else {
                 [void]$sb.AppendLine('  still present: ' + $srLbl + ' at line ' + $sl + ' not resolved by your edit (attempt ' + $sa + ' of 2) -- ' + $sm)
             }
+        }
+    }
+    # Format-on-edit SUGGESTION (000059, PL-8): a SEPARATE warm round-trip, gated on the knob and
+    # appended AFTER the diagnostics block. When the knob is off (the default) this block does not
+    # run, so the emitted context is byte-for-byte identical to the pre-000059 behavior -- the
+    # diagnostics surface is unchanged. Fully wrapped and fail-safe: any failure logs and surfaces
+    # nothing (the hook still exits 0; the file is NEVER modified). Reaching here means the daemon
+    # answered diagnostics (reachable); the parser-pre-pass early-exit path above never runs format
+    # (a syntax error takes precedence and an unparseable file is not formatted).
+    if ($FormatMode -eq 'suggest') {
+        try {
+            $fmtResp = Get-FormatResponse $pipeName $path $ConnectTimeoutMs $HardCapMs $cwd
+            if ($null -ne $fmtResp -and [bool](Get-Prop $fmtResp 'ok') -and
+                [string](Get-Prop $fmtResp 'formatStatus') -eq 'ok' -and [bool](Get-Prop $fmtResp 'changed')) {
+                $fmtBlock = Format-FormattingSuggestionBlock `
+                    -Path $path -Diff ([string](Get-Prop $fmtResp 'diff')) `
+                    -Removed ([int](Get-Prop $fmtResp 'removed')) -Added ([int](Get-Prop $fmtResp 'added')) `
+                    -Truncated ([bool](Get-Prop $fmtResp 'truncated')) -SettingsPath ([string](Get-Prop $fmtResp 'settingsPath'))
+                if (-not [string]::IsNullOrEmpty($fmtBlock)) {
+                    if ($sb.Length -gt 0) { [void]$sb.AppendLine() }   # blank line separating from diagnostics
+                    [void]$sb.AppendLine($fmtBlock)
+                    Write-CLog 'format-on-edit: surfaced a formatting suggestion'
+                }
+            } elseif ($null -ne $fmtResp) {
+                Write-CLog ('format-on-edit: no suggestion (formatStatus=' + [string](Get-Prop $fmtResp 'formatStatus') +
+                    ' changed=' + [string](Get-Prop $fmtResp 'changed') + ')')
+            }
+        } catch {
+            Write-CLog ('format-on-edit suggestion failed (degrading, no surface): ' + $_.Exception.Message)
         }
     }
     $context = $sb.ToString().TrimEnd()

@@ -2026,6 +2026,173 @@ Describe 'Integration: closed-loop agentic correction (dispatch 000061)' -Skip:$
     }
 }
 
+Describe 'Integration: format-on-edit suggestion (dispatch 000059)' -Skip:$script:SkipIntegration {
+    # The end-to-end proof for the off-by-default formatOnEdit knob (PL-8). With the knob ON
+    # ('suggest'): a mis-formatted edit gets a unified-diff SUGGESTION via additionalContext, the
+    # repo's PSScriptAnalyzerSettings.psd1 formatter rules are honored, and -- the load-bearing
+    # safety property -- the hook NEVER rewrites the file. With the knob OFF (the default): NO
+    # suggestion is surfaced and the diagnostics surface is byte-for-byte unchanged (the ON output
+    # with the format block stripped equals the OFF output exactly). A formatting failure (a
+    # malformed settings file) degrades honestly: no suggestion, the hook still exits 0, the file
+    # untouched. ONE warm daemon serves all cases: format resolves its settings PER REQUEST
+    # (independent of the per-session diagnostics settings lock), so a single daemon suffices.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Stop-IntegrationDaemon (info-independent reap, dispatch 000078)
+
+        function Invoke-PluginHook {
+            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+            if ($StdinJson) {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
+                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
+            }
+            $p.StandardInput.Close()
+            $script:F_LastExit = $null
+            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            $script:F_LastExit = $p.ExitCode
+            [void]$stdoutTask.Wait(1500)
+            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+        }
+
+        $script:F_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:F_Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $env:PSLS_TEST_DATA_DIR
+        } else {
+            Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data'
+        }
+        New-Item -ItemType Directory -Force -Path $script:F_Data | Out-Null
+        $env:CLAUDE_PLUGIN_DATA = $script:F_Data
+        $script:F_Fixtures = Join-Path $script:F_Data 'fmt-000059'
+        if (Test-Path -LiteralPath $script:F_Fixtures) { Remove-Item -LiteralPath $script:F_Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Force -Path $script:F_Fixtures | Out-Null
+
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:F_ScriptsDir 'ensure-pses.ps1') 2>&1 | Out-Null
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:F_ScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+
+        # PLAIN: no settings in the walk-up (default style) + an unapproved verb so the file ALSO
+        # trips a real diagnostic (PSUseApprovedVerbs) -- the byte-for-byte knob-off proof needs a
+        # diagnostics surface to compare. Mis-indented body -> a real format change.
+        $script:F_PlainDir = Join-Path $script:F_Fixtures 'plain'
+        New-Item -ItemType Directory -Force -Path $script:F_PlainDir | Out-Null
+        $script:F_PlainFile = Join-Path $script:F_PlainDir 'plain.ps1'
+        Set-Content -LiteralPath $script:F_PlainFile -Value "function Frobnicate-Plain {`nGet-Process`n}`n" -Encoding ascii
+
+        # TWO-SPACE: a PSScriptAnalyzerSettings.psd1 that sets 2-space indentation, so the surfaced
+        # diff diverges from the 4-space PSSA default -- the proof the REPO settings are honored.
+        $script:F_TwoDir = Join-Path $script:F_Fixtures 'twospace'
+        New-Item -ItemType Directory -Force -Path $script:F_TwoDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:F_TwoDir 'PSScriptAnalyzerSettings.psd1') `
+            -Value "@{ Rules = @{ PSUseConsistentIndentation = @{ Enable = `$true; IndentationSize = 2; Kind = 'space' } } }" -Encoding ascii
+        $script:F_TwoFile = Join-Path $script:F_TwoDir 'two.ps1'
+        Set-Content -LiteralPath $script:F_TwoFile -Value "function Test-Two {`nGet-Process`n}`n" -Encoding ascii
+
+        # BAD-CFG: a MALFORMED PSScriptAnalyzerSettings.psd1 -> Invoke-Formatter raises -> the
+        # format path degrades honestly (no suggestion, hook still exits 0, file untouched).
+        $script:F_BadDir = Join-Path $script:F_Fixtures 'badcfg'
+        New-Item -ItemType Directory -Force -Path $script:F_BadDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:F_BadDir 'PSScriptAnalyzerSettings.psd1') `
+            -Value "@{ Rules = @{ PSUseConsistentIndentation = @{ Enable = `$true; IndentationSize" -Encoding ascii
+        $script:F_BadFile = Join-Path $script:F_BadDir 'bad.ps1'
+        Set-Content -LiteralPath $script:F_BadFile -Value "function Test-Bad {`nGet-Process`n}`n" -Encoding ascii
+
+        function Get-FmtHook {
+            # Run the PostToolUse client for a file + cwd, with the formatOnEdit knob set. Raised
+            # client cap: the first analyzed file rebuilds the PSES engine and the format adds a
+            # second warm round-trip.
+            param([string]$File, [string]$Cwd, [string]$Mode)
+            Invoke-PluginHook -ScriptPath (Join-Path $script:F_ScriptsDir 'lsp-client.ps1') `
+                -StdinJson (@{ session_id = $script:F_Sid; tool_input = @{ file_path = $File }; cwd = $Cwd } | ConvertTo-Json -Compress) `
+                -ExtraArgs @() -CapMs 30000 -DataRoot $script:F_Data `
+                -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000'; CLAUDE_PLUGIN_OPTION_formatOnEdit = $Mode }
+        }
+        function Get-AddlContext {
+            param([string]$Out)
+            if ([string]::IsNullOrWhiteSpace($Out)) { return '' }
+            try { return [string]((($Out | ConvertFrom-Json).hookSpecificOutput).additionalContext) } catch { return '' }
+        }
+        function Wait-FmtWarm {
+            # It-time serve-readiness gate on a REAL diagnostics round-trip for the PLAIN file
+            # (dispatch 000051/000078 rule: gate on the same kind of request the It depends on,
+            # never the session-file marker). Polling the PLAIN file FIRST also locks the session's
+            # diagnostics settings to "no settings" before any settings-bearing fixture is touched,
+            # so a later malformed-settings fixture cannot poison the diagnostics engine. Returns the
+            # diagnostics text; THROWS a clear bounded message on timeout (never a silent skip).
+            param([int]$TimeoutMs = 90000)
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
+                $out = Get-FmtHook -File $script:F_PlainFile -Cwd $script:F_PlainDir -Mode 'off'
+                if (-not [string]::IsNullOrWhiteSpace($out) -and ($out -match 'PSUseApprovedVerbs')) { return $out }
+                Start-Sleep -Milliseconds 500
+            }
+            throw ("format-on-edit daemon did not return analysis within " + $TimeoutMs + "ms (daemon not ready)")
+        }
+
+        $script:F_Sid = 'fmt-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        Invoke-PluginHook -ScriptPath (Join-Path $script:F_ScriptsDir 'session-start.ps1') `
+            -StdinJson (@{ session_id = $script:F_Sid } | ConvertTo-Json -Compress) `
+            -ExtraArgs @('-PreferredHost', 'pwsh') -CapMs 60000 -DataRoot $script:F_Data | Out-Null
+
+        # Warm + lock the diagnostics settings on the PLAIN (no-settings) file before any It runs.
+        $script:F_WarmOut = Wait-FmtWarm
+    }
+
+    AfterAll {
+        [void](Stop-IntegrationDaemon -SessionId $script:F_Sid -DataRoot $script:F_Data)
+        $sf = Join-Path $script:F_Data ('session/' + $script:F_Sid + '.json')
+        if (Test-Path -LiteralPath $sf) { Remove-Item -LiteralPath $sf -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $script:F_Fixtures) { Remove-Item -LiteralPath $script:F_Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'knob ON surfaces a unified-diff suggestion and NEVER rewrites the file (suggest-not-apply)' {
+        $before = [System.IO.File]::ReadAllBytes($script:F_PlainFile)
+        $out = Get-FmtHook -File $script:F_PlainFile -Cwd $script:F_PlainDir -Mode 'suggest'
+        $script:F_LastExit | Should -Be 0                                  # the hook always exits 0
+        $ctx = Get-AddlContext $out
+        $ctx | Should -Match 'PowerShell formatting suggestion'            # a suggestion is surfaced
+        $ctx | Should -Match 'NOT modified'                                # and it says so, plainly
+        $ctx | Should -Match '(?m)^\+    Get-Process$'                     # the unified-diff body (4-space default)
+        # THE load-bearing property: the file on disk is byte-for-byte untouched.
+        [System.IO.File]::ReadAllBytes($script:F_PlainFile) | Should -Be $before
+    }
+
+    It 'knob OFF surfaces NO suggestion and the diagnostics surface is byte-for-byte unchanged' {
+        $on = Get-AddlContext (Get-FmtHook -File $script:F_PlainFile -Cwd $script:F_PlainDir -Mode 'suggest')
+        $off = Get-AddlContext (Get-FmtHook -File $script:F_PlainFile -Cwd $script:F_PlainDir -Mode 'off')
+        $off | Should -Not -Match 'formatting suggestion'                  # knob off: no format content at all
+        $off | Should -Match 'PSUseApprovedVerbs'                          # ...but the diagnostics ARE present
+        $on | Should -Match 'PowerShell formatting suggestion'             # knob on: the suggestion is appended
+        # PROOF: the ON context with the appended format block stripped equals the OFF context
+        # EXACTLY -- the knob adds the suggestion and changes nothing else about the surface.
+        $idx = $on.IndexOf('PowerShell formatting suggestion')
+        $idx | Should -BeGreaterThan 0
+        ($on.Substring(0, $idx)).TrimEnd() | Should -BeExactly $off
+    }
+
+    It 'honors the repo PSScriptAnalyzerSettings.psd1 (2-space indent diverges from the 4-space default)' {
+        $ctx = Get-AddlContext (Get-FmtHook -File $script:F_TwoFile -Cwd $script:F_TwoDir -Mode 'suggest')
+        $ctx | Should -Match 'PowerShell formatting suggestion'
+        $ctx | Should -Match 'repo style \(PSScriptAnalyzerSettings\.psd1\)'   # the repo settings were honored, and named
+        $ctx | Should -Match '(?m)^\+  Get-Process$'                          # 2-space indent (from the repo settings)
+        $ctx | Should -Not -Match '(?m)^\+    Get-Process$'                   # NOT the 4-space default
+    }
+
+    It 'a malformed settings file degrades honestly: no suggestion, hook exits 0, file untouched' {
+        $before = [System.IO.File]::ReadAllBytes($script:F_BadFile)
+        $out = Get-FmtHook -File $script:F_BadFile -Cwd $script:F_BadDir -Mode 'suggest'
+        $script:F_LastExit | Should -Be 0                                  # editing is never broken
+        (Get-AddlContext $out) | Should -Not -Match 'formatting suggestion'  # the failure surfaces NO suggestion
+        [System.IO.File]::ReadAllBytes($script:F_BadFile) | Should -Be $before   # and never rewrites the file
+    }
+}
+
 Describe 'Integration: suite-final daemon-leak backstop (dispatch 000078)' -Skip:$script:SkipIntegration {
     # The teardown guarantee + in-suite proof. After every daemon block's AfterAll has run its
     # info-independent per-session reap (Stop-IntegrationDaemon), sweep any STRAGGLER suite-owned

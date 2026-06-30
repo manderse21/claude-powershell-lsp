@@ -133,6 +133,7 @@ Set these via the `/plugin` config UI for `powershell-lsp`, or leave the default
 | `settingsPath`     | _(empty)_| Absolute path to a `PSScriptAnalyzerSettings.psd1` to honor, overriding auto-discovery; a relative value is ignored; empty = auto-discover (nearest file walked up to the project root) |
 | `scopeToEdit`      | `true`   | Scope surfaced diagnostics to the lines the edit touched (plus `editContextLines`); fails open to whole-file when the range is indeterminate. `0`/`off` report whole-file |
 | `editContextLines` | `0`      | Extra context lines kept above and below the touched range when `scopeToEdit` is on; the edit's patch already includes a few, so the default is `0` |
+| `formatOnEdit`     | `off`    | When `suggest`, after an edit the warm daemon runs `Invoke-Formatter` on the file (honoring the repo's `PSScriptAnalyzerSettings.psd1`) and surfaces the formatted result as a **suggestion** -- a unified diff -- via the same channel as diagnostics; it **never rewrites your file**. `off` (default) does nothing and the diagnostics surface is unchanged. `apply` is reserved for a future release and is treated as `off` |
 
 Diagnostics are returned in a stable order (severity, then line, then column),
 deduped, threshold- and rule-filtered, then capped per file.
@@ -142,6 +143,21 @@ PSScriptAnalyzer rule set for live analysis, which is narrower than the
 `Invoke-ScriptAnalyzer` CLI default -- for example `PSAvoidUsingWriteHost` is not
 surfaced on the fly even though the CLI flags it. The knobs here can *suppress or
 narrow* what PSES reports; they cannot add a rule PSES does not run.
+
+### Format-on-edit (suggest, never rewrite)
+
+`formatOnEdit` is **off by default**. When set to `suggest`, each time Claude edits a
+PowerShell file the warm daemon runs PSScriptAnalyzer's `Invoke-Formatter` over it --
+honoring the repo's own `PSScriptAnalyzerSettings.psd1` formatter rules when present (the
+same settings auto-discovery the analyzer uses) -- and surfaces the reformatted result as a
+**suggestion**: a compact unified diff, clearly labelled and distinct from a diagnostic,
+stating that the file was **not** modified. The hook **never writes your file** -- it only
+suggests, so editing is never disrupted and you stay in control of what lands. A formatting
+failure (no settings, a malformed settings file, a formatter error) degrades quietly: no
+suggestion is shown, and the edit is never blocked. Formatting runs on the already-warm
+daemon, so it adds no cold-start, and a file that already matches the configured style
+produces no suggestion at all. Values are `off` (default) and `suggest`; `apply` is reserved
+for a possible future release and currently behaves as `off`.
 
 > **Privacy note -- `enableStats` logs absolute paths.** When `enableStats` is on (it is
 > **off by default**), each timing line in `logs/stats.jsonl` records the **absolute path**

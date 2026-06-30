@@ -1582,3 +1582,213 @@ function Get-FindingLifecycleDiff {
 
     return @{ Cleared = @($cleared); StillPresent = @($stillPresent); NewMap = $newMap }
 }
+
+# --- format-on-edit: suggest, never rewrite (dispatch 000059, PL-8) -----------
+# An OFF-BY-DEFAULT formatOnEdit knob. When 'suggest', the warm daemon runs
+# PSScriptAnalyzer's Invoke-Formatter on the edited file -- honoring the repo's
+# PSScriptAnalyzerSettings.psd1 formatter rules (the 000018 repo-local-settings
+# precedent) -- and the result is surfaced as a SUGGESTION (a capped unified diff) via
+# the existing additionalContext channel. The hook NEVER rewrites the user's file:
+# suggest-not-apply is the WHOLE safety posture of this feature. A formatting failure
+# (no formatter, a bad/malformed settings file, a formatter throw) degrades honestly --
+# no suggestion is surfaced, it is logged, and the hook still exits 0; editing is never
+# broken. The vendored, pinned-hash PSSA (000046 L2) is reused -- NO second acquisition
+# path -- and the format runs on the warm daemon, so no cold-start is added.
+#
+# The knob is an ENUM ('off' | 'suggest', default 'off'), NOT a boolean, so a future
+# 'apply' mode could be added as an additive enum value without a breaking knob change.
+# No apply path exists today (it is a separate, higher-risk dispatch Mike may mint later).
+# These helpers are PURE and unit-testable: the formatter invocation is isolated in
+# Invoke-RepoFormatter (which assumes the caller imported the vendored PSSA), the diff is
+# computed by Get-FormatDiffResult, and the surface wording by Format-FormattingSuggestionBlock.
+
+function ConvertTo-FormatOnEditMode {
+    # Map the raw formatOnEdit knob string to a mode: 'off' | 'suggest'. Default-safe: absent
+    # / blank / an unexpanded '${user_config...}' token / any unrecognized value -> 'off' (the
+    # feature is opt-in; an unparseable knob never silently turns it on). 'suggest' is the only
+    # ON value today; 'true'/'on'/'1'/'yes' are accepted aliases for it so a user who reaches
+    # for a boolean still gets the suggest behavior. 'apply' is RESERVED for a future dispatch
+    # and maps to 'off' here -- no apply path ships, and no current config depends on 'apply'.
+    param([string]$Raw)
+    $v = ([string]$Raw).Trim().ToLowerInvariant()
+    switch ($v) {
+        'suggest' { return 'suggest' }
+        'true'    { return 'suggest' }
+        'on'      { return 'suggest' }
+        '1'       { return 'suggest' }
+        'yes'     { return 'suggest' }
+        default   { return 'off' }
+    }
+}
+
+function Find-VendoredPssaManifest {
+    # Locate the vendored PSScriptAnalyzer manifest (PSScriptAnalyzer.psd1) under the
+    # pinned-hash vendor dir (Get-PssaModuleDir) -- the SAME module ensure-pssa.ps1 produced
+    # (000046 L2). Returns the manifest's absolute path, or '' if not present. This only
+    # RESOLVES what ensure-pssa already vendored: NO download, NO second acquisition path.
+    # Shallowest match wins (mirrors ensure-pssa.ps1's Find-PssaManifest).
+    $vendorDir = Get-PssaModuleDir
+    if ([string]::IsNullOrWhiteSpace($vendorDir) -or -not (Test-Path -LiteralPath $vendorDir)) { return '' }
+    try {
+        $m = Get-ChildItem -LiteralPath $vendorDir -Recurse -Filter 'PSScriptAnalyzer.psd1' -File -ErrorAction SilentlyContinue |
+            Sort-Object { $_.FullName.Length } | Select-Object -First 1
+        if ($null -ne $m) { return $m.FullName }
+    } catch { }
+    return ''
+}
+
+function Invoke-RepoFormatter {
+    # Run PSScriptAnalyzer's Invoke-Formatter over $Text, honoring $SettingsPath when a
+    # non-empty path is given (the repo's PSScriptAnalyzerSettings.psd1 formatter rules,
+    # 000018). ASSUMES Invoke-Formatter is already importable in the caller's process (the
+    # daemon imports the vendored PSSA once -- see Initialize-FormatterModule in the daemon).
+    # PURE w.r.t. the file system: it formats a STRING and returns a result -- reads no file,
+    # writes no file (suggest-not-apply). NEVER throws: every failure (no Invoke-Formatter, a
+    # bad/malformed settings file -- which Invoke-Formatter raises as a terminating
+    # ArgumentException -- or any formatter error) is caught and returned as ok=$false with a
+    # reason, so the caller degrades honestly. Returns:
+    #   @{ ok = $true;  formatted = <string> }                  on success
+    #   @{ ok = $false; error = <message>; reason = <code> }    on any failure
+    param([string]$Text, [string]$SettingsPath = '')
+    if ($null -eq (Get-Command Invoke-Formatter -ErrorAction SilentlyContinue)) {
+        return @{ ok = $false; error = 'Invoke-Formatter not available'; reason = 'no-formatter' }
+    }
+    # Normalize line endings to LF before formatting. Invoke-Formatter THROWS ("Cannot determine
+    # line endings...") on a file with MIXED CRLF/LF -- a common real-world state after edits across
+    # tools -- so without this a mixed-ending file would always degrade to no-suggestion. This is
+    # transparent to the surfaced diff: Get-FormatDiffResult normalizes BOTH sides to LF for its
+    # comparison, so a pure line-ending delta never shows up as a formatting change, and the user's
+    # file is never touched regardless (suggest-not-apply).
+    $normalized = (([string]$Text) -replace "`r`n", "`n") -replace "`r", "`n"
+    try {
+        $formatted = $null
+        if (-not [string]::IsNullOrWhiteSpace($SettingsPath)) {
+            $formatted = Invoke-Formatter -ScriptDefinition $normalized -Settings $SettingsPath
+        } else {
+            $formatted = Invoke-Formatter -ScriptDefinition $normalized
+        }
+        if ($null -eq $formatted) { return @{ ok = $false; error = 'formatter returned null'; reason = 'null-result' } }
+        return @{ ok = $true; formatted = [string]$formatted }
+    } catch {
+        return @{ ok = $false; error = $_.Exception.Message; reason = 'formatter-error' }
+    }
+}
+
+function Get-FormatDiffResult {
+    # PURE line-based unified diff (via an LCS) between $Original and $Formatted, plus the
+    # changed-line counts -- the shape surfaced as a formatting SUGGESTION (never applied).
+    # Line endings are normalized to LF for the comparison, so a pure CRLF/LF delta does NOT
+    # read as a whole-file change. The diff is CAPPED at $MaxLines body lines; the overflow
+    # collapses into a truncation marker so a large reflow never floods the surface.
+    # Returns @{ changed=<bool>; diff=<string>; removed=<int>; added=<int>; truncated=<bool> }.
+    # 'changed' is $false (and 'diff' empty) when the two texts are identical (case-sensitive)
+    # -- the caller then surfaces nothing, preserving the clean-edit-emits-nothing property.
+    param([string]$Original, [string]$Formatted, [int]$ContextLines = 2, [int]$MaxLines = 80)
+    $result = @{ changed = $false; diff = ''; removed = 0; added = 0; truncated = $false }
+    $aN = (([string]$Original) -replace "`r`n", "`n") -replace "`r", "`n"
+    $bN = (([string]$Formatted) -replace "`r`n", "`n") -replace "`r", "`n"
+    if ($aN -ceq $bN) { return $result }   # identical after newline-normalization -> no suggestion
+    $result.changed = $true
+    $aLines = [string[]]($aN -split "`n")
+    $bLines = [string[]]($bN -split "`n")
+    $n = $aLines.Length; $m = $bLines.Length
+    # Guard the O(n*m) LCS for pathological inputs. Format-on-edit is opt-in and files are
+    # usually modest, but never let a huge file blow up the daemon: above the bound, report the
+    # change (coarse counts) without an inline diff.
+    if (([long]$n * [long]$m) -gt 2000000) {
+        $result.removed = $n; $result.added = $m; $result.truncated = $true
+        $result.diff = '(formatted output differs; file too large to show an inline diff)'
+        return $result
+    }
+    # LCS length table (filled from the bottom-right so a forward backtrack reads naturally).
+    # Stored as a 1-D array with row stride $w and indexed by hand: Windows PowerShell 5.1's parser
+    # rejects the multidimensional indexer with a parenthesized subscript (e.g. $dp[($i+1), $j]),
+    # which pwsh 7 accepts -- so a flat array with explicit index arithmetic is the portable form.
+    $w = $m + 1
+    $dp = New-Object 'int[]' (($n + 1) * $w)
+    for ($i = $n - 1; $i -ge 0; $i--) {
+        $rowBase = $i * $w
+        $nextBase = ($i + 1) * $w
+        for ($j = $m - 1; $j -ge 0; $j--) {
+            if ($aLines[$i] -ceq $bLines[$j]) { $dp[$rowBase + $j] = $dp[$nextBase + $j + 1] + 1 }
+            else { $dp[$rowBase + $j] = [Math]::Max($dp[$nextBase + $j], $dp[$rowBase + $j + 1]) }
+        }
+    }
+    # Backtrack into an edit script of '=' (context) / '-' (removed) / '+' (added) ops.
+    $ops = New-Object System.Collections.Generic.List[object]
+    $i = 0; $j = 0
+    while ($i -lt $n -and $j -lt $m) {
+        if ($aLines[$i] -ceq $bLines[$j]) { $ops.Add([pscustomobject]@{ op = '='; text = $aLines[$i] }); $i++; $j++ }
+        elseif ($dp[($i + 1) * $w + $j] -ge $dp[$i * $w + $j + 1]) { $ops.Add([pscustomobject]@{ op = '-'; text = $aLines[$i] }); $i++ }
+        else { $ops.Add([pscustomobject]@{ op = '+'; text = $bLines[$j] }); $j++ }
+    }
+    while ($i -lt $n) { $ops.Add([pscustomobject]@{ op = '-'; text = $aLines[$i] }); $i++ }
+    while ($j -lt $m) { $ops.Add([pscustomobject]@{ op = '+'; text = $bLines[$j] }); $j++ }
+    $opCount = $ops.Count
+    # Per-op 1-based original/new line numbers (the FIRST line each op occupies on its side).
+    $aNum = New-Object 'int[]' $opCount
+    $bNum = New-Object 'int[]' $opCount
+    $ai = 1; $bi = 1
+    for ($k = 0; $k -lt $opCount; $k++) {
+        $aNum[$k] = $ai; $bNum[$k] = $bi
+        $o = $ops[$k].op
+        if ($o -eq '=') { $ai++; $bi++ } elseif ($o -eq '-') { $ai++ } else { $bi++ }
+        if ($o -eq '-') { $result.removed++ } elseif ($o -eq '+') { $result.added++ }
+    }
+    # Group change runs into hunks, merging runs within 2*ContextLines of each other.
+    $changeIdx = New-Object System.Collections.Generic.List[int]
+    for ($k = 0; $k -lt $opCount; $k++) { if ($ops[$k].op -ne '=') { [void]$changeIdx.Add($k) } }
+    $hunks = New-Object System.Collections.Generic.List[object]
+    $startC = $changeIdx[0]; $prevC = $changeIdx[0]
+    for ($x = 1; $x -lt $changeIdx.Count; $x++) {
+        $c = $changeIdx[$x]
+        if (($c - $prevC) -le (2 * $ContextLines + 1)) { $prevC = $c; continue }
+        $hunks.Add([pscustomobject]@{ first = $startC; last = $prevC }); $startC = $c; $prevC = $c
+    }
+    $hunks.Add([pscustomobject]@{ first = $startC; last = $prevC })
+    # Emit unified hunks with ContextLines of context, capped at MaxLines body lines.
+    $body = New-Object System.Collections.Generic.List[string]
+    $truncated = $false
+    foreach ($h in $hunks) {
+        if ($body.Count -ge $MaxLines) { $truncated = $true; break }
+        $hs = [Math]::Max(0, [int]$h.first - $ContextLines)
+        $he = [Math]::Min($opCount - 1, [int]$h.last + $ContextLines)
+        $aCount = 0; $bCount = 0
+        for ($k = $hs; $k -le $he; $k++) {
+            if ($ops[$k].op -ne '+') { $aCount++ }
+            if ($ops[$k].op -ne '-') { $bCount++ }
+        }
+        $body.Add('@@ -' + $aNum[$hs] + ',' + $aCount + ' +' + $bNum[$hs] + ',' + $bCount + ' @@')
+        for ($k = $hs; $k -le $he; $k++) {
+            if ($body.Count -ge $MaxLines) { $truncated = $true; break }
+            $pfx = if ($ops[$k].op -eq '=') { ' ' } elseif ($ops[$k].op -eq '-') { '-' } else { '+' }
+            $body.Add($pfx + [string]$ops[$k].text)
+        }
+        if ($truncated) { break }
+    }
+    $result.diff = ($body -join "`n")
+    $result.truncated = $truncated
+    return $result
+}
+
+function Format-FormattingSuggestionBlock {
+    # Render the additionalContext block for a format-on-edit SUGGESTION (000059), or '' when
+    # there is nothing to suggest ($Diff empty). The header is deliberately distinct from the
+    # 'PowerShell diagnostics (...)' line so the agent never confuses a style suggestion with a
+    # correctness finding, and it states plainly that the file was NOT modified (suggest-not-
+    # apply) and whether the repo's settings were honored. PURE and unit-testable.
+    param([string]$Path, [string]$Diff, [int]$Removed, [int]$Added, [bool]$Truncated, [string]$SettingsPath)
+    if ([string]::IsNullOrEmpty($Diff)) { return '' }
+    $styleNote = if (-not [string]::IsNullOrWhiteSpace($SettingsPath)) {
+        'repo style (' + (Split-Path -Leaf $SettingsPath) + ')'
+    } else {
+        'default PSScriptAnalyzer style'
+    }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('PowerShell formatting suggestion for ' + $Path + ' -- ' + $styleNote +
+        ': the formatted version differs (-' + $Removed + ' / +' + $Added + ' lines). ' +
+        'The file was NOT modified; run Invoke-Formatter yourself to apply this style.')
+    [void]$sb.Append($Diff)
+    if ($Truncated) { [void]$sb.Append("`n... (formatting diff truncated)") }
+    return $sb.ToString()
+}

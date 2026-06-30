@@ -54,6 +54,7 @@ change rules, not a second copy of the prose.
 | `settingsPath` | absolute PSScriptAnalyzerSettings.psd1 override |
 | `scopeToEdit` | scope diagnostics to the edited lines |
 | `editContextLines` | context lines around the touched range |
+| `formatOnEdit` | format-on-edit suggestion mode (off by default) |
 
 <!-- FROZEN-KNOBS:END -->
 
@@ -253,6 +254,20 @@ cold. None is a contract change; each is banked here deliberately.
   token: finding-lifecycle is a different axis from the analyzer-health taxonomy, so it rides an
   additive field (a drift-guard-green MINOR under the semver policy), never the token set. Recorded
   here as a **note, not an amendment**: an additive output field is not a semver-protected surface.
+- **`formatOnEdit` knob (DELIBERATE MINOR amendment) -- dispatch 000059.** A new optional, defaulted
+  userConfig knob, `formatOnEdit`, was added to the manifest (and so to the FROZEN-KNOBS table above,
+  which the drift-guard validates). This is the contract-relevant event the freeze exists to record:
+  a new knob is a **deliberate, documented MINOR**, not a silent drift -- the table row IS the
+  amendment, and the guard passes **because** the contract was updated, not bypassed. The knob's
+  **default is `off`**, and with it **off the diagnostics surface and all behavior are byte-for-byte
+  unchanged** (the format path is never invoked; no `format` request is sent). When `suggest`, the
+  warm daemon runs Invoke-Formatter on the edited file -- honoring the repo's `PSScriptAnalyzerSettings.psd1`
+  formatter rules (the 000018 precedent) -- and surfaces the result as a **suggestion** via the existing
+  `additionalContext` channel; the hook **never rewrites the user's file** (suggest-not-apply is the
+  whole safety posture). The knob is an **enum** (`off` | `suggest`, default `off`), shaped so a future
+  **`apply`** mode could be added as an additive enum value **without** a breaking knob change; no apply
+  path ships today, and `apply` is treated as `off`. No new status token and no second PSSA acquisition
+  path: the suggestion rides the existing surface, and the vendored pinned-hash PSSA is reused.
 
 ---
 

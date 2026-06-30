@@ -269,7 +269,7 @@ function Get-IntegrationDaemonLeak {
     # never match a co-tenant editor host or the operator's shell. Returns objects with
     # .Id and .SessionId so a caller can verify-before-kill a straggler if it chooses.
     param(
-        [string]$SessionIdPattern = '^(pester|honor|scope|restart|incomplete|degraded|exhaust|unavail|ss-surface|pf|rl|loop|bench|no-daemon)-'
+        [string]$SessionIdPattern = '^(pester|honor|scope|restart|incomplete|degraded|exhaust|unavail|ss-surface|pf|rl|loop|bench|no-daemon|fmt)-'
     )
     $leaks = New-Object System.Collections.ArrayList
     try {
