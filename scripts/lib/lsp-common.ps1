@@ -1701,11 +1701,17 @@ function Get-FormatDiffResult {
         return $result
     }
     # LCS length table (filled from the bottom-right so a forward backtrack reads naturally).
-    $dp = New-Object 'int[,]' ($n + 1), ($m + 1)
+    # Stored as a 1-D array with row stride $w and indexed by hand: Windows PowerShell 5.1's parser
+    # rejects the multidimensional indexer with a parenthesized subscript (e.g. $dp[($i+1), $j]),
+    # which pwsh 7 accepts -- so a flat array with explicit index arithmetic is the portable form.
+    $w = $m + 1
+    $dp = New-Object 'int[]' (($n + 1) * $w)
     for ($i = $n - 1; $i -ge 0; $i--) {
+        $rowBase = $i * $w
+        $nextBase = ($i + 1) * $w
         for ($j = $m - 1; $j -ge 0; $j--) {
-            if ($aLines[$i] -ceq $bLines[$j]) { $dp[$i, $j] = $dp[($i + 1), ($j + 1)] + 1 }
-            else { $dp[$i, $j] = [Math]::Max($dp[($i + 1), $j], $dp[$i, ($j + 1)]) }
+            if ($aLines[$i] -ceq $bLines[$j]) { $dp[$rowBase + $j] = $dp[$nextBase + $j + 1] + 1 }
+            else { $dp[$rowBase + $j] = [Math]::Max($dp[$nextBase + $j], $dp[$rowBase + $j + 1]) }
         }
     }
     # Backtrack into an edit script of '=' (context) / '-' (removed) / '+' (added) ops.
@@ -1713,7 +1719,7 @@ function Get-FormatDiffResult {
     $i = 0; $j = 0
     while ($i -lt $n -and $j -lt $m) {
         if ($aLines[$i] -ceq $bLines[$j]) { $ops.Add([pscustomobject]@{ op = '='; text = $aLines[$i] }); $i++; $j++ }
-        elseif ($dp[($i + 1), $j] -ge $dp[$i, ($j + 1)]) { $ops.Add([pscustomobject]@{ op = '-'; text = $aLines[$i] }); $i++ }
+        elseif ($dp[($i + 1) * $w + $j] -ge $dp[$i * $w + $j + 1]) { $ops.Add([pscustomobject]@{ op = '-'; text = $aLines[$i] }); $i++ }
         else { $ops.Add([pscustomobject]@{ op = '+'; text = $bLines[$j] }); $j++ }
     }
     while ($i -lt $n) { $ops.Add([pscustomobject]@{ op = '-'; text = $aLines[$i] }); $i++ }
