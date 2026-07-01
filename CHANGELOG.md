@@ -29,7 +29,7 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
-## [Unreleased]
+## [1.20.0] - 2026-06-30
 MINOR: **Off-by-default format-on-edit suggestions -- the warm daemon runs PSScriptAnalyzer's
 Invoke-Formatter on the edited file (honoring the repo's PSScriptAnalyzerSettings.psd1) and
 surfaces the formatted result as a SUGGESTION (a unified diff) via additionalContext; the hook
