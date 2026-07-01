@@ -29,6 +29,51 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [Unreleased]
+PATCH: **Curate the opt-in `base` ruleset -- remove three survey-measured noisy rules so `base` is
+quieter on real code, with the default `pses-default` surface byte-for-byte unchanged**. The 000091
+quality wave ran the base ruleset whole-file over a 34-file known-good false-positive oracle plus the
+plugin's own source and measured three default-on rules as net-noise: `PSReviewUnusedParameter`
+(~90% false-positive -- PSScriptAnalyzer's per-scriptblock scope analysis misses a script-level
+parameter consumed by a nested function, which is every hook script), `PSUseSingularNouns` (zero
+true-issues; intentional plural collection-returning names), and
+`PSUseShouldProcessForStateChangingFunctions` (fires on the state-changing VERB, not on real state
+change -- four false-positives on clean `New-*` / `Set-*` builders in the oracle). All three are
+BASE-ONLY: none is in PSES's built-in 15-rule no-settings allow-list (dispatch 000085
+`AnalysisService.s_defaultRules`), so removing them tightens the opt-in `base` surface alone and
+CANNOT move `pses-default` -- the default never resolves `base.psd1` and never evaluates these rules,
+so its live surface is byte-for-byte unchanged. The exclusions live as a named, documented exclude
+list (`$BaseRuleExclusions`) in `scripts/regen-base-ruleset.ps1` -- each entry comment-citing the
+000091 evidence -- and `rulesets/base.psd1` is REGENERATED as (default-on minus the
+compatibility-profile family minus the exclude list), dropping 57 -> 54 rules; `regen -Check` stays
+green, preserving the 000087 deterministic-enumeration property. The three Error-severity security
+rules (`PSAvoidUsingComputerNameHardcoded` / `PSAvoidUsingConvertToSecureStringWithPlainText` /
+`PSAvoidUsingUsernameAndPasswordParams`) and `PSAvoidUsingWriteHost` are RETAINED. EXCLUDE-ONLY: no
+rule is added (additions are a separate survey-first slice). A PATCH, not a MINOR: the frozen CONTRACT
+surface (the `ruleset` knob name, its enum values, its default) is unchanged -- base's rule content is
+a regenerable implementation detail, not part of the frozen surface -- and this is a noise-reduction
+refinement of an opt-in ruleset with the default untouched (dispatch 000092).
+
+### Changed
+
+- **`rulesets/base.psd1` -- 57 -> 54 rules.** Regenerated (not hand-edited) from the new
+  `$BaseRuleExclusions` list in `scripts/regen-base-ruleset.ps1` -- still the pinned analyzer's
+  default-on set minus `PSUseCompatible*`, now also minus the three survey-measured noisy rules below.
+  The three Error-severity security rules and `PSAvoidUsingWriteHost` remain present; `regen -Check`
+  confirms the file still matches the derivation.
+- **`scripts/regen-base-ruleset.ps1` -- named, documented exclude list.** A new `$BaseRuleExclusions`
+  array (each entry comment-citing the 000091 finding and its false-positive rationale) is subtracted
+  in `Get-DerivedBaseRules`, so every removal is auditable and reproducible and the `-Check`
+  determinism guard covers it.
+
+### Removed
+
+- **Three base-only rules removed from `rulesets/base.psd1` as measured noise (dispatch 000091):**
+  `PSReviewUnusedParameter` (~90% false-positive on the param-block + nested-functions shape),
+  `PSUseSingularNouns` (zero true-issues; intentional plural names), and
+  `PSUseShouldProcessForStateChangingFunctions` (verb-triggered false-positive on clean `New-*` /
+  `Set-*` builders). Each is reachable only under `ruleset=base`; `pses-default` is unaffected.
+
 ## [1.21.0] - 2026-06-30
 MINOR: **Opt-in broadened live surface -- a new `ruleset` knob and a plugin-owned, explicitly
 enumerated base ruleset that surfaces PSScriptAnalyzer's default-on rules (including three

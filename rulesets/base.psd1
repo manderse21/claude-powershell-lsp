@@ -1,4 +1,4 @@
-# base.psd1 -- the plugin-owned "base" PSScriptAnalyzer ruleset (dispatch 000087).
+# base.psd1 -- the plugin-owned "base" PSScriptAnalyzer ruleset (dispatch 000087; curated 000092).
 #
 # WHAT THIS IS. An OPT-IN, EXPLICITLY ENUMERATED PSScriptAnalyzerSettings file selected
 # ONLY when the userConfig knob `ruleset` = 'base' AND no repo-local
@@ -25,7 +25,10 @@
 # DEFAULT-ON rule set of the vendored PSScriptAnalyzer pin (PSScriptAnalyzer 1.25.0, the
 # $PssaVersion in scripts/ensure-pssa.ps1) MINUS the compatibility-profile family
 # (PSUseCompatible*), which needs target-profile configuration (and emits a configuration
-# warning without it) and is deferred to the later curated / AI-era rule-pack tier.
+# warning without it) and is deferred to the later curated / AI-era rule-pack tier, MINUS a
+# named, survey-evidenced exclude list ($BaseRuleExclusions in regen-base-ruleset.ps1;
+# dispatch 000092) -- three default-on rules the 000091 quality wave MEASURED noisy or
+# false-positive on real code (see the CURATION bullet below).
 #   - "default-on" = a rule PSScriptAnalyzer evaluates with no settings, i.e. either a
 #     non-configurable rule or a ConfigurableRule whose default `Enable` is $true. The
 #     twelve+ formatting rules (PSPlaceOpenBrace, PSPlaceCloseBrace, PSUseConsistentIndentation,
@@ -35,10 +38,21 @@
 #     NOT default-on and are already absent here; they need per-rule config and land in the
 #     later formatting/quality tier, not this base.
 #   - Count at PSScriptAnalyzer 1.25.0: 75 total rules; 58 default-on; minus the 1 default-on
-#     compatibility rule (PSUseCompatibleCmdlets) = 57 enumerated below.
+#     compatibility rule (PSUseCompatibleCmdlets) minus the 3 survey-excluded rules (below)
+#     = 54 enumerated below.
+#   - CURATION (dispatch 000092; EXCLUDE-ONLY, evidence-gated from the 000091 survey). Three
+#     default-on, BASE-ONLY rules are removed as measured noise. Each is reachable ONLY under
+#     ruleset=base (none is in the PSES 15-rule allow-list), so removing it tightens the opt-in
+#     base surface alone and does NOT move pses-default (which never evaluates them):
+#       * PSReviewUnusedParameter -- ~90% false-positive: PSSA's per-scriptblock scope analysis
+#         misses a script-level param consumed by a nested function, which is every hook script.
+#       * PSUseSingularNouns -- 0 true-issues; intentional plural collection-returning names.
+#       * PSUseShouldProcessForStateChangingFunctions -- fires on the state-changing VERB, not
+#         real state change; 4 false-positives on clean New-*/Set-* builders in the FP oracle.
 #   - The THREE Error-severity security rules this base makes surfaceable that the PSES
 #     15-rule allow-list omits: PSAvoidUsingComputerNameHardcoded,
 #     PSAvoidUsingConvertToSecureStringWithPlainText, PSAvoidUsingUsernameAndPasswordParams.
+#     These, and PSAvoidUsingWriteHost, are RETAINED (never excluded).
 #
 # ASCII-only (PS 5.1 em-dash trap); no-BOM UTF-8.
 @{
@@ -84,7 +98,6 @@
         'PSProvideCommentHelp'
         'PSReservedCmdletChar'
         'PSReservedParams'
-        'PSReviewUnusedParameter'
         'PSShouldProcess'
         'PSUseApprovedVerbs'
         'PSUseBOMForUnicodeEncodedFile'
@@ -94,8 +107,6 @@
         'PSUseOutputTypeCorrectly'
         'PSUseProcessBlockForPipelineCommand'
         'PSUsePSCredentialType'
-        'PSUseShouldProcessForStateChangingFunctions'
-        'PSUseSingularNouns'
         'PSUseSupportsShouldProcess'
         'PSUseToExportFieldsInManifest'
         'PSUseUsingScopeModifierInNewRunspaces'

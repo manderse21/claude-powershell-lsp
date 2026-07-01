@@ -16,7 +16,8 @@ $ErrorActionPreference = 'Stop'
 # rulesets/base.psd1 from the vendored PScriptAnalyzer pin (dispatch 000087). This makes
 # the base ruleset's derivation EXECUTABLE and REPRODUCIBLE: the shipped file is the
 # default-on rule set of the pinned PScriptAnalyzer MINUS the compatibility-profile family
-# (PSUseCompatible*). When the $PssaVersion pin in ensure-pssa.ps1 is bumped, re-run this
+# (PSUseCompatible*) MINUS the named, survey-evidenced exclude list ($BaseRuleExclusions
+# below, dispatch 000092). When the $PssaVersion pin in ensure-pssa.ps1 is bumped, re-run this
 # and review the diff -- a DELIBERATE regeneration, never a silent shift (the whole reason
 # the base enumerates rather than using IncludeDefaultRules = $true).
 #
@@ -32,6 +33,43 @@ $ErrorActionPreference = 'Stop'
 # Author: Mike Andersen / powershell-lsp plugin.
 
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
+
+# --- survey-evidenced exclude list (dispatch 000092; from the 000091 quality wave) ----------
+# EXCLUDE-ONLY curation. Each rule below is default-on in the pinned PSScriptAnalyzer (so the
+# derivation would otherwise include it) but was MEASURED noisy or false-positive on real code by
+# the 000091 whole-file survey over the 34-file known-good FP oracle (tests/corpus/samples/clean)
+# plus the plugin's own source. Excluding a rule here shrinks the regenerated rulesets/base.psd1 by
+# one and is the only curation lever for a misfire mode that has no per-rule config fix.
+#
+# SAFE BY CONSTRUCTION: none of these rules is in the PSES v4.6.0 15-rule no-settings allow-list
+# (dispatch 000085 AnalysisService.s_defaultRules), so each is reachable ONLY under ruleset=base.
+# Removing one therefore tightens the opt-in base surface alone and CANNOT move the default
+# pses-default surface (which never evaluates them).
+#
+# EVIDENCE-GATED: every entry must trace to a 000091 finding. Adding a NEW rule is a separate
+# survey-first slice, never a silent ride-in here (this list only REMOVES measured-noisy rules).
+# Script-scoped so Get-DerivedBaseRules (a nested scope) reads it explicitly.
+$script:BaseRuleExclusions = @(
+    # PSReviewUnusedParameter -- 000091: 9 of 10 findings are systematic FALSE-POSITIVES. PSSA does
+    #   per-scriptblock scope analysis and misses a script-level param consumed by a nested function
+    #   -- the plugin's dominant shape (top-level param block + nested functions = every hook script)
+    #   -- so its FP rate on this style of code is ~90%. No per-rule config fixes the misfire.
+    'PSReviewUnusedParameter'
+    # PSUseSingularNouns -- 000091: 0 true-issues; 35 intentional plural collection-returning names
+    #   (Get-DogfoodShapes, Get-ScanTargets, Read-DogfoodAnnotations, ...). Renaming to singular would
+    #   be WORSE naming. Pure low-value style; the NounAllowList knob is unwieldy at 35 nouns, so
+    #   EXCLUDE is the clean lever.
+    'PSUseSingularNouns'
+    # PSUseShouldProcessForStateChangingFunctions -- 000091: hit the 34-file known-good FP oracle 4x on
+    #   clean builders, all FALSE-POSITIVES (New-ServerConfig / New-ApiSession construct an in-memory
+    #   object and return it; Set-Mode / Set-LogLevel only Write-Output) -- the rule fires on the
+    #   state-changing VERB, not on real state change, so it is noise-prone on the ubiquitous New-*/Set-*
+    #   builder pattern (24+23 own-source/harness hits). 000091 DEFERRED it pending its PSES-15
+    #   membership; resolved from disk for 000092 -- it is NOT in the PSES v4.6.0 15-rule allow-list
+    #   (dispatch 000085), so it is base-only: a clean base exclusion that cannot touch pses-default.
+    #   No per-rule config fixes the verb-triggered misfire.
+    'PSUseShouldProcessForStateChangingFunctions'
+)
 
 function Resolve-PssaManifest {
     param([string]$Explicit)
@@ -64,7 +102,8 @@ function Resolve-PssaManifest {
 }
 
 function Get-DerivedBaseRules {
-    # The reproducible derivation: default-on rules minus the compatibility family.
+    # The reproducible derivation: default-on rules minus the compatibility family minus the
+    # survey-evidenced $BaseRuleExclusions (dispatch 000092).
     param([string]$ManifestPath)
     Import-Module $ManifestPath -Force -ErrorAction Stop
     $defaultOff = New-Object System.Collections.Generic.HashSet[string]
@@ -77,7 +116,7 @@ function Get-DerivedBaseRules {
         } catch { }
     }
     $names = @(Get-ScriptAnalyzerRule | ForEach-Object { $_.RuleName } |
-            Where-Object { -not $defaultOff.Contains($_) -and ($_ -notlike 'PSUseCompatible*') })
+            Where-Object { -not $defaultOff.Contains($_) -and ($_ -notlike 'PSUseCompatible*') -and ($script:BaseRuleExclusions -notcontains $_) })
     return @($names | Sort-Object)
 }
 

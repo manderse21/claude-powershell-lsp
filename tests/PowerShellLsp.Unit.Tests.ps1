@@ -1119,11 +1119,12 @@ Describe 'base.psd1 is NOT auto-discovered as a repo-local settings file (dispat
     }
 }
 
-Describe 'rulesets/base.psd1 -- enumerated, deterministic base ruleset (dispatch 000087)' {
+Describe 'rulesets/base.psd1 -- enumerated, deterministic base ruleset (dispatch 000087; curated 000092)' {
     # The base ENUMERATES its rules explicitly (not IncludeDefaultRules=$true) so the surfaced
     # set is pin-independent and a pin bump is a deliberate regeneration. These guard the
     # shipped file's content directly (parse only -- no PSScriptAnalyzer needed, so they run on
-    # every leg): the security rules are in, the formatting/compat rules are out, no duplicates.
+    # every leg): the security rules + Write-Host are in, the formatting/compat rules are out, the
+    # three survey-evidenced noisy rules (dispatch 000092) are out, no duplicates.
     BeforeAll {
         $script:BaseFile = Join-Path $script:PluginRoot 'rulesets/base.psd1'
         $script:BaseData = Import-PowerShellDataFile -LiteralPath $script:BaseFile
@@ -1138,18 +1139,34 @@ Describe 'rulesets/base.psd1 -- enumerated, deterministic base ruleset (dispatch
         # Adversarial control: switch base.psd1 to IncludeDefaultRules=$true and this goes RED.
         $script:BaseData.ContainsKey('IncludeDefaultRules') | Should -BeFalse
     }
-    It 'ships exactly the derived rule count at the current pin (57 at PSScriptAnalyzer 1.25.0)' {
+    It 'ships exactly the derived rule count at the current pin (54 at PSScriptAnalyzer 1.25.0)' {
         # Pin-coupled by design: a pinned-analyzer bump regenerates the base
         # (scripts/regen-base-ruleset.ps1) and updates this count in the same reviewed diff.
-        $script:BaseRules.Count | Should -Be 57
+        # 54 = 58 default-on minus 1 default-on compat rule (PSUseCompatibleCmdlets) minus the
+        # 3 survey-evidenced exclusions (dispatch 000092; down from 57 at 000087).
+        $script:BaseRules.Count | Should -Be 54
     }
-    It 'includes the three Error-severity security rules and a Write-Host-class rule' {
+    It 'includes the three Error-severity security rules and a Write-Host-class rule (RETAINED through 000092)' {
+        # These are load-bearing signal and MUST survive the 000092 exclude curation.
         foreach ($r in @(
                 'PSAvoidUsingComputerNameHardcoded',
                 'PSAvoidUsingConvertToSecureStringWithPlainText',
                 'PSAvoidUsingUsernameAndPasswordParams',
                 'PSAvoidUsingWriteHost')) {
             $script:BaseRules | Should -Contain $r
+        }
+    }
+    It 'EXCLUDES the three survey-evidenced noisy rules (dispatch 000092, from the 000091 quality wave)' {
+        # Removed as measured noise: PSReviewUnusedParameter (~90% FP on the param-block +
+        # nested-functions shape), PSUseSingularNouns (0 true-issues; intentional plurals),
+        # PSUseShouldProcessForStateChangingFunctions (verb-triggered FP on clean New-*/Set-*
+        # builders). All three are base-only (not in the PSES 15-rule allow-list), so their
+        # removal tightens the opt-in base surface alone and leaves pses-default unchanged.
+        foreach ($r in @(
+                'PSReviewUnusedParameter',
+                'PSUseSingularNouns',
+                'PSUseShouldProcessForStateChangingFunctions')) {
+            $script:BaseRules | Should -Not -Contain $r
         }
     }
     It 'EXCLUDES the formatting and compatibility rules (Phase 2 item 2, not this base)' {
