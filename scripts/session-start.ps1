@@ -22,7 +22,8 @@ param(
     [int] $DebounceMs = 150,
     [int] $IdleTtlMin = 30,
     [int] $PerFileCap = 20,
-    [string] $SettingsPath = ''
+    [string] $SettingsPath = '',
+    [string] $Ruleset = 'pses-default'
 )
 
 Set-StrictMode -Version Latest
@@ -49,6 +50,7 @@ $DebounceMs        = Get-PluginOptionInt 'debounceMs'        $DebounceMs
 $IdleTtlMin        = Get-PluginOptionInt 'idleTtlMin'        $IdleTtlMin
 $PerFileCap        = Get-PluginOptionInt 'perFileCap'        $PerFileCap
 $SettingsPath      = Get-PluginOption    'settingsPath'       $SettingsPath
+$Ruleset           = Get-PluginOption    'ruleset'            $Ruleset
 
 $logDir = Get-LogDir
 $sessionDir = Get-SessionDir
@@ -242,7 +244,8 @@ try {
     # session (claude-code #43123).
     $launched = Start-PsesDaemonDetached -SessionId $sessionId -HostExe $hostExe `
         -SeverityThreshold $SeverityThreshold -RuleInclude $RuleInclude -RuleExclude $RuleExclude `
-        -DebounceMs $DebounceMs -IdleTtlMin $IdleTtlMin -PerFileCap $PerFileCap -SettingsPath $SettingsPath
+        -DebounceMs $DebounceMs -IdleTtlMin $IdleTtlMin -PerFileCap $PerFileCap -SettingsPath $SettingsPath `
+        -Ruleset $Ruleset
     Write-SLog ('launched daemon (detached) for session ' + $sessionId + ' via ' + $hostExe + ' (ok=' + $launched + ')')
     exit 0
 }

@@ -42,6 +42,13 @@ param(
     # the nearest settings file walked up from the edited file, bounded at the project
     # root (dispatch 000018). Absolute only -- see Resolve-PssaSettingsPath in lib.
     [string] $SettingsPath = '',
+    # Base-ruleset opt-in (dispatch 000087). 'pses-default' (default) keeps PSES's 15-rule
+    # no-settings allow-list -- byte-for-byte the pre-000087 surface; 'base' resolves the
+    # shipped plugin base ruleset when no repo-local settings and no explicit SettingsPath
+    # override resolve first. Threaded ONLY into the diagnostics settings resolution
+    # (Initialize-PssaSettings); the formatter path keeps its own repo-local/override-only
+    # resolution (the base carries no formatter rules).
+    [string] $Ruleset = 'pses-default',
     # Supervised PSES re-spawn (dispatch 000022): bound a mid-session crash recovery so a
     # transient PSES exit recovers but a hard-broken PSES does not thrash. MaxPsesRestarts
     # mirrors the manifest's advertised maxRestarts (3) but on the ACTUAL daemon path; the
@@ -608,7 +615,7 @@ function Initialize-PssaSettings {
     $root = if (-not [string]::IsNullOrWhiteSpace($ProjectRoot)) { $ProjectRoot } else { (Get-Location).Path }
     $resolved = ''
     try {
-        $resolved = Resolve-PssaSettingsPath -EditedFilePath $FilePath -ProjectRoot $root -Override $SettingsPath
+        $resolved = Resolve-PssaSettingsPath -EditedFilePath $FilePath -ProjectRoot $root -Override $SettingsPath -Ruleset $Ruleset
     } catch {
         Write-DLog ('PSSA settings resolve error (ignored, default rules): ' + $_.Exception.Message); return
     }
