@@ -629,6 +629,253 @@ Describe 'Dogfood annotation/review tool (dispatch 000043)' {
     }
 }
 
+Describe 'Dogfood reader: source resolution + source split (dispatch 000088)' {
+    # READER-ONLY hardening. Two additive changes, both provable without touching the hook
+    # write-side (Get-DogfoodLogPath is byte-for-byte unchanged -- these exercise only the NEW
+    # reader helpers): (1) the reader resolves the INSTALLED marketplace-cache log so a run from
+    # the dev checkout stops seeing zero real captures; (2) a source-split dimension (canonical-
+    # checkout / other-genuine / synthetic) lifted from the 000066/000084 inline path patterns.
+    # Env is saved/cleared/restored per-It so cache discovery and the checkout resolver are
+    # hermetic (no ambient CLAUDE_PLUGIN_ROOT / POWERSHELL_LSP_DOGFOOD_LOG bleeds in).
+    BeforeAll {
+        . (Join-Path $script:ScriptsDir 'review-dogfood.ps1')
+
+        # Build a fake installed-cache log at
+        # <root>/<marketplace>/powershell-lsp/<version>/dogfood/diagnostics.jsonl. Uses
+        # [IO.Path]::Combine (PS 5.1 has no multi-segment Join-Path) with the platform separator,
+        # so the tree is correct on all four CI legs. Returns the log path.
+        function New-FakeCacheLog {
+            param(
+                [string] $CacheRoot,
+                [string] $Version,
+                [string] $Marketplace = 'claude-powershell-lsp',
+                [string[]] $Lines = @('{"file":"C:\\proj\\a.ps1","hash":"h1","ruleId":"R"}')
+            )
+            $dir = [System.IO.Path]::Combine($CacheRoot, $Marketplace, 'powershell-lsp', $Version, 'dogfood')
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $log = Join-Path $dir 'diagnostics.jsonl'
+            Set-Content -LiteralPath $log -Value $Lines -Encoding ascii
+            return $log
+        }
+        # One capture record in the shape Read-DogfoodLog yields (a PSCustomObject with file+hash).
+        function New-Rec {
+            param([string] $File, [string] $Hash = 'h1')
+            return [pscustomobject]@{ file = $File; hash = $Hash }
+        }
+    }
+
+    BeforeEach {
+        $script:PrevPluginRoot = $env:CLAUDE_PLUGIN_ROOT
+        $script:PrevDfLog = $env:POWERSHELL_LSP_DOGFOOD_LOG
+        Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_ROOT' -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_DOGFOOD_LOG' -ErrorAction SilentlyContinue
+        $script:SrcDir = Join-Path $TestDrive ('src-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:SrcDir | Out-Null
+    }
+    AfterEach {
+        if ($null -eq $script:PrevPluginRoot) { Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_ROOT' -ErrorAction SilentlyContinue }
+        else { $env:CLAUDE_PLUGIN_ROOT = $script:PrevPluginRoot }
+        if ($null -eq $script:PrevDfLog) { Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_DOGFOOD_LOG' -ErrorAction SilentlyContinue }
+        else { $env:POWERSHELL_LSP_DOGFOOD_LOG = $script:PrevDfLog }
+    }
+
+    Context 'Get-DogfoodSourceBucket -- lifted 000066/000084 patterns, conservative default' {
+        It 'a canonical-checkout path classifies as canonical-checkout' {
+            (Get-DogfoodSourceBucket -File 'C:\Users\m\projects\work\nortam\claude-powershell-lsp\scripts\a.ps1') |
+                Should -BeExactly 'canonical-checkout'
+        }
+        It 'is separator-agnostic -- a forward-slash canonical path also classifies as canonical-checkout' {
+            # The '?' single-char wildcard matches '/' as well as '\', so a path built with the
+            # POSIX separator (as the CI legs do via Join-Path) still classifies correctly.
+            (Get-DogfoodSourceBucket -File '/home/runner/work/nortam/claude-powershell-lsp/scripts/a.ps1') |
+                Should -BeExactly 'canonical-checkout'
+        }
+        It 'a Temp\claude harness path classifies as synthetic' {
+            (Get-DogfoodSourceBucket -File 'C:\Users\m\AppData\Local\Temp\claude\sess\scratchpad\a.ps1') |
+                Should -BeExactly 'synthetic'
+        }
+        It 'a psls-pester-data fixture path classifies as synthetic' {
+            (Get-DogfoodSourceBucket -File 'C:\x\psls-pester-data\fixture.ps1') | Should -BeExactly 'synthetic'
+        }
+        It 'synthetic is checked FIRST -- a Temp\claude path embedding the mangled repo slug is synthetic, NOT canonical' {
+            # The harness worktree dir name embeds the slug ...nortam-claude-powershell-lsp..., which
+            # the canonical pattern would otherwise match. Ordering (synthetic before canonical) is
+            # load-bearing. Adversarial control: reorder the checks and this goes RED.
+            $slugTemp = 'C:\Users\m\AppData\Local\Temp\claude\C--Users-m-projects-work-nortam-claude-powershell-lsp\s\a.ps1'
+            (Get-DogfoodSourceBucket -File $slugTemp) | Should -BeExactly 'synthetic'
+        }
+        It 'a linked worktree path (pls-wt-000059) classifies as other-genuine, NOT canonical' {
+            (Get-DogfoodSourceBucket -File 'C:\Users\m\projects\work\nortam\pls-wt-000059\scripts\lsp-client.ps1') |
+                Should -BeExactly 'other-genuine'
+        }
+        It 'the hub demo recording (demo-take.ps1) classifies as other-genuine, NOT canonical' {
+            (Get-DogfoodSourceBucket -File 'C:\Users\m\projects\work\nortam\strategic-dispatch\projects\powershell-lsp\demo-take.ps1') |
+                Should -BeExactly 'other-genuine'
+        }
+        It 'an empty path classifies conservatively as other-genuine (never canonical)' {
+            (Get-DogfoodSourceBucket -File '') | Should -BeExactly 'other-genuine'
+        }
+    }
+
+    Context 'Get-DogfoodSourceSplit -- per-record occurrences + distinct shapes' {
+        It 'the known baseline else-bucket entries land as other-genuine (demo-take.ps1 x3 + pls-wt-000059)' {
+            # Mirrors the real cache log's non-canonical tail (per 000085): 3 hub-demo records and 1
+            # worktree record must bucket as other-genuine, with the canonical edits as canonical-
+            # checkout. This is the acceptance's named guard.
+            $canon = 'C:\Users\m\projects\work\nortam\claude-powershell-lsp\scripts\show-stats.ps1'
+            $demo = 'C:\Users\m\projects\work\nortam\strategic-dispatch\projects\powershell-lsp\demo-take.ps1'
+            $wtree = 'C:\Users\m\projects\work\nortam\pls-wt-000059\scripts\lsp-client.ps1'
+            $records = @(
+                (New-Rec -File $canon -Hash 'c1'), (New-Rec -File $canon -Hash 'c2'),
+                (New-Rec -File $demo -Hash 'd1'), (New-Rec -File $demo -Hash 'd1'), (New-Rec -File $demo -Hash 'd2'),
+                (New-Rec -File $wtree -Hash 'w1'))
+            $split = Get-DogfoodSourceSplit -Records $records
+            $split['canonical-checkout'].occurrences | Should -Be 2
+            $split['other-genuine'].occurrences | Should -Be 4      # 3 demo + 1 worktree
+            $split['synthetic'].occurrences | Should -Be 0
+            $split['other-genuine'].shapes | Should -Be 3           # d1, d2, w1 (d1 repeats)
+        }
+        It 'classifies PER RECORD, not per shape -- one hash across two files counts in both buckets' {
+            # hash collision across a canonical and a synthetic file: rule + line-shape can match in
+            # two files. A per-shape split would mis-attribute; per-record keeps each occurrence in
+            # its own file's bucket.
+            $records = @(
+                (New-Rec -File 'C:\Users\m\projects\work\nortam\claude-powershell-lsp\a.ps1' -Hash 'same'),
+                (New-Rec -File 'C:\Users\m\AppData\Local\Temp\claude\s\a.ps1' -Hash 'same'))
+            $split = Get-DogfoodSourceSplit -Records $records
+            $split['canonical-checkout'].occurrences | Should -Be 1
+            $split['synthetic'].occurrences | Should -Be 1
+            $split['canonical-checkout'].shapes | Should -Be 1
+            $split['synthetic'].shapes | Should -Be 1
+        }
+        It 'all three buckets are present even when empty (fixed display order)' {
+            $split = Get-DogfoodSourceSplit -Records @()
+            @($split.Keys) | Should -Be @('canonical-checkout', 'other-genuine', 'synthetic')
+            $split['synthetic'].occurrences | Should -Be 0
+        }
+    }
+
+    Context 'cache-path resolution -- discovered, never hardcoded' {
+        It 'Select-DogfoodCacheVersion picks the highest semantic version' {
+            $cands = @(
+                [pscustomobject]@{ Version = '1.9.0'; Path = 'p-1-9-0' },
+                [pscustomobject]@{ Version = '1.18.1'; Path = 'p-1-18-1' },
+                [pscustomobject]@{ Version = '1.10.0'; Path = 'p-1-10-0' })
+            # semantic (not lexical) ordering: 1.18.1 > 1.10.0 > 1.9.0.
+            (Select-DogfoodCacheVersion -Candidates $cands) | Should -BeExactly 'p-1-18-1'
+        }
+        It 'Select-DogfoodCacheVersion returns empty for no candidates' {
+            (Select-DogfoodCacheVersion -Candidates @()) | Should -BeExactly ''
+        }
+        It 'Get-DogfoodCacheLogPath rule 1: CLAUDE_PLUGIN_ROOT / -PluginRoot points straight at the log' {
+            $root = Join-Path $script:SrcDir 'installed'
+            $dir = Join-Path $root 'dogfood'
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $log = Join-Path $dir 'diagnostics.jsonl'
+            Set-Content -LiteralPath $log -Value '{"file":"x","hash":"h"}' -Encoding ascii
+            (Get-DogfoodCacheLogPath -PluginRoot $root) | Should -BeExactly $log
+        }
+        It 'Get-DogfoodCacheLogPath rule 2: discovers the versioned cache log under the cache tree' {
+            $cache = Join-Path $script:SrcDir 'cache'
+            $log = New-FakeCacheLog -CacheRoot $cache -Version '1.18.1'
+            (Get-DogfoodCacheLogPath -CacheRoot $cache) | Should -BeExactly $log
+        }
+        It 'NO HARDCODED VERSION: an arbitrary future version resolves, and the highest wins over 1.18.1' {
+            # The load-bearing proof for the acceptance: resolution is independent of any embedded
+            # version segment. A tree whose ONLY version is 9.9.9 resolves; add 1.18.1 and the
+            # discovery still returns the highest (2.0.0), never a baked-in 1.18.1.
+            $cache = Join-Path $script:SrcDir 'cache-arbitrary'
+            $only = New-FakeCacheLog -CacheRoot $cache -Version '9.9.9'
+            (Get-DogfoodCacheLogPath -CacheRoot $cache) | Should -BeExactly $only
+
+            $cache2 = Join-Path $script:SrcDir 'cache-multi'
+            New-FakeCacheLog -CacheRoot $cache2 -Version '1.18.1' | Out-Null
+            $newest = New-FakeCacheLog -CacheRoot $cache2 -Version '2.0.0'
+            (Get-DogfoodCacheLogPath -CacheRoot $cache2) | Should -BeExactly $newest
+        }
+        It 'Get-DogfoodCacheLogPath returns empty when no cache log exists' {
+            $empty = Join-Path $script:SrcDir 'no-cache'
+            New-Item -ItemType Directory -Force -Path $empty | Out-Null
+            (Get-DogfoodCacheLogPath -CacheRoot $empty) | Should -BeExactly ''
+        }
+        It 'the reader source carries no hardcoded 1.18.1 version literal (regression guard)' {
+            # 000084 warned the cache path must not bake in the observed 1.18.1. Adversarial control:
+            # hardcode 1.18.1 in the resolver and this goes RED.
+            $scriptPath = Join-Path $script:ScriptsDir 'review-dogfood.ps1'
+            (Get-Content -LiteralPath $scriptPath -Raw) | Should -Not -Match '1\.18\.1'
+        }
+    }
+
+    Context 'Test-DogfoodLogNonEmpty' {
+        It 'is false for a missing file' {
+            (Test-DogfoodLogNonEmpty -LogPath (Join-Path $script:SrcDir 'nope.jsonl')) | Should -BeFalse
+        }
+        It 'is false for an empty or whitespace-only file' {
+            $e = Join-Path $script:SrcDir 'empty.jsonl'; Set-Content -LiteralPath $e -Value '' -Encoding ascii
+            (Test-DogfoodLogNonEmpty -LogPath $e) | Should -BeFalse
+        }
+        It 'is true once the file has a non-blank line' {
+            $f = Join-Path $script:SrcDir 'one.jsonl'; Set-Content -LiteralPath $f -Value '{"hash":"h"}' -Encoding ascii
+            (Test-DogfoodLogNonEmpty -LogPath $f) | Should -BeTrue
+        }
+    }
+
+    Context 'Resolve-DogfoodLogSource -- -Source semantics + effective label' {
+        It '-Path wins over -Source and is honored verbatim' {
+            $r = Resolve-DogfoodLogSource -Source 'cache' -Path 'C:\explicit\df.jsonl'
+            $r.LogPath | Should -BeExactly 'C:\explicit\df.jsonl'
+            $r.Effective | Should -BeExactly 'path'
+        }
+        It 'checkout reuses the UNCHANGED write-side resolver (Get-DogfoodLogPath) READ-ONLY' {
+            # The read-side/write-side boundary: the reader's checkout source is exactly the hook's
+            # own resolver, driven here via its documented override seam.
+            $env:POWERSHELL_LSP_DOGFOOD_LOG = 'C:\co\df.jsonl'
+            $r = Resolve-DogfoodLogSource -Source 'checkout'
+            $r.LogPath | Should -BeExactly (Get-DogfoodLogPath)
+            $r.LogPath | Should -BeExactly 'C:\co\df.jsonl'
+            $r.Effective | Should -BeExactly 'checkout'
+        }
+        It 'cache resolves the discovered cache log' {
+            $cache = Join-Path $script:SrcDir 'cache'
+            $log = New-FakeCacheLog -CacheRoot $cache -Version '1.18.1'
+            $r = Resolve-DogfoodLogSource -Source 'cache' -CacheRoot $cache
+            $r.LogPath | Should -BeExactly $log
+            $r.Effective | Should -BeExactly 'cache'
+        }
+        It 'auto prefers a NON-EMPTY cache log (Effective auto->cache)' {
+            $cache = Join-Path $script:SrcDir 'cache'
+            $log = New-FakeCacheLog -CacheRoot $cache -Version '1.18.1' -Lines @('{"file":"x","hash":"h"}')
+            $env:POWERSHELL_LSP_DOGFOOD_LOG = 'C:\co\df.jsonl'   # checkout would resolve here
+            $r = Resolve-DogfoodLogSource -Source 'auto' -CacheRoot $cache
+            $r.LogPath | Should -BeExactly $log
+            $r.Effective | Should -BeExactly 'auto->cache'
+        }
+        It 'auto falls back to checkout when the cache log is absent/empty (Effective auto->checkout)' {
+            $empty = Join-Path $script:SrcDir 'no-cache'
+            New-Item -ItemType Directory -Force -Path $empty | Out-Null
+            $env:POWERSHELL_LSP_DOGFOOD_LOG = 'C:\co\df.jsonl'
+            $r = Resolve-DogfoodLogSource -Source 'auto' -CacheRoot $empty
+            $r.LogPath | Should -BeExactly 'C:\co\df.jsonl'
+            $r.Effective | Should -BeExactly 'auto->checkout'
+        }
+    }
+
+    Context 'Resolve-DogfoodPaths -- annotations beside the resolved log + Source field' {
+        It 'surfaces the effective Source and puts annotations beside the resolved log' {
+            $log = Join-Path $script:SrcDir 'diagnostics.jsonl'
+            $r = Resolve-DogfoodPaths -Path $log
+            $r.LogPath | Should -BeExactly $log
+            $r.Source | Should -BeExactly 'path'
+            $r.AnnotationsPath | Should -BeExactly (Join-Path $script:SrcDir 'annotations.jsonl')
+        }
+        It 'honors an explicit -AnnotationsPath' {
+            $log = Join-Path $script:SrcDir 'diagnostics.jsonl'
+            $ann = Join-Path $script:SrcDir 'custom-ann.jsonl'
+            (Resolve-DogfoodPaths -Path $log -AnnotationsPath $ann).AnnotationsPath | Should -BeExactly $ann
+        }
+    }
+}
+
 Describe 'Diagnostics ordering and dedupe (Select-OrderedDiagnostics)' {
     It 'sorts by severity then line and dedupes identical findings' {
         $recs = @(

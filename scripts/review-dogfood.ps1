@@ -47,6 +47,8 @@
 #   pwsh -File scripts/review-dogfood.ps1 -Review              # interactive verdict loop
 #   pwsh -File scripts/review-dogfood.ps1 -Hash <h> -Verdict false-positive -Rationale '...'
 #   pwsh -File scripts/review-dogfood.ps1 -Path X -AnnotationsPath Y   # explicit files
+#   pwsh -File scripts/review-dogfood.ps1 -Source cache         # force the installed cache log
+#   pwsh -File scripts/review-dogfood.ps1 -Source checkout      # force the running-tree log
 #
 # Exit 0 on success (including an empty log). Throws (non-zero) only on a genuine write failure
 # of an explicit annotation. Dot-source safe: dot-sourcing defines the functions without running
@@ -55,9 +57,23 @@
 # Author: Mike Andersen / powershell-lsp plugin.
 
 param(
-    # Explicit diagnostics.jsonl to read. Default: Get-DogfoodLogPath (the plugin-tree log,
-    # honoring the POWERSHELL_LSP_DOGFOOD_LOG override exactly as capture does).
+    # Explicit diagnostics.jsonl to read. Overrides -Source entirely (honored verbatim). Default
+    # empty -- the log is then chosen by -Source below.
     [string] $Path = '',
+
+    # WHICH dogfood log the reader reads (dispatch 000088). READ-SIDE only -- this NEVER affects
+    # where the hook WRITES (Get-DogfoodLogPath's write-side is untouched):
+    #   auto      (default) the INSTALLED marketplace-cache log when it exists and is non-empty --
+    #             the log the LIVE hook writes to under normal installed use -- else the running-
+    #             tree (checkout) log. So a review run FROM the dev checkout stops seeing ZERO of
+    #             the real captures.
+    #   cache     force the installed marketplace-cache log (the versioned path is DISCOVERED, never
+    #             hardcoded; follows CLAUDE_PLUGIN_ROOT when set).
+    #   checkout  force the running-tree log (the pre-000088 behavior: Get-DogfoodLogPath, reused
+    #             READ-ONLY).
+    # -Path always wins over -Source.
+    [ValidateSet('auto', 'cache', 'checkout')]
+    [string] $Source = 'auto',
 
     # Explicit annotations.jsonl to read/write. Default: annotations.jsonl beside the log.
     [string] $AnnotationsPath = '',
@@ -254,6 +270,59 @@ function Get-DogfoodSummary {
 }
 
 # ===========================================================================
+# Source split (dispatch 000088) -- an ADDED bucketing DIMENSION over the capture `file` path,
+# ALONGSIDE the existing shape-hash / verdict / ruleId bucketing (which is left intact). Lifts the
+# 000066/000084 inline path-pattern logic into this committed reader as the single source of truth,
+# so the quality wave can tell real canonical source from worktrees/demos and from synthetic
+# fixtures. That split lived only inside dispatch custom_checks before; here it is reusable tooling.
+# ===========================================================================
+
+function Get-DogfoodSourceBucket {
+    # Classify ONE capture record's `file` into the source dimension. Three buckets:
+    #   synthetic          harness build-temp and Pester fixture data ('*Temp?claude*',
+    #                      '*psls-pester-data*'). Checked FIRST so a temp path that embeds the
+    #                      mangled repo slug (e.g. ...\Temp\claude\C--...-nortam-claude-powershell-lsp\...)
+    #                      cannot leak into the canonical bucket.
+    #   canonical-checkout an edit of the real canonical checkout ('*nortam?claude-powershell-lsp?*').
+    #   other-genuine      any other real path -- linked worktrees (pls-wt-*), the hub demo
+    #                      recording, other repos -- AND the conservative default for an ambiguous
+    #                      or empty path (dispatch 000088: never guess a path INTO canonical).
+    # '?' is the single-char wildcard for the path separator, so every pattern matches '\' and '/'
+    # alike: Windows captures carry '\', while the reader's own tests build paths with the platform
+    # separator, so the classifier stays correct on all four CI legs (the 000044 portability lesson).
+    param([string] $File)
+    $f = [string]$File
+    if ([string]::IsNullOrWhiteSpace($f)) { return 'other-genuine' }
+    if (($f -like '*Temp?claude*') -or ($f -like '*psls-pester-data*')) { return 'synthetic' }
+    if ($f -like '*nortam?claude-powershell-lsp?*') { return 'canonical-checkout' }
+    return 'other-genuine'
+}
+
+function Get-DogfoodSourceSplit {
+    # The source-dimension tally. Classify EACH capture record's `file` PER-RECORD (not per-shape):
+    # a shape-hash is (ruleId + normalized line), so the same hash can occur across two files, and a
+    # per-shape classification would mis-attribute one file's occurrences to the other's bucket.
+    # Counts occurrences (raw records) and distinct shapes (by hash) per bucket. Returns an ordered
+    # map bucket -> { occurrences; shapes } with all three buckets present (even at zero), in a fixed
+    # display order. Pure; no I/O. The shape-hash / verdict / ruleId bucketing is untouched.
+    param([object[]] $Records)
+    $out = [ordered]@{}
+    $seen = @{}
+    foreach ($b in @('canonical-checkout', 'other-genuine', 'synthetic')) {
+        $out[$b] = [pscustomobject]@{ occurrences = 0; shapes = 0 }
+        $seen[$b] = @{}
+    }
+    foreach ($r in @($Records)) {
+        $bucket = Get-DogfoodSourceBucket -File ([string](Get-Prop $r 'file'))
+        $out[$bucket].occurrences++
+        $h = [string](Get-Prop $r 'hash')
+        if ([string]::IsNullOrWhiteSpace($h)) { $h = '(no-hash)' }
+        if (-not $seen[$bucket].ContainsKey($h)) { $seen[$bucket][$h] = $true; $out[$bucket].shapes++ }
+    }
+    return $out
+}
+
+# ===========================================================================
 # Pure persistence model -- build + locate + append annotations. Keyed on the shape-hash.
 # ===========================================================================
 
@@ -379,11 +448,15 @@ function Format-DogfoodShape {
 }
 
 function Format-DogfoodSummary {
-    # The ranked readout (counts by verdict, annotation coverage, top actionable rules) as a
-    # joined string, in the show-stats.ps1 idiom. $LogPath is echoed so the readout is self-locating.
-    param($Summary, [string] $LogPath = '')
+    # The ranked readout (counts by verdict, annotation coverage, the source split, and top
+    # actionable rules) as a joined string, in the show-stats.ps1 idiom. $LogPath (and the effective
+    # $SourceLabel, dispatch 000088) are echoed so the readout is self-locating. $SourceSplit, when
+    # provided, renders the added source dimension; omitting it keeps the pre-000088 readout.
+    param($Summary, [string] $LogPath = '', $SourceSplit = $null, [string] $SourceLabel = '')
     $lines = @()
-    $lines += ('powershell-lsp dogfood review -- ' + $LogPath)
+    $header = 'powershell-lsp dogfood review -- ' + $LogPath
+    if (-not [string]::IsNullOrWhiteSpace($SourceLabel)) { $header += ('  [source: ' + $SourceLabel + ']') }
+    $lines += $header
     if ([int]$Summary.totalShapes -eq 0) {
         $lines += '  no diagnostics captured yet (edit some PowerShell with the plugin enabled, then re-run).'
         return ($lines -join [Environment]::NewLine)
@@ -391,6 +464,16 @@ function Format-DogfoodSummary {
     $lines += ('  shapes: ' + $Summary.totalShapes + ' distinct   occurrences: ' + $Summary.totalOccurrences)
     $lines += ('  coverage: ' + $Summary.annotatedShapes + '/' + $Summary.totalShapes +
         ' shapes annotated (' + $Summary.coveragePct + '%)   pending: ' + $Summary.pendingShapes)
+    if ($null -ne $SourceSplit) {
+        $lines += ''
+        $lines += ('  {0,-20} {1,-8} {2}' -f 'by source', 'occ', 'shapes')
+        foreach ($b in @('canonical-checkout', 'other-genuine', 'synthetic')) {
+            $row = $SourceSplit[$b]
+            $occ = if ($null -ne $row) { [int]$row.occurrences } else { 0 }
+            $shp = if ($null -ne $row) { [int]$row.shapes } else { 0 }
+            $lines += ('  {0,-20} {1,-8} {2}' -f $b, $occ, $shp)
+        }
+    }
     $lines += ''
     $lines += ('  {0,-16} {1,-8} {2}' -f 'verdict', 'shapes', 'occurrences')
     foreach ($v in $script:DogfoodVerdicts) {
@@ -412,17 +495,142 @@ function Format-DogfoodSummary {
 }
 
 # ===========================================================================
+# Reader-side log-source resolution (dispatch 000088). The reader can read a DIFFERENT log than
+# the running tree's: under normal installed use the LIVE hook writes to the INSTALLED
+# marketplace-cache log (Claude Code sets CLAUDE_PLUGIN_ROOT to the cache tree), so a review run
+# from the dev checkout would otherwise resolve the EMPTY checkout log and see zero real captures.
+#
+# THE READ-SIDE / WRITE-SIDE BOUNDARY (load-bearing): the hook's capture/write path is UNCHANGED --
+# Add-DiagnosticCaptureEntries still calls Get-DogfoodLogPath (lib/lsp-common.ps1), whose write-side
+# resolution is byte-for-byte untouched. This reader adds NEW discovery (Get-DogfoodCacheLogPath)
+# and, for the 'checkout' source, REUSES Get-DogfoodLogPath in a READ-ONLY context. Nothing here
+# changes where the hook writes.
+# ===========================================================================
+
+function Get-DefaultPluginCacheRoot {
+    # The Claude Code plugin cache root: <home>/.claude/plugins/cache. Home is $env:USERPROFILE on
+    # Windows, else $env:HOME. Returns '' when home cannot be resolved. No hardcoded user or version.
+    $homeDir = if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) { $env:USERPROFILE }
+        elseif (-not [string]::IsNullOrWhiteSpace($env:HOME)) { $env:HOME }
+        else { '' }
+    if ([string]::IsNullOrWhiteSpace($homeDir)) { return '' }
+    return (Join-Path $homeDir '.claude/plugins/cache')
+}
+
+function ConvertTo-CacheVersionKey {
+    # A comparable [version] for a cache dir name. Parses '1.2.3' and the like; a non-semver name
+    # yields 0.0.0 so any real version outranks it (the lexical tiebreak in Select-DogfoodCacheVersion
+    # then decides among non-semver names). Pure -- the version is DERIVED from the name, never a
+    # literal. TryParse keeps a junk dir name from throwing.
+    param([string] $Text)
+    $v = $null
+    if ([System.Version]::TryParse([string]$Text, [ref] $v)) { return $v }
+    return ([System.Version]'0.0.0')
+}
+
+function Select-DogfoodCacheVersion {
+    # Pick the CURRENT installed cache log from candidate { Version; Path } objects: the greatest by
+    # SEMANTIC version, breaking ties by lexically-greatest name. The version segment is thus chosen
+    # deterministically and DISCOVERED from disk, never hardcoded -- so a fresh install at any future
+    # version resolves with no code change. Returns the chosen .Path, or '' for no candidates. Pure.
+    param([object[]] $Candidates)
+    $c = @($Candidates)
+    if ($c.Count -eq 0) { return '' }
+    $sorted = @($c | Sort-Object `
+            @{ Expression = { ConvertTo-CacheVersionKey ([string]$_.Version) }; Descending = $true }, `
+            @{ Expression = { [string]$_.Version }; Descending = $true })
+    return [string]$sorted[0].Path
+}
+
+function Get-DogfoodCacheLogPath {
+    # READER-SIDE discovery of the INSTALLED marketplace-cache dogfood log -- independent of where
+    # THIS reader runs from. Resolution rule (NO hardcoded version):
+    #   1. CLAUDE_PLUGIN_ROOT (or -PluginRoot) when set -- Claude Code sets it for plugin
+    #      subprocesses, the authoritative pointer at the running plugin tree. Use
+    #      <root>/dogfood/diagnostics.jsonl when that file exists.
+    #   2. else discover under the plugin cache tree
+    #        <cache-root>/<marketplace>/powershell-lsp/<version>/dogfood/diagnostics.jsonl
+    #      and choose the CURRENT <version> deterministically (Select-DogfoodCacheVersion: the
+    #      highest semantic version that actually carries a log). <marketplace> and <version> are
+    #      both discovered from disk; only the fixed plugin-name segment 'powershell-lsp' is literal.
+    # Returns '' when no installed cache log can be found. A read-only locator -- its only I/O is
+    # Test-Path / Get-ChildItem; it never writes and never touches the hook write-side.
+    param([string] $PluginRoot = '', [string] $CacheRoot = '')
+    $root = if (-not [string]::IsNullOrWhiteSpace($PluginRoot)) { $PluginRoot } else { $env:CLAUDE_PLUGIN_ROOT }
+    if (-not [string]::IsNullOrWhiteSpace($root)) {
+        $direct = Join-Path $root 'dogfood/diagnostics.jsonl'
+        if (Test-Path -LiteralPath $direct -PathType Leaf) { return $direct }
+    }
+    $cacheDir = if (-not [string]::IsNullOrWhiteSpace($CacheRoot)) { $CacheRoot } else { Get-DefaultPluginCacheRoot }
+    if ([string]::IsNullOrWhiteSpace($cacheDir) -or -not (Test-Path -LiteralPath $cacheDir)) { return '' }
+    $found = New-Object System.Collections.Generic.List[object]
+    foreach ($mk in @(Get-ChildItem -LiteralPath $cacheDir -Directory -ErrorAction SilentlyContinue)) {
+        $pluginDir = Join-Path $mk.FullName 'powershell-lsp'
+        if (-not (Test-Path -LiteralPath $pluginDir -PathType Container)) { continue }
+        foreach ($ver in @(Get-ChildItem -LiteralPath $pluginDir -Directory -ErrorAction SilentlyContinue)) {
+            $log = Join-Path $ver.FullName 'dogfood/diagnostics.jsonl'
+            if (Test-Path -LiteralPath $log -PathType Leaf) {
+                $found.Add([pscustomobject]@{ Version = $ver.Name; Path = $log })
+            }
+        }
+    }
+    return (Select-DogfoodCacheVersion -Candidates $found.ToArray())
+}
+
+function Test-DogfoodLogNonEmpty {
+    # $true iff the log exists and holds at least one non-blank line. -Source auto uses this to prefer
+    # the cache log only when it actually carries captures (else fall back to the checkout log).
+    param([string] $LogPath)
+    if ([string]::IsNullOrWhiteSpace($LogPath) -or -not (Test-Path -LiteralPath $LogPath)) { return $false }
+    foreach ($line in @(Get-Content -LiteralPath $LogPath -ErrorAction SilentlyContinue)) {
+        if (-not [string]::IsNullOrWhiteSpace($line)) { return $true }
+    }
+    return $false
+}
+
+function Resolve-DogfoodLogSource {
+    # Resolve WHICH log the reader reads, per -Source (dispatch 000088), plus the effective source
+    # label (what 'auto' actually chose, for a self-locating readout). READ-SIDE only. Returns
+    # { LogPath; Effective }:
+    #   -Path <file>  wins over -Source -- honored verbatim (Effective 'path').
+    #   cache         -> Get-DogfoodCacheLogPath (installed marketplace-cache log).
+    #   checkout      -> Get-DogfoodLogPath (the write-side resolver, reused READ-ONLY, unchanged).
+    #   auto          -> the cache log when it exists and is non-empty, else the checkout log.
+    param([string] $Source = 'auto', [string] $Path = '', [string] $CacheRoot = '')
+    if (-not [string]::IsNullOrWhiteSpace($Path)) {
+        return [pscustomobject]@{ LogPath = $Path; Effective = 'path' }
+    }
+    switch ($Source) {
+        'cache' {
+            return [pscustomobject]@{ LogPath = (Get-DogfoodCacheLogPath -CacheRoot $CacheRoot); Effective = 'cache' }
+        }
+        'checkout' {
+            return [pscustomobject]@{ LogPath = (Get-DogfoodLogPath); Effective = 'checkout' }
+        }
+        default {
+            $cache = Get-DogfoodCacheLogPath -CacheRoot $CacheRoot
+            if (Test-DogfoodLogNonEmpty -LogPath $cache) {
+                return [pscustomobject]@{ LogPath = $cache; Effective = 'auto->cache' }
+            }
+            return [pscustomobject]@{ LogPath = (Get-DogfoodLogPath); Effective = 'auto->checkout' }
+        }
+    }
+}
+
+# ===========================================================================
 # Compose -- load the log + annotations, then list / summarize / review / write. Separated from
 # the entry point so a caller can drive it programmatically.
 # ===========================================================================
 
 function Resolve-DogfoodPaths {
-    # Resolve the (log, annotations) path pair from the explicit params, falling back to
-    # Get-DogfoodLogPath and the sibling annotations file. Returns a 2-field object.
-    param([string] $Path = '', [string] $AnnotationsPath = '')
-    $logPath = if (-not [string]::IsNullOrWhiteSpace($Path)) { $Path } else { Get-DogfoodLogPath }
+    # Resolve the (log, annotations) path pair plus the effective source label. The LOG is chosen by
+    # -Source (dispatch 000088): explicit -Path wins, else 'auto' prefers the installed cache log,
+    # else 'cache'/'checkout' force one. Annotations default to the sibling file beside the log.
+    param([string] $Path = '', [string] $AnnotationsPath = '', [string] $Source = 'auto')
+    $resolved = Resolve-DogfoodLogSource -Source $Source -Path $Path
+    $logPath = $resolved.LogPath
     $annPath = if (-not [string]::IsNullOrWhiteSpace($AnnotationsPath)) { $AnnotationsPath } else { Get-DogfoodAnnotationsPath -LogPath $logPath }
-    return [pscustomobject]@{ LogPath = $logPath; AnnotationsPath = $annPath }
+    return [pscustomobject]@{ LogPath = $logPath; AnnotationsPath = $annPath; Source = $resolved.Effective }
 }
 
 function Invoke-DogfoodReview {
@@ -463,16 +671,18 @@ function Invoke-DogfoodReview {
 }
 
 function Show-DogfoodListing {
-    # Read-only render: the summary, then the pending (or, with -All, every) shape. Returns the
-    # joined string so tests can assert on it without capturing host output.
-    param([string] $LogPath, [string] $AnnotationsPath, [switch] $All, [switch] $Redact, [switch] $SummaryOnly)
+    # Read-only render: the summary (with the dispatch 000088 source split), then the pending (or,
+    # with -All, every) shape. Returns the joined string so tests can assert on it without capturing
+    # host output. $SourceLabel is the effective source ('auto->cache' etc.) echoed in the header.
+    param([string] $LogPath, [string] $AnnotationsPath, [switch] $All, [switch] $Redact, [switch] $SummaryOnly, [string] $SourceLabel = '')
     $records = Read-DogfoodLog -LogPath $LogPath
     $shapes = Get-DogfoodShapes -Records $records
     $ann = Read-DogfoodAnnotations -AnnotationsPath $AnnotationsPath
     $summary = Get-DogfoodSummary -Shapes $shapes -Annotations $ann
+    $sourceSplit = Get-DogfoodSourceSplit -Records $records
 
     $blocks = @()
-    $blocks += (Format-DogfoodSummary -Summary $summary -LogPath $LogPath)
+    $blocks += (Format-DogfoodSummary -Summary $summary -LogPath $LogPath -SourceSplit $sourceSplit -SourceLabel $SourceLabel)
     if ($SummaryOnly -or [int]$summary.totalShapes -eq 0) { return ($blocks -join [Environment]::NewLine) }
 
     $toShow = if ($All) { @($shapes) } else { @(Get-DogfoodPendingShapes -Shapes $shapes -Annotations $ann) }
@@ -503,7 +713,7 @@ if ($MyInvocation.InvocationName -ne '.') {
     Set-StrictMode -Version Latest
     $ErrorActionPreference = 'Stop'
 
-    $paths = Resolve-DogfoodPaths -Path $Path -AnnotationsPath $AnnotationsPath
+    $paths = Resolve-DogfoodPaths -Path $Path -AnnotationsPath $AnnotationsPath -Source $Source
 
     # Explicit write action: -Hash + -Verdict.
     if (-not [string]::IsNullOrWhiteSpace($Hash) -or -not [string]::IsNullOrWhiteSpace($Verdict)) {
@@ -525,6 +735,6 @@ if ($MyInvocation.InvocationName -ne '.') {
 
     # Default: read-only listing (+ summary), or summary only.
     Write-Host (Show-DogfoodListing -LogPath $paths.LogPath -AnnotationsPath $paths.AnnotationsPath `
-            -All:$All -Redact:$Redact -SummaryOnly:$Summary)
+            -All:$All -Redact:$Redact -SummaryOnly:$Summary -SourceLabel $paths.Source)
     exit 0
 }
