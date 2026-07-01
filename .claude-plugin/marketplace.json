@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Real-time PowerShell diagnostics for Claude Code -- standalone distribution of the powershell-lsp plugin.",
-    "version": "1.20.0"
+    "version": "1.21.0"
   },
   "plugins": [
     {
