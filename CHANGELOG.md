@@ -29,7 +29,7 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
-## [Unreleased]
+## [1.21.1] - 2026-07-01
 PATCH: **Curate the opt-in `base` ruleset -- remove three survey-measured noisy rules so `base` is
 quieter on real code, with the default `pses-default` surface byte-for-byte unchanged**. The 000091
 quality wave ran the base ruleset whole-file over a 34-file known-good false-positive oracle plus the
