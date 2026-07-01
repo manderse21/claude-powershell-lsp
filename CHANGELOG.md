@@ -29,7 +29,7 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
-## [Unreleased]
+## [1.21.0] - 2026-06-30
 MINOR: **Opt-in broadened live surface -- a new `ruleset` knob and a plugin-owned, explicitly
 enumerated base ruleset that surfaces PSScriptAnalyzer's default-on rules (including three
 Error-severity security rules) on the live edit path, with the default surface byte-for-byte
