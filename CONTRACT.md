@@ -55,6 +55,7 @@ change rules, not a second copy of the prose.
 | `scopeToEdit` | scope diagnostics to the edited lines |
 | `editContextLines` | context lines around the touched range |
 | `formatOnEdit` | format-on-edit suggestion mode (off by default) |
+| `ruleset` | live diagnostics ruleset tier (`pses-default` by default; `base` opt-in) |
 
 <!-- FROZEN-KNOBS:END -->
 
@@ -268,6 +269,29 @@ cold. None is a contract change; each is banked here deliberately.
   **`apply`** mode could be added as an additive enum value **without** a breaking knob change; no apply
   path ships today, and `apply` is treated as `off`. No new status token and no second PSSA acquisition
   path: the suggestion rides the existing surface, and the vendored pinned-hash PSSA is reused.
+- **`ruleset` knob (DELIBERATE MINOR amendment) -- dispatch 000087.** A new optional, defaulted
+  userConfig knob, `ruleset`, was added to the manifest (and so to the FROZEN-KNOBS table above, which
+  the drift-guard validates). This is the contract-relevant event the freeze exists to record: a new knob
+  is a **deliberate, documented MINOR**, not a silent drift -- the table row IS the amendment, and the
+  guard passes **because** the contract was updated, not bypassed. The knob's **default is `pses-default`**,
+  and with it at the default the diagnostics surface and all behavior are **byte-for-byte unchanged**: the
+  live path keeps PSES's own built-in no-settings rule set (the ~15-rule allow-list) and no plugin base
+  ruleset is ever resolved. When `base`, and ONLY when no repo-local `PSScriptAnalyzerSettings.psd1` and no
+  explicit `settingsPath` resolve first, the plugin's shipped, **explicitly enumerated** base ruleset
+  (`rulesets/base.psd1`) is applied, broadening the live surface to PSScriptAnalyzer's default-on set minus
+  the compatibility-profile rules (surfacing e.g. `PSAvoidUsingWriteHost` and the three Error-severity
+  security rules). **Precedence (authoritative for the user), highest wins:** explicit `settingsPath` >
+  discovered repo-local `PSScriptAnalyzerSettings.psd1` (000018) > the plugin base (only when
+  `ruleset=base`) > PSES's 15-rule no-settings default (when `ruleset=pses-default`). A repo-local settings
+  file or an explicit override ALWAYS wins over the base -- the base only fills the gap. The knob is an
+  **enum** (`pses-default` | `base`, default `pses-default`), shaped so future curated / AI-era rule tiers
+  can be added as additive enum values **without** a breaking knob change. **The default is not flipped in
+  this dispatch** (the broadened surface must not activate on upgrade for anyone who does not opt in -- an
+  evidence-backed default-flip is a later dispatch). No new status token and no second PSSA acquisition
+  path: the base is resolved through the existing settings-path channel, and the vendored pinned-hash PSSA
+  (000046 L2) is reused unchanged. Because the base **enumerates** its rules rather than using
+  `IncludeDefaultRules = $true`, a vendored-PSSA pin bump is a deliberate, reviewed regeneration
+  (`scripts/regen-base-ruleset.ps1`), never a silent shift of the surfaced set.
 
 ---
 

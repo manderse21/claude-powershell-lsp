@@ -794,6 +794,133 @@ Describe 'Resolve-PssaSettingsPath -- honor PSScriptAnalyzerSettings.psd1 (dispa
     }
 }
 
+Describe 'Resolve-PssaSettingsPath -- opt-in ruleset=base fallback + four precedence levels (dispatch 000087)' {
+    # The 'ruleset' knob selects the fallback ONLY when no explicit override and no repo-local
+    # PSScriptAnalyzerSettings.psd1 resolve first. These prove all four precedence levels the
+    # dispatch requires, at the resolver -- the single place the fallback is decided:
+    #   L1 default-unchanged  : pses-default (and the default) -> '' (PSES 15-rule fallback).
+    #   L2 base-broadens      : ruleset=base, no repo-local, no override -> the shipped base.
+    #   L3 repo-local-wins    : a discovered PSScriptAnalyzerSettings.psd1 wins over the base.
+    #   L4 settingsPath-wins  : an explicit absolute override wins over base AND repo-local.
+    BeforeAll {
+        $script:R87Root = Join-Path $TestDrive 'proj87'
+        $script:R87Sub = Join-Path $script:R87Root 'src'
+        New-Item -ItemType Directory -Force -Path $script:R87Sub | Out-Null
+        $script:R87Edit = Join-Path $script:R87Sub 'edited.ps1'
+        Set-Content -LiteralPath $script:R87Edit -Value 'Get-Process' -Encoding ascii
+        $script:R87RepoCfg = Join-Path $script:R87Root 'PSScriptAnalyzerSettings.psd1'
+        $script:BaseShipped = Get-PluginBaseSettingsPath
+    }
+    AfterEach {
+        Remove-Item -LiteralPath $script:R87RepoCfg -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'the shipped base ruleset resolves from the plugin tree (Get-PluginBaseSettingsPath)' {
+        $script:BaseShipped | Should -Not -BeNullOrEmpty
+        [System.IO.Path]::IsPathRooted($script:BaseShipped) | Should -BeTrue
+        (Split-Path -Leaf $script:BaseShipped) | Should -BeExactly 'base.psd1'
+        Test-Path -LiteralPath $script:BaseShipped -PathType Leaf | Should -BeTrue
+    }
+    It 'L1 default-unchanged: pses-default (and the omitted default) returns empty -- the PSES 15-rule path' {
+        # Adversarial control: this is the byte-for-byte pre-000087 behavior; if the fallback
+        # ever returned the base for pses-default, the default surface would broaden -> RED.
+        Resolve-PssaSettingsPath -EditedFilePath $script:R87Edit -ProjectRoot $script:R87Root | Should -BeExactly ''
+        Resolve-PssaSettingsPath -EditedFilePath $script:R87Edit -ProjectRoot $script:R87Root -Ruleset 'pses-default' | Should -BeExactly ''
+    }
+    It 'L2 base-broadens: ruleset=base with no repo-local and no override resolves the shipped base' {
+        Resolve-PssaSettingsPath -EditedFilePath $script:R87Edit -ProjectRoot $script:R87Root -Ruleset 'base' |
+            Should -BeExactly $script:BaseShipped
+    }
+    It 'L3 repo-local-wins: a discovered PSScriptAnalyzerSettings.psd1 wins over the base' {
+        Set-Content -LiteralPath $script:R87RepoCfg -Value '@{}' -Encoding ascii
+        $r = Resolve-PssaSettingsPath -EditedFilePath $script:R87Edit -ProjectRoot $script:R87Root -Ruleset 'base'
+        $r | Should -BeExactly ([System.IO.Path]::GetFullPath($script:R87RepoCfg))
+        $r | Should -Not -Be $script:BaseShipped
+    }
+    It 'L4 settingsPath-wins: an explicit absolute override wins over the base AND a repo-local file' {
+        Set-Content -LiteralPath $script:R87RepoCfg -Value '@{}' -Encoding ascii
+        $ovr = Join-Path (Join-Path $TestDrive 'elsewhere87') 'custom.psd1'
+        Resolve-PssaSettingsPath -EditedFilePath $script:R87Edit -ProjectRoot $script:R87Root -Override $ovr -Ruleset 'base' |
+            Should -BeExactly ([System.IO.Path]::GetFullPath($ovr))
+    }
+    It 'an unknown ruleset value degrades to the PSES default (no base, no throw)' {
+        Resolve-PssaSettingsPath -EditedFilePath $script:R87Edit -ProjectRoot $script:R87Root -Ruleset 'nonsense' | Should -BeExactly ''
+    }
+}
+
+Describe 'base.psd1 is NOT auto-discovered as a repo-local settings file (dispatch 000087 guard)' {
+    # The shipped base ruleset is named base.psd1, NOT PSScriptAnalyzerSettings.psd1, so the
+    # repo-local discovery walk-up (which matches only that exact name) never selects it --
+    # shipping it inside the plugin tree cannot change the plugin's own repo lint surface.
+    It 'a file literally named base.psd1 in the project tree is ignored by discovery (pses-default -> empty)' {
+        $root = Join-Path $TestDrive 'guard1'
+        $sub = Join-Path $root 'src'; New-Item -ItemType Directory -Force -Path $sub | Out-Null
+        Set-Content -LiteralPath (Join-Path $root 'base.psd1') -Value '@{}' -Encoding ascii
+        Set-Content -LiteralPath (Join-Path $sub 'base.psd1') -Value '@{}' -Encoding ascii
+        $edit = Join-Path $sub 'x.ps1'; Set-Content -LiteralPath $edit -Value 'Get-Process' -Encoding ascii
+        Resolve-PssaSettingsPath -EditedFilePath $edit -ProjectRoot $root | Should -BeExactly ''
+    }
+    It 'under ruleset=base, a local base.psd1 in the tree is NOT selected as repo-local -- the SHIPPED base is used' {
+        $root = Join-Path $TestDrive 'guard2'
+        $sub = Join-Path $root 'src'; New-Item -ItemType Directory -Force -Path $sub | Out-Null
+        $localBase = Join-Path $sub 'base.psd1'
+        Set-Content -LiteralPath $localBase -Value '@{}' -Encoding ascii
+        $edit = Join-Path $sub 'x.ps1'; Set-Content -LiteralPath $edit -Value 'Get-Process' -Encoding ascii
+        $r = Resolve-PssaSettingsPath -EditedFilePath $edit -ProjectRoot $root -Ruleset 'base'
+        $r | Should -BeExactly (Get-PluginBaseSettingsPath)
+        $r | Should -Not -Be ([System.IO.Path]::GetFullPath($localBase))
+    }
+}
+
+Describe 'rulesets/base.psd1 -- enumerated, deterministic base ruleset (dispatch 000087)' {
+    # The base ENUMERATES its rules explicitly (not IncludeDefaultRules=$true) so the surfaced
+    # set is pin-independent and a pin bump is a deliberate regeneration. These guard the
+    # shipped file's content directly (parse only -- no PSScriptAnalyzer needed, so they run on
+    # every leg): the security rules are in, the formatting/compat rules are out, no duplicates.
+    BeforeAll {
+        $script:BaseFile = Join-Path $script:PluginRoot 'rulesets/base.psd1'
+        $script:BaseData = Import-PowerShellDataFile -LiteralPath $script:BaseFile
+        $script:BaseRules = @($script:BaseData['IncludeRules'])
+    }
+    It 'exists and parses as a settings hashtable with a non-empty IncludeRules array' {
+        Test-Path -LiteralPath $script:BaseFile -PathType Leaf | Should -BeTrue
+        $script:BaseData.ContainsKey('IncludeRules') | Should -BeTrue
+        $script:BaseRules.Count | Should -BeGreaterThan 0
+    }
+    It 'enumerates explicitly -- NOT a bare IncludeDefaultRules (the determinism property)' {
+        # Adversarial control: switch base.psd1 to IncludeDefaultRules=$true and this goes RED.
+        $script:BaseData.ContainsKey('IncludeDefaultRules') | Should -BeFalse
+    }
+    It 'ships exactly the derived rule count at the current pin (57 at PSScriptAnalyzer 1.25.0)' {
+        # Pin-coupled by design: a pinned-analyzer bump regenerates the base
+        # (scripts/regen-base-ruleset.ps1) and updates this count in the same reviewed diff.
+        $script:BaseRules.Count | Should -Be 57
+    }
+    It 'includes the three Error-severity security rules and a Write-Host-class rule' {
+        foreach ($r in @(
+                'PSAvoidUsingComputerNameHardcoded',
+                'PSAvoidUsingConvertToSecureStringWithPlainText',
+                'PSAvoidUsingUsernameAndPasswordParams',
+                'PSAvoidUsingWriteHost')) {
+            $script:BaseRules | Should -Contain $r
+        }
+    }
+    It 'EXCLUDES the formatting and compatibility rules (Phase 2 item 2, not this base)' {
+        foreach ($r in @(
+                'PSPlaceOpenBrace', 'PSPlaceCloseBrace', 'PSUseConsistentIndentation',
+                'PSUseConsistentWhitespace', 'PSAlignAssignmentStatement', 'PSUseCorrectCasing',
+                'PSAvoidUsingDoubleQuotesForConstantString', 'PSAvoidSemicolonsAsLineTerminators',
+                'PSAvoidLongLines',
+                'PSUseCompatibleCmdlets', 'PSUseCompatibleCommands', 'PSUseCompatibleSyntax', 'PSUseCompatibleTypes')) {
+            $script:BaseRules | Should -Not -Contain $r
+        }
+    }
+    It 'has no duplicate entries and every name is a PS-prefixed rule code' {
+        (@($script:BaseRules | Sort-Object -Unique)).Count | Should -Be $script:BaseRules.Count
+        foreach ($r in $script:BaseRules) { $r | Should -Match '^PS' }
+    }
+}
+
 Describe 'New-ScriptAnalysisSettings -- the PSES scriptAnalysis settings object (dispatch 000018)' {
     It 'always enables analysis (with or without a settings path)' {
         (New-ScriptAnalysisSettings).enable | Should -BeTrue

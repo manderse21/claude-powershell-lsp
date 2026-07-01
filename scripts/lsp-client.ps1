@@ -208,7 +208,8 @@ function Start-DaemonRelaunchIfRecoverable {
         -DebounceMs (Get-PluginOptionInt 'debounceMs' 150) `
         -IdleTtlMin (Get-PluginOptionInt 'idleTtlMin' 30) `
         -PerFileCap (Get-PluginOptionInt 'perFileCap' 20) `
-        -SettingsPath (Get-PluginOption 'settingsPath' ''))
+        -SettingsPath (Get-PluginOption 'settingsPath' '') `
+        -Ruleset (Get-PluginOption 'ruleset' 'pses-default'))
     Write-CLog ('auto-relaunch: daemon launch ' + $(if ($result.LaunchOk) { 'fired' } else { 'FAILED (spawn threw)' }))
     return $result
 }

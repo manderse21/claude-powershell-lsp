@@ -92,6 +92,12 @@
       "title": "Format-on-edit suggestion",
       "description": "When 'suggest', after an edit the warm daemon runs PSScriptAnalyzer's Invoke-Formatter on the edited file (honoring the repo's PSScriptAnalyzerSettings.psd1 formatter rules) and surfaces the formatted result as a SUGGESTION (a unified diff) -- it NEVER rewrites your file. 'off' (default) does nothing and the diagnostics surface is unchanged. Values: 'off' (default), 'suggest'. 'apply' is reserved for a future release and is treated as 'off' today.",
       "default": "off"
+    },
+    "ruleset": {
+      "type": "string",
+      "title": "Live diagnostics ruleset",
+      "description": "Which PSScriptAnalyzer rule set to apply on the live edit path when no repo-local PSScriptAnalyzerSettings.psd1 and no settingsPath override resolve. 'pses-default' (default) keeps PowerShell Editor Services' built-in no-settings rule set (about 15 rules) -- the surface is unchanged from prior versions. 'base' opts in to the plugin's shipped enumerated base ruleset: PSScriptAnalyzer's full default-on set minus the compatibility-profile rules, which broadens the live surface (e.g. PSAvoidUsingWriteHost and the three Error-severity security rules PSAvoidUsingComputerNameHardcoded / PSAvoidUsingConvertToSecureStringWithPlainText / PSAvoidUsingUsernameAndPasswordParams start surfacing). A repo-local PSScriptAnalyzerSettings.psd1 and an explicit settingsPath ALWAYS win over the base. Values: 'pses-default' (default), 'base'.",
+      "default": "pses-default"
     }
   },
   "lspServers": {

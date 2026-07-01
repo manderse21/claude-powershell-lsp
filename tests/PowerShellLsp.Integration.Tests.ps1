@@ -484,6 +484,157 @@ Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -S
     }
 }
 
+Describe 'Integration: opt-in ruleset=base broadens the live surface (dispatch 000087)' -Skip:$script:SkipIntegration {
+    # The end-to-end proof of the opt-in broaden, over the REAL warm daemon (the CI arbiter),
+    # mirroring the 000018 honor RED/GREEN discipline. SAME security fixture, two daemons:
+    #   BASE  (ruleset=base)         -> the 3 Error-severity security rules AND a Write-Host-class
+    #                                   rule surface (they are outside PSES's 15-rule no-settings set).
+    #   DEFAULT (ruleset=pses-default) -> the SAME file surfaces the alias rule (proving analysis ran)
+    #                                   but NONE of those broadened rules -- the 15-rule ceiling holds.
+    # No repo-local settings and no settingsPath in either walk-up, so the ONLY difference is the knob.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Stop-IntegrationDaemon (info-independent reap, dispatch 000078)
+
+        function Invoke-PluginHook {
+            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+            if ($StdinJson) {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
+                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
+            }
+            $p.StandardInput.Close()
+            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            [void]$stdoutTask.Wait(1500)
+            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+        }
+
+        $script:B87ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:B87Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $env:PSLS_TEST_DATA_DIR
+        } else {
+            Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data'
+        }
+        New-Item -ItemType Directory -Force -Path $script:B87Data | Out-Null
+        $env:CLAUDE_PLUGIN_DATA = $script:B87Data
+        $script:B87Fixtures = Join-Path $script:B87Data 'ruleset-000087'
+        if (Test-Path -LiteralPath $script:B87Fixtures) { Remove-Item -LiteralPath $script:B87Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Force -Path $script:B87Fixtures | Out-Null
+
+        # Idempotent bootstrap of PSES + pinned PSSA (no-op if the honor block did it).
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:B87ScriptsDir 'ensure-pses.ps1') 2>&1 | Out-Null
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:B87ScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+
+        # ONE security fixture, identical bytes for both daemons: gci -> PSAvoidUsingCmdletAliases
+        # (fires in BOTH rule sets -- the warmth signal for the DEFAULT control); the hardcoded
+        # ComputerName / plaintext SecureString / username+password params -> the three Error-severity
+        # security rules; Write-Host -> the Write-Host-class rule. All four are OUTSIDE the PSES
+        # 15-rule no-settings set, so only the base daemon surfaces them.
+        $script:B87Content = @(
+            'function Connect-Box {',
+            '    param([string] $Username, [string] $Password)',
+            '    gci',
+            '    Get-WmiObject -Class Win32_BIOS -ComputerName "PRODSQL01"',
+            '    $sec = ConvertTo-SecureString -String "hunter2" -AsPlainText -Force',
+            '    Write-Host "done"',
+            '}'
+        ) -join "`n"
+
+        $script:B87BaseDir = Join-Path $script:B87Fixtures 'proj-base'
+        New-Item -ItemType Directory -Force -Path $script:B87BaseDir | Out-Null
+        $script:B87BaseFile = Join-Path $script:B87BaseDir 'box.ps1'
+        Set-Content -LiteralPath $script:B87BaseFile -Value $script:B87Content -Encoding ascii
+
+        $script:B87DefDir = Join-Path $script:B87Fixtures 'proj-default'
+        New-Item -ItemType Directory -Force -Path $script:B87DefDir | Out-Null
+        $script:B87DefFile = Join-Path $script:B87DefDir 'box.ps1'
+        Set-Content -LiteralPath $script:B87DefFile -Value $script:B87Content -Encoding ascii
+
+        function Start-RulesetDaemon {
+            param([string]$Sid, [string]$RulesetValue)
+            Invoke-PluginHook -ScriptPath (Join-Path $script:B87ScriptsDir 'session-start.ps1') `
+                -StdinJson (@{ session_id = $Sid } | ConvertTo-Json -Compress) `
+                -ExtraArgs @('-PreferredHost', 'pwsh') -CapMs 60000 -DataRoot $script:B87Data `
+                -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_ruleset = $RulesetValue; CLAUDE_PLUGIN_OPTION_settingsPath = '' } | Out-Null
+        }
+        function Get-RulesetDiag {
+            param([string]$Sid, [string]$File, [string]$Cwd)
+            Invoke-PluginHook -ScriptPath (Join-Path $script:B87ScriptsDir 'lsp-client.ps1') `
+                -StdinJson (@{ session_id = $Sid; tool_input = @{ file_path = $File }; cwd = $Cwd } | ConvertTo-Json -Compress) `
+                -ExtraArgs @() -CapMs 25000 -DataRoot $script:B87Data -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+        }
+        function Wait-RulesetDiagReady {
+            # It-time serve-readiness gate (dispatch 000051/000078 discipline): poll the REAL
+            # diagnostics round-trip the assertion fires until it returns a SETTLED analysis
+            # carrying $ReadyPattern; THROW a bounded message on timeout -- never a bare '' for
+            # the assertion to trip on. For the BASE daemon $ReadyPattern is a broadened-only
+            # rule (proving base settings are applied); for DEFAULT it is the alias rule that
+            # fires under the 15-rule set (proving the daemon is warm and analyzing).
+            param(
+                [Parameter(Mandatory = $true)][scriptblock]$GetDiag,
+                [string]$Scenario = 'ruleset',
+                [Parameter(Mandatory = $true)][string]$ReadyPattern,
+                [int]$TimeoutMs = 90000
+            )
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $lastLen = -1
+            while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
+                $out = & $GetDiag
+                if (-not [string]::IsNullOrWhiteSpace($out) -and ($out -match $ReadyPattern)) { return $out }
+                $lastLen = ([string]$out).Length
+                Start-Sleep -Milliseconds 500
+            }
+            throw ("ruleset daemon '" + $Scenario + "' did not return analysis within " + $TimeoutMs +
+                "ms (daemon not ready / broaden not applied); last response length=" + $lastLen)
+        }
+
+        $script:B87BaseSid = 'ruleset-base-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:B87DefSid = 'ruleset-def-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        Start-RulesetDaemon -Sid $script:B87BaseSid -RulesetValue 'base'
+        Start-RulesetDaemon -Sid $script:B87DefSid -RulesetValue 'pses-default'
+    }
+
+    AfterAll {
+        foreach ($sid in @($script:B87BaseSid, $script:B87DefSid)) {
+            [void](Stop-IntegrationDaemon -SessionId $sid -DataRoot $script:B87Data)
+            $sf = Join-Path $script:B87Data ('session/' + $sid + '.json')
+            if (Test-Path -LiteralPath $sf) { Remove-Item -LiteralPath $sf -Force -ErrorAction SilentlyContinue }
+        }
+        if (Test-Path -LiteralPath $script:B87Fixtures) { Remove-Item -LiteralPath $script:B87Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'BASE: the three security Error rules AND a Write-Host-class rule surface on real source' {
+        # Gate on ANY broadened-only rule (proves the base settings are applied), then assert ALL
+        # four broadened rules are present. If base were not applied the gate would time out loud.
+        $out = Wait-RulesetDiagReady -Scenario 'BASE' `
+            -ReadyPattern 'PSAvoidUsingComputerNameHardcoded|PSAvoidUsingConvertToSecureStringWithPlainText|PSAvoidUsingUsernameAndPasswordParams|PSAvoidUsingWriteHost' `
+            -GetDiag { Get-RulesetDiag -Sid $script:B87BaseSid -File $script:B87BaseFile -Cwd $script:B87BaseDir }
+        $out | Should -Match 'PSAvoidUsingComputerNameHardcoded'
+        $out | Should -Match 'PSAvoidUsingConvertToSecureStringWithPlainText'
+        $out | Should -Match 'PSAvoidUsingUsernameAndPasswordParams'
+        $out | Should -Match 'PSAvoidUsingWriteHost'
+    }
+
+    It 'DEFAULT control: pses-default surfaces the alias rule but NONE of the broadened rules (the 15-rule ceiling holds)' {
+        # RED-to-BASE: the SAME file under the default knob. The alias rule fires (analysis ran),
+        # but the broadened rules stay absent -- proving the broaden is the knob, not the fixture.
+        $out = Wait-RulesetDiagReady -Scenario 'DEFAULT' -ReadyPattern 'PSAvoidUsingCmdletAliases' `
+            -GetDiag { Get-RulesetDiag -Sid $script:B87DefSid -File $script:B87DefFile -Cwd $script:B87DefDir }
+        $out | Should -Match 'PSAvoidUsingCmdletAliases'
+        $out | Should -Not -Match 'PSAvoidUsingComputerNameHardcoded'
+        $out | Should -Not -Match 'PSAvoidUsingConvertToSecureStringWithPlainText'
+        $out | Should -Not -Match 'PSAvoidUsingUsernameAndPasswordParams'
+        $out | Should -Not -Match 'PSAvoidUsingWriteHost'
+    }
+}
+
 Describe 'Integration: edit-range diagnostic scoping (dispatch 000019)' -Skip:$script:SkipIntegration {
     # End-to-end over the REAL daemon with a REAL PostToolUse payload carrying
     # tool_response.structuredPatch. The adversarial control mirrors 000018: a file with

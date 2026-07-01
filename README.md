@@ -134,15 +134,19 @@ Set these via the `/plugin` config UI for `powershell-lsp`, or leave the default
 | `scopeToEdit`      | `true`   | Scope surfaced diagnostics to the lines the edit touched (plus `editContextLines`); fails open to whole-file when the range is indeterminate. `0`/`off` report whole-file |
 | `editContextLines` | `0`      | Extra context lines kept above and below the touched range when `scopeToEdit` is on; the edit's patch already includes a few, so the default is `0` |
 | `formatOnEdit`     | `off`    | When `suggest`, after an edit the warm daemon runs `Invoke-Formatter` on the file (honoring the repo's `PSScriptAnalyzerSettings.psd1`) and surfaces the formatted result as a **suggestion** -- a unified diff -- via the same channel as diagnostics; it **never rewrites your file**. `off` (default) does nothing and the diagnostics surface is unchanged. `apply` is reserved for a future release and is treated as `off` |
+| `ruleset`          | `pses-default` | Live diagnostics ruleset tier. `pses-default` (default) keeps PSES's built-in no-settings rule set (about 15 rules) -- unchanged from prior versions. `base` opts in to the plugin's shipped enumerated base ruleset (PSScriptAnalyzer's default-on set minus the compatibility rules), broadening the live surface so `PSAvoidUsingWriteHost` and the three Error-severity security rules surface. A repo-local `PSScriptAnalyzerSettings.psd1` and an explicit `settingsPath` always win over the base. See [Ruleset tiers](#ruleset-tiers-opt-in-broaden) |
 
 Diagnostics are returned in a stable order (severity, then line, then column),
 deduped, threshold- and rule-filtered, then capped per file.
 
-These filters apply on top of whatever **PSES** publishes. PSES runs its own default
-PSScriptAnalyzer rule set for live analysis, which is narrower than the
-`Invoke-ScriptAnalyzer` CLI default -- for example `PSAvoidUsingWriteHost` is not
-surfaced on the fly even though the CLI flags it. The knobs here can *suppress or
-narrow* what PSES reports; they cannot add a rule PSES does not run.
+These filters apply on top of whatever **PSES** publishes. By default (`ruleset` =
+`pses-default`) PSES runs its own built-in no-settings rule set for live analysis, which is
+narrower than the `Invoke-ScriptAnalyzer` CLI default -- for example `PSAvoidUsingWriteHost`
+is not surfaced on the fly even though the CLI flags it. The filter knobs
+(`severityThreshold`, `ruleInclude`, `ruleExclude`) can *suppress or narrow* what PSES
+reports. To *broaden* the live surface instead, set `ruleset` = `base` -- or point
+`settingsPath` at your own settings file -- which replaces that built-in set with a resolved
+rule set (see [Ruleset tiers](#ruleset-tiers-opt-in-broaden) below).
 
 ### Format-on-edit (suggest, never rewrite)
 
@@ -158,6 +162,25 @@ suggestion is shown, and the edit is never blocked. Formatting runs on the alrea
 daemon, so it adds no cold-start, and a file that already matches the configured style
 produces no suggestion at all. Values are `off` (default) and `suggest`; `apply` is reserved
 for a possible future release and currently behaves as `off`.
+
+### Ruleset tiers (opt-in broaden)
+
+`ruleset` is **`pses-default` by default**, which keeps today's live surface exactly: PowerShell
+Editor Services applies its own built-in no-settings rule set (about 15 PSScriptAnalyzer rules) on
+the fly, and no plugin ruleset is resolved. Set `ruleset` = `base` to opt in to the plugin's shipped
+**base ruleset** (`rulesets/base.psd1`): PSScriptAnalyzer's full default-on set **minus** the
+compatibility-profile rules, **enumerated explicitly** so the surfaced set is deterministic and does
+not drift when the pinned analyzer is bumped (regenerate with `scripts/regen-base-ruleset.ps1`).
+Opting in broadens the live surface -- notably `PSAvoidUsingWriteHost` and the three Error-severity
+security rules (`PSAvoidUsingComputerNameHardcoded`, `PSAvoidUsingConvertToSecureStringWithPlainText`,
+`PSAvoidUsingUsernameAndPasswordParams`) start surfacing where the built-in set omits them.
+
+Precedence is always yours to control: an explicit `settingsPath` and a repo-local
+`PSScriptAnalyzerSettings.psd1` **both win over the base** -- the base only fills the gap when neither
+is present. The existing noise controls still apply on top: `scopeToEdit` (on by default) limits
+findings to the lines you edited, `perFileCap` caps the count per file, and `severityThreshold` drops
+low-severity findings -- so `base` broadens *what can surface* without flooding a single edit. The
+default is deliberately **not** flipped: the broadened surface never activates unless you opt in.
 
 > **Privacy note -- `enableStats` logs absolute paths.** When `enableStats` is on (it is
 > **off by default**), each timing line in `logs/stats.jsonl` records the **absolute path**

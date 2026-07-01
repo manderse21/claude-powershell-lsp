@@ -29,6 +29,48 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [Unreleased]
+MINOR: **Opt-in broadened live surface -- a new `ruleset` knob and a plugin-owned, explicitly
+enumerated base ruleset that surfaces PSScriptAnalyzer's default-on rules (including three
+Error-severity security rules) on the live edit path, with the default surface byte-for-byte
+unchanged**. On the live PostToolUse path PowerShell Editor Services applies its OWN built-in
+no-settings rule set -- a ~15-rule allow-list -- so most default-on PSScriptAnalyzer rules
+(`PSAvoidUsingWriteHost` and the three Error-severity security rules
+`PSAvoidUsingComputerNameHardcoded` / `PSAvoidUsingConvertToSecureStringWithPlainText` /
+`PSAvoidUsingUsernameAndPasswordParams`) never fire live. A new opt-in `ruleset` enum knob
+(`pses-default` | `base`, default `pses-default`) selects the fallback ruleset when no repo-local
+`PSScriptAnalyzerSettings.psd1` and no explicit `settingsPath` resolve: `pses-default` keeps today's
+15-rule surface exactly (byte-for-byte unchanged -- no plugin ruleset is resolved), and `base`
+resolves the shipped `rulesets/base.psd1`, broadening the live surface to PSScriptAnalyzer's default-on
+set minus the compatibility-profile rules (57 rules at the pinned analyzer). The base **enumerates**
+its rules explicitly rather than using `IncludeDefaultRules = $true`, so the surfaced set is
+deterministic and a pinned-analyzer bump is a deliberate regeneration
+(`scripts/regen-base-ruleset.ps1`), never a silent shift. Precedence stays authoritative for the user:
+an explicit `settingsPath` and a discovered repo-local `PSScriptAnalyzerSettings.psd1` ALWAYS win over
+the base -- the base only fills the gap. The default is deliberately **not** flipped: the broadened
+surface never activates on upgrade unless opted in (an evidence-backed default-flip is a later
+dispatch). No new status token and no second PSSA acquisition path: the base is resolved through the
+existing settings-path channel and the vendored pinned-hash PSScriptAnalyzer (000046 L2) is reused. A
+DELIBERATE MINOR with a CONTRACT amendment for the new knob (the 000027 drift-guard passes because the
+contract was updated, not bypassed); dispatch 000087.
+
+### Added
+
+- **`ruleset` userConfig knob (opt-in, default `pses-default`).** An enum (`pses-default` | `base`,
+  default `pses-default`). `base` broadens the live surface to the plugin's shipped enumerated base
+  ruleset; `pses-default` keeps PSES's built-in 15-rule no-settings set. The enum shape lets future
+  curated / AI-era rule tiers be added as additive values without a breaking knob change. Declared in
+  `.claude-plugin/plugin.json`, frozen in `CONTRACT.md` (FROZEN-KNOBS), and documented in `README.md`
+  (`## Configuration` + a Ruleset tiers subsection).
+- **`rulesets/base.psd1` -- the plugin-owned base ruleset.** PSScriptAnalyzer's default-on set minus
+  the compatibility-profile rules, enumerated explicitly (57 rules at PSScriptAnalyzer 1.25.0),
+  including the three Error-severity security rules. Selected ONLY when `ruleset=base` and no repo-local
+  settings / explicit override resolve; named `base.psd1` (not `PSScriptAnalyzerSettings.psd1`) so it is
+  never auto-discovered as a repo-local settings file.
+- **`scripts/regen-base-ruleset.ps1` -- reproducible regeneration.** Derives the base rule list from the
+  vendored pinned PSScriptAnalyzer (default-on minus `PSUseCompatible*`) and prints it, or `-Check`
+  compares the shipped `rulesets/base.psd1` against the derivation and fails on drift.
+
 ## [1.20.0] - 2026-06-30
 MINOR: **Off-by-default format-on-edit suggestions -- the warm daemon runs PSScriptAnalyzer's
 Invoke-Formatter on the edited file (honoring the repo's PSScriptAnalyzerSettings.psd1) and

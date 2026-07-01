@@ -251,21 +251,73 @@ function New-ScriptAnalysisSettings {
     return $sa
 }
 
+function Get-PluginBaseSettingsPath {
+    # Absolute path to the shipped plugin-owned base ruleset (rulesets/base.psd1) -- the
+    # OPT-IN fallback the 'ruleset' knob selects when ruleset='base' and no repo-local
+    # settings / explicit override resolve first (dispatch 000087). Located the SAME way as
+    # Get-PluginManifestPath: walk up from this lib's dir (scripts/lib -> scripts -> root),
+    # then fall back to $env:CLAUDE_PLUGIN_ROOT. Returns '' if not found -- the caller then
+    # degrades to the PSES default rules (honest: base requested but unshipped never breaks
+    # editing). DELIBERATELY named base.psd1, NOT PSScriptAnalyzerSettings.psd1, so the
+    # repo-local discovery walk-up (which matches only that exact name) can NEVER auto-select
+    # it -- it is reachable ONLY through this explicit resolver, so shipping it inside the
+    # plugin tree does not change the plugin's own repo lint surface.
+    $libDir = $script:LspCommonDir
+    if ([string]::IsNullOrWhiteSpace($libDir)) { $libDir = $PSScriptRoot }
+    if (-not [string]::IsNullOrWhiteSpace($libDir)) {
+        $root = Split-Path -Parent (Split-Path -Parent $libDir)
+        if (-not [string]::IsNullOrWhiteSpace($root)) {
+            $candidate = Join-Path $root 'rulesets/base.psd1'
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { return [System.IO.Path]::GetFullPath($candidate) }
+        }
+    }
+    $envRoot = $env:CLAUDE_PLUGIN_ROOT
+    if (-not [string]::IsNullOrWhiteSpace($envRoot)) {
+        $candidate = Join-Path $envRoot 'rulesets/base.psd1'
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return [System.IO.Path]::GetFullPath($candidate) }
+    }
+    return ''
+}
+
+function Get-RulesetFallbackPath {
+    # The no-repo-local, no-override fallback the 'ruleset' knob selects (dispatch 000087).
+    # 'base' -> the shipped plugin base ruleset (broadens the live surface); ANY other value
+    # (incl. the default 'pses-default') -> '' (PSES's own 15-rule no-settings allow-list --
+    # byte-for-byte the pre-000087 behavior). When 'base' is requested but the base file
+    # cannot be located, degrade to '' (PSES default) rather than fail: editing is never
+    # broken and the analyzer stays honest.
+    param([string]$Ruleset = 'pses-default')
+    if ($Ruleset -eq 'base') {
+        $basePath = Get-PluginBaseSettingsPath
+        if (-not [string]::IsNullOrWhiteSpace($basePath)) { return $basePath }
+    }
+    return ''
+}
+
 function Resolve-PssaSettingsPath {
-    # Resolve the ABSOLUTE PSScriptAnalyzerSettings.psd1 to honor, or '' if none.
-    # Precedence: explicit absolute override > nearest PSScriptAnalyzerSettings.psd1
-    # walked up from the edited file's directory, bounded at (and including) the
-    # project root > '' (PSES loads default rules). Best-effort and cheap: a path
-    # walk-up is a chain of stats, off the hot path (resolved once per session).
+    # Resolve the ABSOLUTE settings .psd1 to honor, or '' if none. Precedence:
+    #   explicit absolute override ($Override / the settingsPath knob)
+    #     > nearest PSScriptAnalyzerSettings.psd1 walked up from the edited file's
+    #       directory, bounded at (and including) the project root
+    #     > the shipped plugin base ruleset when $Ruleset = 'base' (dispatch 000087)
+    #     > '' (PSES loads its own 15-rule no-settings default set).
+    # The base fallback is consulted ONLY after BOTH the override and the repo-local walk-up
+    # come up empty (via Get-RulesetFallbackPath at every no-match exit), so a discovered
+    # repo-local file or an explicit override ALWAYS wins over the base. With the default
+    # $Ruleset = 'pses-default' the fallback returns '' -- byte-for-byte the pre-000087 path.
+    # Best-effort and cheap: a path walk-up is a chain of stats, off the hot path (resolved
+    # once per session).
     #
-    # Adversarial control: drop the `$rootFull` bound (walk to the filesystem root)
-    # and the 'settings file ABOVE the project root is not honored' unit test goes
-    # RED; return $Override unconditionally and the 'relative override is ignored'
-    # test goes RED.
+    # Adversarial control: drop the `$rootFull` bound (walk to the filesystem root) and the
+    # 'settings file ABOVE the project root is not honored' unit test goes RED; return
+    # $Override unconditionally and the 'relative override is ignored' test goes RED; return
+    # a bare '' at the no-match exits instead of the ruleset fallback and the
+    # 'ruleset=base broadens' / 'repo-local wins over base' tests go RED.
     param(
         [string]$EditedFilePath,
         [string]$ProjectRoot,
-        [string]$Override = ''
+        [string]$Override = '',
+        [string]$Ruleset = 'pses-default'
     )
     # Explicit override -- ABSOLUTE only (Mike's gate; a relative override cannot
     # resolve safely through PSES, so it is ignored and we fall through to
@@ -276,10 +328,10 @@ function Resolve-PssaSettingsPath {
             return [System.IO.Path]::GetFullPath($Override)
         }
     }
-    if ([string]::IsNullOrWhiteSpace($EditedFilePath)) { return '' }
+    if ([string]::IsNullOrWhiteSpace($EditedFilePath)) { return (Get-RulesetFallbackPath $Ruleset) }
     $fileFull = [System.IO.Path]::GetFullPath($EditedFilePath)
     $dir = [System.IO.Path]::GetDirectoryName($fileFull)
-    if ([string]::IsNullOrWhiteSpace($dir)) { return '' }
+    if ([string]::IsNullOrWhiteSpace($dir)) { return (Get-RulesetFallbackPath $Ruleset) }
 
     $sep = [System.IO.Path]::DirectorySeparatorChar
     $alt = [System.IO.Path]::AltDirectorySeparatorChar
@@ -306,7 +358,10 @@ function Resolve-PssaSettingsPath {
         }
         $cur = $parent
     }
-    return ''
+    # No explicit override and no repo-local settings resolved: the 'ruleset' knob decides
+    # the fallback -- 'base' resolves the shipped plugin base ruleset, anything else '' (PSES
+    # default). Repo-local / override already returned above, so they still win.
+    return (Get-RulesetFallbackPath $Ruleset)
 }
 
 # --- telemetry / stats (Track A) -------------------------------------------
@@ -560,7 +615,8 @@ function Start-PsesDaemonDetached {
         [int]$DebounceMs = 150,
         [int]$IdleTtlMin = 30,
         [int]$PerFileCap = 20,
-        [string]$SettingsPath = ''
+        [string]$SettingsPath = '',
+        [string]$Ruleset = 'pses-default'
     )
     $scriptsDir = Split-Path -Parent $script:LspCommonDir   # scripts/lib -> scripts
     if ([string]::IsNullOrWhiteSpace($scriptsDir)) { $scriptsDir = Split-Path -Parent $PSScriptRoot }
@@ -577,6 +633,9 @@ function Start-PsesDaemonDetached {
     if (-not [string]::IsNullOrWhiteSpace($RuleInclude)) { $daemonArgs += @('-RuleInclude', $RuleInclude) }
     if (-not [string]::IsNullOrWhiteSpace($RuleExclude)) { $daemonArgs += @('-RuleExclude', $RuleExclude) }
     if (-not [string]::IsNullOrWhiteSpace($SettingsPath)) { $daemonArgs += @('-SettingsPath', $SettingsPath) }
+    # Pass -Ruleset ONLY when opted in ('base'); the daemon defaults to 'pses-default', so the
+    # default path's daemon invocation is byte-identical to pre-000087 (no extra arg).
+    if (-not [string]::IsNullOrWhiteSpace($Ruleset) -and $Ruleset -ne 'pses-default') { $daemonArgs += @('-Ruleset', $Ruleset) }
     try {
         if (Test-OnWindows) {
             # -WindowStyle Hidden routes through ShellExecute, which STRUCTURALLY does not pass
