@@ -1164,6 +1164,97 @@ function Find-NonAsciiSmuggling {
     return @($findings)
 }
 
+# --- pre-PSSA pack: PowerShell 7-only syntax compatibility (dispatch 000096) --
+# A syntax-only pass over the parser AST the pre-pass already produces (reusing the
+# 000060 seam) that flags PowerShell-7-only SYNTAX an AI commonly emits into a file that
+# may still run on Windows PowerShell 5.1: pipeline chains (&& / ||), the ternary operator
+# (a ? b : c), and the null-coalescing / null-conditional family (?? / ??= / ?. / ?[]).
+# Under pwsh 7 (the daemon's host) these PARSE, so the AST carries the nodes; under 5.1
+# they are parse errors. The finding is SUPPRESSED when the file honestly declares
+# #Requires -Version 7 (or higher) via ScriptRequirements.RequiredPSVersion -- a file that
+# genuinely targets 7 is not a portability defect (the load-bearing 0-FP case). Same
+# finding shape and source label as Find-NonAsciiSmuggling (source = 'powershell-lsp', a
+# compatibility WARNING) with a distinct, stable check id. Always-on additive; no knob.
+#
+# HOST / StrictMode SAFETY: this lib is dot-sourced by BOTH pwsh 7 and Windows PowerShell
+# 5.1, where the PS7 AST types (PipelineChainAst / TernaryExpressionAst), the TokenKind
+# values (QuestionQuestion / QuestionQuestionEquals), and the NullConditional property do
+# NOT exist. So detection uses type-NAME string comparisons, an enum-to-string operator
+# compare, and a PSObject.Properties-guarded NullConditional probe -- never a type/enum
+# literal or an unguarded property access that would throw under 5.1 or StrictMode. On 5.1
+# the input AST never carries these nodes anyway (parse errors there), so the pass is @().
+
+function Find-Ps7OnlySyntax {
+    <#
+    .SYNOPSIS
+        Flag PowerShell-7-only syntax constructs in a parsed AST, suppressed when the file
+        declares #Requires -Version 7 (or higher).
+    .DESCRIPTION
+        PURE over the supplied AST (the object the parser pre-pass already produces).
+        Returns @() when the AST is $null, when the file declares #Requires -Version 7+
+        (the load-bearing 0-FP: a file that targets 7 is not a portability defect), or when
+        no 7-only syntax node is present. Otherwise one finding per 7-only node. Finding
+        source = 'powershell-lsp', ruleId/code = 'PS7OnlySyntax', severity 'Warning' -- the
+        same shape and channel as Find-NonAsciiSmuggling.
+    #>
+    param($Ast)
+    if ($null -eq $Ast) { return @() }
+
+    # Host-awareness suppression (the load-bearing 0-FP). RequiredPSVersion is a [version]
+    # (or $null when no #Requires -Version). Guarded so a shape lacking ScriptRequirements
+    # can never throw.
+    try {
+        $req = $Ast.ScriptRequirements
+        if ($null -ne $req) {
+            $rv = $req.RequiredPSVersion
+            if ($null -ne $rv -and [int]$rv.Major -ge 7) { return @() }
+        }
+    } catch { }
+
+    # Match the 7-only node types. Type-NAME string checks + a PSObject-guarded
+    # NullConditional probe keep this safe on Windows PowerShell 5.1 + StrictMode (see the
+    # section header). InvokeMemberExpressionAst derives from MemberExpressionAst and also
+    # carries NullConditional, so the property probe catches ?. on both member access and
+    # method invocation; IndexExpressionAst carries it for ?[].
+    $predicate = {
+        param($node)
+        $tn = $node.GetType().Name
+        if ($tn -eq 'PipelineChainAst') { return $true }
+        if ($tn -eq 'TernaryExpressionAst') { return $true }
+        if ($tn -eq 'BinaryExpressionAst') { return ([string]$node.Operator -eq 'QuestionQuestion') }
+        if ($tn -eq 'AssignmentStatementAst') { return ([string]$node.Operator -eq 'QuestionQuestionEquals') }
+        $nc = $node.PSObject.Properties['NullConditional']
+        if ($null -ne $nc) { return [bool]$nc.Value }
+        return $false
+    }
+    $nodes = @()
+    try { $nodes = @($Ast.FindAll($predicate, $true)) } catch { return @() }
+
+    $findings = New-Object System.Collections.ArrayList
+    foreach ($node in $nodes) {
+        $line = 1; $col = 1
+        try { $line = [int]$node.Extent.StartLineNumber } catch { $line = 1 }
+        try { $col = [int]$node.Extent.StartColumnNumber } catch { $col = 1 }
+        $construct = switch ($node.GetType().Name) {
+            'PipelineChainAst'       { 'pipeline chain operator && or ||' }
+            'TernaryExpressionAst'   { 'ternary operator a ? b : c' }
+            'BinaryExpressionAst'    { 'null-coalescing operator ??' }
+            'AssignmentStatementAst' { 'null-coalescing assignment ??=' }
+            'IndexExpressionAst'     { 'null-conditional index ?[]' }
+            default                  { 'null-conditional operator ?.' }
+        }
+        [void]$findings.Add([pscustomobject]@{
+            ruleId = 'PS7OnlySyntax'; code = 'PS7OnlySyntax'
+            source = 'powershell-lsp'
+            severity = 'Warning'; line = $line; col = $col
+            message = "PowerShell 7-only syntax ($construct) detected. This is a parse " +
+                "error under Windows PowerShell 5.1; add '#Requires -Version 7' if this " +
+                "file targets PowerShell 7 only."
+        })
+    }
+    return @($findings)
+}
+
 # --- module surface / project intelligence (PL-6, dispatch 000062) -----------
 # Manifest-consistency helpers for the daemon-side module surface cache. The daemon
 # caches the module surface ONCE per session keyed by manifest path + content hash;

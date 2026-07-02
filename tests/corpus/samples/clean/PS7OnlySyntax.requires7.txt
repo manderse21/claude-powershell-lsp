@@ -1,0 +1,3 @@
+#Requires -Version 7.0
+Test-Path -LiteralPath 'a.txt' && Write-Output 'exists'
+Test-Path -LiteralPath 'b.txt' || Write-Output 'missing'

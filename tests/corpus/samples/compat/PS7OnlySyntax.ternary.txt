@@ -1,0 +1,3 @@
+$count = 15
+$level = ($count -gt 10) ? 'high' : 'low'
+Write-Output $level
