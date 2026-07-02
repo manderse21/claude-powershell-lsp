@@ -29,7 +29,7 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
-## [Unreleased]
+## [1.22.0] - 2026-07-01
 MINOR: **the AI-era rule pack, slice 2 -- 5.1-vs-7 syntax compatibility as a pre-PSSA AST
 pass, always-on additive, no knob/token**. A new pre-PSSA check on the `powershell-lsp` source
 flags PowerShell-7-only SYNTAX an AI commonly emits into a file that may still run on Windows
@@ -118,8 +118,8 @@ measured **0% false-positive rate and 100% true-positive coverage** hold on the 
   still gets full PSScriptAnalyzer analysis, so these ride the daemon merge path. The standalone SARIF
   / CI scan (dispatch 000057) surfaces the finding automatically via its one-engine derivation.
 - **Corpus coverage extended (bash-isms).** A new `bashism` category with 11 known-bad `.txt` samples
-  (one per shipped command name, a pipe-to-`grep`, and a bash-ism-plus-`PSPossibleIncorrectComparison`
-  `WithNull` file proving both findings surface on the merge path) and its own It-block asserting the
+  (one per shipped command name, a pipe-to-`grep`, and a bash-ism-plus-`PSPossibleIncorrectComparisonWithNull`
+  file proving both findings surface on the merge path) and its own It-block asserting the
   `powershell-lsp` / `BashIsm` source+rule, plus a dedicated merge-path It-block and 7 known-good
   `clean` samples (string-literal and comment mentions, idiomatic `Select-String` / `Get-ChildItem`,
   and the load-bearing `& grep`, `function touch`, and `Set-Alias grep` suppression proofs -- all
