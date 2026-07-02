@@ -90,7 +90,7 @@
     "formatOnEdit": {
       "type": "string",
       "title": "Format-on-edit suggestion",
-      "description": "When 'suggest', after an edit the warm daemon runs PSScriptAnalyzer's Invoke-Formatter on the edited file (honoring the repo's PSScriptAnalyzerSettings.psd1 formatter rules) and surfaces the formatted result as a SUGGESTION (a unified diff) -- it NEVER rewrites your file. 'off' (default) does nothing and the diagnostics surface is unchanged. Values: 'off' (default), 'suggest'. 'apply' is reserved for a future release and is treated as 'off' today.",
+      "description": "When 'suggest', after an edit the warm daemon runs PSScriptAnalyzer's Invoke-Formatter on the edited file (honoring the repo's PSScriptAnalyzerSettings.psd1 formatter rules) and surfaces the formatted result as a SUGGESTION (a unified diff) -- it NEVER rewrites your file. 'apply' additionally WRITES the formatted result back, guarded: a stale-write compare-and-swap aborts the write if the file changed since formatting (the newer edit always wins), the write is atomic (never a torn file), the original BOM and dominant line-ending style are preserved (the only byte change is the formatting itself), and an applied write is announced loudly so you re-read before your next edit. 'off' (default) does nothing and the diagnostics surface is unchanged. Values: 'off' (default), 'suggest', 'apply'; 'apply' is doubly opt-in (only the exact value 'apply', never a boolean) and aborts to a suggestion for mixed-line-ending or non-UTF-8 files.",
       "default": "off"
     },
     "ruleset": {

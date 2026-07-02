@@ -265,10 +265,35 @@ cold. None is a contract change; each is banked here deliberately.
   warm daemon runs Invoke-Formatter on the edited file -- honoring the repo's `PSScriptAnalyzerSettings.psd1`
   formatter rules (the 000018 precedent) -- and surfaces the result as a **suggestion** via the existing
   `additionalContext` channel; the hook **never rewrites the user's file** (suggest-not-apply is the
-  whole safety posture). The knob is an **enum** (`off` | `suggest`, default `off`), shaped so a future
-  **`apply`** mode could be added as an additive enum value **without** a breaking knob change; no apply
-  path ships today, and `apply` is treated as `off`. No new status token and no second PSSA acquisition
-  path: the suggestion rides the existing surface, and the vendored pinned-hash PSSA is reused.
+  whole safety posture). The knob is an **enum** (`off` | `suggest` | `apply`, default `off`), shaped so
+  the **`apply`** mode could be added as an additive enum value **without** a breaking knob change. That
+  activation is now done -- see the next note (dispatch 000099); 000059 itself shipped **suggest-only**,
+  with no new status token and no second PSSA acquisition path (the suggestion rides the existing surface,
+  and the vendored pinned-hash PSSA is reused).
+- **`formatOnEdit=apply` activated (DELIBERATE MINOR amendment) -- dispatch 000099.** The `apply` enum
+  value 000059 reserved is now **active**: when `formatOnEdit=apply` and the formatter produces a change,
+  the warm daemon **writes the formatted result back**. This is the anticipated additive MINOR the 000059
+  note foresaw -- the knob **NAME is unchanged** (the FROZEN-KNOBS table does not move), so the drift-guard
+  passes **because** the knob surface is stable and this note records the activation, not because anything
+  was bypassed. The **default stays `off`**, and **`off` and `suggest` are byte-for-byte unchanged**
+  (regression-proven): `off` sends no `format` request; `suggest` sends the same request with no `apply`
+  flag and never writes. `apply` is **doubly opt-in** -- only the exact value `apply` reaches it (a boolean
+  alias maps to `suggest`), so no config is upgraded into file writes by accident. The write is the whole
+  risk and is guarded by ALL of: a **stale-write compare-and-swap** (the file's bytes are hashed at
+  format-input time and re-checked immediately before the write, in the same daemon process that writes --
+  any concurrent modification ABORTS and the newer file wins); an **atomic-or-abort** swap (temp file +
+  atomic replace, never a torn/partial file); **byte fidelity** (the original BOM state and dominant EOL
+  style are re-applied to the formatter's LF-normalized output, so the only byte delta is the formatting
+  change itself); **no-change = no write** (an already-formatted file is never touched); and **conservative
+  aborts to suggest** for mixed-line-ending or non-UTF-8 (UTF-16) files. An applied write surfaces a
+  **visibly distinct WAS-MODIFIED block** instructing the agent to re-read, and that turn's diagnostics
+  (derived from the pre-apply bytes) are omitted to avoid stale line numbers. Two **additive** daemon->client
+  `formatStatus` values -- `applied` and `apply-aborted` -- carry the outcome. Like the 000061 closed-loop
+  fields, `formatStatus` is an **output field, NOT part of the frozen Tier-1 contract**: the drift-guarded
+  status taxonomy (1.2) is specifically the *diagnostics* tokens from `Get-DiagnosticsStatusBanner` /
+  `Resolve-AnalysisStatus`, which this dispatch leaves untouched. So **no new frozen status token** and no
+  second PSSA acquisition path -- the apply reuses the 000059 formatter, settings resolution, diff engine,
+  and vendored pinned-hash PSSA.
 - **`ruleset` knob (DELIBERATE MINOR amendment) -- dispatch 000087.** A new optional, defaulted
   userConfig knob, `ruleset`, was added to the manifest (and so to the FROZEN-KNOBS table above, which
   the drift-guard validates). This is the contract-relevant event the freeze exists to record: a new knob

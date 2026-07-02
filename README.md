@@ -133,7 +133,7 @@ Set these via the `/plugin` config UI for `powershell-lsp`, or leave the default
 | `settingsPath`     | _(empty)_| Absolute path to a `PSScriptAnalyzerSettings.psd1` to honor, overriding auto-discovery; a relative value is ignored; empty = auto-discover (nearest file walked up to the project root) |
 | `scopeToEdit`      | `true`   | Scope surfaced diagnostics to the lines the edit touched (plus `editContextLines`); fails open to whole-file when the range is indeterminate. `0`/`off` report whole-file |
 | `editContextLines` | `0`      | Extra context lines kept above and below the touched range when `scopeToEdit` is on; the edit's patch already includes a few, so the default is `0` |
-| `formatOnEdit`     | `off`    | When `suggest`, after an edit the warm daemon runs `Invoke-Formatter` on the file (honoring the repo's `PSScriptAnalyzerSettings.psd1`) and surfaces the formatted result as a **suggestion** -- a unified diff -- via the same channel as diagnostics; it **never rewrites your file**. `off` (default) does nothing and the diagnostics surface is unchanged. `apply` is reserved for a future release and is treated as `off` |
+| `formatOnEdit`     | `off`    | When `suggest`, after an edit the warm daemon runs `Invoke-Formatter` on the file (honoring the repo's `PSScriptAnalyzerSettings.psd1`) and surfaces the formatted result as a **suggestion** -- a unified diff -- via the same channel as diagnostics; it **never rewrites your file**. `apply` additionally **writes it back**, guarded: a stale-write compare-and-swap aborts if the file changed since formatting (the newer edit wins), the write is atomic, and the original BOM + line-ending style are preserved (only the formatting changes); an applied write is announced so you re-read. `off` (default) does nothing and the diagnostics surface is unchanged. Values: `off` (default), `suggest`, `apply`; `apply` is doubly opt-in and aborts to a suggestion for mixed-EOL / non-UTF-8 files. See [Format-on-edit](#format-on-edit-suggest-or-guarded-apply) |
 | `ruleset`          | `pses-default` | Live diagnostics ruleset tier. `pses-default` (default) keeps PSES's built-in no-settings rule set (about 15 rules) -- unchanged from prior versions. `base` opts in to the plugin's shipped enumerated base ruleset (PSScriptAnalyzer's default-on set minus the compatibility rules), broadening the live surface so `PSAvoidUsingWriteHost` and the three Error-severity security rules surface. A repo-local `PSScriptAnalyzerSettings.psd1` and an explicit `settingsPath` always win over the base. See [Ruleset tiers](#ruleset-tiers-opt-in-broaden) |
 
 Diagnostics are returned in a stable order (severity, then line, then column),
@@ -148,20 +148,39 @@ reports. To *broaden* the live surface instead, set `ruleset` = `base` -- or poi
 `settingsPath` at your own settings file -- which replaces that built-in set with a resolved
 rule set (see [Ruleset tiers](#ruleset-tiers-opt-in-broaden) below).
 
-### Format-on-edit (suggest, never rewrite)
+### Format-on-edit (suggest, or guarded apply)
 
 `formatOnEdit` is **off by default**. When set to `suggest`, each time Claude edits a
 PowerShell file the warm daemon runs PSScriptAnalyzer's `Invoke-Formatter` over it --
 honoring the repo's own `PSScriptAnalyzerSettings.psd1` formatter rules when present (the
 same settings auto-discovery the analyzer uses) -- and surfaces the reformatted result as a
 **suggestion**: a compact unified diff, clearly labelled and distinct from a diagnostic,
-stating that the file was **not** modified. The hook **never writes your file** -- it only
-suggests, so editing is never disrupted and you stay in control of what lands. A formatting
-failure (no settings, a malformed settings file, a formatter error) degrades quietly: no
-suggestion is shown, and the edit is never blocked. Formatting runs on the already-warm
-daemon, so it adds no cold-start, and a file that already matches the configured style
-produces no suggestion at all. Values are `off` (default) and `suggest`; `apply` is reserved
-for a possible future release and currently behaves as `off`.
+stating that the file was **not** modified. In `suggest` mode the hook **never writes your
+file** -- it only suggests, so editing is never disrupted and you stay in control of what lands.
+
+When set to `apply`, the daemon additionally **writes the formatted result back** -- the one
+mode that ever touches your file -- behind a deliberately strict guard:
+
+- **Stale-write compare-and-swap.** The file's bytes are fingerprinted when formatting starts
+  and re-checked immediately before the write; if anything changed the file in between, the
+  apply **aborts** and your newer content is left untouched (the concurrent edit always wins).
+- **Atomic-or-abort.** The formatted bytes are staged and swapped in atomically, so a crashed
+  write can never leave a torn or half-written file.
+- **Byte fidelity.** The original BOM state and dominant line-ending style are preserved; the
+  only byte difference from your file is the formatting change itself. A file with **mixed**
+  line endings, or a non-UTF-8 (UTF-16) file, **aborts to a suggestion** rather than risk a
+  broader rewrite.
+- **Loud, and re-read.** An applied write surfaces a block that plainly says the file **was
+  modified** and tells the agent to re-read before its next edit (its in-context copy is now
+  stale). Diagnostics for that turn -- computed before the reformat -- are omitted to avoid
+  stale line numbers and refresh on the next edit.
+
+`apply` is **doubly opt-in**: only the exact value `apply` activates it (a boolean like `true`
+maps to the safe `suggest`), and the default stays `off`. Any failure or ambiguity -- a
+formatter error, a guard trip, a write error -- degrades to a suggestion or to nothing, the
+hook always exits 0, and editing is never blocked. Formatting runs on the already-warm daemon,
+so it adds no cold-start, and a file that already matches the configured style is **never
+touched**. Values are `off` (default), `suggest`, and `apply`.
 
 ### Ruleset tiers (opt-in broaden)
 
