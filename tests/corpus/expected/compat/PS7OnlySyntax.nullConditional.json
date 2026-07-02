@@ -1,0 +1,18 @@
+[
+  {
+    "ruleId": "PS7OnlySyntax",
+    "source": "powershell-lsp",
+    "severity": "Warning",
+    "line": 1,
+    "col": 11,
+    "message": "PowerShell 7-only syntax (null-conditional operator ?.) detected. This is a parse error under Windows PowerShell 5.1; add '#Requires -Version 7' if this file targets PowerShell 7 only."
+  },
+  {
+    "ruleId": "PS7OnlySyntax",
+    "source": "powershell-lsp",
+    "severity": "Warning",
+    "line": 3,
+    "col": 10,
+    "message": "PowerShell 7-only syntax (null-conditional index ?[]) detected. This is a parse error under Windows PowerShell 5.1; add '#Requires -Version 7' if this file targets PowerShell 7 only."
+  }
+]

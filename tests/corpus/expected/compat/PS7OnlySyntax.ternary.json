@@ -1,0 +1,8 @@
+[{
+  "ruleId": "PS7OnlySyntax",
+  "source": "powershell-lsp",
+  "severity": "Warning",
+  "line": 2,
+  "col": 10,
+  "message": "PowerShell 7-only syntax (ternary operator a ? b : c) detected. This is a parse error under Windows PowerShell 5.1; add '#Requires -Version 7' if this file targets PowerShell 7 only."
+}]

@@ -1,0 +1,4 @@
+$result = ${env:PATH}?.Length
+Write-Output $result
+$first = ${env:PATH}?[0]
+Write-Output $first

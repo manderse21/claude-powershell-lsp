@@ -29,6 +29,52 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [Unreleased]
+MINOR: **the AI-era rule pack, slice 2 -- 5.1-vs-7 syntax compatibility as a pre-PSSA AST
+pass, always-on additive, no knob/token**. A new pre-PSSA check on the `powershell-lsp` source
+flags PowerShell-7-only SYNTAX an AI commonly emits into a file that may still run on Windows
+PowerShell 5.1: pipeline chains (`&&` / `||`), the ternary operator (`a ? b : c`), and the
+null-coalescing / null-conditional family (`??` / `??=` / `?.` / `?[]`). It runs over the parser
+AST the pre-pass already produces (reusing the 000060 seam in `scripts/lsp-client.ps1`), so it
+costs no second parse. The load-bearing 0-FP: a finding is SUPPRESSED when the file honestly
+declares `#Requires -Version 7` (or higher) via `ScriptRequirements.RequiredPSVersion` -- a file
+that genuinely targets 7 is not a portability defect. MECHANISM: dispatch 000055's survey named
+the settings channel (`PSUseCompatibleSyntax`) as its primary mechanism, but that predates
+dispatch 000087 -- `rulesets/base.psd1` now deliberately EXCLUDES the whole `PSUseCompatible*`
+family and the `ruleset` knob is a frozen CONTRACT surface, so the settings path collides; the
+infrastructure-independent pre-PSSA AST pass is the clean path. Always-on additive: **no new
+`userConfig` knob, no new status token** (the 000027 drift-guard stays green); the `powershell-lsp`
+source label is reused with a distinct check id `PS7OnlySyntax` and is not a frozen surface, so
+CONTRACT.md is byte-for-byte unchanged. PSSA acquisition and the pinned hash are untouched (a
+pre-PSSA pass needs none of that). Compatible-CMDLET / -TYPE checks (`PSUseCompatibleCommands` /
+`PSUseCompatibleTypes`) remain deferred (survey-ranked high-FP): this slice is SYNTAX-only. The
+corpus grows by 4 known-bad (one per construct family) and 4 known-good (three 5.1-safe
+equivalents plus the load-bearing `#Requires -Version 7` file using `&&` that must NOT flag); the
+measured **0% false-positive rate and 100% true-positive coverage** hold on the wider set.
+
+### Added
+
+- **PS7-only syntax compatibility check (`PS7OnlySyntax`).** A new pre-PSSA AST pass in
+  `scripts/lib/lsp-common.ps1` (`Find-Ps7OnlySyntax`), seamed into `scripts/lsp-client.ps1` at the
+  same point as the 000060 non-ASCII pass and over the same AST the parser pre-pass already
+  produces. Detects `PipelineChainAst` (`&&` / `||`), `TernaryExpressionAst` (`a ? b : c`), the
+  null-coalescing operator `??` (`BinaryExpressionAst` operator `QuestionQuestion`) and assignment
+  `??=` (`AssignmentStatementAst` operator `QuestionQuestionEquals`), and the null-conditional
+  `?.` / `?[]` (the `NullConditional` member / index forms). Findings carry source `powershell-lsp`,
+  ruleId `PS7OnlySyntax`, severity `Warning`, and are SUPPRESSED for a file declaring
+  `#Requires -Version 7`+. Detection is Windows PowerShell 5.1- and StrictMode-safe (type-name
+  string checks, an enum-to-string operator compare, and a guarded `NullConditional` probe -- never
+  a PS7 type/enum literal that would throw on 5.1). Unlike the non-ASCII pass, compat findings do
+  NOT gate the parser-error early-exit: a 7-only-syntax file parses cleanly under the pwsh-7 daemon
+  and still gets full PSScriptAnalyzer analysis. The standalone SARIF / CI scan (dispatch 000057)
+  surfaces the finding automatically via its one-engine derivation (it runs the real
+  `lsp-client.ps1`), needing no separate wiring.
+- **Corpus coverage extended.** A new `compat` category with 4 known-bad `.txt` samples (pipeline
+  chain, ternary, null-coalescing, null-conditional) and its own It-block asserting the
+  `powershell-lsp` / `PS7OnlySyntax` source+rule, plus 4 known-good `clean` samples (three 5.1-safe
+  equivalents and a `#Requires -Version 7` file using `&&` -- the host-awareness 0-FP proof,
+  silent). The 0%-FP / 100%-TP guards hold on the wider set.
+
 ## [1.21.1] - 2026-07-01
 PATCH: **Curate the opt-in `base` ruleset -- remove three survey-measured noisy rules so `base` is
 quieter on real code, with the default `pses-default` surface byte-for-byte unchanged**. The 000091

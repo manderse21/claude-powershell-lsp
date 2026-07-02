@@ -265,13 +265,35 @@ try {
     # before (lint-always). Wrapped so any failure degrades to the pipe path and
     # never blocks the edit.
     $parseErrors = $null
+    $parsedAst = $null
     try {
         $ptoks = $null; $perrs = $null
-        [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$ptoks, [ref]$perrs)
+        $parsedAst = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$ptoks, [ref]$perrs)
         $parseErrors = @($perrs)
     } catch {
         Write-CLog ('parser pre-pass threw (falling through to daemon): ' + $_.Exception.Message)
         $parseErrors = $null
+        $parsedAst = $null
+    }
+    # Track C -- pre-PSSA AST compat pass (dispatch 000096): flag PowerShell-7-only SYNTAX
+    # (&& / ||, ternary, ?? / ??= / ?. / ?[]) over the SAME AST the parser pre-pass just
+    # produced, suppressed when the file declares #Requires -Version 7+. Wrapped so any
+    # failure degrades gracefully. Unlike the non-ASCII pass, compat findings do NOT gate
+    # the parse-error/pre-PSSA early-exit below: a file using 7-only syntax parses cleanly
+    # under the pwsh-7 daemon and must still get full PSScriptAnalyzer analysis, so these
+    # ride the daemon merge path (below), surfaced + dogfood-captured alongside the daemon
+    # diagnostics -- never skipping the daemon on their own.
+    $compatFindings = $null
+    try {
+        if ($null -ne $parsedAst) {
+            $compatFindings = @(Find-Ps7OnlySyntax -Ast $parsedAst)
+            if ($null -ne $compatFindings -and $compatFindings.Count -gt 0) {
+                Write-CLog ('pre-PSSA (PS7-only syntax) found ' + $compatFindings.Count + ' finding(s)')
+            }
+        }
+    } catch {
+        Write-CLog ('pre-PSSA compat scan threw (degrading gracefully): ' + $_.Exception.Message)
+        $compatFindings = $null
     }
     $hasParseErrors = ($null -ne $parseErrors -and $parseErrors.Count -gt 0)
     $hasPrePssa = ($null -ne $prePssaFindings -and $prePssaFindings.Count -gt 0)
@@ -405,6 +427,14 @@ try {
     # loop handles their source/code/severity fields correctly.
     if ($null -ne $prePssaFindings -and $prePssaFindings.Count -gt 0) {
         $diags = @($prePssaFindings) + @($diags)
+    }
+    # Merge pre-PSSA compat (PS7-only syntax) findings into the diagnostics stream (dispatch
+    # 000096). These are client-side AST findings, independent of the daemon; they ride here
+    # (not the early-exit) so a 7-only-syntax file still gets full daemon analysis. They
+    # appear alongside daemon diagnostics; the existing render + dogfood-capture loop below
+    # handles their source/code/severity fields, exactly like the non-ASCII findings.
+    if ($null -ne $compatFindings -and $compatFindings.Count -gt 0) {
+        $diags = @($compatFindings) + @($diags)
     }
     # Project findings (PL-6, dispatch 000062): merge manifest-consistency findings from
     # the daemon's module surface cache into the diagnostics stream. Uses the same

@@ -1,0 +1,4 @@
+$name = $env:USERNAME ?? 'anonymous'
+Write-Output $name
+$config ??= 'default'
+Write-Output $config

@@ -160,6 +160,23 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
         }
     }
 
+    It 'compat samples each surface a powershell-lsp-sourced PS7OnlySyntax diagnostic' {
+        # dispatch 000096: the PS7-only-syntax pre-PSSA AST pass. Each known-bad compat
+        # fixture (&& / ||, ternary, ?? / ??=, ?. / ?[]) must surface the pack's
+        # powershell-lsp-sourced PS7OnlySyntax finding. The FIRST finding is the compat one
+        # because client-side pre-PSSA findings are prepended to the daemon stream. The
+        # host-awareness 0-FP proof (a #Requires -Version 7 file using &&) lives in the
+        # 'clean' category and is asserted silent by the clean-samples guard above.
+        $compat = @(Get-CorpusSampleSpec | Where-Object { $_.Category -eq 'compat' })
+        $compat.Count | Should -BeGreaterThan 0
+        foreach ($s in $compat) {
+            $d = @($script:Derived[$s.Label])
+            $d.Count | Should -BeGreaterThan 0 -Because "$($s.Label) must surface at least one PS7-only-syntax finding"
+            ($d | Select-Object -First 1).source | Should -BeExactly 'powershell-lsp'
+            ($d | Select-Object -First 1).ruleId | Should -BeExactly 'PS7OnlySyntax'
+        }
+    }
+
     It 'module samples: consistent/wildcard/dynamic produce zero findings; orphan/typo surface ManifestConsistency' {
         $module = @(Get-CorpusSampleSpec | Where-Object { $_.Category -eq 'module' })
         $module.Count | Should -BeGreaterThan 0
