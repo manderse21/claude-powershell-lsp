@@ -1025,6 +1025,88 @@ function Get-FormatSuggestion {
     }
 }
 
+function Invoke-FormatApply {
+    # Format-on-edit APPLY (dispatch 000099). Run the SAME warm formatter Get-FormatSuggestion uses,
+    # and -- when it produces a real change -- WRITE the result back GUARDED. Reuses the 000059
+    # substrate verbatim (Initialize-FormatterModule, Resolve-PssaSettingsPath, Invoke-RepoFormatter,
+    # Get-FormatDiffResult); the ONLY additions are the byte-fidelity encode and the stale-write
+    # compare-and-swap + atomic write (Get-ApplyEncodedBytes / Write-FormatResultAtomic in lib, both
+    # pure). FAIL-SAFE: every failure returns an honest non-applied formatStatus and never throws
+    # past this frame; the file is written ONLY on the happy path and NEVER left torn. formatStatus
+    # values (000099, an ADDITIVE daemon->client field, NOT a frozen contract token): 'applied'
+    # (wrote), 'apply-aborted' (a guard / encoding / mixed-EOL / write abort -> the client surfaces
+    # the suggest fallback with the reason), plus the inherited 'ok' (no change -> no write), 'error',
+    # and 'unavailable'. Runs the compare-and-swap read in THIS (writing) process, so the race window
+    # is only the daemon-local format runtime -- no IPC hop between the guard read and the write.
+    param([string]$filePath, [string]$cwd = '')
+    $resp = [ordered]@{ ok = $true; action = 'format'; file = $filePath
+        applied = $false; wasModified = $false
+        changed = $false; diff = ''; removed = 0; added = 0; truncated = $false
+        settingsPath = ''; formatStatus = 'ok' }
+    try {
+        $full = [System.IO.Path]::GetFullPath($filePath)
+        if (-not (Test-Path -LiteralPath $full)) { $resp['formatStatus'] = 'error'; $resp['error'] = 'file not found'; return $resp }
+        if (-not (Initialize-FormatterModule)) {
+            $resp['formatStatus'] = 'unavailable'; $resp['error'] = 'formatter unavailable'; return $resp
+        }
+        # CAS INPUT CAPTURE: the raw bytes the formatter is about to consume, and their fingerprint,
+        # plus the original BOM state -- the byte-fidelity contract's inputs.
+        $origBytes = [System.IO.File]::ReadAllBytes($full)
+        $inputHash = Get-Sha256HexFromBytes $origBytes
+        $hasBom = Test-Utf8Bom $origBytes
+        # Same settings precedence as suggest (000018): explicit override > nearest settings > default.
+        $root = if (-not [string]::IsNullOrWhiteSpace($cwd)) { $cwd } else { (Get-Location).Path }
+        $settings = ''
+        try { $settings = Resolve-PssaSettingsPath -EditedFilePath $full -ProjectRoot $root -Override $SettingsPath } catch { $settings = '' }
+        $resp['settingsPath'] = $settings
+        # Decode for the formatter exactly as suggest does (ReadAllText: BOM-aware, UTF-8 default).
+        $text = [System.IO.File]::ReadAllText($full)
+        $fmt = Invoke-RepoFormatter -Text $text -SettingsPath $settings
+        if (-not $fmt.ok) {
+            Write-DLog ('format-apply: formatter degraded (' + [string]$fmt.reason + '): ' + [string]$fmt.error)
+            $resp['formatStatus'] = 'error'; $resp['error'] = [string]$fmt.error; return $resp
+        }
+        $diffRes = Get-FormatDiffResult -Original $text -Formatted ([string]$fmt.formatted)
+        $resp['changed'] = [bool]$diffRes.changed
+        $resp['diff'] = [string]$diffRes.diff
+        $resp['removed'] = [int]$diffRes.removed
+        $resp['added'] = [int]$diffRes.added
+        $resp['truncated'] = [bool]$diffRes.truncated
+        # NO-CHANGE = NO WRITE: an already-formatted file is never touched (formatStatus stays 'ok',
+        # changed=$false -> the client surfaces nothing, exactly like suggest's clean-edit no-op).
+        if (-not $diffRes.changed) {
+            Write-DLog ('format-apply: ' + $full + ' already formatted -- no write')
+            return $resp
+        }
+        # CONSERVATIVE ABORTS (OQ4 + encoding): a mixed-EOL or UTF-16 file aborts to suggest, so an
+        # unchanged minority-EOL line is never flipped and a UTF-16 file is never re-encoded. The diff
+        # is already computed, so the client surfaces the suggest fallback naming the reason.
+        $eol = Get-DominantEol $text
+        $abortReason = ''
+        if (Test-Utf16Bom $origBytes) { $abortReason = 'file is UTF-16 (apply supports UTF-8 only)' }
+        elseif ($eol -eq 'mixed') { $abortReason = 'file has mixed line endings' }
+        if ($abortReason -ne '') {
+            Write-DLog ('format-apply: aborting to suggest (' + $abortReason + '): ' + $full)
+            $resp['formatStatus'] = 'apply-aborted'; $resp['error'] = $abortReason; return $resp
+        }
+        # Byte-fidelity output + the stale-write compare-and-swap + atomic write, all in this process.
+        $outBytes = Get-ApplyEncodedBytes -FormattedText ([string]$fmt.formatted) -Eol $eol -HasBom $hasBom
+        $w = Write-FormatResultAtomic -Full $full -InputHash $inputHash -OutBytes $outBytes
+        if ($w.applied) {
+            $resp['applied'] = $true; $resp['wasModified'] = $true; $resp['formatStatus'] = 'applied'
+            Write-DLog ('format-apply: WROTE ' + $full + ' -' + $resp['removed'] + '/+' + $resp['added'] +
+                ' eol=' + $eol + ' bom=' + $hasBom + ' settings=' + $(if ($settings) { $settings } else { '(default)' }))
+        } else {
+            $resp['formatStatus'] = 'apply-aborted'; $resp['error'] = [string]$w.reason
+            Write-DLog ('format-apply: aborted (' + [string]$w.reason + '): ' + $full)
+        }
+        return $resp
+    } catch {
+        Write-DLog ('format-apply: unexpected error (degrading): ' + $_.Exception.Message)
+        $resp['formatStatus'] = 'apply-aborted'; $resp['error'] = $_.Exception.Message; return $resp
+    }
+}
+
 # --- session file / heartbeat ----------------------------------------------
 function Write-SessionFile([string]$pipeName, [string]$state) {
     $obj = [ordered]@{
@@ -1182,15 +1264,18 @@ try {
                         $writer.WriteLine(($payload | ConvertTo-Json -Depth 8 -Compress))
                     }
                     'format' {
-                        # Format-on-edit suggestion (dispatch 000059, PL-8). A SEPARATE action from
-                        # 'diagnostics' -- the client sends it only when the formatOnEdit knob is on,
-                        # so with the knob off (the default) this branch is never reached and the
-                        # diagnostics surface is byte-for-byte unchanged. Runs Invoke-Formatter on the
-                        # warm daemon honoring the repo settings; the response carries a unified-diff
-                        # SUGGESTION, never a rewritten file.
+                        # Format-on-edit (dispatch 000059 suggest; 000099 apply). A SEPARATE action
+                        # from 'diagnostics' -- the client sends it only when the formatOnEdit knob is
+                        # on, so with the knob off (the default) this branch is never reached and the
+                        # diagnostics surface is byte-for-byte unchanged. The request's optional 'apply'
+                        # flag selects the path: absent/false -> Get-FormatSuggestion (a unified-diff
+                        # SUGGESTION, never a rewritten file -- the 000059 behavior, unchanged); true ->
+                        # Invoke-FormatApply (the GUARDED write-back, 000099). Both reuse the one warm
+                        # formatter + repo-settings resolution.
                         $file = [string](Get-Prop $req 'file')
                         $reqCwd = [string](Get-Prop $req 'cwd')
-                        $payload = Get-FormatSuggestion $file $reqCwd
+                        $doApply = [bool](Get-Prop $req 'apply')
+                        $payload = if ($doApply) { Invoke-FormatApply $file $reqCwd } else { Get-FormatSuggestion $file $reqCwd }
                         $writer.WriteLine(($payload | ConvertTo-Json -Depth 6 -Compress))
                     }
                     'ping' {

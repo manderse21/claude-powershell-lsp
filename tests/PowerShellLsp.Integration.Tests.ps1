@@ -2344,6 +2344,191 @@ Describe 'Integration: format-on-edit suggestion (dispatch 000059)' -Skip:$scrip
     }
 }
 
+Describe 'Integration: format-on-edit APPLY -- the guarded write-back (dispatch 000099)' -Skip:$script:SkipIntegration {
+    # The end-to-end proof for formatOnEdit=apply (PL-8 slice 2). With the knob 'apply' and a real
+    # formatter change: the warm daemon WRITES the formatted result back GUARDED, the surface flips to a
+    # visibly-distinct WAS-MODIFIED block, and byte fidelity holds (BOM + dominant EOL preserved, the only
+    # delta the formatting). An already-formatted file is never touched (no-change = no write). A
+    # mixed-EOL file ABORTS to a suggestion (conservative, OQ4). A formatter failure degrades honestly
+    # (no write, hook exits 0, file untouched). A SEPARATE session/daemon from the 000059 suggest suite,
+    # so that regression floor stays pristine. The adversarial stale-write compare-and-swap itself is
+    # proven at the function level (Write-FormatResultAtomic unit tests) -- a concurrent modification
+    # cannot be injected mid-request into the daemon's synchronous read->format->write, so the CAS is
+    # exercised directly where a mutation CAN be interleaved between the input capture and the write.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
+
+        function Invoke-PluginHook {
+            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+            if ($StdinJson) {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
+                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
+            }
+            $p.StandardInput.Close()
+            $script:AP_LastExit = $null
+            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            $script:AP_LastExit = $p.ExitCode
+            [void]$stdoutTask.Wait(1500)
+            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+        }
+        function Get-AddlContext { param([string]$Out) if ([string]::IsNullOrWhiteSpace($Out)) { return '' } try { return [string]((($Out | ConvertFrom-Json).hookSpecificOutput).additionalContext) } catch { return '' } }
+        function Set-RawFile { param([string]$Path, [byte[]]$Bytes) [System.IO.File]::WriteAllBytes($Path, $Bytes) }
+        function Get-U8 { param([string]$S) [System.Text.Encoding]::UTF8.GetBytes($S) }
+
+        $script:AP_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:AP_Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) { $env:PSLS_TEST_DATA_DIR } else { Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data' }
+        New-Item -ItemType Directory -Force -Path $script:AP_Data | Out-Null
+        $env:CLAUDE_PLUGIN_DATA = $script:AP_Data
+        $script:AP_Fixtures = Join-Path $script:AP_Data 'fmt-000099'
+        if (Test-Path -LiteralPath $script:AP_Fixtures) { Remove-Item -LiteralPath $script:AP_Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Force -Path $script:AP_Fixtures | Out-Null
+
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:AP_ScriptsDir 'ensure-pses.ps1') 2>&1 | Out-Null
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:AP_ScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+
+        $script:AP_Bom = [byte[]](0xEF, 0xBB, 0xBF)
+
+        # PLAIN mis-indented (LF, no BOM): the warm gate + the happy-apply fixture.
+        $script:AP_PlainDir = Join-Path $script:AP_Fixtures 'plain'; New-Item -ItemType Directory -Force -Path $script:AP_PlainDir | Out-Null
+        $script:AP_PlainFile = Join-Path $script:AP_PlainDir 'plain.ps1'
+        Set-RawFile $script:AP_PlainFile (Get-U8 "function Test-Plain {`nGet-Process`n}`n")
+
+        # CRLF + BOM mis-indented: byte fidelity (BOM stays, CRLF stays).
+        $script:AP_CrlfDir = Join-Path $script:AP_Fixtures 'crlfbom'; New-Item -ItemType Directory -Force -Path $script:AP_CrlfDir | Out-Null
+        $script:AP_CrlfFile = Join-Path $script:AP_CrlfDir 'crlf.ps1'
+        Set-RawFile $script:AP_CrlfFile ($script:AP_Bom + (Get-U8 "function Test-Crlf {`r`nGet-Process`r`n}`r`n"))
+
+        # LF + no BOM mis-indented: byte fidelity (no BOM stays, LF stays).
+        $script:AP_LfDir = Join-Path $script:AP_Fixtures 'lfnobom'; New-Item -ItemType Directory -Force -Path $script:AP_LfDir | Out-Null
+        $script:AP_LfFile = Join-Path $script:AP_LfDir 'lf.ps1'
+        Set-RawFile $script:AP_LfFile (Get-U8 "function Test-Lf {`nGet-Process`n}`n")
+
+        # MIXED CRLF/LF mis-indented: apply ABORTS to suggest (OQ4). First body EOL CRLF, second LF.
+        $script:AP_MixedDir = Join-Path $script:AP_Fixtures 'mixed'; New-Item -ItemType Directory -Force -Path $script:AP_MixedDir | Out-Null
+        $script:AP_MixedFile = Join-Path $script:AP_MixedDir 'mixed.ps1'
+        Set-RawFile $script:AP_MixedFile (Get-U8 "function Test-Mixed {`r`nGet-Process`n}`r`n")
+
+        # CLEAN already-formatted (LF, 4-space): no-change = no write.
+        $script:AP_CleanDir = Join-Path $script:AP_Fixtures 'clean'; New-Item -ItemType Directory -Force -Path $script:AP_CleanDir | Out-Null
+        $script:AP_CleanFile = Join-Path $script:AP_CleanDir 'clean.ps1'
+        Set-RawFile $script:AP_CleanFile (Get-U8 "function Test-Clean {`n    Get-Process`n}`n")
+
+        # BAD-CFG malformed settings: formatter fails -> no write, exit 0, untouched.
+        $script:AP_BadDir = Join-Path $script:AP_Fixtures 'badcfg'; New-Item -ItemType Directory -Force -Path $script:AP_BadDir | Out-Null
+        Set-RawFile (Join-Path $script:AP_BadDir 'PSScriptAnalyzerSettings.psd1') (Get-U8 "@{ Rules = @{ PSUseConsistentIndentation = @{ Enable = `$true; IndentationSize")
+        $script:AP_BadFile = Join-Path $script:AP_BadDir 'bad.ps1'
+        Set-RawFile $script:AP_BadFile (Get-U8 "function Test-Bad {`nGet-Process`n}`n")
+
+        function Get-ApplyHook {
+            param([string]$File, [string]$Cwd, [string]$Mode)
+            Invoke-PluginHook -ScriptPath (Join-Path $script:AP_ScriptsDir 'lsp-client.ps1') `
+                -StdinJson (@{ session_id = $script:AP_Sid; tool_input = @{ file_path = $File }; cwd = $Cwd } | ConvertTo-Json -Compress) `
+                -ExtraArgs @() -CapMs 30000 -DataRoot $script:AP_Data `
+                -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000'; CLAUDE_PLUGIN_OPTION_formatOnEdit = $Mode }
+        }
+
+        $script:AP_Sid = 'apply-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        Invoke-PluginHook -ScriptPath (Join-Path $script:AP_ScriptsDir 'session-start.ps1') `
+            -StdinJson (@{ session_id = $script:AP_Sid } | ConvertTo-Json -Compress) `
+            -ExtraArgs @('-PreferredHost', 'pwsh') -CapMs 60000 -DataRoot $script:AP_Data | Out-Null
+
+        # Warm gate: poll a SUGGEST format request on the mis-indented PLAIN file (suggest never writes,
+        # so PLAIN stays mis-indented for the happy-apply It) until a suggestion returns -- daemon up +
+        # formatter initialized + a real diff. Gate on the same warm format path the Its use.
+        $sw = [System.Diagnostics.Stopwatch]::StartNew(); $script:AP_Ready = $false
+        while ($sw.ElapsedMilliseconds -lt 90000) {
+            $o = Get-AddlContext (Get-ApplyHook -File $script:AP_PlainFile -Cwd $script:AP_PlainDir -Mode 'suggest')
+            if ($o -match 'formatting suggestion') { $script:AP_Ready = $true; break }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $script:AP_Ready) { throw ('format-on-edit apply daemon did not warm within 90000ms (daemon not ready)') }
+    }
+
+    AfterAll {
+        [void](Stop-IntegrationDaemon -SessionId $script:AP_Sid -DataRoot $script:AP_Data)
+        $sf = Join-Path $script:AP_Data ('session/' + $script:AP_Sid + '.json')
+        if (Test-Path -LiteralPath $sf) { Remove-Item -LiteralPath $sf -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $script:AP_Fixtures) { Remove-Item -LiteralPath $script:AP_Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'apply WRITES the formatted result back and surfaces a visibly-distinct WAS-MODIFIED block' {
+        $before = [System.IO.File]::ReadAllBytes($script:AP_PlainFile)
+        ([System.Text.Encoding]::UTF8.GetString($before)) | Should -Not -Match '(?m)^    Get-Process$'   # pre: not yet indented
+        $out = Get-ApplyHook -File $script:AP_PlainFile -Cwd $script:AP_PlainDir -Mode 'apply'
+        $script:AP_LastExit | Should -Be 0
+        $ctx = Get-AddlContext $out
+        $ctx | Should -Match 'formatting APPLIED'
+        $ctx | Should -Match 'WAS MODIFIED'
+        $ctx | Should -Match 'RE-READ'
+        $ctx | Should -Not -Match 'NOT modified'
+        # the file on disk WAS reformatted (now 4-space indented)
+        ([System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($script:AP_PlainFile))) | Should -Match '(?m)^    Get-Process$'
+    }
+
+    It 'BYTE FIDELITY: a CRLF + BOM file round-trips with BOM and CRLF preserved, only the formatting delta' {
+        $out = Get-ApplyHook -File $script:AP_CrlfFile -Cwd $script:AP_CrlfDir -Mode 'apply'
+        $script:AP_LastExit | Should -Be 0
+        (Get-AddlContext $out) | Should -Match 'WAS MODIFIED'
+        $after = [System.IO.File]::ReadAllBytes($script:AP_CrlfFile)
+        # BOM preserved (first three bytes), and the body decoded from byte 3 is EXACTLY the 4-space
+        # form with CRLF terminators -- so BOM state, EOL style, and content are all pinned at once.
+        $after[0] | Should -Be 0xEF; $after[1] | Should -Be 0xBB; $after[2] | Should -Be 0xBF
+        $text = [System.Text.Encoding]::UTF8.GetString($after, 3, $after.Length - 3)
+        $text | Should -BeExactly "function Test-Crlf {`r`n    Get-Process`r`n}`r`n"
+    }
+
+    It 'BYTE FIDELITY: a LF + no-BOM file round-trips with no BOM and LF preserved, only the formatting delta' {
+        $out = Get-ApplyHook -File $script:AP_LfFile -Cwd $script:AP_LfDir -Mode 'apply'
+        $script:AP_LastExit | Should -Be 0
+        (Get-AddlContext $out) | Should -Match 'WAS MODIFIED'
+        $after = [System.IO.File]::ReadAllBytes($script:AP_LfFile)
+        $after[0] | Should -Be 0x66   # 'f' of function -- no BOM was added
+        ([System.Text.Encoding]::UTF8.GetString($after)) | Should -BeExactly "function Test-Lf {`n    Get-Process`n}`n"
+    }
+
+    It 'NO-CHANGE = NO WRITE: an already-formatted file is byte-for-byte and mtime untouched, no apply surface' {
+        $before = [System.IO.File]::ReadAllBytes($script:AP_CleanFile)
+        $mtimeBefore = (Get-Item -LiteralPath $script:AP_CleanFile).LastWriteTimeUtc
+        Start-Sleep -Milliseconds 50
+        $out = Get-ApplyHook -File $script:AP_CleanFile -Cwd $script:AP_CleanDir -Mode 'apply'
+        $script:AP_LastExit | Should -Be 0
+        $ctx = Get-AddlContext $out
+        $ctx | Should -Not -Match 'formatting APPLIED'
+        $ctx | Should -Not -Match 'formatting suggestion'
+        [System.IO.File]::ReadAllBytes($script:AP_CleanFile) | Should -Be $before
+        (Get-Item -LiteralPath $script:AP_CleanFile).LastWriteTimeUtc | Should -Be $mtimeBefore
+    }
+
+    It 'MIXED EOL: apply ABORTS to a suggestion (OQ4) -- file untouched, honest reason surfaced' {
+        $before = [System.IO.File]::ReadAllBytes($script:AP_MixedFile)
+        $out = Get-ApplyHook -File $script:AP_MixedFile -Cwd $script:AP_MixedDir -Mode 'apply'
+        $script:AP_LastExit | Should -Be 0
+        $ctx = Get-AddlContext $out
+        $ctx | Should -Match 'formatting suggestion'          # the suggest-shaped fallback
+        $ctx | Should -Match 'apply did NOT run'
+        $ctx | Should -Match 'mixed line endings'             # the honest one-line reason
+        $ctx | Should -Not -Match 'WAS MODIFIED'
+        [System.IO.File]::ReadAllBytes($script:AP_MixedFile) | Should -Be $before   # file untouched
+    }
+
+    It 'FAIL-SAFE: a malformed settings file degrades -- no write, hook exits 0, file untouched' {
+        $before = [System.IO.File]::ReadAllBytes($script:AP_BadFile)
+        $out = Get-ApplyHook -File $script:AP_BadFile -Cwd $script:AP_BadDir -Mode 'apply'
+        $script:AP_LastExit | Should -Be 0
+        (Get-AddlContext $out) | Should -Not -Match 'WAS MODIFIED'
+        [System.IO.File]::ReadAllBytes($script:AP_BadFile) | Should -Be $before
+    }
+}
+
 Describe 'Integration: suite-final daemon-leak backstop (dispatch 000078)' -Skip:$script:SkipIntegration {
     # The teardown guarantee + in-suite proof. After every daemon block's AfterAll has run its
     # info-independent per-session reap (Stop-IntegrationDaemon), sweep any STRAGGLER suite-owned

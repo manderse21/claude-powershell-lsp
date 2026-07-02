@@ -128,12 +128,15 @@ function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, 
     }
 }
 
-function Get-FormatResponse([string]$pipeName, [string]$filePath, [int]$connectMs, [int]$hardCapMs, [string]$cwd = '') {
-    # Format-on-edit (000059): ask the warm daemon to format the edited file (a SEPARATE 'format'
-    # action from diagnostics). Returns the parsed response object, or $null on any connect/read/
-    # timeout failure -- the caller then surfaces no suggestion (degrade honestly). Deliberately
-    # separate from Get-Diagnostics so the diagnostics path is untouched; one bounded connect +
-    # read within the remaining hard cap. NEVER writes the file.
+function Get-FormatResponse([string]$pipeName, [string]$filePath, [int]$connectMs, [int]$hardCapMs, [string]$cwd = '', [bool]$Apply = $false) {
+    # Format-on-edit (000059 suggest; 000099 apply): ask the warm daemon to format the edited file (a
+    # SEPARATE 'format' action from diagnostics). Returns the parsed response object, or $null on any
+    # connect/read/timeout failure -- the caller then surfaces nothing (degrade honestly). Deliberately
+    # separate from Get-Diagnostics so the diagnostics path is untouched; one bounded connect + read
+    # within the remaining hard cap. The CLIENT never writes the file: with -Apply the daemon performs
+    # the GUARDED write and this returns its result (formatStatus 'applied' / 'apply-aborted'); without
+    # it the daemon returns a suggestion only. -Apply defaults $false, so the suggest request is
+    # byte-identical to before (no 'apply' field is sent).
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $client = $null
     try {
@@ -145,6 +148,7 @@ function Get-FormatResponse([string]$pipeName, [string]$filePath, [int]$connectM
         $writer.NewLine = "`n"; $writer.AutoFlush = $true
         $reader = New-Object System.IO.StreamReader($client, [System.Text.Encoding]::UTF8, $false, 4096, $true)
         $reqObj = [ordered]@{ action = 'format'; file = $filePath; cwd = $cwd }
+        if ($Apply) { $reqObj['apply'] = $true }   # 000099: request the daemon's guarded write-back
         $writer.WriteLine(($reqObj | ConvertTo-Json -Compress)); $writer.Flush()
         $remaining = [Math]::Max(1, $hardCapMs - [int]$sw.ElapsedMilliseconds)
         $readTask = $reader.ReadLineAsync()
@@ -507,6 +511,11 @@ try {
     # like "analyzed, found nothing." A clean pass adds NOTHING, so the warm output is unchanged.
     $status = [string](Get-Prop $resp 'status')
 
+    # Format-on-edit APPLY suppression flag (000099): set true only when a real apply WROTE the file
+    # this turn. Initialized here (StrictMode-safe) and read below to suppress the now-stale pre-apply
+    # diagnostics from both the surface and the dogfood capture. Stays false for off/suggest.
+    $applyModified = $false
+
     # Build the feedback block. The diagnostics rendering is byte-identical to before;
     # 'degraded' leads with its banner then still lists any parser-only findings, and
     # 'incomplete' (no trustworthy findings) renders the banner alone. A clean 0-diagnostic
@@ -608,6 +617,68 @@ try {
             Write-CLog ('format-on-edit suggestion failed (degrading, no surface): ' + $_.Exception.Message)
         }
     }
+    elseif ($FormatMode -eq 'apply') {
+        # Format-on-edit APPLY (000099): request the daemon's GUARDED write-back. Fully wrapped and
+        # fail-safe -- any failure logs and surfaces nothing beyond what already rendered; the hook
+        # still exits 0; the CLIENT never writes the file (the daemon does, guarded). Three outcomes:
+        #   applied       -> the file WAS written. The diagnostics rendered above are PRE-apply (their
+        #                    line numbers may have shifted, OQ2), so SUPPRESS them: rebuild the surface
+        #                    as [any analysis-health banner] + the visibly-distinct WAS-MODIFIED block
+        #                    (which tells the agent to re-read). No re-derive round-trip -- the agent's
+        #                    next edit re-checks the file, and the 000061 lifecycle is not double-diffed.
+        #   apply-aborted -> the file was NOT touched (a stale-write guard trip, mixed EOL, a UTF-16
+        #                    file, or a write error). The rendered diagnostics stand; append the
+        #                    suggest-shaped fallback with the honest reason (only when there is a diff).
+        #   ok / other    -> no change (no write) or a degrade: surface nothing extra (like suggest).
+        try {
+            $fmtResp = Get-FormatResponse $pipeName $path $ConnectTimeoutMs $HardCapMs $cwd $true
+            if ($null -ne $fmtResp -and [bool](Get-Prop $fmtResp 'ok')) {
+                $fst = [string](Get-Prop $fmtResp 'formatStatus')
+                if ($fst -eq 'applied') {
+                    $applyModified = $true
+                    $applyBlock = Format-FormattingAppliedBlock `
+                        -Path $path -Diff ([string](Get-Prop $fmtResp 'diff')) `
+                        -Removed ([int](Get-Prop $fmtResp 'removed')) -Added ([int](Get-Prop $fmtResp 'added')) `
+                        -Truncated ([bool](Get-Prop $fmtResp 'truncated')) -SettingsPath ([string](Get-Prop $fmtResp 'settingsPath'))
+                    # Suppress the stale pre-apply diagnostics: rebuild from scratch, preserving only
+                    # the analysis-health banner (which carries no line numbers) so a 'PSES did not
+                    # start' signal is not lost on the apply turn.
+                    $sb = New-Object System.Text.StringBuilder
+                    if ($status -and $status -ne 'ok') {
+                        $applyBanner = Get-DiagnosticsStatusBanner $status $path
+                        if (-not [string]::IsNullOrEmpty($applyBanner)) { [void]$sb.AppendLine($applyBanner) }
+                    }
+                    if (-not [string]::IsNullOrEmpty($applyBlock)) {
+                        if ($sb.Length -gt 0) { [void]$sb.AppendLine() }
+                        [void]$sb.AppendLine($applyBlock)
+                    }
+                    Write-CLog 'format-on-edit: APPLIED formatting (file modified on disk; suppressed stale pre-apply diagnostics)'
+                } elseif ($fst -eq 'apply-aborted') {
+                    if ([bool](Get-Prop $fmtResp 'changed')) {
+                        $fbBlock = Format-FormattingApplyAbortedBlock `
+                            -Path $path -Diff ([string](Get-Prop $fmtResp 'diff')) `
+                            -Removed ([int](Get-Prop $fmtResp 'removed')) -Added ([int](Get-Prop $fmtResp 'added')) `
+                            -Truncated ([bool](Get-Prop $fmtResp 'truncated')) -SettingsPath ([string](Get-Prop $fmtResp 'settingsPath')) `
+                            -Reason ([string](Get-Prop $fmtResp 'error'))
+                        if (-not [string]::IsNullOrEmpty($fbBlock)) {
+                            if ($sb.Length -gt 0) { [void]$sb.AppendLine() }
+                            [void]$sb.AppendLine($fbBlock)
+                            Write-CLog ('format-on-edit: apply aborted (' + [string](Get-Prop $fmtResp 'error') + '); surfaced suggest fallback')
+                        }
+                    } else {
+                        Write-CLog ('format-on-edit: apply aborted, no change to suggest (' + [string](Get-Prop $fmtResp 'error') + ')')
+                    }
+                } else {
+                    Write-CLog ('format-on-edit apply: no action (formatStatus=' + $fst +
+                        ' changed=' + [string](Get-Prop $fmtResp 'changed') + ')')
+                }
+            } elseif ($null -ne $fmtResp) {
+                Write-CLog 'format-on-edit apply: response not ok'
+            }
+        } catch {
+            Write-CLog ('format-on-edit apply failed (degrading, no surface): ' + $_.Exception.Message)
+        }
+    }
     $context = $sb.ToString().TrimEnd()
 
     if (-not [string]::IsNullOrEmpty($context)) {
@@ -622,8 +693,10 @@ try {
     # can never alter, reorder, delay, or gate the surface above or the exit 0 below (the
     # invisible-side-channel fence). $diags is the exact (already scoped + capped) set
     # surfaced to Claude; every occurrence is logged (no capture-time dedup). Only diagnostic
-    # OCCURRENCES are captured -- a status-only banner (incomplete/unavailable) is not one.
-    if ($diags.Count -gt 0) {
+    # OCCURRENCES are captured -- a status-only banner (incomplete/unavailable) is not one. On a real
+    # apply (000099) the pre-apply diagnostics were SUPPRESSED (stale line numbers), so they are not
+    # captured either -- the dogfood log records only what was actually surfaced to Claude.
+    if ($diags.Count -gt 0 -and -not $applyModified) {
         try {
             $capRecords = @($diags | ForEach-Object { New-CaptureRecordFromDiag $_ })
             Add-DiagnosticCaptureEntries -File $path -Records $capRecords | Out-Null
