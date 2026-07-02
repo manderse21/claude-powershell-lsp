@@ -2397,10 +2397,12 @@ Describe 'Integration: format-on-edit APPLY -- the guarded write-back (dispatch 
 
         $script:AP_Bom = [byte[]](0xEF, 0xBB, 0xBF)
 
-        # PLAIN mis-indented (LF, no BOM): the warm gate + the happy-apply fixture.
+        # PLAIN mis-indented (LF, no BOM): the warm gate + the happy-apply fixture. The unapproved verb
+        # 'Frobnicate' also trips a real PSUseApprovedVerbs diagnostic, so the warm gate can settle the
+        # DIAGNOSTICS engine on it (mirroring the 000059 Wait-FmtWarm) -- not just the formatter.
         $script:AP_PlainDir = Join-Path $script:AP_Fixtures 'plain'; New-Item -ItemType Directory -Force -Path $script:AP_PlainDir | Out-Null
         $script:AP_PlainFile = Join-Path $script:AP_PlainDir 'plain.ps1'
-        Set-RawFile $script:AP_PlainFile (Get-U8 "function Test-Plain {`nGet-Process`n}`n")
+        Set-RawFile $script:AP_PlainFile (Get-U8 "function Frobnicate-Apply {`nGet-Process`n}`n")
 
         # CRLF + BOM mis-indented: byte fidelity (BOM stays, CRLF stays).
         $script:AP_CrlfDir = Join-Path $script:AP_Fixtures 'crlfbom'; New-Item -ItemType Directory -Force -Path $script:AP_CrlfDir | Out-Null
@@ -2441,16 +2443,31 @@ Describe 'Integration: format-on-edit APPLY -- the guarded write-back (dispatch 
             -StdinJson (@{ session_id = $script:AP_Sid } | ConvertTo-Json -Compress) `
             -ExtraArgs @('-PreferredHost', 'pwsh') -CapMs 60000 -DataRoot $script:AP_Data | Out-Null
 
-        # Warm gate: poll a SUGGEST format request on the mis-indented PLAIN file (suggest never writes,
-        # so PLAIN stays mis-indented for the happy-apply It) until a suggestion returns -- daemon up +
-        # formatter initialized + a real diff. Gate on the same warm format path the Its use.
-        $sw = [System.Diagnostics.Stopwatch]::StartNew(); $script:AP_Ready = $false
-        while ($sw.ElapsedMilliseconds -lt 90000) {
-            $o = Get-AddlContext (Get-ApplyHook -File $script:AP_PlainFile -Cwd $script:AP_PlainDir -Mode 'suggest')
-            if ($o -match 'formatting suggestion') { $script:AP_Ready = $true; break }
+        # Warm gate (two-stage; the 000059 rule: gate on the SAME kinds of request the Its depend on).
+        # STAGE 1 -- SETTLE THE DIAGNOSTICS ENGINE: poll a diagnostics-only (Mode 'off') pass on the
+        # unapproved-verb PLAIN file until its PSUseApprovedVerbs finding appears, proving PSES has
+        # SETTLED (an 'incomplete' pass surfaces the 'analysis did not complete' banner, never the
+        # finding). Without this a COLD first apply -- whose hook does a diagnostics pass THEN the apply
+        # round-trip in one call -- can return 'incomplete' on a slow runner and exhaust the client hard
+        # cap before the apply request, so no write happens and the WAS-MODIFIED surface never appears
+        # (the CI-only flake this gate closes; suggest never writes, and neither does 'off', so PLAIN
+        # stays mis-indented for the happy-apply It).
+        $sw = [System.Diagnostics.Stopwatch]::StartNew(); $script:AP_DiagReady = $false
+        while ($sw.ElapsedMilliseconds -lt 120000) {
+            $o = Get-AddlContext (Get-ApplyHook -File $script:AP_PlainFile -Cwd $script:AP_PlainDir -Mode 'off')
+            if ($o -match 'PSUseApprovedVerbs') { $script:AP_DiagReady = $true; break }
             Start-Sleep -Milliseconds 500
         }
-        if (-not $script:AP_Ready) { throw ('format-on-edit apply daemon did not warm within 90000ms (daemon not ready)') }
+        if (-not $script:AP_DiagReady) { throw ('format-on-edit apply: diagnostics did not settle within 120000ms (daemon not ready)') }
+        # STAGE 2 -- WARM THE FORMATTER: poll a suggest pass until a suggestion returns (Invoke-Formatter
+        # imported + a real diff), so the first apply's format round-trip is warm too.
+        $sw2 = [System.Diagnostics.Stopwatch]::StartNew(); $script:AP_FmtReady = $false
+        while ($sw2.ElapsedMilliseconds -lt 60000) {
+            $o = Get-AddlContext (Get-ApplyHook -File $script:AP_PlainFile -Cwd $script:AP_PlainDir -Mode 'suggest')
+            if ($o -match 'formatting suggestion') { $script:AP_FmtReady = $true; break }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $script:AP_FmtReady) { throw ('format-on-edit apply: formatter did not warm within 60000ms (daemon not ready)') }
     }
 
     AfterAll {
