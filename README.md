@@ -135,6 +135,7 @@ Set these via the `/plugin` config UI for `powershell-lsp`, or leave the default
 | `editContextLines` | `0`      | Extra context lines kept above and below the touched range when `scopeToEdit` is on; the edit's patch already includes a few, so the default is `0` |
 | `formatOnEdit`     | `off`    | When `suggest`, after an edit the warm daemon runs `Invoke-Formatter` on the file (honoring the repo's `PSScriptAnalyzerSettings.psd1`) and surfaces the formatted result as a **suggestion** -- a unified diff -- via the same channel as diagnostics; it **never rewrites your file**. `apply` additionally **writes it back**, guarded: a stale-write compare-and-swap aborts if the file changed since formatting (the newer edit wins), the write is atomic, and the original BOM + line-ending style are preserved (only the formatting changes); an applied write is announced so you re-read. `off` (default) does nothing and the diagnostics surface is unchanged. Values: `off` (default), `suggest`, `apply`; `apply` is doubly opt-in and aborts to a suggestion for mixed-EOL / non-UTF-8 files. See [Format-on-edit](#format-on-edit-suggest-or-guarded-apply) |
 | `ruleset`          | `pses-default` | Live diagnostics ruleset tier. `pses-default` (default) keeps PSES's built-in no-settings rule set (about 15 rules) -- unchanged from prior versions. `base` opts in to the plugin's shipped enumerated base ruleset (PSScriptAnalyzer's default-on set minus the compatibility rules), broadening the live surface so `PSAvoidUsingWriteHost` and the three Error-severity security rules surface. A repo-local `PSScriptAnalyzerSettings.psd1` and an explicit `settingsPath` always win over the base. See [Ruleset tiers](#ruleset-tiers-opt-in-broaden) |
+| `moduleAwareness`  | `off`    | When `suggest`, the warm daemon adds an **Information** hint when a command in the edited file is exported by a **known** module (a shipped, offline command->module index) that is **not installed** on this machine, so the call would not resolve (`Install-Module M or import it`). It fires only on positive identification and stays **silent** on any ambiguity (a not-yet-ready install snapshot, a dynamic include); it **never writes** your file and adds **no** edit-path network or latency. `off` (default) does nothing and the diagnostics surface is unchanged. Values: `off` (default), `suggest`. See [Module awareness](#module-awareness-uninstalled-module-hint) |
 
 Diagnostics are returned in a stable order (severity, then line, then column),
 deduped, threshold- and rule-filtered, then capped per file.
@@ -200,6 +201,40 @@ is present. The existing noise controls still apply on top: `scopeToEdit` (on by
 findings to the lines you edited, `perFileCap` caps the count per file, and `severityThreshold` drops
 low-severity findings -- so `base` broadens *what can surface* without flooding a single edit. The
 default is deliberately **not** flipped: the broadened surface never activates unless you opt in.
+
+### Module awareness (uninstalled-module hint)
+
+`moduleAwareness` is **off by default**. When set to `suggest`, each time Claude edits a PowerShell
+file the warm daemon checks the commands used against a **shipped, offline command->module index** --
+a curated map of common first-party and Gallery modules (Az, Microsoft.Graph, Exchange Online,
+ActiveDirectory, Pester, and more) to the commands they export -- and adds an **Information**-severity
+hint when a command is a positive index hit whose owning module is **not installed** on this machine.
+The message is actionable: *"`Get-MgUser` is exported by module `Microsoft.Graph.Users`, which is not
+installed on this machine; Install-Module Microsoft.Graph.Users or import it."*
+
+The check is built to be **quiet and correct** -- a missing hint costs you a web search, but a *wrong*
+"install X" would teach you to ignore the plugin, so it fires only on **positive identification** and
+degrades to **silence** on every ambiguity:
+
+- It only flags a **literal command name** that is a hit in the shipped index, never an unknown
+  command (an unknown name is not evidence of a missing module -- it could be your own function, a
+  profile module, or private tooling).
+- It stays silent when the command is a **built-in**, is **defined in the file** (a function or
+  alias), is pulled in by a **literal dot-source** the check follows, or when the module is
+  **declared** via `#Requires -Modules`, the nearest manifest's `RequiredModules`, or a literal
+  `Import-Module`.
+- It suppresses the **whole file** on a **dynamic** include (`. $path`, `Import-Module $name`) it
+  cannot resolve -- it never guesses across something it cannot read.
+- **Design B (the install-check):** because PowerShell auto-loads an installed module on first use, a
+  command whose module *is* installed resolves fine -- so the hint fires **only** when the module is
+  absent. Install-state is read **once per session** by a background snapshot taken off the critical
+  path (it never delays your first edit); until that snapshot is ready, the check stays **silent**.
+
+It **never rewrites your file** and adds **no network on the edit path** -- the index is a shipped
+artifact (`rulesets/command-module-index.psd1`), regenerated offline from a vendored source snapshot by
+`scripts/regen-command-module-index.ps1` and refreshed only by a deliberate release, so an edit never
+reaches the network or a live module query. The default is deliberately **not** flipped: the hint never
+appears unless you opt in. Values are `off` (default) and `suggest`.
 
 > **Privacy note -- `enableStats` logs absolute paths.** When `enableStats` is on (it is
 > **off by default**), each timing line in `logs/stats.jsonl` records the **absolute path**

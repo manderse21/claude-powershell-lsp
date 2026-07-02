@@ -63,7 +63,20 @@ param(
     # deadline (or a PSES exit) does it flip to a permanent 'unavailable'. 30s mirrors the
     # manifest lspServers.startupTimeout. NOT a userConfig knob; daemon-level so a surfacing
     # test can hold the daemon in 'initializing' (set it high) or force a fast fail.
-    [int] $InitTimeoutMs = 30000
+    [int] $InitTimeoutMs = 30000,
+    # Module awareness (dispatch 000101, PL-6): 'off' (default) keeps the diagnostics surface
+    # byte-for-byte unchanged (the check never runs; no index load, no installed-modules snapshot);
+    # 'suggest' turns on the daemon-side "command N is from module M, which is not installed" hint.
+    # The value arrives already canonicalized (off|suggest) from session-start / lsp-client
+    # (ConvertTo-ModuleAwarenessMode), and is passed ONLY when 'suggest' (mirrors -Ruleset), so the
+    # default path's daemon invocation is byte-identical to pre-000101.
+    [string] $ModuleAwareness = 'off',
+    # TEST-ONLY injectable seam for the 000101 corpus -- deterministic installed-modules snapshot so
+    # the kb/kg fixtures do not depend on what is really installed on the runner. NEVER passed by the
+    # production launcher (session-start / lsp-client). '' = production (the real background pre-warm);
+    # '__defer__' = the snapshot never latches ready (the fail-safe not-ready fixture); '__empty__' =
+    # ready with an EMPTY installed-set (kb1: module absent -> fires); 'A,B' = ready with those names.
+    [string] $ModuleAwarenessInstalledInject = ''
 )
 
 Set-StrictMode -Version Latest
@@ -161,6 +174,40 @@ $script:moduleCacheExportedNames = $null  # $null = implicitly all; @(...) = exp
 # daemon process ONCE (lazy, on the first format request) so Invoke-Formatter runs on the warm
 # path with no cold-start. Latched here so the import cost is paid at most once per daemon.
 $script:formatterReady = $false
+# Module awareness (PL-6, dispatch 000101): the once-per-session installed-modules snapshot (the
+# machine-state rung 6, design B) lives here -- taken by a BACKGROUND pre-warm OFF the critical path
+# (a raw runspace; Start-ThreadJob is absent on Windows PowerShell 5.1) so it NEVER delays first-edit
+# diagnostics. The shipped command->module index is loaded ONCE. FAIL-SAFE: until the snapshot
+# latches ready, the check is SILENT. With the knob 'off' (default) NONE of this runs and the surface
+# is byte-for-byte unchanged.
+$script:moduleAwarenessMode = ConvertTo-ModuleAwarenessMode $ModuleAwareness
+$script:commandModuleIndex = @{}
+$script:installedModulesSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+$script:installedSnapshotReady = $false      # latch: $true once the snapshot is populated (or injected)
+$script:installedSnapshotStarted = $false    # latch: the background pre-warm was kicked (or injection resolved)
+$script:snapshotPs = $null                   # background [PowerShell] instance
+$script:snapshotAsync = $null                # its IAsyncResult
+$script:snapshotRunspace = $null             # its dedicated runspace
+if ($script:moduleAwarenessMode -eq 'suggest') {
+    $script:commandModuleIndex = Import-CommandModuleIndex
+    Write-DLog ('module awareness: mode=suggest; index (' + @($script:commandModuleIndex.Keys).Count + ' entries) loaded')
+    # Resolve the TEST-ONLY injection seam deterministically at load (the corpus); production ('')
+    # kicks the real background pre-warm at daemon-ready (Complete-PsesReady). Inlined here (not a
+    # function) because top-level load runs before the later function definitions are reached.
+    $inj = [string]$ModuleAwarenessInstalledInject
+    if (-not [string]::IsNullOrWhiteSpace($inj)) {
+        $script:installedSnapshotStarted = $true
+        if ($inj -eq '__defer__') {
+            Write-DLog 'module awareness: installed snapshot DEFERRED (injected not-ready; check stays silent)'
+        } else {
+            if ($inj -ne '__empty__') {
+                foreach ($n in @($inj -split ',')) { $nn = ([string]$n).Trim(); if (-not [string]::IsNullOrWhiteSpace($nn)) { [void]$script:installedModulesSet.Add($nn) } }
+            }
+            $script:installedSnapshotReady = $true
+            Write-DLog ('module awareness: installed snapshot INJECTED (' + $script:installedModulesSet.Count + ' names; ready)')
+        }
+    }
+}
 
 function Get-ContentHash([string]$text) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -348,6 +395,10 @@ function Complete-PsesReady {
     Write-DLog 'PSES initialized'
     Write-SessionFile $pipeName 'ready'
     Invoke-WarmStart
+    # Module awareness (dispatch 000101): kick the installed-modules snapshot pre-warm on a background
+    # runspace NOW (idle gap, right after PSES is ready), OFF the critical path -- a no-op when the
+    # knob is off or the snapshot was test-injected. The first-edit diagnostics never wait on it.
+    Start-InstalledSnapshotPrewarm
 }
 
 function Invoke-WarmStart {
@@ -778,6 +829,84 @@ function Get-CachedProjectFindings {
         -ExportedNames $script:moduleCacheExportedNames `
         -ManifestPath $script:moduleCacheManifest
     return @($result.Findings)
+}
+
+# --- module awareness: installed-modules snapshot + check (dispatch 000101) --
+function Start-InstalledSnapshotPrewarm {
+    # Kick off the once-per-session installed-modules snapshot (the machine-state rung 6) on a
+    # BACKGROUND runspace so the multi-second Get-Module -ListAvailable (survey-MEASURED ~6.3s pwsh /
+    # ~11.7s WinPS 5.1) is paid OFF the critical path and NEVER delays first-edit diagnostics. Names
+    # suffice. The main path harvests the result lazily (Update-InstalledSnapshotFromBackground);
+    # until it latches ready the check is SILENT (fail-safe). One-shot per daemon. A raw runspace +
+    # BeginInvoke (NOT Start-ThreadJob -- absent on Windows PowerShell 5.1) keeps it portable to both
+    # hosts. Best-effort: any failure leaves ready=$false, so the check simply stays silent.
+    if ($script:moduleAwarenessMode -ne 'suggest') { return }
+    if ($script:installedSnapshotStarted) { return }   # already started, or resolved by test injection
+    $script:installedSnapshotStarted = $true
+    try {
+        $rs = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+        $rs.Open()
+        $ps = [System.Management.Automation.PowerShell]::Create()
+        $ps.Runspace = $rs
+        [void]$ps.AddScript('@(Get-Module -ListAvailable -ErrorAction SilentlyContinue | ForEach-Object { $_.Name } | Sort-Object -Unique)')
+        $script:snapshotRunspace = $rs
+        $script:snapshotPs = $ps
+        $script:snapshotAsync = $ps.BeginInvoke()
+        Write-DLog 'module awareness: installed snapshot pre-warm started (background runspace, off the critical path)'
+    } catch {
+        Write-DLog ('module awareness: snapshot pre-warm could not start (' + $_.Exception.Message + '); check stays silent')
+    }
+}
+
+function Update-InstalledSnapshotFromBackground {
+    # If the background snapshot completed, harvest its NAME set into $script:installedModulesSet and
+    # latch ready. Cheap poll (IsCompleted); a no-op once ready or when no background job is running.
+    # FAIL-SAFE: any harvest error latches nothing (the check stays silent). Disposes the runspace
+    # exactly once, on completion.
+    if ($script:installedSnapshotReady) { return }
+    if ($null -eq $script:snapshotAsync -or $null -eq $script:snapshotPs) { return }
+    if (-not $script:snapshotAsync.IsCompleted) { return }
+    try {
+        $result = $script:snapshotPs.EndInvoke($script:snapshotAsync)
+        foreach ($n in @($result)) {
+            $nm = [string]$n
+            if (-not [string]::IsNullOrWhiteSpace($nm)) { [void]$script:installedModulesSet.Add($nm) }
+        }
+        $script:installedSnapshotReady = $true
+        Write-DLog ('module awareness: installed snapshot ready (' + $script:installedModulesSet.Count + ' modules)')
+    } catch {
+        Write-DLog ('module awareness: snapshot harvest failed (' + $_.Exception.Message + '); staying silent')
+    } finally {
+        try { $script:snapshotPs.Dispose() } catch { }
+        try { if ($null -ne $script:snapshotRunspace) { $script:snapshotRunspace.Dispose() } } catch { }
+        $script:snapshotPs = $null; $script:snapshotAsync = $null; $script:snapshotRunspace = $null
+    }
+}
+
+function Get-ModuleAwarenessFindings {
+    # Daemon wrapper for the 000101 module-awareness check (rides the diagnostics merge path). Gated:
+    # returns @() unless the knob is 'suggest' AND the installed-modules snapshot has latched ready
+    # (fail-safe -- never guess install-state). Parses the edited file, resolves the nearest manifest's
+    # RequiredModules, and calls the PURE Find-ModuleAwareness with the session snapshot + shipped
+    # index. NEVER throws past its own frame (a throw would be caught by the caller, but this returns
+    # @() on any error so the diagnostics pass is untouched). Per-edit cost is O(index membership).
+    param([string]$FilePath)
+    if ($script:moduleAwarenessMode -ne 'suggest') { return @() }
+    Update-InstalledSnapshotFromBackground
+    if (-not $script:installedSnapshotReady) { return @() }              # snapshot not ready -> SILENT
+    if (@($script:commandModuleIndex.Keys).Count -eq 0) { return @() }   # empty/failed index -> nothing to hit
+    try {
+        $full = [System.IO.Path]::GetFullPath($FilePath)
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return @() }
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($full, [ref]$null, [ref]$null)
+        if ($null -eq $ast) { return @() }
+        $reqMods = Get-NearestManifestRequiredModules -FilePath $full
+        return @(Find-ModuleAwareness -Ast $ast -Index $script:commandModuleIndex `
+                -InstalledModules $script:installedModulesSet -ManifestRequiredModules $reqMods -FilePath $full)
+    } catch {
+        Write-DLog ('module awareness: check errored (ignored, silent): ' + $_.Exception.Message)
+        return @()
+    }
 }
 
 # --- closed-loop agentic correction (dispatch 000061, PL-4 slice 1) ----------
@@ -1226,9 +1355,22 @@ try {
                         $touched = Get-Prop $req 'touchedRanges'
                         $res = Get-Diagnostics $file $reqCwd
                         if ($res.ok) {
+                            # Module awareness (dispatch 000101): merge daemon-side ModuleNotInstalled
+                            # Information hints into the records so they ride the SAME order + severity
+                            # + scope + cap pipeline as PSES diagnostics. Gated: knob 'suggest' AND a
+                            # CLEAN pass (never incomplete/degraded/unavailable -- a status-carrying
+                            # pass leaves the surface untouched). ADDITIVE + FAIL-SAFE: the wrapper
+                            # returns @() when the snapshot is not ready or on any error, and this
+                            # try/catch guarantees a throw never zeroes or blocks the diagnostics pass.
+                            # With the knob OFF the whole block is skipped -> byte-for-byte unchanged.
+                            $maRecords = @()
+                            if ($script:moduleAwarenessMode -eq 'suggest' -and -not $res.Contains('status')) {
+                                try { $maRecords = @(Get-ModuleAwarenessFindings -FilePath $file) }
+                                catch { $maRecords = @(); Write-DLog ('module awareness merge error (ignored): ' + $_.Exception.Message) }
+                            }
                             # Stable order + dedupe, then severity threshold + rule
                             # include/exclude, then scope to the edit, then cap per file.
-                            $ordered = Select-OrderedDiagnostics @($res.records)
+                            $ordered = Select-OrderedDiagnostics (@($res.records) + @($maRecords))
                             $filtered = @(Select-FilteredDiagnostics $ordered $SeverityThreshold $script:RuleIncludeArr $script:RuleExcludeArr)
                             $sc = Get-ScopedCappedResult -Records $filtered -Ranges $touched -PerFileCap $PerFileCap
                             $payload = [ordered]@{ ok = $true; action = 'diagnostics'; file = $file
@@ -1302,6 +1444,10 @@ try {
     Write-DLog 'main loop ended; cleanup'
     try { $server.Dispose() } catch { }
     Stop-Pses
+    # Module awareness (dispatch 000101): tear down the background snapshot runspace if it is still
+    # alive (best-effort; the process is exiting anyway).
+    try { if ($null -ne $script:snapshotPs) { $script:snapshotPs.Dispose() } } catch { }
+    try { if ($null -ne $script:snapshotRunspace) { $script:snapshotRunspace.Dispose() } } catch { }
     try { if (Test-Path -LiteralPath $sessionFile) { Remove-Item -LiteralPath $sessionFile -Force } } catch { }
     Write-DLog '--- daemon exit ---'
 }

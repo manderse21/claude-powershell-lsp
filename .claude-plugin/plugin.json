@@ -98,6 +98,12 @@
       "title": "Live diagnostics ruleset",
       "description": "Which PSScriptAnalyzer rule set to apply on the live edit path when no repo-local PSScriptAnalyzerSettings.psd1 and no settingsPath override resolve. 'pses-default' (default) keeps PowerShell Editor Services' built-in no-settings rule set (about 15 rules) -- the surface is unchanged from prior versions. 'base' opts in to the plugin's shipped enumerated base ruleset: PSScriptAnalyzer's full default-on set minus the compatibility-profile rules, which broadens the live surface (e.g. PSAvoidUsingWriteHost and the three Error-severity security rules PSAvoidUsingComputerNameHardcoded / PSAvoidUsingConvertToSecureStringWithPlainText / PSAvoidUsingUsernameAndPasswordParams start surfacing). A repo-local PSScriptAnalyzerSettings.psd1 and an explicit settingsPath ALWAYS win over the base. Values: 'pses-default' (default), 'base'.",
       "default": "pses-default"
+    },
+    "moduleAwareness": {
+      "type": "string",
+      "title": "Module awareness (uninstalled-module hint)",
+      "description": "When 'suggest', after an edit the warm daemon adds an Information-severity hint when a command in the edited file is exported by a KNOWN module (a shipped, offline command->module index of common first-party / Gallery modules) that is NOT installed on this machine -- so the call would fail to resolve. The message is actionable ('N is exported by module M, which is not installed; Install-Module M or import it'). It fires ONLY on positive identification: the command is a literal index hit, not a built-in, not defined or dot-sourced or #Requires/Import-Module-declared in the file, and its module is absent from a once-per-session installed-modules snapshot the daemon takes in the background (off the critical path; the check stays silent until it is ready, and on ANY ambiguity -- a dynamic include, an unresolved dot-source -- so a missing hint never becomes a wrong one). It NEVER writes your file and adds NO edit-path network or latency (the index is a shipped artifact; install-state is read once per session). 'off' (default) does nothing and the diagnostics surface is byte-for-byte unchanged. Values: 'off' (default), 'suggest'.",
+      "default": "off"
     }
   },
   "lspServers": {
