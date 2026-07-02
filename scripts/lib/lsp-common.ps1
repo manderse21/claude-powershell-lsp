@@ -1933,12 +1933,15 @@ function Get-FindingLifecycleDiff {
 # computed by Get-FormatDiffResult, and the surface wording by Format-FormattingSuggestionBlock.
 
 function ConvertTo-FormatOnEditMode {
-    # Map the raw formatOnEdit knob string to a mode: 'off' | 'suggest'. Default-safe: absent
-    # / blank / an unexpanded '${user_config...}' token / any unrecognized value -> 'off' (the
-    # feature is opt-in; an unparseable knob never silently turns it on). 'suggest' is the only
-    # ON value today; 'true'/'on'/'1'/'yes' are accepted aliases for it so a user who reaches
-    # for a boolean still gets the suggest behavior. 'apply' is RESERVED for a future dispatch
-    # and maps to 'off' here -- no apply path ships, and no current config depends on 'apply'.
+    # Map the raw formatOnEdit knob string to a mode: 'off' | 'suggest' | 'apply'. Default-safe:
+    # absent / blank / an unexpanded '${user_config...}' token / any unrecognized value -> 'off'
+    # (the feature is opt-in; an unparseable knob never silently turns it on). 'suggest' surfaces a
+    # diff and NEVER writes; the boolean-truthy aliases 'true'/'on'/'1'/'yes' map to 'suggest' so a
+    # user who reaches for a boolean gets the safe suggest behavior. 'apply' (dispatch 000099) is the
+    # ONLY value that activates the guarded write-back path: it is DOUBLY opt-in (an explicit, exact
+    # 'apply' -- never reachable through a boolean alias), so no config is upgraded into file writes
+    # by accident. The write path itself is guarded (stale-write compare-and-swap, byte fidelity,
+    # atomic-or-abort); this function only classifies the knob.
     param([string]$Raw)
     $v = ([string]$Raw).Trim().ToLowerInvariant()
     switch ($v) {
@@ -1947,6 +1950,7 @@ function ConvertTo-FormatOnEditMode {
         'on'      { return 'suggest' }
         '1'       { return 'suggest' }
         'yes'     { return 'suggest' }
+        'apply'   { return 'apply' }
         default   { return 'off' }
     }
 }
@@ -2118,6 +2122,186 @@ function Format-FormattingSuggestionBlock {
     [void]$sb.AppendLine('PowerShell formatting suggestion for ' + $Path + ' -- ' + $styleNote +
         ': the formatted version differs (-' + $Removed + ' / +' + $Added + ' lines). ' +
         'The file was NOT modified; run Invoke-Formatter yourself to apply this style.')
+    [void]$sb.Append($Diff)
+    if ($Truncated) { [void]$sb.Append("`n... (formatting diff truncated)") }
+    return $sb.ToString()
+}
+
+# --- format-on-edit APPLY: the guarded write-back path (dispatch 000099, PL-8 slice 2) --------
+# 000059 shipped suggest-not-apply; this slice activates 'apply', the FIRST feature that ever
+# WRITES the user's file. The entire risk lives in the write path, so it is guarded by ALL of:
+#   * a stale-write COMPARE-AND-SWAP: the file's bytes are hashed at format-input time and
+#     re-hashed immediately before the write, in the SAME process that writes (the daemon); ANY
+#     mismatch ABORTS -- a concurrent modification always wins (Write-FormatResultAtomic).
+#   * ATOMIC-OR-ABORT: the formatted bytes are staged to a temp file in the SAME directory and
+#     swapped in with [IO.File]::Replace (an atomic NTFS replace that preserves the destination's
+#     ACLs/attributes); a crashed write can never leave a torn/partial file.
+#   * BYTE FIDELITY: the original BOM state and dominant EOL style are captured from the RAW bytes
+#     and re-applied to the formatter's (LF-normalized) output, so the only byte delta is the
+#     formatting change itself (Get-ApplyEncodedBytes). The 000059 LF normalization is
+#     formatter-INPUT-only; the write path re-applies the original conventions.
+#   * NO-CHANGE = NO WRITE: an already-formatted file is never touched (the caller checks
+#     Get-FormatDiffResult.changed before staging any write), preserving clean-edit-emits-nothing.
+#   * CONSERVATIVE ABORTS (OQ4): a MIXED CRLF/LF file or a non-UTF-8 (UTF-16) file ABORTS to
+#     suggest -- normalizing the minority EOL on unchanged lines would be a byte change beyond the
+#     formatting delta, and a silent full normalization the surface does not mention is never
+#     emitted. When in doubt, apply aborts to suggest.
+# These helpers are PURE / unit-testable; the daemon orchestrator (Invoke-FormatApply) wires them
+# to the REUSED 000059 formatter + settings resolution + diff engine. The apply path EXTENDS the
+# 000059 core -- it never duplicates the formatter or the pinned-PSSA import.
+
+function Get-Sha256HexFromBytes {
+    # Deterministic lower-case hex SHA-256 of a byte buffer -- the stale-write guard's fingerprint.
+    # Same primitive as the dogfood capture hash, kept as its own helper so the apply CAS and its
+    # tests share one implementation. NEVER throws for a valid array (an empty array hashes fine).
+    param([byte[]]$Bytes)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $hashBytes = $sha.ComputeHash($Bytes) } finally { $sha.Dispose() }
+    return (([System.BitConverter]::ToString($hashBytes)) -replace '-', '').ToLowerInvariant()
+}
+
+function Test-Utf8Bom {
+    # $true iff the buffer opens with the UTF-8 BOM (EF BB BF). Guards the byte-fidelity contract:
+    # a BOM file must come back a BOM file. StrictMode-safe (length-checked before indexing).
+    param([byte[]]$Bytes)
+    return ($null -ne $Bytes -and $Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF)
+}
+
+function Test-Utf16Bom {
+    # $true iff the buffer opens with a UTF-16 BOM (FF FE LE or FE FF BE). Apply supports the
+    # UTF-8 family only; a UTF-16 file ABORTS to suggest (re-encoding its formatted text as UTF-8
+    # would rewrite every byte, far beyond the formatting delta). StrictMode-safe.
+    param([byte[]]$Bytes)
+    if ($null -eq $Bytes -or $Bytes.Length -lt 2) { return $false }
+    if ($Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xFE) { return $true }
+    if ($Bytes[0] -eq 0xFE -and $Bytes[1] -eq 0xFF) { return $true }
+    return $false
+}
+
+function Get-DominantEol {
+    # Classify a text's line-ending style from its RAW content: 'crlf' (only CRLF), 'lf' (only bare
+    # LF), 'none' (no terminators -- a single line), or 'mixed' (any mixture, OR a bare CR). Apply
+    # writes back 'crlf'/'lf'/'none' with the ORIGINAL style re-applied; 'mixed' ABORTS to suggest
+    # (OQ4) so an unchanged minority-EOL line is never silently flipped. [regex]::Matches with
+    # runtime CR/LF patterns keeps the SOURCE ASCII-clean and is 5.1-safe.
+    param([string]$Text)
+    $t = [string]$Text
+    $crlf = ([regex]::Matches($t, "`r`n")).Count
+    $allLf = ([regex]::Matches($t, "`n")).Count
+    $allCr = ([regex]::Matches($t, "`r")).Count
+    $loneLf = $allLf - $crlf
+    $loneCr = $allCr - $crlf
+    if ($crlf -eq 0 -and $loneLf -eq 0 -and $loneCr -eq 0) { return 'none' }
+    if ($loneCr -gt 0) { return 'mixed' }                       # a bare CR (classic Mac) -> unsupported
+    if ($crlf -gt 0 -and $loneLf -gt 0) { return 'mixed' }      # genuinely mixed CRLF + LF
+    if ($crlf -gt 0) { return 'crlf' }
+    return 'lf'
+}
+
+function ConvertTo-Eol {
+    # Re-apply a line-ending style to text. Normalize to LF first (defensive: the formatter output
+    # EOL is not guaranteed), then emit: 'crlf' -> CRLF; anything else ('lf'/'none') -> LF. Mirrors
+    # the 000059 Invoke-RepoFormatter normalization idiom exactly.
+    param([string]$Text, [string]$Eol)
+    $lf = (([string]$Text) -replace "`r`n", "`n") -replace "`r", "`n"
+    if ($Eol -eq 'crlf') { return ($lf -replace "`n", "`r`n") }
+    return $lf
+}
+
+function Get-ApplyEncodedBytes {
+    # Assemble the exact bytes to write back: the formatter's output re-EOLed to $Eol, UTF-8
+    # encoded WITHOUT a BOM, then a UTF-8 BOM prepended iff the original had one. This is the whole
+    # byte-fidelity contract in one pure builder -- the only intended byte delta vs the original is
+    # the formatting change. Returns a byte[] (the leading comma prevents pipeline unrolling).
+    param([string]$FormattedText, [string]$Eol, [bool]$HasBom)
+    $eolText = ConvertTo-Eol -Text $FormattedText -Eol $Eol
+    $enc = New-Object System.Text.UTF8Encoding($false)          # UTF-8, NO BOM
+    $body = $enc.GetBytes($eolText)
+    if (-not $HasBom) { return , $body }
+    $bom = [byte[]](0xEF, 0xBB, 0xBF)
+    $out = New-Object 'byte[]' ($bom.Length + $body.Length)
+    [System.Array]::Copy($bom, 0, $out, 0, $bom.Length)
+    [System.Array]::Copy($body, 0, $out, $bom.Length, $body.Length)
+    return , $out
+}
+
+function Write-FormatResultAtomic {
+    # The stale-write COMPARE-AND-SWAP and ATOMIC write, together, in the caller's (daemon) process.
+    # $InputHash is the SHA-256 of the file's bytes AS THE FORMATTER SAW THEM. Here we: stage
+    # $OutBytes to a temp file in the SAME directory (touching NOTHING on the target yet), RE-READ
+    # the target's current bytes as close to the swap as possible, and compare their hash to
+    # $InputHash. On ANY mismatch we ABORT and the concurrent modification survives untouched (the
+    # mutated file always wins). On a match we swap the temp in with [IO.File]::Replace -- atomic on
+    # NTFS, preserves the destination's ACLs/attributes, and either fully replaces or throws leaving
+    # the original intact (never a torn file). Any failure (a sharing violation, a read-only target)
+    # ABORTS honestly; the temp is always cleaned up. NEVER throws past its own frame.
+    # Returns @{ applied = <bool>; reason = <string> }.
+    param([string]$Full, [string]$InputHash, [byte[]]$OutBytes)
+    $tmp = $null
+    try {
+        $dir = [System.IO.Path]::GetDirectoryName($Full)
+        $tmp = [System.IO.Path]::Combine($dir, ('.pslsp-fmt-' + [System.Guid]::NewGuid().ToString('N') + '.tmp'))
+        [System.IO.File]::WriteAllBytes($tmp, $OutBytes)         # stage temp -- does NOT touch $Full
+        $currentBytes = [System.IO.File]::ReadAllBytes($Full)    # CAS re-read, immediately before the swap
+        if ((Get-Sha256HexFromBytes $currentBytes) -ne $InputHash) {
+            return @{ applied = $false; reason = 'file changed on disk since formatting' }
+        }
+        # Atomic swap, right after the check. [NullString]::Value passes a REAL null for the (no)
+        # backup file -- a bare $null binds to '' and File.Replace rejects it ("The path is empty").
+        [System.IO.File]::Replace($tmp, $Full, [NullString]::Value)
+        $tmp = $null                                             # Replace consumed the temp
+        return @{ applied = $true; reason = '' }
+    } catch {
+        return @{ applied = $false; reason = ('write failed: ' + $_.Exception.Message) }
+    } finally {
+        if ($null -ne $tmp) { try { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } } catch { } }
+    }
+}
+
+function Format-FormattingAppliedBlock {
+    # Render the additionalContext block for a format-on-edit APPLY that WROTE the file (000099),
+    # or '' when there is nothing to show ($Diff empty). Deliberately DISTINCT from both the
+    # diagnostics header ('PowerShell diagnostics (...)') and the suggest header ('...suggestion...
+    # The file was NOT modified...'): this states the file WAS MODIFIED and that the agent's
+    # in-context copy is now STALE, so it must RE-READ before its next edit (an old_str/Edit against
+    # the pre-format text would miss). The parenthetical records that this turn's diagnostics were
+    # derived from the PRE-apply bytes and are omitted to avoid stale line numbers (OQ2). PURE.
+    param([string]$Path, [string]$Diff, [int]$Removed, [int]$Added, [bool]$Truncated, [string]$SettingsPath)
+    if ([string]::IsNullOrEmpty($Diff)) { return '' }
+    $styleNote = if (-not [string]::IsNullOrWhiteSpace($SettingsPath)) {
+        'repo style (' + (Split-Path -Leaf $SettingsPath) + ')'
+    } else {
+        'default PSScriptAnalyzer style'
+    }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('PowerShell formatting APPLIED to ' + $Path + ' -- ' + $styleNote +
+        ': the file WAS MODIFIED on disk (-' + $Removed + ' / +' + $Added + ' lines). Your in-context ' +
+        'copy is now STALE -- RE-READ the file before your next edit, or an old_str/Edit against the ' +
+        'pre-format text will miss. (Diagnostics for this turn were derived from the pre-format bytes ' +
+        'and are omitted to avoid stale line numbers; they refresh on your next edit.)')
+    [void]$sb.Append($Diff)
+    if ($Truncated) { [void]$sb.Append("`n... (formatting diff truncated)") }
+    return $sb.ToString()
+}
+
+function Format-FormattingApplyAbortedBlock {
+    # Render the additionalContext block when an APPLY was requested but ABORTED (000099): a
+    # suggest-SHAPED fallback (the file was NOT modified) carrying an honest one-line reason apply
+    # did not run -- a concurrent modification, mixed line endings, an unsupported encoding, or a
+    # write error. The leading 'apply did NOT run (<reason>)' clause distinguishes it from a plain
+    # suggest. '' when there is nothing to show ($Diff empty). PURE.
+    param([string]$Path, [string]$Diff, [int]$Removed, [int]$Added, [bool]$Truncated, [string]$SettingsPath, [string]$Reason)
+    if ([string]::IsNullOrEmpty($Diff)) { return '' }
+    $styleNote = if (-not [string]::IsNullOrWhiteSpace($SettingsPath)) {
+        'repo style (' + (Split-Path -Leaf $SettingsPath) + ')'
+    } else {
+        'default PSScriptAnalyzer style'
+    }
+    $why = if (-not [string]::IsNullOrWhiteSpace($Reason)) { $Reason } else { 'apply could not complete safely' }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('PowerShell formatting suggestion for ' + $Path + ' -- ' + $styleNote +
+        ': apply did NOT run (' + $why + ') -- the file was NOT modified. The formatted version differs (-' +
+        $Removed + ' / +' + $Added + ' lines); run Invoke-Formatter yourself to apply this style.')
     [void]$sb.Append($Diff)
     if ($Truncated) { [void]$sb.Append("`n... (formatting diff truncated)") }
     return $sb.ToString()

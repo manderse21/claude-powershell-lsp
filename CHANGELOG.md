@@ -29,6 +29,28 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [Unreleased]
+MINOR: **format-on-edit `apply` activated -- the reserved enum value becomes a guarded write-back
+(PL-8 slice 2)**. `formatOnEdit=apply` now WRITES the formatter's result back to the edited file --
+the first feature that ever modifies the user's file. The entire risk lives in the write path, so it
+is guarded by ALL of: a **stale-write compare-and-swap** (the file's bytes are hashed at format-input
+time and re-checked immediately before the write, in the same daemon process that writes; any
+concurrent modification ABORTS and the newer file always wins), an **atomic-or-abort** swap (temp file
++ `[IO.File]::Replace`, never a torn/partial file), **byte fidelity** (the original BOM state and
+dominant EOL style are preserved -- the only byte delta is the formatting change itself), and
+**no-change = no write** (an already-formatted file is never touched). A **mixed-line-ending** or
+**non-UTF-8 (UTF-16)** file **aborts to a suggestion** rather than risk a broader rewrite (OQ4). An
+applied write surfaces a **visibly distinct WAS-MODIFIED block** telling the agent to re-read before
+its next edit; that turn's diagnostics, derived from the pre-apply bytes, are omitted to avoid stale
+line numbers (OQ2). The **default stays `off`**, and **`off` and `suggest` are byte-for-byte unchanged**
+(regression-proven); `apply` is **doubly opt-in** (only the exact value `apply`, never a boolean). Two
+additive daemon->client `formatStatus` values (`applied`, `apply-aborted`) carry the outcome;
+`formatStatus` is an output field, not a frozen status token, so no taxonomy amendment is needed.
+`CONTRACT.md`, the README knob table + prose, and the `plugin.json` knob description are amended in
+lockstep -- the 000027 drift-guards stay green because the knob NAME and diagnostics taxonomy are
+unchanged. Reuses the 000059 formatter, settings resolution, diff engine, and vendored pinned-hash
+PSSA -- no second acquisition path. Dispatch 000099.
+
 ## [1.22.0] - 2026-07-01
 MINOR: **the AI-era rule pack, slice 2 -- 5.1-vs-7 syntax compatibility as a pre-PSSA AST
 pass, always-on additive, no knob/token**. A new pre-PSSA check on the `powershell-lsp` source

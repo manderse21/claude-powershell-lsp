@@ -1422,12 +1422,22 @@ Describe 'ConvertTo-FormatOnEditMode -- off-by-default knob parse (dispatch 0000
             (ConvertTo-FormatOnEditMode $v) | Should -BeExactly 'suggest'
         }
     }
-    It 'maps off / blank / unexpanded token / unknown (and reserved apply) to off -- never silently on' {
-        # The feature is opt-in: anything not explicitly an ON value is OFF. 'apply' is reserved
-        # for a future dispatch and must NOT do anything today. Adversarial control: make the
-        # default branch return 'suggest' and these go RED (the knob would default ON).
-        foreach ($v in @('off', '', '   ', '${user_config.formatOnEdit}', 'apply', 'garbage', 'false', '0')) {
+    It 'maps off / blank / unexpanded token / unknown to off -- never silently on' {
+        # The feature is opt-in: anything not explicitly an ON value is OFF. Adversarial control:
+        # make the default branch return 'suggest' and these go RED (the knob would default ON).
+        foreach ($v in @('off', '', '   ', '${user_config.formatOnEdit}', 'garbage', 'false', '0')) {
             (ConvertTo-FormatOnEditMode $v) | Should -BeExactly 'off'
+        }
+    }
+    It 'maps the exact value apply to apply -- and ONLY the exact value (000099, doubly opt-in)' {
+        # 000099 activated apply -- the write-back mode. It is DOUBLY opt-in: only the exact string
+        # 'apply' (case/whitespace-insensitive) reaches it. A boolean-truthy alias must NOT, so a
+        # user reaching for a boolean gets the safe suggest, never a file-writing mode. Adversarial
+        # control: route a boolean alias to 'apply' and the alias assertions below go RED.
+        (ConvertTo-FormatOnEditMode 'apply')    | Should -BeExactly 'apply'
+        (ConvertTo-FormatOnEditMode '  APPLY ') | Should -BeExactly 'apply'
+        foreach ($v in @('true', 'on', '1', 'yes')) {
+            (ConvertTo-FormatOnEditMode $v) | Should -BeExactly 'suggest'   # NOT apply
         }
     }
 }
@@ -1752,6 +1762,116 @@ Describe 'No hand-maintained host-version literal remains -- single-source guard
     }
     It 'pses-daemon.ps1 start banner emits the version stamp into the log (S1a)' {
         $script:DaemonSrc | Should -Match "daemon start: ' \+ \(Get-VersionStamp\)"
+    }
+}
+
+Describe 'format-on-edit APPLY helpers -- byte fidelity + stale-write guard (dispatch 000099)' {
+    Context 'BOM detection (byte fidelity)' {
+        It 'detects a UTF-8 BOM prefix' { (Test-Utf8Bom ([byte[]](0xEF, 0xBB, 0xBF, 0x61))) | Should -BeTrue }
+        It 'reports no UTF-8 BOM for plain bytes' { (Test-Utf8Bom ([byte[]](0x61, 0x62, 0x63))) | Should -BeFalse }
+        It 'reports no UTF-8 BOM for an empty buffer (StrictMode-safe)' { (Test-Utf8Bom ([byte[]]@())) | Should -BeFalse }
+        It 'detects UTF-16 LE and BE BOMs (unsupported for apply)' {
+            (Test-Utf16Bom ([byte[]](0xFF, 0xFE, 0x61, 0x00))) | Should -BeTrue
+            (Test-Utf16Bom ([byte[]](0xFE, 0xFF, 0x00, 0x61))) | Should -BeTrue
+        }
+        It 'reports no UTF-16 BOM for a UTF-8 file' { (Test-Utf16Bom ([byte[]](0xEF, 0xBB, 0xBF, 0x61))) | Should -BeFalse }
+    }
+    Context 'EOL classification (OQ4 -- mixed aborts to suggest)' {
+        It 'classifies pure LF' { (Get-DominantEol "a`nb`n") | Should -BeExactly 'lf' }
+        It 'classifies pure CRLF' { (Get-DominantEol "a`r`nb`r`n") | Should -BeExactly 'crlf' }
+        It 'classifies MIXED CRLF+LF as mixed' { (Get-DominantEol "a`r`nb`n") | Should -BeExactly 'mixed' }
+        It 'classifies a lone CR (classic Mac) as mixed/unsupported' { (Get-DominantEol "a`rb") | Should -BeExactly 'mixed' }
+        It 'classifies a single line with no terminator as none' { (Get-DominantEol 'abc') | Should -BeExactly 'none' }
+    }
+    Context 'ConvertTo-Eol -- re-apply the original style' {
+        It 're-applies CRLF to LF text' { (ConvertTo-Eol "a`nb`n" 'crlf') | Should -BeExactly "a`r`nb`r`n" }
+        It 'normalizes CRLF text to LF' { (ConvertTo-Eol "a`r`nb`r`n" 'lf') | Should -BeExactly "a`nb`n" }
+        It 'leaves LF for none' { (ConvertTo-Eol 'abc' 'none') | Should -BeExactly 'abc' }
+    }
+    Context 'Get-ApplyEncodedBytes -- the byte-fidelity assembler' {
+        It 'returns a byte[] (never pipeline-unrolled)' {
+            $b = Get-ApplyEncodedBytes -FormattedText "x`n" -Eol 'lf' -HasBom $false
+            ($b -is [byte[]]) | Should -BeTrue
+        }
+        It 'prepends the UTF-8 BOM iff HasBom' {
+            $b = Get-ApplyEncodedBytes -FormattedText "x`n" -Eol 'lf' -HasBom $true
+            $b[0] | Should -Be 0xEF; $b[1] | Should -Be 0xBB; $b[2] | Should -Be 0xBF
+            (Get-ApplyEncodedBytes -FormattedText "x`n" -Eol 'lf' -HasBom $false)[0] | Should -Be 0x78
+        }
+        It 'applies CRLF at the byte level (dominant-EOL preservation)' {
+            $b = Get-ApplyEncodedBytes -FormattedText "a`nb`n" -Eol 'crlf' -HasBom $false
+            ([System.Text.Encoding]::UTF8.GetString($b)) | Should -BeExactly "a`r`nb`r`n"
+        }
+    }
+    Context 'Get-Sha256HexFromBytes -- the stale-write fingerprint' {
+        It 'is a 64-char lowercase hex digest' {
+            (Get-Sha256HexFromBytes ([System.Text.Encoding]::UTF8.GetBytes('x'))) | Should -Match '^[0-9a-f]{64}$'
+        }
+        It 'matches the known SHA-256 of "hello"' {
+            (Get-Sha256HexFromBytes ([System.Text.Encoding]::UTF8.GetBytes('hello'))) |
+                Should -BeExactly '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824'
+        }
+        It 'differs for a one-byte change' {
+            (Get-Sha256HexFromBytes ([byte[]](1, 2, 3))) | Should -Not -Be (Get-Sha256HexFromBytes ([byte[]](1, 2, 4)))
+        }
+    }
+    Context 'Write-FormatResultAtomic -- the stale-write compare-and-swap, proven adversarially' {
+        BeforeEach {
+            $script:AppDir = Join-Path ([System.IO.Path]::GetTempPath()) ('pslsp-apply-' + [System.Guid]::NewGuid().ToString('N').Substring(0, 10))
+            New-Item -ItemType Directory -Force -Path $script:AppDir | Out-Null
+            $script:AppFile = Join-Path $script:AppDir 'f.ps1'
+        }
+        AfterEach {
+            if (Test-Path -LiteralPath $script:AppDir) { Remove-Item -LiteralPath $script:AppDir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+        It 'HAPPY PATH: an unmutated file is written atomically with the formatted bytes' {
+            $orig = [System.Text.Encoding]::UTF8.GetBytes("orig`n")
+            [System.IO.File]::WriteAllBytes($script:AppFile, $orig)
+            $h = Get-Sha256HexFromBytes ([System.IO.File]::ReadAllBytes($script:AppFile))
+            $new = [System.Text.Encoding]::UTF8.GetBytes("formatted`n")
+            $r = Write-FormatResultAtomic -Full $script:AppFile -InputHash $h -OutBytes $new
+            $r.applied | Should -BeTrue
+            [System.IO.File]::ReadAllBytes($script:AppFile) | Should -Be $new
+        }
+        It 'ADVERSARIAL: a file mutated between format-input capture and the write ABORTS, and the mutated bytes survive untouched' {
+            $orig = [System.Text.Encoding]::UTF8.GetBytes("orig`n")
+            [System.IO.File]::WriteAllBytes($script:AppFile, $orig)
+            $h = Get-Sha256HexFromBytes ([System.IO.File]::ReadAllBytes($script:AppFile))   # (input capture)
+            $mutated = [System.Text.Encoding]::UTF8.GetBytes("MUTATED-BY-A-NEWER-EDIT`n")
+            [System.IO.File]::WriteAllBytes($script:AppFile, $mutated)                       # (concurrent modification)
+            $new = [System.Text.Encoding]::UTF8.GetBytes("formatted`n")
+            $r = Write-FormatResultAtomic -Full $script:AppFile -InputHash $h -OutBytes $new
+            $r.applied | Should -BeFalse                                                     # (a) the apply ABORTED
+            $r.reason | Should -Match 'changed on disk'                                      # (c) honest abort reason
+            [System.IO.File]::ReadAllBytes($script:AppFile) | Should -Be $mutated            # (b) mutated bytes survive
+        }
+        It 'leaves NO temp file behind on either the applied or the aborted path' {
+            $orig = [System.Text.Encoding]::UTF8.GetBytes("orig`n")
+            [System.IO.File]::WriteAllBytes($script:AppFile, $orig)
+            $h = Get-Sha256HexFromBytes $orig
+            [void](Write-FormatResultAtomic -Full $script:AppFile -InputHash $h -OutBytes ([System.Text.Encoding]::UTF8.GetBytes("z`n")))       # applies
+            [void](Write-FormatResultAtomic -Full $script:AppFile -InputHash 'deadbeef' -OutBytes ([System.Text.Encoding]::UTF8.GetBytes("z`n"))) # aborts (bad hash)
+            @(Get-ChildItem -LiteralPath $script:AppDir -Filter '.pslsp-fmt-*' -Force).Count | Should -Be 0
+        }
+    }
+    Context 'apply surface renderers -- visibly distinct from suggest and diagnostics' {
+        It 'the APPLIED block says WAS MODIFIED and instructs a RE-READ (never "NOT modified")' {
+            $b = Format-FormattingAppliedBlock -Path 'x.ps1' -Diff '@@ -1 +1 @@' -Removed 1 -Added 1 -Truncated $false -SettingsPath ''
+            $b | Should -Match 'APPLIED'
+            $b | Should -Match 'WAS MODIFIED'
+            $b | Should -Match 'RE-READ'
+            $b | Should -Not -Match 'NOT modified'
+        }
+        It 'the APPLIED block is empty when there is no diff' {
+            (Format-FormattingAppliedBlock -Path 'x.ps1' -Diff '' -Removed 0 -Added 0 -Truncated $false -SettingsPath '') | Should -BeExactly ''
+        }
+        It 'the ABORTED fallback is suggest-shaped, says NOT modified, and names the reason' {
+            $b = Format-FormattingApplyAbortedBlock -Path 'x.ps1' -Diff '@@ -1 +1 @@' -Removed 1 -Added 1 -Truncated $false -SettingsPath '' -Reason 'file has mixed line endings'
+            $b | Should -Match 'formatting suggestion'
+            $b | Should -Match 'apply did NOT run'
+            $b | Should -Match 'NOT modified'
+            $b | Should -Match 'mixed line endings'
+        }
     }
 }
 
