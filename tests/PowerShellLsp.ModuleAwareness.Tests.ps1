@@ -166,11 +166,18 @@ Describe 'rulesets/command-module-index.psd1 -- shipped index derives offline + 
 }
 
 Describe 'Integration: module-awareness corpus through the REAL warm daemon (dispatch 000101)' -Skip:$script:SkipIntegration {
-    # The kb/kg corpus with the installed-set INJECTED at the daemon cache seam. Four daemons:
-    #   A (suggest, __empty__ injected)   -- nothing installed: kb1 fires; kg1-4,6-8 stay silent by rung.
-    #   B (suggest, Microsoft.Graph.Users) -- present: kg5 stays silent (design-B discriminator).
-    #   C (off / no -ModuleAwareness)      -- knob off: kb1 fixture yields NO hint (byte-for-byte surface).
-    #   D (suggest, __defer__ injected)    -- snapshot never ready: kb1 fixture stays SILENT (fail-safe).
+    # The kb/kg corpus with the installed-set INJECTED at the daemon cache seam. Each scenario is a
+    # SEPARATE Context that launches ONE daemon in its own BeforeAll and tears it down in its AfterAll,
+    # so only ONE daemon (+ its PSES child) is ever alive at a time. That is deliberate: launching all
+    # four daemons at once overwhelmed the constrained Windows PowerShell 5.1 CI leg's startup (one
+    # daemon lost the bootstrap race and never went ready), a pure test-harness contention issue -- the
+    # product path is identical. Serializing the scenarios removes the concurrent-startup spike.
+    #   A (suggest, __empty__ injected)    -- nothing installed: kb1 fires; kg1-4,6-8 stay silent by rung.
+    #   B (suggest, Microsoft.Graph.Users) -- present: kg5 stays silent (the design-B discriminator).
+    #   C (off / no -ModuleAwareness)      -- knob off: the kb1 fixture yields NO hint (byte-for-byte).
+    #   D (suggest, __defer__ injected)    -- snapshot never ready: the kb1 fixture stays SILENT.
+    # 0-FP / 100-TP is the conjunction of these Its: kb1 fires (the one known-bad) and every kg / off /
+    # defer is silent (the known-goods). The 000101 outbox custom_check runs the whole suite as the guard.
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Wait-DaemonRequestReady, Stop-IntegrationDaemon
@@ -192,11 +199,25 @@ Describe 'Integration: module-awareness corpus through the REAL warm daemon (dis
         }
         function Wait-MaReady { param([string]$Sid)
             $sf = Join-Path $script:MaData ('session/' + $Sid + '.json')
-            for ($i = 0; $i -lt 100; $i++) {
+            for ($i = 0; $i -lt 150; $i++) {
                 if (Test-Path -LiteralPath $sf) { $o = Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json; if ($o.state -eq 'ready') { return $true } }
                 Start-Sleep -Milliseconds 400
             }
             return $false
+        }
+        # Launch ONE daemon + wait until it services a real diagnostics round-trip; returns a scenario
+        # handle. With only one daemon alive there is no startup contention, so a single daemon comes up
+        # well within the wait even on the slow 5.1 CI leg.
+        function Start-MaScenario { param([string]$Label, [string[]]$ExtraArgs)
+            $sid = 'ma-' + $Label + '-' + [guid]::NewGuid().ToString('N').Substring(0, 6)
+            $proc = Start-MaDaemon -Sid $sid -ExtraArgs $ExtraArgs
+            $ready = (Wait-MaReady -Sid $sid) -and (Wait-DaemonRequestReady -SessionId $sid -DataRoot $script:MaData -TimeoutMs 60000)
+            return @{ Sid = $sid; Proc = $proc; Ready = $ready }
+        }
+        function Stop-MaScenario { param($Scn)
+            if ($null -eq $Scn) { return }
+            try { [void](Stop-IntegrationDaemon -SessionId $Scn.Sid -DataRoot $script:MaData) } catch { }
+            try { if ($null -ne $Scn.Proc -and -not $Scn.Proc.HasExited) { $Scn.Proc.Kill($true) } } catch { }
         }
         # Send a diagnostics request over the pipe, retrying until a CLEAN settled pass (no 'status'
         # token) -- so a silent case is proven silent on a REAL analysis, never trivially on an
@@ -236,7 +257,8 @@ Describe 'Integration: module-awareness corpus through the REAL warm daemon (dis
         New-Item -ItemType Directory -Force -Path $script:MaData | Out-Null
         $env:CLAUDE_PLUGIN_DATA = $script:MaData
         $script:MaBundle = Join-Path $script:MaData 'PowerShellEditorServices'
-        # Idempotent PSES + PSSA bootstrap (no-op if the shared data root already has them).
+        # Idempotent PSES + PSSA bootstrap (no-op if the shared data root already has them) -- done ONCE,
+        # before any daemon launches, so each scenario's daemon starts from a present bundle.
         & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:MaScriptsDir 'ensure-pses.ps1') 2>&1 | Out-Null
         & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:MaScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
 
@@ -258,65 +280,48 @@ Describe 'Integration: module-awareness corpus through the REAL warm daemon (dis
         Set-Content -LiteralPath (Join-Path $script:MaKg8Dir 'kg8mod.psd1') -Encoding ascii -Value "@{`n    RootModule = 'kg8mod.psm1'`n    ModuleVersion = '1.0.0'`n    FunctionsToExport = @('Invoke-Kg8')`n    RequiredModules = @('Microsoft.Graph.Users')`n}`n"
         $script:F_kg8 = Join-Path $script:MaKg8Dir 'kg8mod.psm1'
         Set-Content -LiteralPath $script:F_kg8 -Encoding ascii -Value "function Invoke-Kg8 { Get-MgUser }`n"
-
-        $g = [guid]::NewGuid().ToString('N').Substring(0, 6)
-        $script:MaSidA = 'ma-empty-' + $g
-        $script:MaSidB = 'ma-present-' + $g
-        $script:MaSidC = 'ma-off-' + $g
-        $script:MaSidD = 'ma-defer-' + $g
-        $script:MaProcs = @()
-        $script:MaProcs += Start-MaDaemon -Sid $script:MaSidA -ExtraArgs @('-ModuleAwareness', 'suggest', '-ModuleAwarenessInstalledInject', '__empty__')
-        $script:MaProcs += Start-MaDaemon -Sid $script:MaSidB -ExtraArgs @('-ModuleAwareness', 'suggest', '-ModuleAwarenessInstalledInject', 'Microsoft.Graph.Users')
-        $script:MaProcs += Start-MaDaemon -Sid $script:MaSidC -ExtraArgs @()
-        $script:MaProcs += Start-MaDaemon -Sid $script:MaSidD -ExtraArgs @('-ModuleAwareness', 'suggest', '-ModuleAwarenessInstalledInject', '__defer__')
-        $script:MaReadyA = (Wait-MaReady -Sid $script:MaSidA) -and (Wait-DaemonRequestReady -SessionId $script:MaSidA -DataRoot $script:MaData -TimeoutMs 45000)
-        $script:MaReadyB = (Wait-MaReady -Sid $script:MaSidB) -and (Wait-DaemonRequestReady -SessionId $script:MaSidB -DataRoot $script:MaData -TimeoutMs 45000)
-        $script:MaReadyC = (Wait-MaReady -Sid $script:MaSidC) -and (Wait-DaemonRequestReady -SessionId $script:MaSidC -DataRoot $script:MaData -TimeoutMs 45000)
-        $script:MaReadyD = (Wait-MaReady -Sid $script:MaSidD) -and (Wait-DaemonRequestReady -SessionId $script:MaSidD -DataRoot $script:MaData -TimeoutMs 45000)
     }
     AfterAll {
-        foreach ($sid in @($script:MaSidA, $script:MaSidB, $script:MaSidC, $script:MaSidD)) {
-            [void](Stop-IntegrationDaemon -SessionId $sid -DataRoot $script:MaData)
-        }
-        foreach ($p in @($script:MaProcs)) { try { if ($null -ne $p -and -not $p.HasExited) { $p.Kill($true) } } catch { } }
         if (Test-Path -LiteralPath $script:MaFix) { Remove-Item -LiteralPath $script:MaFix -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It 'all four corpus daemons came up ready (else the corpus below is meaningless)' {
-        $script:MaReadyA | Should -BeTrue -Because 'daemon A (empty injected) must serve'
-        $script:MaReadyB | Should -BeTrue -Because 'daemon B (module present) must serve'
-        $script:MaReadyC | Should -BeTrue -Because 'daemon C (knob off) must serve'
-        $script:MaReadyD | Should -BeTrue -Because 'daemon D (snapshot deferred) must serve'
+    Context 'daemon A -- nothing installed (__empty__ injected): kb1 fires, kg1-4,6-8 silent' {
+        BeforeAll { $script:ScnA = Start-MaScenario -Label 'empty' -ExtraArgs @('-ModuleAwareness', 'suggest', '-ModuleAwarenessInstalledInject', '__empty__') }
+        AfterAll { Stop-MaScenario $script:ScnA }
+        It 'came up ready' { $script:ScnA.Ready | Should -BeTrue -Because 'daemon A must serve or the corpus is meaningless' }
+        It 'kb1: Get-MgUser with the module ABSENT fires EXACTLY ONE ModuleNotInstalled hint' {
+            (Get-MaCount -Sid $script:ScnA.Sid -File $script:F_kb1) | Should -Be 1
+        }
+        It 'kg1: literal Import-Module -> SILENT' { (Get-MaCount -Sid $script:ScnA.Sid -File $script:F_kg1) | Should -Be 0 }
+        It 'kg2: #Requires -Modules -> SILENT' { (Get-MaCount -Sid $script:ScnA.Sid -File $script:F_kg2) | Should -Be 0 }
+        It 'kg3: same-file function definition -> SILENT' { (Get-MaCount -Sid $script:ScnA.Sid -File $script:F_kg3) | Should -Be 0 }
+        It 'kg4: dynamic invocation -> SILENT' { (Get-MaCount -Sid $script:ScnA.Sid -File $script:F_kg4) | Should -Be 0 }
+        It 'kg6: dynamic dot-source -> SILENT' { (Get-MaCount -Sid $script:ScnA.Sid -File $script:F_kg6) | Should -Be 0 }
+        It 'kg7: built-in (never indexed) -> SILENT' { (Get-MaCount -Sid $script:ScnA.Sid -File $script:F_kg7) | Should -Be 0 }
+        It 'kg8: nearest-manifest RequiredModules in a module file -> SILENT' { (Get-MaCount -Sid $script:ScnA.Sid -File $script:F_kg8) | Should -Be 0 }
     }
-    It 'kb1: Get-MgUser with the module ABSENT fires EXACTLY ONE ModuleNotInstalled hint' {
-        (Get-MaCount -Sid $script:MaSidA -File $script:F_kb1) | Should -Be 1
+    Context 'daemon B -- module PRESENT (injected): kg5 silent (the design-B discriminator)' {
+        BeforeAll { $script:ScnB = Start-MaScenario -Label 'present' -ExtraArgs @('-ModuleAwareness', 'suggest', '-ModuleAwarenessInstalledInject', 'Microsoft.Graph.Users') }
+        AfterAll { Stop-MaScenario $script:ScnB }
+        It 'came up ready' { $script:ScnB.Ready | Should -BeTrue }
+        It 'kg5: Get-MgUser with the module PRESENT -> SILENT (design A would FAIL this)' {
+            (Get-MaCount -Sid $script:ScnB.Sid -File $script:F_kg5) | Should -Be 0
+        }
     }
-    It 'kg1: literal Import-Module -> SILENT' { (Get-MaCount -Sid $script:MaSidA -File $script:F_kg1) | Should -Be 0 }
-    It 'kg2: #Requires -Modules -> SILENT' { (Get-MaCount -Sid $script:MaSidA -File $script:F_kg2) | Should -Be 0 }
-    It 'kg3: same-file function definition -> SILENT' { (Get-MaCount -Sid $script:MaSidA -File $script:F_kg3) | Should -Be 0 }
-    It 'kg4: dynamic invocation -> SILENT' { (Get-MaCount -Sid $script:MaSidA -File $script:F_kg4) | Should -Be 0 }
-    It 'kg6: dynamic dot-source -> SILENT' { (Get-MaCount -Sid $script:MaSidA -File $script:F_kg6) | Should -Be 0 }
-    It 'kg7: built-in (never indexed) -> SILENT' { (Get-MaCount -Sid $script:MaSidA -File $script:F_kg7) | Should -Be 0 }
-    It 'kg8: nearest-manifest RequiredModules in a module file -> SILENT' { (Get-MaCount -Sid $script:MaSidA -File $script:F_kg8) | Should -Be 0 }
-    It 'kg5: Get-MgUser with the module PRESENT -> SILENT (the design-B discriminator that A would fail)' {
-        (Get-MaCount -Sid $script:MaSidB -File $script:F_kg5) | Should -Be 0
+    Context 'daemon C -- knob OFF: byte-for-byte surface (no ModuleNotInstalled record)' {
+        BeforeAll { $script:ScnC = Start-MaScenario -Label 'off' -ExtraArgs @() }
+        AfterAll { Stop-MaScenario $script:ScnC }
+        It 'came up ready' { $script:ScnC.Ready | Should -BeTrue }
+        It 'knob OFF: the kb1 fixture yields NO ModuleNotInstalled hint' {
+            (Get-MaCount -Sid $script:ScnC.Sid -File $script:F_kb1) | Should -Be 0
+        }
     }
-    It 'knob OFF: the kb1 fixture yields NO ModuleNotInstalled hint (byte-for-byte surface)' {
-        (Get-MaCount -Sid $script:MaSidC -File $script:F_kb1) | Should -Be 0
-    }
-    It 'snapshot NOT READY: the kb1 fixture stays SILENT (the fail-safe direction)' {
-        (Get-MaCount -Sid $script:MaSidD -File $script:F_kb1) | Should -Be 0
-    }
-    It 'corpus-wide: 100% TP (kb1 fires) and 0% FP (every kg / off / defer is silent)' {
-        $tp = (Get-MaCount -Sid $script:MaSidA -File $script:F_kb1)
-        $silent = @(
-            (Get-MaCount -Sid $script:MaSidA -File $script:F_kg1), (Get-MaCount -Sid $script:MaSidA -File $script:F_kg2),
-            (Get-MaCount -Sid $script:MaSidA -File $script:F_kg3), (Get-MaCount -Sid $script:MaSidA -File $script:F_kg4),
-            (Get-MaCount -Sid $script:MaSidB -File $script:F_kg5), (Get-MaCount -Sid $script:MaSidA -File $script:F_kg6),
-            (Get-MaCount -Sid $script:MaSidA -File $script:F_kg7), (Get-MaCount -Sid $script:MaSidA -File $script:F_kg8),
-            (Get-MaCount -Sid $script:MaSidC -File $script:F_kb1), (Get-MaCount -Sid $script:MaSidD -File $script:F_kb1)
-        )
-        $tp | Should -Be 1 -Because 'the one known-bad (kb1) must fire (100% TP)'
-        @($silent | Where-Object { $_ -ne 0 }).Count | Should -Be 0 -Because 'every known-good must be silent (0% FP)'
+    Context 'daemon D -- snapshot DEFERRED: the fail-safe direction (silent while not ready)' {
+        BeforeAll { $script:ScnD = Start-MaScenario -Label 'defer' -ExtraArgs @('-ModuleAwareness', 'suggest', '-ModuleAwarenessInstalledInject', '__defer__') }
+        AfterAll { Stop-MaScenario $script:ScnD }
+        It 'came up ready' { $script:ScnD.Ready | Should -BeTrue }
+        It 'snapshot NOT READY: the kb1 fixture stays SILENT' {
+            (Get-MaCount -Sid $script:ScnD.Sid -File $script:F_kb1) | Should -Be 0
+        }
     }
 }
