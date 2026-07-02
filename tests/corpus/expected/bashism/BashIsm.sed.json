@@ -1,0 +1,8 @@
+[{
+  "ruleId": "BashIsm",
+  "source": "powershell-lsp",
+  "severity": "Warning",
+  "line": 1,
+  "col": 1,
+  "message": "Unix/bash command 'sed' used in a PowerShell script. This is not a PowerShell cmdlet and will fail on a clean Windows host (or silently depend on Git Bash being on PATH). Use the PowerShell equivalent, or invoke the external tool explicitly with the call operator (& sed)."
+}]

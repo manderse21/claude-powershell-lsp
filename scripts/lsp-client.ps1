@@ -295,6 +295,25 @@ try {
         Write-CLog ('pre-PSSA compat scan threw (degrading gracefully): ' + $_.Exception.Message)
         $compatFindings = $null
     }
+    # Track C -- pre-PSSA AST bash-ism pass (dispatch 000097): flag Unix/bash command names
+    # (grep, sed, awk, export, which, touch, chmod, chown, ln) used as commands over the SAME
+    # AST the parser pre-pass produced, suppressed for an explicit '& name' call or a same-file
+    # definition of the name. Wrapped so any failure degrades gracefully. Like the 000096 compat
+    # pass, bash-ism findings do NOT gate the parse-error/pre-PSSA early-exit: a file using a
+    # bash-ism parses cleanly under the daemon and must still get full PSScriptAnalyzer analysis,
+    # so these ride the daemon merge path (below), never skipping the daemon on their own.
+    $bashismFindings = $null
+    try {
+        if ($null -ne $parsedAst) {
+            $bashismFindings = @(Find-BashIsm -Ast $parsedAst)
+            if ($null -ne $bashismFindings -and $bashismFindings.Count -gt 0) {
+                Write-CLog ('pre-PSSA (bash-ism) found ' + $bashismFindings.Count + ' finding(s)')
+            }
+        }
+    } catch {
+        Write-CLog ('pre-PSSA bash-ism scan threw (degrading gracefully): ' + $_.Exception.Message)
+        $bashismFindings = $null
+    }
     $hasParseErrors = ($null -ne $parseErrors -and $parseErrors.Count -gt 0)
     $hasPrePssa = ($null -ne $prePssaFindings -and $prePssaFindings.Count -gt 0)
     if ($hasParseErrors -or $hasPrePssa) {
@@ -435,6 +454,14 @@ try {
     # handles their source/code/severity fields, exactly like the non-ASCII findings.
     if ($null -ne $compatFindings -and $compatFindings.Count -gt 0) {
         $diags = @($compatFindings) + @($diags)
+    }
+    # Merge pre-PSSA bash-ism findings into the diagnostics stream (dispatch 000097). Same as
+    # the 000096 compat findings: client-side AST findings, independent of the daemon, riding
+    # the merge path (not the early-exit) so a bash-ism file still gets full daemon analysis.
+    # They appear alongside daemon diagnostics; the existing render + dogfood-capture loop below
+    # handles their source/code/severity fields, exactly like the non-ASCII and compat findings.
+    if ($null -ne $bashismFindings -and $bashismFindings.Count -gt 0) {
+        $diags = @($bashismFindings) + @($diags)
     }
     # Project findings (PL-6, dispatch 000062): merge manifest-consistency findings from
     # the daemon's module surface cache into the diagnostics stream. Uses the same

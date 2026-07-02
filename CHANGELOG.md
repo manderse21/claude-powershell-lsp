@@ -52,6 +52,35 @@ corpus grows by 4 known-bad (one per construct family) and 4 known-good (three 5
 equivalents plus the load-bearing `#Requires -Version 7` file using `&&` that must NOT flag); the
 measured **0% false-positive rate and 100% true-positive coverage** hold on the wider set.
 
+MINOR: **the AI-era rule pack, slice 3 (closes the pack) -- bash-isms in `.ps1` as a command-name
+pre-PSSA AST pass, always-on additive, no knob/token**. A new pre-PSSA check on the `powershell-lsp`
+source flags Unix/bash command NAMES an AI commonly drops into a `.ps1` -- `grep`, `sed`, `awk`,
+`export`, `which`, `touch`, `chmod`, `chown`, `ln` -- which fail at runtime on a clean Windows host or
+silently depend on Git Bash being on PATH. It walks the SAME parser AST the pre-pass already produces
+(reusing the 000060/000096 seam in `scripts/lsp-client.ps1`), so it costs no second parse.
+Command-NAME matching over `CommandAst` only: a `grep` inside a string literal or a comment never
+flags. Two suppressions keep deliberate use silent (the load-bearing 0-FP design): an explicit
+call-operator invocation (`& grep`, InvocationOperator Ampersand -- the "I mean the external binary"
+signal, the analog of slice 2's `#Requires -Version 7` escape) and a same-file definition of the name
+(a `function`, `Set-Alias`, or `New-Alias`). Severity is `Warning`, never `Error`: the residual
+legitimate case is a genuinely-installed Unix tool on PATH. OWNERSHIP BOUNDARIES: `&&` / `||` belong
+to slice 2's `PS7OnlySyntax`, and the PowerShell alias subset (`ls`, `cat`, `cp`, `mv`, `rm`, `echo`)
+belongs to PSScriptAnalyzer's `PSAvoidUsingCmdletAliases` -- confirmed against the pinned PSSA 1.25.0
+(zero `PSAvoidUsingCmdletAliases` hits on every name shipped here, on both hosts), so there is no
+double-report; that alias subset is deliberately EXCLUDED. Always-on additive: **no new `userConfig`
+knob, no new status token** (the 000027 drift-guard stays green); the `powershell-lsp` source label is
+reused with a distinct check id `BashIsm` and is not a frozen surface, so CONTRACT.md is byte-for-byte
+unchanged, and PSSA acquisition / the pinned hash are untouched (a pre-PSSA pass needs none of that).
+Bash-ism findings ride the daemon MERGE path (not the parser-error early-exit), so a file carrying a
+bash-ism still gets full PSScriptAnalyzer analysis. **With this slice merged the 000055 AI-era rule
+pack is CLOSED**: slice 4 was already-covered (its BOM half is slice 1's non-ASCII rule; the indented
+here-string closer is an existing parser error) and slice 5 (angle-bracket placeholders) stays
+deferred on irreducible false-positives. The corpus grows by 11 known-bad `.txt` (one per shipped
+name, a pipe-to-`grep`, and a bash-ism-plus-PSSA-issue merge-path case) and 7 known-good `clean`
+samples (string-literal / comment mentions, idiomatic `Select-String` / `Get-ChildItem`, and the
+load-bearing `& grep`, `function touch`, and `Set-Alias grep` suppression proofs -- all silent); the
+measured **0% false-positive rate and 100% true-positive coverage** hold on the wider set.
+
 ### Added
 
 - **PS7-only syntax compatibility check (`PS7OnlySyntax`).** A new pre-PSSA AST pass in
@@ -74,6 +103,32 @@ measured **0% false-positive rate and 100% true-positive coverage** hold on the 
   `powershell-lsp` / `PS7OnlySyntax` source+rule, plus 4 known-good `clean` samples (three 5.1-safe
   equivalents and a `#Requires -Version 7` file using `&&` -- the host-awareness 0-FP proof,
   silent). The 0%-FP / 100%-TP guards hold on the wider set.
+- **Bash-ism command-name check (`BashIsm`).** A new pre-PSSA AST pass in
+  `scripts/lib/lsp-common.ps1` (`Find-BashIsm`, plus the `Get-AliasDefinitionNameFromCommand` helper),
+  seamed into `scripts/lsp-client.ps1` at the same point as the 000060 non-ASCII and 000096 compat
+  passes and over the same AST the parser pre-pass already produces. Flags `CommandAst` nodes whose
+  command NAME is one of `grep`, `sed`, `awk`, `export`, `which`, `touch`, `chmod`, `chown`, `ln`.
+  Findings carry source `powershell-lsp`, ruleId `BashIsm`, severity `Warning`, and are SUPPRESSED for
+  an explicit `& name` call-operator invocation or a same-file definition of the name (function /
+  `Set-Alias` / `New-Alias`). Detection is Windows PowerShell 5.1- and StrictMode-safe -- every AST
+  type and member it touches (`CommandAst`, `FunctionDefinitionAst`, `GetCommandName()`,
+  `InvocationOperator`) is core to both hosts, and it uses type-name string checks and an
+  enum-to-string operator compare, never a type/enum literal. Unlike the non-ASCII pass, bash-ism
+  findings do NOT gate the parser-error early-exit: a bash-ism file parses cleanly under the daemon and
+  still gets full PSScriptAnalyzer analysis, so these ride the daemon merge path. The standalone SARIF
+  / CI scan (dispatch 000057) surfaces the finding automatically via its one-engine derivation.
+- **Corpus coverage extended (bash-isms).** A new `bashism` category with 11 known-bad `.txt` samples
+  (one per shipped command name, a pipe-to-`grep`, and a bash-ism-plus-`PSPossibleIncorrectComparison`
+  `WithNull` file proving both findings surface on the merge path) and its own It-block asserting the
+  `powershell-lsp` / `BashIsm` source+rule, plus a dedicated merge-path It-block and 7 known-good
+  `clean` samples (string-literal and comment mentions, idiomatic `Select-String` / `Get-ChildItem`,
+  and the load-bearing `& grep`, `function touch`, and `Set-Alias grep` suppression proofs -- all
+  silent). The 0%-FP / 100%-TP guards hold on the wider set.
+- **000055 AI-era rule pack CLOSED.** With slices 1 (non-ASCII smuggling, 000060), 2 (PS7-only syntax,
+  000096), and 3 (bash-isms, 000097) shipped, the survey's build pack is complete: slice 4 was
+  characterized as already-covered (BOM half = the slice-1 non-ASCII rule; the indented here-string
+  closer is an existing parser error) and slice 5 (angle-bracket placeholders) stays deferred on
+  irreducible false-positives.
 
 ## [1.21.1] - 2026-07-01
 PATCH: **Curate the opt-in `base` ruleset -- remove three survey-measured noisy rules so `base` is

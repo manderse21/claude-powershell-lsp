@@ -1,0 +1,2 @@
+$found = grep 'TODO' 'notes.txt'
+if ($found -eq $null) { Write-Output 'no matches' }

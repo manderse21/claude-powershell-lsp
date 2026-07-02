@@ -39,6 +39,7 @@ function Get-CorpusPaths {
         ParserDir   = (Join-Path $script:CorpusCommonDir 'parser-samples')
         PrePssaDir  = (Join-Path $script:CorpusCommonDir 'samples/pre-pssa')
         CompatDir   = (Join-Path $script:CorpusCommonDir 'samples/compat')
+        BashismDir  = (Join-Path $script:CorpusCommonDir 'samples/bashism')
         ModuleDir   = (Join-Path $script:CorpusCommonDir 'samples/module')
         ExpectedDir = (Join-Path $script:CorpusCommonDir 'expected')
     }
@@ -59,7 +60,8 @@ function Get-CorpusSampleSpec {
         @{ Category = 'bad';    Dir = $p.BadDir;    Filter = '*.ps1' },
         @{ Category = 'parser'; Dir = $p.ParserDir; Filter = '*.txt' },
         @{ Category = 'pre-pssa'; Dir = $p.PrePssaDir; Filter = '*.txt' },
-        @{ Category = 'compat'; Dir = $p.CompatDir; Filter = '*.txt' }
+        @{ Category = 'compat'; Dir = $p.CompatDir; Filter = '*.txt' },
+        @{ Category = 'bashism'; Dir = $p.BashismDir; Filter = '*.txt' }
     )
     <#
     Multi-file module fixtures (PL-6, dispatch 000062): each fixture is a DIRECTORY
@@ -99,7 +101,7 @@ function Get-CorpusSampleSpec {
             # and the expected rule is the FIRST dot-segment of the base. A legacy single-segment
             # name (PSUseApprovedVerbs.ps1) yields RuleId == base unchanged, so existing samples
             # keep working. Only 'bad' uses RuleId; 'clean'/'parser' carry the base for symmetry.
-            $ruleId = if ($s.Category -eq 'bad' -or $s.Category -eq 'pre-pssa' -or $s.Category -eq 'compat') { ($base -split '\.')[0] } else { $base }
+            $ruleId = if ($s.Category -eq 'bad' -or $s.Category -eq 'pre-pssa' -or $s.Category -eq 'compat' -or $s.Category -eq 'bashism') { ($base -split '\.')[0] } else { $base }
             # Hashtables (not PSCustomObjects): Pester 5 -ForEach exposes each key as a
             # named variable inside the test; dot access ($spec.Label) still works for the
             # generator's foreach. One spec shape, used by both call sites.

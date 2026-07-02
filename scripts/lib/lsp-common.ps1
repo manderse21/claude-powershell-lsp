@@ -1255,6 +1255,186 @@ function Find-Ps7OnlySyntax {
     return @($findings)
 }
 
+# --- pre-PSSA pack: Unix/bash command names in .ps1 (dispatch 000097) ----------
+# A command-NAME pass over the parser AST the pre-pass already produces (reusing the
+# 000060/000096 seam) that flags Unix shell command NAMES an AI commonly drops into a .ps1
+# -- grep, sed, awk, export, which, touch, chmod, chown, ln -- which either fail at runtime
+# on a clean Windows host or silently depend on Git Bash being on PATH. This is the 000055
+# survey's "AI's most common tell" and the LAST net-new slice of that pack. Same finding
+# shape and source label as Find-NonAsciiSmuggling / Find-Ps7OnlySyntax (source
+# 'powershell-lsp', a portability WARNING) with a distinct, stable check id BashIsm.
+# Always-on additive; no knob.
+#
+# OWNERSHIP BOUNDARIES (one construct, one owner, one ruleId): the pipeline-chain operators
+# && / || belong to Find-Ps7OnlySyntax (000096); the PowerShell alias subset (ls, cat, cp,
+# mv, rm, echo, ...) belongs to PSScriptAnalyzer's PSAvoidUsingCmdletAliases under the pinned
+# PSSA. This check owns ONLY the non-alias Unix command NAMES below and never re-reports
+# either. The set was confirmed against the pinned PSScriptAnalyzer 1.25.0 -- its
+# PSAvoidUsingCmdletAliases fires ZERO hits on every name here on BOTH hosts, and none is a
+# Get-Alias entry on pwsh 7 or Windows PowerShell 5.1 -- so there is no double-report;
+# ls/cat/... are deliberately EXCLUDED because that rule already owns them.
+#
+# THE FP DISCIPLINE (where this slice is won or lost): command-NAME matching over CommandAst
+# ONLY -- a grep inside a string literal or a comment is not a CommandAst node and never
+# flags. Two suppressions make deliberate use silent:
+#   (a) an explicit call-operator invocation ('& grep') -- InvocationOperator Ampersand --
+#       is the "I mean the external binary" signal (the analog of 000096's #Requires -Version
+#       7 escape), and
+#   (b) a same-file definition of the name -- a FunctionDefinitionAst, or a Set-Alias /
+#       New-Alias defining that name -- means the call is the user's own function/alias.
+# Severity is Warning, never Error: the residual legitimate case is a genuinely-installed
+# Unix tool on PATH (common on the Linux/macOS legs), a portability heads-up, not a failure.
+#
+# HOST / StrictMode SAFETY: unlike Find-Ps7OnlySyntax, every AST type this pass touches
+# (CommandAst, FunctionDefinitionAst, CommandParameterAst, StringConstantExpressionAst) and
+# every member it reads (GetCommandName(), InvocationOperator, CommandElements, .Name) is
+# CORE and present on BOTH Windows PowerShell 5.1 and pwsh 7 -- these are not 7-only nodes.
+# Detection still uses GetType().Name string checks and an enum-to-string operator compare
+# (never a type/enum literal), and every property access is guarded, so it dot-sources and
+# runs silent under 5.1 + StrictMode exactly like the rest of the pack.
+
+function Get-AliasDefinitionNameFromCommand {
+    # Extract the alias NAME a Set-Alias/New-Alias CommandAst defines: the value bound to
+    # -Name if present, else the first positional string argument (PowerShell binds the alias
+    # name to position 0). Returns '' when it cannot be determined statically (e.g. a
+    # variable/expression name) -- an indeterminate name simply does not suppress. Core AST
+    # members only (5.1/StrictMode-safe); every access guarded.
+    param($CommandAstNode)
+    $elems = @()
+    try { $elems = @($CommandAstNode.CommandElements) } catch { return '' }
+    $namedValue = ''
+    $firstPositional = ''
+    $wantNameValue = $false
+    # elems[0] is the command name (Set-Alias/New-Alias); scan the arguments after it.
+    for ($k = 1; $k -lt $elems.Count; $k++) {
+        $el = $elems[$k]
+        $etn = ''
+        try { $etn = $el.GetType().Name } catch { $etn = '' }
+        if ($etn -eq 'CommandParameterAst') {
+            $pn = ''
+            try { $pn = [string]$el.ParameterName } catch { $pn = '' }
+            # -Name, or an unambiguous prefix of it (-n/-na/-nam) -- PowerShell prefix-matches
+            # parameters. A blank name never matches (guarded), so '' can never be read as -Name.
+            $isName = (-not [string]::IsNullOrWhiteSpace($pn)) -and ('name'.StartsWith($pn.ToLowerInvariant()))
+            $wantNameValue = $isName
+            if ($isName) {
+                # -Name:foo binds the argument inline on the CommandParameterAst.
+                $arg = $el.PSObject.Properties['Argument']
+                if ($null -ne $arg -and $null -ne $arg.Value) {
+                    try {
+                        if ($arg.Value.GetType().Name -eq 'StringConstantExpressionAst') {
+                            $namedValue = [string]$arg.Value.Value; $wantNameValue = $false
+                        }
+                    } catch { }
+                }
+            }
+        } elseif ($etn -eq 'StringConstantExpressionAst') {
+            $val = ''
+            try { $val = [string]$el.Value } catch { $val = '' }
+            if ($wantNameValue) { $namedValue = $val; $wantNameValue = $false }
+            elseif ([string]::IsNullOrWhiteSpace($firstPositional)) { $firstPositional = $val }
+        } else {
+            $wantNameValue = $false
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($namedValue)) { return $namedValue }
+    return $firstPositional
+}
+
+function Find-BashIsm {
+    <#
+    .SYNOPSIS
+        Flag Unix/bash command NAMES used as commands in a parsed AST, suppressed for an
+        explicit '& name' call-operator invocation or a same-file definition of the name.
+    .DESCRIPTION
+        PURE over the supplied AST (the object the parser pre-pass already produces).
+        Returns @() when the AST is $null or no bash-ism command call is present. Otherwise
+        one finding per offending CommandAst. A finding is SUPPRESSED when the invocation
+        uses the call operator '&' (InvocationOperator Ampersand -- a deliberate external
+        call) or when the file itself defines that name (function / Set-Alias / New-Alias).
+        Finding source = 'powershell-lsp', ruleId/code = 'BashIsm', severity 'Warning' --
+        the same shape and channel as Find-NonAsciiSmuggling / Find-Ps7OnlySyntax.
+    #>
+    param($Ast)
+    if ($null -eq $Ast) { return @() }
+
+    # The net-new bash-ism command NAMES this check owns (OQ1). Excludes the PowerShell alias
+    # subset (PSAvoidUsingCmdletAliases owns ls/cat/cp/mv/rm/echo/...) and the && / || chain
+    # operators (Find-Ps7OnlySyntax owns them). Lower-case; matching is case-insensitive.
+    $bashIsmNames = @('grep', 'sed', 'awk', 'export', 'which', 'touch', 'chmod', 'chown', 'ln')
+
+    # ONE AST walk collects both the candidate CommandAst nodes and the same-file definitions
+    # (function names + Set-Alias/New-Alias targets) that suppress them.
+    $nodes = @()
+    try {
+        $nodes = @($Ast.FindAll({ param($n)
+                    $tn = $n.GetType().Name
+                    ($tn -eq 'CommandAst') -or ($tn -eq 'FunctionDefinitionAst')
+                }, $true))
+    } catch { return @() }
+
+    $commands = New-Object System.Collections.ArrayList
+    $definedNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($n in $nodes) {
+        $tn = ''
+        try { $tn = $n.GetType().Name } catch { $tn = '' }
+        if ($tn -eq 'FunctionDefinitionAst') {
+            $nm = ''
+            try { $nm = [string]$n.Name } catch { $nm = '' }
+            if (-not [string]::IsNullOrWhiteSpace($nm)) { [void]$definedNames.Add($nm) }
+        } elseif ($tn -eq 'CommandAst') {
+            [void]$commands.Add($n)
+            # If this command is Set-Alias/New-Alias (or the sal/nal aliases), record the alias
+            # NAME it defines so a later call to that name is treated as the user's own.
+            $cn = $null
+            try { $cn = $n.GetCommandName() } catch { $cn = $null }
+            if (-not [string]::IsNullOrWhiteSpace($cn)) {
+                $cnl = $cn.ToLowerInvariant()
+                if ($cnl -eq 'set-alias' -or $cnl -eq 'new-alias' -or $cnl -eq 'sal' -or $cnl -eq 'nal') {
+                    $aliasName = Get-AliasDefinitionNameFromCommand $n
+                    if (-not [string]::IsNullOrWhiteSpace($aliasName)) { [void]$definedNames.Add($aliasName) }
+                }
+            }
+        }
+    }
+
+    $findings = New-Object System.Collections.ArrayList
+    foreach ($node in $commands) {
+        # Command NAME only -- GetCommandName() returns the bareword/string name, or $null for
+        # an expression/dynamic invocation (never flags). String literals and comments are not
+        # CommandAst nodes, so they are structurally excluded.
+        $name = $null
+        try { $name = $node.GetCommandName() } catch { $name = $null }
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        $nameLower = $name.ToLowerInvariant()
+        if ($bashIsmNames -notcontains $nameLower) { continue }
+
+        # Suppression (a): explicit call-operator invocation '& grep' is a deliberate external
+        # call. Enum-to-string compare (5.1/StrictMode-safe -- never a TokenKind literal).
+        $inv = ''
+        try { $inv = [string]$node.InvocationOperator } catch { $inv = '' }
+        if ($inv -eq 'Ampersand') { continue }
+
+        # Suppression (b): the file defines this name itself (function / alias) -- the call is
+        # the user's own, not the Unix binary. Case-insensitive membership.
+        if ($definedNames.Contains($name)) { continue }
+
+        $line = 1; $col = 1
+        try { $line = [int]$node.Extent.StartLineNumber } catch { $line = 1 }
+        try { $col = [int]$node.Extent.StartColumnNumber } catch { $col = 1 }
+        [void]$findings.Add([pscustomobject]@{
+                ruleId = 'BashIsm'; code = 'BashIsm'
+                source = 'powershell-lsp'
+                severity = 'Warning'; line = $line; col = $col
+                message = "Unix/bash command '$name' used in a PowerShell script. This is not a " +
+                    "PowerShell cmdlet and will fail on a clean Windows host (or silently depend " +
+                    "on Git Bash being on PATH). Use the PowerShell equivalent, or invoke the " +
+                    "external tool explicitly with the call operator (& $name)."
+            })
+    }
+    return @($findings)
+}
+
 # --- module surface / project intelligence (PL-6, dispatch 000062) -----------
 # Manifest-consistency helpers for the daemon-side module surface cache. The daemon
 # caches the module surface ONCE per session keyed by manifest path + content hash;
