@@ -56,6 +56,7 @@ change rules, not a second copy of the prose.
 | `editContextLines` | context lines around the touched range |
 | `formatOnEdit` | format-on-edit suggestion mode (off by default) |
 | `ruleset` | live diagnostics ruleset tier (`pses-default` by default; `base` opt-in) |
+| `moduleAwareness` | uninstalled-module command hint (off by default; `suggest` opt-in) |
 
 <!-- FROZEN-KNOBS:END -->
 
@@ -317,6 +318,34 @@ cold. None is a contract change; each is banked here deliberately.
   (000046 L2) is reused unchanged. Because the base **enumerates** its rules rather than using
   `IncludeDefaultRules = $true`, a vendored-PSSA pin bump is a deliberate, reviewed regeneration
   (`scripts/regen-base-ruleset.ps1`), never a silent shift of the surfaced set.
+- **`moduleAwareness` knob (DELIBERATE MINOR amendment) -- dispatch 000101.** A new optional, defaulted
+  userConfig knob, `moduleAwareness`, was added to the manifest (and so to the FROZEN-KNOBS table above,
+  which the drift-guard validates). This is the contract-relevant event the freeze exists to record: a
+  new knob is a **deliberate, documented MINOR**, not a silent drift -- the table row IS the amendment,
+  and the guard passes **because** the contract was updated, not bypassed. The knob's **default is
+  `off`**, and with it off the diagnostics surface and all behavior are **byte-for-byte unchanged**: the
+  daemon loads no index and takes no installed-modules snapshot, and the check never runs. When
+  `suggest`, the warm daemon adds an **Information**-severity hint when a command in the edited file is a
+  positive hit in a shipped, offline command->module index whose owning module is **not installed** on
+  this machine (design B: the install-check is what earns an actionable message, because PowerShell
+  auto-loads an installed module). It fires only on positive identification and degrades to **silence**
+  on every ambiguity (a not-yet-ready snapshot, a dynamic include); it **never writes** a file and adds
+  **no edit-path network or latency** (the index is a shipped artifact; install-state is a once-per-
+  session background snapshot). The knob is an **enum** (`off` | `suggest`, default `off`), shaped like
+  `formatOnEdit` so a future additive value could be added **without** a breaking knob change; it is
+  never a boolean.
+  - **Recorded design decision (Mike, dispatch 000101):** this is a **dedicated, orthogonal knob**, a
+    deliberate **deviation from the 000100 survey's OQ3 first pick**, which recommended folding module
+    awareness into the existing `ruleset` enum as an additive AI-era tier value. The survey named this
+    dedicated-knob path as its explicit alternative; Mike chose it for **orthogonality** -- module
+    awareness is about machine state (is a module installed?), a different axis from which rule *set*
+    runs, and tier cross-products (`base` x awareness) do not scale. The cost the survey noted -- **+1
+    frozen knob name** and the three-way manifest + CONTRACT-table + README drift-guard lockstep -- is
+    paid here deliberately (this amendment + the README knob row + the manifest key). No new status
+    token (a module-awareness hint rides the existing diagnostics channel as an Information record,
+    exactly as BashIsm/PS7OnlySyntax do) and no second index/network acquisition path (the shipped
+    `rulesets/command-module-index.psd1` is derived offline from a vendored source snapshot by
+    `scripts/regen-command-module-index.ps1`, refreshed only by a deliberate dispatch).
 
 ---
 

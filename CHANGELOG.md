@@ -30,6 +30,32 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **module awareness -- a knob-gated "command from an uninstalled module" hint (PL-6 slice 1)**.
+A new off-by-default `userConfig` knob, `moduleAwareness`, adds an **Information**-severity diagnostic
+when a command in the edited file is a positive hit in a **shipped, offline command->module index**
+whose owning module is **not installed** on this machine -- so the call would fail to resolve. The
+message is actionable (`'Get-MgUser' is exported by module 'Microsoft.Graph.Users', which is not
+installed on this machine; Install-Module Microsoft.Graph.Users or import it`). This is **design B**
+from the 000100 survey: the install-check is what earns an actionable message, because PowerShell
+auto-loads an installed module, so an index-only design would be noise on any box that has the module.
+The check is deterministic in exactly one direction -- **positive identification** -- and degrades to
+**silence** on every ambiguity: it fires only on a literal index hit that is not a built-in, not
+defined or literally dot-sourced or `#Requires`/manifest-`RequiredModules`/`Import-Module`-declared in
+the file, and whose module is absent from a **once-per-session installed-modules snapshot** the daemon
+takes on a background runspace **off the critical path** (it never delays first-edit diagnostics, and
+the check stays silent until it is ready). A dynamic include (`. $path`, `Import-Module $name`)
+suppresses the whole file -- it never guesses across something it cannot read. It **never writes** your
+file and adds **no edit-path network or latency** (the index is a shipped artifact,
+`rulesets/command-module-index.psd1`, derived offline from a vendored source snapshot by
+`scripts/regen-command-module-index.ps1` and refreshed only by a deliberate release). The knob is an
+**enum** (`off` | `suggest`, default `off`); with it **off the diagnostics surface is byte-for-byte
+unchanged** (no index load, no snapshot, the check never runs). Shipped as a **deliberate MINOR** (a
+new frozen knob name, amended in lockstep into the manifest, `CONTRACT.md`, and `README.md`); no new
+status token and no second index/network path. Recorded design decision (dispatch 000101): the
+dedicated, orthogonal knob is a considered deviation from the survey's OQ3 first pick (folding into the
+`ruleset` enum) -- module awareness is about machine state, a different axis from which rule set runs.
+No version bump (the next release-prep cuts the version).
+
 MINOR: **format-on-edit `apply` activated -- the reserved enum value becomes a guarded write-back
 (PL-8 slice 2)**. `formatOnEdit=apply` now WRITES the formatter's result back to the edited file --
 the first feature that ever modifies the user's file. The entire risk lives in the write path, so it

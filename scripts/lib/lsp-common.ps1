@@ -616,7 +616,8 @@ function Start-PsesDaemonDetached {
         [int]$IdleTtlMin = 30,
         [int]$PerFileCap = 20,
         [string]$SettingsPath = '',
-        [string]$Ruleset = 'pses-default'
+        [string]$Ruleset = 'pses-default',
+        [string]$ModuleAwareness = 'off'
     )
     $scriptsDir = Split-Path -Parent $script:LspCommonDir   # scripts/lib -> scripts
     if ([string]::IsNullOrWhiteSpace($scriptsDir)) { $scriptsDir = Split-Path -Parent $PSScriptRoot }
@@ -636,6 +637,10 @@ function Start-PsesDaemonDetached {
     # Pass -Ruleset ONLY when opted in ('base'); the daemon defaults to 'pses-default', so the
     # default path's daemon invocation is byte-identical to pre-000087 (no extra arg).
     if (-not [string]::IsNullOrWhiteSpace($Ruleset) -and $Ruleset -ne 'pses-default') { $daemonArgs += @('-Ruleset', $Ruleset) }
+    # Pass -ModuleAwareness ONLY when opted in ('suggest'); the daemon defaults to 'off', so the
+    # default path's daemon invocation is byte-identical to pre-000101 (no extra arg, no index load,
+    # no installed-modules snapshot). The value is canonicalized upstream (ConvertTo-ModuleAwarenessMode).
+    if ($ModuleAwareness -eq 'suggest') { $daemonArgs += @('-ModuleAwareness', 'suggest') }
     try {
         if (Test-OnWindows) {
             # -WindowStyle Hidden routes through ShellExecute, which STRUCTURALLY does not pass
@@ -1433,6 +1438,408 @@ function Find-BashIsm {
             })
     }
     return @($findings)
+}
+
+# --- module awareness: command from an uninstalled module (PL-6, dispatch 000101) -----------
+# A daemon-side, knob-gated (moduleAwareness=suggest), Information-severity hint that a
+# CommandAst NAME is exported by a KNOWN module (the shipped offline command->module index)
+# that is NOT installed on this machine -- so the call would fail to resolve. Design B (the
+# 000100 survey): the install-check is what earns the actionable message, because PowerShell
+# AUTO-LOADS an installed module, so an index-only design is noise on any box that has the
+# module. Fires ONLY on the survey's rung 0-6 positive-identification predicate; EVERY ambiguity
+# degrades to SILENCE (a missing hint costs a web search; a wrong "install M" teaches the user to
+# ignore the plugin -- the FP this feature cannot afford).
+#
+# WHERE IT RUNS (survey-vs-disk reconciliation, dispatch 000101): unlike Find-BashIsm / the
+# pre-PSSA pack (which run CLIENT-side over the client-parsed AST), this check runs DAEMON-side --
+# the once-per-session installed-modules snapshot (the machine-state rung 6) lives in the warm
+# daemon ($script:, the 000062 cache model), taken by a background pre-warm OFF the critical path.
+# This function is the PURE core (AST + index + installed-set + declared-modules in, findings out),
+# unit-testable in isolation; the daemon wrapper (Get-ModuleAwarenessFindings in pses-daemon.ps1)
+# parses the edited file, resolves the nearest manifest's RequiredModules, and supplies the
+# session snapshot. It REUSES the BashIsm machinery (the CommandAst walk, the $definedNames
+# same-file-suppression HashSet, Get-AliasDefinitionNameFromCommand) verbatim.
+#
+# HOST / StrictMode SAFETY: every AST type touched (CommandAst, FunctionDefinitionAst,
+# StringConstantExpressionAst, VariableExpressionAst, ArrayLiteralAst, CommandParameterAst) and
+# member read (GetCommandName, InvocationOperator, CommandElements, ScriptRequirements
+# .RequiredModules, .Extent) is CORE on BOTH Windows PowerShell 5.1 and pwsh 7. Detection uses
+# GetType().Name string checks + guarded property access -- never a 7-only type/enum literal --
+# so it dot-sources and runs silent under 5.1 + StrictMode exactly like the rest of the pack.
+
+function Get-ModuleNameArgClass {
+    # Classify ONE argument node as literal module name(s) or dynamic. A literal string constant
+    # (or an array literal of only string constants) yields Names; ANYTHING else (a variable, an
+    # expandable "$mod" string, a sub-expression) is Dynamic -> the caller degrades honestly.
+    # Core AST members only (5.1/StrictMode-safe); every access guarded.
+    param($Node)
+    $tn = ''
+    try { $tn = $Node.GetType().Name } catch { return @{ Names = @(); Dynamic = $true } }
+    if ($tn -eq 'StringConstantExpressionAst') {
+        $v = ''
+        try { $v = [string]$Node.Value } catch { $v = '' }
+        if ([string]::IsNullOrWhiteSpace($v)) { return @{ Names = @(); Dynamic = $false } }
+        return @{ Names = @($v); Dynamic = $false }
+    }
+    if ($tn -eq 'ArrayLiteralAst') {
+        $names = New-Object System.Collections.Generic.List[string]
+        $elems = @()
+        try { $elems = @($Node.Elements) } catch { return @{ Names = @(); Dynamic = $true } }
+        foreach ($e in $elems) {
+            $etn = ''
+            try { $etn = $e.GetType().Name } catch { $etn = '' }
+            if ($etn -eq 'StringConstantExpressionAst') {
+                $ev = ''
+                try { $ev = [string]$e.Value } catch { $ev = '' }
+                if (-not [string]::IsNullOrWhiteSpace($ev)) { $names.Add($ev) }
+            } else {
+                return @{ Names = @(); Dynamic = $true }   # a dynamic element -> the whole import is dynamic
+            }
+        }
+        return @{ Names = @($names); Dynamic = $false }
+    }
+    return @{ Names = @(); Dynamic = $true }   # variable / expandable-string / sub-expression -> dynamic
+}
+
+function Get-ImportModuleModuleNames {
+    # From an Import-Module (or ipmo) CommandAst, return @{ Names = @(...); Dynamic = $bool }.
+    # Names = the LITERAL module names imported (positional string args + -Name string values +
+    # an array literal of string constants). Dynamic = $true if ANY module-name argument is not a
+    # literal (a variable / expression) -- rung 5 degrade: the caller suppresses firing for the
+    # whole file, since a dynamic import could pull in any module. Over-collecting a non-module
+    # string (e.g. a -Scope value) is harmless: an extra declared name only SUPPRESSES (fail-safe).
+    param($CommandAstNode)
+    $names = New-Object System.Collections.Generic.List[string]
+    $dynamic = $false
+    $elems = @()
+    try { $elems = @($CommandAstNode.CommandElements) } catch { return @{ Names = @(); Dynamic = $true } }
+    $expectNameValue = $false
+    for ($i = 1; $i -lt $elems.Count; $i++) {
+        $el = $elems[$i]
+        $etn = ''
+        try { $etn = $el.GetType().Name } catch { $etn = '' }
+        if ($etn -eq 'CommandParameterAst') {
+            $pn = ''
+            try { $pn = [string]$el.ParameterName } catch { $pn = '' }
+            $isName = (-not [string]::IsNullOrWhiteSpace($pn)) -and ('name'.StartsWith($pn.ToLowerInvariant()))
+            $expectNameValue = $isName
+            if ($isName) {
+                $arg = $el.PSObject.Properties['Argument']
+                if ($null -ne $arg -and $null -ne $arg.Value) {
+                    $r = Get-ModuleNameArgClass $arg.Value
+                    if ($r.Dynamic) { $dynamic = $true } else { foreach ($n in $r.Names) { $names.Add($n) } }
+                    $expectNameValue = $false
+                }
+            }
+        } elseif ($expectNameValue) {
+            $r = Get-ModuleNameArgClass $el
+            if ($r.Dynamic) { $dynamic = $true } else { foreach ($n in $r.Names) { $names.Add($n) } }
+            $expectNameValue = $false
+        } else {
+            # A positional argument -- the first positional binds to -Name (the module).
+            $r = Get-ModuleNameArgClass $el
+            if ($r.Dynamic) { $dynamic = $true } else { foreach ($n in $r.Names) { $names.Add($n) } }
+        }
+    }
+    return @{ Names = @($names); Dynamic = $dynamic }
+}
+
+function Get-DotSourceClass {
+    # Classify a CommandAst as a dot-source. Returns @{ IsDotSource; Dynamic; Path }.
+    # A LITERAL dot-source (`. ./helpers.ps1`) -- InvocationOperator Dot, first element a string
+    # constant -- is FOLLOWABLE (Path set, Dynamic $false). A DYNAMIC dot-source (`. $path`) --
+    # Dot with a non-literal first element -- is Dynamic $true (rung 3 degrade -> suppress file).
+    # Not a dot-source at all -> IsDotSource $false. Core members only; guarded.
+    param($CommandAstNode)
+    $inv = ''
+    try { $inv = [string]$CommandAstNode.InvocationOperator } catch { $inv = '' }
+    if ($inv -ne 'Dot') { return @{ IsDotSource = $false; Dynamic = $false; Path = '' } }
+    $elems = @()
+    try { $elems = @($CommandAstNode.CommandElements) } catch { return @{ IsDotSource = $true; Dynamic = $true; Path = '' } }
+    if ($elems.Count -lt 1) { return @{ IsDotSource = $true; Dynamic = $true; Path = '' } }
+    $e0 = $elems[0]
+    $etn = ''
+    try { $etn = $e0.GetType().Name } catch { $etn = '' }
+    if ($etn -eq 'StringConstantExpressionAst') {
+        $p = ''
+        try { $p = [string]$e0.Value } catch { $p = '' }
+        if ([string]::IsNullOrWhiteSpace($p)) { return @{ IsDotSource = $true; Dynamic = $true; Path = '' } }
+        return @{ IsDotSource = $true; Dynamic = $false; Path = $p }
+    }
+    return @{ IsDotSource = $true; Dynamic = $true; Path = '' }   # `. $var` / `. (expr)` -> dynamic
+}
+
+function Add-DotSourcedDefinitionNames {
+    # Follow ONE literal dot-source (rung 3): resolve $RelPath relative to $BaseDir, parse the
+    # target, and add its top-level function names + Set-Alias/New-Alias names to $DefinedNames.
+    # Returns $true when the include was fully resolved + harvested, $false on ANY failure (a path
+    # that does not resolve to a readable, parseable file) -- the caller then SUPPRESSES the file
+    # (fail-safe: never guess across an include it could not read). One level deep, no recursion.
+    param([string]$RelPath, [string]$BaseDir, $DefinedNames)
+    if ([string]::IsNullOrWhiteSpace($BaseDir)) { return $false }
+    $full = ''
+    try {
+        if ([System.IO.Path]::IsPathRooted($RelPath)) { $full = [System.IO.Path]::GetFullPath($RelPath) }
+        else { $full = [System.IO.Path]::GetFullPath((Join-Path $BaseDir $RelPath)) }
+    } catch { return $false }
+    if ([string]::IsNullOrWhiteSpace($full) -or -not (Test-Path -LiteralPath $full -PathType Leaf)) { return $false }
+    try {
+        $incAst = [System.Management.Automation.Language.Parser]::ParseFile($full, [ref]$null, [ref]$null)
+        if ($null -eq $incAst) { return $false }
+        $nodes = @($incAst.FindAll({ param($n)
+                    $tn = $n.GetType().Name
+                    ($tn -eq 'FunctionDefinitionAst') -or ($tn -eq 'CommandAst')
+                }, $true))
+        foreach ($n in $nodes) {
+            $tn = ''
+            try { $tn = $n.GetType().Name } catch { $tn = '' }
+            if ($tn -eq 'FunctionDefinitionAst') {
+                $nm = ''
+                try { $nm = [string]$n.Name } catch { $nm = '' }
+                if (-not [string]::IsNullOrWhiteSpace($nm)) { [void]$DefinedNames.Add($nm) }
+            } elseif ($tn -eq 'CommandAst') {
+                $cn = $null
+                try { $cn = $n.GetCommandName() } catch { $cn = $null }
+                if (-not [string]::IsNullOrWhiteSpace($cn)) {
+                    $cnl = $cn.ToLowerInvariant()
+                    if ($cnl -eq 'set-alias' -or $cnl -eq 'new-alias' -or $cnl -eq 'sal' -or $cnl -eq 'nal') {
+                        $aliasName = Get-AliasDefinitionNameFromCommand $n
+                        if (-not [string]::IsNullOrWhiteSpace($aliasName)) { [void]$DefinedNames.Add($aliasName) }
+                    }
+                }
+            }
+        }
+        return $true
+    } catch { return $false }
+}
+
+function Find-ModuleAwareness {
+    <#
+    .SYNOPSIS
+        Flag a CommandAst NAME that the shipped index maps to a module NOT installed on this
+        machine and NOT locally resolved (defined, dot-sourced, required, or imported).
+    .DESCRIPTION
+        PURE over the supplied AST + injected index / installed-set / declared modules. Returns @()
+        when $Ast is $null, when the file has a dynamic dot-source or dynamic Import-Module (rung
+        3/5 degrade -- the whole file is suppressed), or when no name survives the rung 0-6
+        predicate. Otherwise one finding per firing CommandAst. Finding source = 'powershell-lsp',
+        ruleId/code = 'ModuleNotInstalled', severity 'Information'.
+
+        THE PREDICATE (0-FP-defensible, the 000100 survey). Fire for CommandAst name N iff:
+          (0) GetCommandName() returns a literal N (dynamic invocation returns $null -> never);
+          (1) N is not a built-in (guaranteed by construction: built-ins are never in the index);
+          (2) N is not defined same-file as a function / Set-Alias / New-Alias ($definedNames);
+          (3) the file has no dynamic dot-source (a literal dot-source is FOLLOWED, its defs folded
+              into $definedNames; a dynamic one suppresses the whole file);
+          (4)+(5) N's owning module M is not declared via #Requires -Modules, the nearest manifest's
+              RequiredModules, or a literal Import-Module M (a dynamic import suppresses the file);
+          (6) N is a POSITIVE index hit -> M, AND M is NOT installed (design B, the machine-state
+              rung -- the injected session snapshot).
+    #>
+    param(
+        $Ast,
+        $Index,                                     # hashtable: command name -> owning module name
+        $InstalledModules,                          # collection of installed module names
+        [string[]]$ManifestRequiredModules = @(),   # RequiredModules from the nearest manifest (daemon-resolved)
+        [string]$FilePath = ''                      # edited file path (for resolving literal dot-source includes)
+    )
+    if ($null -eq $Ast) { return @() }
+    if ($null -eq $Index) { return @() }
+
+    # Build case-insensitive lookups from the injected inputs (never trust the caller's casing).
+    $indexLookup = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    try {
+        foreach ($k in @($Index.Keys)) {
+            $kn = [string]$k
+            if (-not [string]::IsNullOrWhiteSpace($kn) -and -not $indexLookup.ContainsKey($kn)) {
+                $indexLookup[$kn] = [string]$Index[$k]
+            }
+        }
+    } catch { return @() }
+    if ($indexLookup.Count -eq 0) { return @() }
+
+    $installedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($m in @($InstalledModules)) {
+        $mn = [string]$m
+        if (-not [string]::IsNullOrWhiteSpace($mn)) { [void]$installedSet.Add($mn) }
+    }
+
+    $declaredModules = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($m in @($ManifestRequiredModules)) {
+        $mn = [string]$m
+        if (-not [string]::IsNullOrWhiteSpace($mn)) { [void]$declaredModules.Add($mn) }
+    }
+    # #Requires -Modules M (rung 4) -- ModuleSpecification.Name off the SAME AST Find-Ps7OnlySyntax
+    # reads RequiredPSVersion from (000096). Guarded so a shape lacking ScriptRequirements never throws.
+    try {
+        $req = $Ast.ScriptRequirements
+        if ($null -ne $req) {
+            foreach ($rm in @($req.RequiredModules)) {
+                $rn = ''
+                try { $rn = [string]$rm.Name } catch { $rn = '' }
+                if (-not [string]::IsNullOrWhiteSpace($rn)) { [void]$declaredModules.Add($rn) }
+            }
+        }
+    } catch { }
+
+    # ONE AST walk: candidate CommandAsts + same-file definitions + imports + dot-source shape.
+    $nodes = @()
+    try {
+        $nodes = @($Ast.FindAll({ param($n)
+                    $tn = $n.GetType().Name
+                    ($tn -eq 'CommandAst') -or ($tn -eq 'FunctionDefinitionAst')
+                }, $true))
+    } catch { return @() }
+
+    $definedNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $candidates = New-Object System.Collections.ArrayList
+    $literalIncludes = New-Object System.Collections.ArrayList
+    $suppressFile = $false
+    foreach ($n in $nodes) {
+        $tn = ''
+        try { $tn = $n.GetType().Name } catch { $tn = '' }
+        if ($tn -eq 'FunctionDefinitionAst') {
+            $nm = ''
+            try { $nm = [string]$n.Name } catch { $nm = '' }
+            if (-not [string]::IsNullOrWhiteSpace($nm)) { [void]$definedNames.Add($nm) }
+            continue
+        }
+        # CommandAst. First: is it a dot-source? (rung 3)
+        $ds = Get-DotSourceClass $n
+        if ($ds.IsDotSource) {
+            if ($ds.Dynamic) { $suppressFile = $true }
+            else { [void]$literalIncludes.Add([string]$ds.Path) }
+            continue   # a dot-source is never a command candidate (its name is a path)
+        }
+        $cn = $null
+        try { $cn = $n.GetCommandName() } catch { $cn = $null }
+        if (-not [string]::IsNullOrWhiteSpace($cn)) {
+            $cnl = $cn.ToLowerInvariant()
+            if ($cnl -eq 'set-alias' -or $cnl -eq 'new-alias' -or $cnl -eq 'sal' -or $cnl -eq 'nal') {
+                $aliasName = Get-AliasDefinitionNameFromCommand $n
+                if (-not [string]::IsNullOrWhiteSpace($aliasName)) { [void]$definedNames.Add($aliasName) }
+                continue
+            }
+            if ($cnl -eq 'import-module' -or $cnl -eq 'ipmo') {
+                $imp = Get-ImportModuleModuleNames $n   # rung 5
+                if ($imp.Dynamic) { $suppressFile = $true }
+                foreach ($mn in @($imp.Names)) { if (-not [string]::IsNullOrWhiteSpace($mn)) { [void]$declaredModules.Add($mn) } }
+                continue
+            }
+        }
+        [void]$candidates.Add($n)
+    }
+
+    # Follow literal dot-sources (rung 3): harvest their defs; ANY failure suppresses the file.
+    if (-not $suppressFile -and $literalIncludes.Count -gt 0) {
+        $baseDir = ''
+        if (-not [string]::IsNullOrWhiteSpace($FilePath)) {
+            try { $baseDir = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($FilePath)) } catch { $baseDir = '' }
+        }
+        foreach ($inc in $literalIncludes) {
+            if (-not (Add-DotSourcedDefinitionNames -RelPath $inc -BaseDir $baseDir -DefinedNames $definedNames)) {
+                $suppressFile = $true; break
+            }
+        }
+    }
+    if ($suppressFile) { return @() }   # rung 3/5 honest degrade: never guess across an unresolved include/import
+
+    $findings = New-Object System.Collections.ArrayList
+    foreach ($node in $candidates) {
+        $name = $null
+        try { $name = $node.GetCommandName() } catch { $name = $null }
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }          # rung 0
+        if ($definedNames.Contains($name)) { continue }                # rung 2 (+ followed rung 3)
+        if (-not $indexLookup.ContainsKey($name)) { continue }         # rung 1 (built-ins never indexed) + unknown
+        $module = [string]$indexLookup[$name]
+        if ([string]::IsNullOrWhiteSpace($module)) { continue }
+        if ($declaredModules.Contains($module)) { continue }           # rung 4 / 5
+        if ($installedSet.Contains($module)) { continue }              # rung 6 (design B discriminator)
+
+        $line = 1; $col = 1
+        try { $line = [int]$node.Extent.StartLineNumber } catch { $line = 1 }
+        try { $col = [int]$node.Extent.StartColumnNumber } catch { $col = 1 }
+        [void]$findings.Add([pscustomobject]@{
+                ruleId = 'ModuleNotInstalled'; code = 'ModuleNotInstalled'
+                source = 'powershell-lsp'
+                severity = 'Information'; line = $line; col = $col
+                message = "'$name' is exported by module '$module', which is not installed on this " +
+                    "machine; Install-Module $module or import it."
+            })
+    }
+    return @($findings)
+}
+
+function ConvertTo-ModuleAwarenessMode {
+    # Map the raw moduleAwareness knob string to a mode: 'off' | 'suggest'. Default-safe: absent /
+    # blank / an unexpanded '${user_config...}' token / any unrecognized value -> 'off' (the feature
+    # is opt-in; an unparseable knob NEVER silently turns it on -- the 000101 acceptance). Mirrors
+    # ConvertTo-FormatOnEditMode's boolean-truthy aliases (true/on/1/yes -> the active mode) so a user
+    # who reaches for a boolean gets the safe advisory behavior. There is no 'apply'-class escalation
+    # here: a module-awareness hint only surfaces an Information diagnostic, it never writes a file.
+    param([string]$Raw)
+    $v = ([string]$Raw).Trim().ToLowerInvariant()
+    switch ($v) {
+        'suggest' { return 'suggest' }
+        'true'    { return 'suggest' }
+        'on'      { return 'suggest' }
+        '1'       { return 'suggest' }
+        'yes'     { return 'suggest' }
+        default   { return 'off' }
+    }
+}
+
+function Get-CommandModuleIndexPath {
+    # Absolute path to the shipped rulesets/command-module-index.psd1 (scripts/lib -> scripts -> root).
+    $scriptsDir = Split-Path -Parent $script:LspCommonDir
+    if ([string]::IsNullOrWhiteSpace($scriptsDir)) { $scriptsDir = Split-Path -Parent $PSScriptRoot }
+    $root = Split-Path -Parent $scriptsDir
+    return (Join-Path $root 'rulesets/command-module-index.psd1')
+}
+
+function Import-CommandModuleIndex {
+    # Load the shipped command->module index entries (name -> module) as a hashtable. FAIL-SAFE:
+    # returns @{} on ANY error (missing file, parse failure, no entries) -> the check then never
+    # fires (a positive hit against an empty index is impossible). Reads the SHIPPED artifact ONLY --
+    # no network, no live module (the 000100 determinism requirement: no network at edit time, ever).
+    param([string]$Path = '')
+    if ([string]::IsNullOrWhiteSpace($Path)) { $Path = Get-CommandModuleIndexPath }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @{} }
+    try {
+        $data = Import-PowerShellDataFile -LiteralPath $Path -ErrorAction Stop
+        if ($null -eq $data) { return @{} }
+        $entries = $data['entries']
+        if ($null -eq $entries) { return @{} }
+        return $entries
+    } catch { return @{} }
+}
+
+function Get-NearestManifestRequiredModules {
+    # Resolve the nearest module manifest walked up from $FilePath (Find-ModuleManifest) and return
+    # its RequiredModules module NAMES (rung 4 via manifest). RequiredModules entries may be strings
+    # or @{ ModuleName = 'X'; ... } hashtables -- both are normalized to the name. Returns @() when
+    # there is no manifest / no RequiredModules / on ANY error (the check never throws). Reads the
+    # manifest via Import-PowerShellDataFile with the index-not-dot-access StrictMode discipline
+    # (a missing key via the indexer is $null, not a throw -- the 000062 lesson).
+    param([string]$FilePath)
+    if ([string]::IsNullOrWhiteSpace($FilePath)) { return @() }
+    try {
+        $manifestPath = Find-ModuleManifest -FilePath $FilePath
+        if ([string]::IsNullOrWhiteSpace($manifestPath)) { return @() }
+        $data = Import-PowerShellDataFile -LiteralPath $manifestPath -ErrorAction Stop
+        if ($null -eq $data) { return @() }
+        $rm = $data['RequiredModules']
+        if ($null -eq $rm) { return @() }
+        $names = New-Object System.Collections.Generic.List[string]
+        foreach ($entry in @($rm)) {
+            $n = ''
+            if ($entry -is [string]) { $n = [string]$entry }
+            elseif ($entry -is [System.Collections.IDictionary]) { $n = [string]$entry['ModuleName'] }
+            else { try { $n = [string]$entry } catch { $n = '' } }
+            if (-not [string]::IsNullOrWhiteSpace($n)) { $names.Add($n) }
+        }
+        return @($names)
+    } catch { return @() }
 }
 
 # --- module surface / project intelligence (PL-6, dispatch 000062) -----------

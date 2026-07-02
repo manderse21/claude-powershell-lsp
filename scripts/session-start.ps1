@@ -23,7 +23,8 @@ param(
     [int] $IdleTtlMin = 30,
     [int] $PerFileCap = 20,
     [string] $SettingsPath = '',
-    [string] $Ruleset = 'pses-default'
+    [string] $Ruleset = 'pses-default',
+    [string] $ModuleAwareness = 'off'
 )
 
 Set-StrictMode -Version Latest
@@ -51,6 +52,9 @@ $IdleTtlMin        = Get-PluginOptionInt 'idleTtlMin'        $IdleTtlMin
 $PerFileCap        = Get-PluginOptionInt 'perFileCap'        $PerFileCap
 $SettingsPath      = Get-PluginOption    'settingsPath'       $SettingsPath
 $Ruleset           = Get-PluginOption    'ruleset'            $Ruleset
+# Canonicalize the moduleAwareness knob here (off|suggest); the daemon receives the canonical value
+# and Start-PsesDaemonDetached passes it ONLY when 'suggest' (byte-identical default launch otherwise).
+$ModuleAwareness   = ConvertTo-ModuleAwarenessMode (Get-PluginOption 'moduleAwareness' $ModuleAwareness)
 
 $logDir = Get-LogDir
 $sessionDir = Get-SessionDir
@@ -245,7 +249,7 @@ try {
     $launched = Start-PsesDaemonDetached -SessionId $sessionId -HostExe $hostExe `
         -SeverityThreshold $SeverityThreshold -RuleInclude $RuleInclude -RuleExclude $RuleExclude `
         -DebounceMs $DebounceMs -IdleTtlMin $IdleTtlMin -PerFileCap $PerFileCap -SettingsPath $SettingsPath `
-        -Ruleset $Ruleset
+        -Ruleset $Ruleset -ModuleAwareness $ModuleAwareness
     Write-SLog ('launched daemon (detached) for session ' + $sessionId + ' via ' + $hostExe + ' (ok=' + $launched + ')')
     exit 0
 }
