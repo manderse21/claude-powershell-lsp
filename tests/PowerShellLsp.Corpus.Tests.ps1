@@ -177,6 +177,38 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
         }
     }
 
+    It 'bashism samples each surface a powershell-lsp-sourced BashIsm diagnostic' {
+        # dispatch 000097: the bash-ism command-name pre-PSSA AST pass (the closing slice of the
+        # 000055 pack). Each known-bad bashism fixture (grep / sed / awk / export / which / touch
+        # / chmod / chown / ln, plus a pipe-to-grep and a bash-ism-plus-PSSA-issue case) must
+        # surface the pack's powershell-lsp-sourced BashIsm finding. The FIRST finding is the
+        # bash-ism one because client-side pre-PSSA findings are prepended to the daemon stream.
+        # The 0-FP suppression proofs (& grep, function touch, Set-Alias grep, string/comment
+        # mentions, idiomatic cmdlets) live in the 'clean' category and are asserted silent by
+        # the clean-samples guard above.
+        $bashism = @(Get-CorpusSampleSpec | Where-Object { $_.Category -eq 'bashism' })
+        $bashism.Count | Should -BeGreaterThan 0
+        foreach ($s in $bashism) {
+            $d = @($script:Derived[$s.Label])
+            $d.Count | Should -BeGreaterThan 0 -Because "$($s.Label) must surface at least one bash-ism finding"
+            ($d | Select-Object -First 1).source | Should -BeExactly 'powershell-lsp'
+            ($d | Select-Object -First 1).ruleId | Should -BeExactly 'BashIsm'
+        }
+    }
+
+    It 'a bash-ism does NOT suppress PSScriptAnalyzer analysis of the same file (merge path, not early-exit)' {
+        # dispatch 000097 acceptance: a file carrying BOTH a bash-ism AND a PSSA-detectable issue
+        # must surface BOTH -- proving the bash-ism finding rides the daemon MERGE path and never
+        # gates the pre-PSSA early-exit that would skip the daemon. The withPssaIssue fixture pairs
+        # a 'grep' call with a '-eq $null' comparison (PSPossibleIncorrectComparisonWithNull).
+        $d = @($script:Derived['bashism/BashIsm.withPssaIssue'])
+        $d.Count | Should -BeGreaterThan 1 -Because 'both the bash-ism and the PSSA finding must surface'
+        @($d | Where-Object { $_.source -eq 'powershell-lsp' -and $_.ruleId -eq 'BashIsm' }).Count |
+            Should -BeGreaterThan 0 -Because 'the bash-ism (grep) must surface'
+        @($d | Where-Object { $_.source -eq 'PSScriptAnalyzer' }).Count |
+            Should -BeGreaterThan 0 -Because 'full PSScriptAnalyzer analysis still ran (a bash-ism did not gate the early-exit)'
+    }
+
     It 'module samples: consistent/wildcard/dynamic produce zero findings; orphan/typo surface ManifestConsistency' {
         $module = @(Get-CorpusSampleSpec | Where-Object { $_.Category -eq 'module' })
         $module.Count | Should -BeGreaterThan 0
