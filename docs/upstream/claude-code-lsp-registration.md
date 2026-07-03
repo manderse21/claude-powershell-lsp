@@ -48,6 +48,77 @@ not platform-wide**:
 (`tests/PowerShellLsp.Unit.Tests.ps1`) fails CI if any `lspServers` entry ever re-declares a field
 outside that allowlist.
 
+## The native LSP launcher guard -- a second, independent blocker (Windows; dispatch 000107, upstream `#73961`)
+
+**Status (2026-07-03, dispatch 000107 -- survey verified).** On **Windows**, Claude Code 2.1.200's
+native LSP launcher refuses to start this plugin's registered server before any plugin code runs.
+Against the installed v1.23.0 -- whose `lspServers.powershell.command` is the bare string `pwsh` -- a
+`goToDefinition` driven through Claude Code's builtin LSP tool returns, verbatim:
+
+```
+Command 'pwsh' not found or is in an unsafe location (current directory)
+```
+
+No `pwsh` process starts. This is a **second blocker, independent of the `#1359` serve handshake** above:
+it fires **pre-spawn** in Claude Code's native LSP launcher -- **upstream of the shim, `pses-stdio.ps1`,
+and PSES** -- so it is reached whether `nativeServe` is `off` or `shim` (neither the relay nor the proxy
+has run yet). Where `#1359` is a serve-layer gap the shim closes once PSES is running, this guard is a
+spawn-layer refusal the plugin cannot reach around from inside its own launcher.
+
+**The guard mechanism (per dispatch 000107).** The launcher routes the server `command` through an
+unconditional `where.exe`-based safe-resolver that dispatches on the command's **shape**: any command
+containing a path separator (`/` or `\`) is passed through and spawned as-is, while a **bare name** (no
+separator) is sent to a resolver that returns null -- and null throws the refusal above -- unless a
+candidate both exists, sits outside the current directory, and ends in `.com`/`.exe`/`.bat`/`.cmd`. On
+the surveyed machine `where.exe pwsh` and `where.exe powershell` both resolve to real executables
+(Program Files / System32), yet both bare names are refused in a fresh session -- consistent with the
+sibling reports `#67821` / `#42135`, where the launcher's spawn-context PATH is reduced/sanitized and a
+failed resolution is cached as null for the session. A separator-bearing command bypasses the resolver
+entirely: dispatch 000107 confirmed an absolute path and a `${CLAUDE_PLUGIN_ROOT}`-anchored `.cmd`
+wrapper both spawn, while bare `pwsh` and bare `powershell` both refuse.
+
+**Regression window: (2.1.195, 2.1.200].** On Claude Code **2.1.195** (dispatch 000069) the registered
+launcher **launched** bare `pwsh` -- PSES reached "Starting Language Server" and init then timed out on
+the `#1359` handshake -- so the spawn itself succeeded there. On **2.1.200** the same command is refused
+**pre-spawn**. The 2.1.196-2.1.200 changelog records no command-resolution or LSP-launcher change; the
+application to the LSP launcher was silent.
+
+**Not plugin-specific; the diagnostics path is unaffected.** Dispatch 000107 reproduced the identical
+refusal on the **official `pyright-lsp` plugin** (`command: "pyright-langserver"`, bare) through the
+same builtin LSP tool, while `typescript-lsp` served -- so this is a broad Claude-Code-on-Windows
+launcher regression, not a powershell-lsp defect. Crucially, the plugin's **PostToolUse diagnostics are
+unaffected**: the warm daemon runs bare `pwsh` through a **different, unguarded** shell-spawn path (the
+plugin's hooks, not the native LSP launcher), so per-file PSScriptAnalyzer diagnostics -- the plugin's
+primary value -- keep working normally on Windows. Only the opt-in `nativeServe` navigation tier is
+blocked, and only on Windows.
+
+**macOS and Linux under these Claude Code versions are untested with the real client.** Dispatch 000107
+characterized the guard on Windows only. The real-client status of the native nav tier on macOS and
+Linux under Claude Code 2.1.196-2.1.200 has **not** been probed, and is **not** claimed here in either
+direction.
+
+**Upstream: `anthropics/claude-code#73961` (open).** The guard is filed upstream as
+[anthropics/claude-code#73961](https://github.com/anthropics/claude-code/issues/73961) (labeled bug /
+platform:windows / area:lsp / area:plugins / has-repro), with the same-root-cause siblings `#67821`
+(bare `cmd` in `/desktop`) and `#42135` (bare `git` in marketplace update).
+
+**Verdict: wait for upstream.** Per dispatch 000107 the fix is not the plugin's to make cleanly. A single
+`lspServers.command` string cannot be both a Windows `.cmd` wrapper and a cross-platform launcher (Claude
+Code offers no per-platform `command` field), and the natural absolute-path workaround
+`C:\Program Files\PowerShell\7\pwsh.exe` fails `claude plugin validate` because the manifest validator
+rejects a `command` containing a space unless it starts with `/`. Because the same resolver also breaks
+an official Anthropic LSP plugin and the git/cmd subsystems, one upstream fix -- resolve via a full PATH,
+stop caching null, or add per-platform command support -- resolves it for every affected plugin at once.
+The native nav tier is therefore documented as **blocked on Windows Claude Code 2.1.196-2.1.200**, pending
+`#73961`.
+
+**Contingent build trigger.** A `${CLAUDE_PLUGIN_ROOT}`-anchored Windows `.cmd` wrapper is the only
+launcher-clean, machine-portable local lane (dispatch 000107 proved it spawns), and it becomes the
+**recommended build for Windows native nav if and only if** Claude Code ships per-platform
+`lspServers.command` support (suggested fix (c) in `#73961`) -- which would let the wrapper be Windows-only
+while bare `pwsh` stays the Unix command -- **or** the launcher resolver/guard is fixed so a bare `pwsh`
+spawns again. Until one of those lands upstream, no local build is unblocked and none is minted here.
+
 ## Removability, and how to learn the shim is removable (dispatch 000103)
 
 The `nativeServe` shim exists **only** to route around the upstream `#1359` client bug. When Claude
@@ -89,7 +160,12 @@ authoritative for a client-side fix:
   **client-side** `#1359` fix (Claude Code completing the dynamic-registration handshake so nav
   registers dynamically) serves WITHOUT changing the static init result and is **not** caught here --
   that case still needs the manual real-`claude -p` re-probe above, which stays authoritative. The
-  probe never yields a false "removable"; it errs toward keeping the shim.
+  probe never yields a false "removable"; it errs toward keeping the shim. Note that this probe launches
+  PSES **directly** (a pwsh subprocess) and so speaks only to the `#1359` serve handshake; it does not
+  exercise Claude Code's native LSP launcher, so it cannot detect the separate Windows launcher guard
+  documented in "The native LSP launcher guard" above (dispatch 000107, upstream `#73961`). That guard is
+  client-side; whether it has been lifted is learned only from the manual real-`claude -p` re-probe, not
+  from this check.
 
 ---
 

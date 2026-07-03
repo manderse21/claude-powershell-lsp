@@ -246,6 +246,18 @@ documentSymbol serve to Claude Code's **native** LSP client on a `.ps1`/`.psm1`/
 go-to-definition or a hover in Claude Code resolves through PowerShell Editor Services, not just the
 diagnostics you get from the warm hook.
 
+> **Known issue -- Windows (Claude Code 2.1.196-2.1.200).** On Windows, these Claude Code versions
+> refuse to start the plugin's LSP server -- a launcher-level guard rejects the bare `pwsh` command
+> pre-spawn (`Command 'pwsh' not found or is in an unsafe location`) -- so the native nav tier does
+> **not** start on Windows even with `nativeServe = shim`. This is an upstream Claude Code regression
+> (it also breaks the official `pyright-lsp` plugin), filed as
+> [anthropics/claude-code#73961](https://github.com/anthropics/claude-code/issues/73961). The plugin's
+> core **PostToolUse diagnostics are unaffected** -- they run through a different, unguarded spawn path
+> and keep working normally. The native-nav status on **macOS and Linux under these Claude Code
+> versions is untested** with the real client. Full analysis:
+> [docs/upstream/claude-code-lsp-registration.md](docs/upstream/claude-code-lsp-registration.md)
+> (dispatch 000107).
+
 **Why it needs a shim.** Once the server is registered, Claude Code launches PSES and it reaches
 "Starting Language Server", but Claude Code's LSP client currently rejects the standard server-to-client
 requests PSES sends during initialization (the upstream `#1359`-class handshake gap -- see [Why a hook,
