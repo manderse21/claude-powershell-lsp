@@ -3,7 +3,7 @@
   "name": "powershell-lsp",
   "displayName": "PowerShell Diagnostics (PSES)",
   "version": "1.22.0",
-  "description": "Real-time PowerShell diagnostics in Claude Code: as Claude edits a .ps1/.psm1/.psd1, it runs PowerShell Editor Services + PSScriptAnalyzer over that file and surfaces syntax errors and lint fixes inline. Hover/definition/references are on the roadmap.",
+  "description": "Real-time PowerShell diagnostics in Claude Code: as Claude edits a .ps1/.psm1/.psd1, it runs PowerShell Editor Services + PSScriptAnalyzer over that file and surfaces syntax errors and lint fixes inline. Hover, go-to-definition, and find-references serve natively through an opt-in handshake shim (userConfig nativeServe, off by default).",
   "author": { "name": "Mike Andersen" },
   "license": "GPL-3.0-or-later",
   "keywords": ["powershell", "lsp", "editor-services", "diagnostics", "psscriptanalyzer", "claude-code", "linter"],
@@ -104,6 +104,12 @@
       "title": "Module awareness (uninstalled-module hint)",
       "description": "When 'suggest', after an edit the warm daemon adds an Information-severity hint when a command in the edited file is exported by a KNOWN module (a shipped, offline command->module index of common first-party / Gallery modules) that is NOT installed on this machine -- so the call would fail to resolve. The message is actionable ('N is exported by module M, which is not installed; Install-Module M or import it'). It fires ONLY on positive identification: the command is a literal index hit, not a built-in, not defined or dot-sourced or #Requires/Import-Module-declared in the file, and its module is absent from a once-per-session installed-modules snapshot the daemon takes in the background (off the critical path; the check stays silent until it is ready, and on ANY ambiguity -- a dynamic include, an unresolved dot-source -- so a missing hint never becomes a wrong one). It NEVER writes your file and adds NO edit-path network or latency (the index is a shipped artifact; install-state is read once per session). 'off' (default) does nothing and the diagnostics surface is byte-for-byte unchanged. Values: 'off' (default), 'suggest'.",
       "default": "off"
+    },
+    "nativeServe": {
+      "type": "string",
+      "title": "Native LSP serve (hover / go-to-definition / find-references)",
+      "description": "When 'shim', a thin stdio proxy (scripts/pses-serve-shim.ps1) wraps the PSES launcher so Claude Code's NATIVE LSP client can drive hover, go-to-definition, find-references, and documentSymbol on a .ps1/.psm1/.psd1 -- serving the navigation tier past the upstream #1359-class init handshake that otherwise gates it. The proxy PATCHES the forwarded initialize (disables dynamicRegistration so PSES advertises its providers statically and sends no client/registerCapability; drops the params-level workspaceFolders that trips a PSES v4.6.0 Linux init NRE; ensures a rename capability) and answers the residual workspace/configuration + window/workDoneProgress/create locally, forwarding everything else on the LSP transport BYTE-EXACT. 'off' (default) is a TRANSPARENT pass-through: the proxy relays every frame unchanged with no patch and no interception, so the protocol behavior is byte-for-byte what it is without the shim (native nav stays gated exactly as today, and the warm PostToolUse diagnostics hook -- the plugin's primary value -- is completely independent and unaffected in either mode). This is a workaround for an upstream Claude Code client bug, so it is default-off and removable by pointing the manifest lspServers command back at pses-stdio.ps1. Values: 'off' (default), 'shim'.",
+      "default": "off"
     }
   },
   "lspServers": {
@@ -113,7 +119,7 @@
         "-NoLogo",
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
-        "-File", "${CLAUDE_PLUGIN_ROOT}/scripts/pses-stdio.ps1"
+        "-File", "${CLAUDE_PLUGIN_ROOT}/scripts/pses-serve-shim.ps1"
       ],
       "extensionToLanguage": {
         ".ps1": "powershell",

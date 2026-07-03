@@ -57,6 +57,7 @@ change rules, not a second copy of the prose.
 | `formatOnEdit` | format-on-edit suggestion mode (off by default) |
 | `ruleset` | live diagnostics ruleset tier (`pses-default` by default; `base` opt-in) |
 | `moduleAwareness` | uninstalled-module command hint (off by default; `suggest` opt-in) |
+| `nativeServe` | native hover/definition/references serve via the handshake shim (off by default; `shim` opt-in) |
 
 <!-- FROZEN-KNOBS:END -->
 
@@ -346,6 +347,38 @@ cold. None is a contract change; each is banked here deliberately.
     exactly as BashIsm/PS7OnlySyntax do) and no second index/network acquisition path (the shipped
     `rulesets/command-module-index.psd1` is derived offline from a vendored source snapshot by
     `scripts/regen-command-module-index.ps1`, refreshed only by a deliberate dispatch).
+- **`nativeServe` knob + native SERVE becomes real (DELIBERATE MINOR amendment) -- dispatch 000103.**
+  This is precisely the contract-relevant event the 000075 note above flagged and deferred: *"If a
+  future change makes native serve a real, user-visible feature, that is the contract-relevant event to
+  adjudicate."* It is adjudicated here as a **MINOR** -- a new user-facing capability tier (hover /
+  go-to-definition / find-references / documentSymbol served over Claude Code's NATIVE LSP client),
+  additive and opt-in. A new optional, defaulted `userConfig` knob, `nativeServe`, was added to the
+  manifest (and so to the FROZEN-KNOBS table above, which the drift-guard validates) -- the table row IS
+  the amendment; the guard passes **because** the contract was updated, not bypassed. The knob's
+  **default is `off`**, and with it off the protocol behavior is **byte-for-byte** what it is without the
+  shim (the proxy relays every LSP frame unchanged -- no init patch, no interception -- so native nav
+  stays gated exactly as it does today, and the warm PostToolUse diagnostics hook is wholly independent
+  and unaffected in either mode). When `shim`, a thin stdio proxy (`scripts/pses-serve-shim.ps1`) wraps
+  the launcher, patches the forwarded `initialize` (dynamicRegistration off, so PSES advertises its nav
+  providers statically and sends no `client/registerCapability`; the params-level `workspaceFolders`
+  #2300 dodge; a rename capability), and answers the residual `workspace/configuration` +
+  `window/workDoneProgress/create` locally -- un-gating the built nav tier past the upstream
+  `#1359`-class handshake WITHOUT waiting on the Claude Code fix. **No new status token** (native nav
+  rides the LSP transport, a different axis from the diagnostics analyzer-health taxonomy of 1.2, which
+  is untouched) and **no second PSES acquisition path** (the shim spawns the same pinned PSES the daemon
+  vendors). The `lspServers` command now launches `pses-serve-shim.ps1` instead of `pses-stdio.ps1`, a
+  change WITHIN the 000075 registrar-clean allowlist `{command, args, extensionToLanguage, transport,
+  startupTimeout, maxRestarts, env}` (only an `args` value changed; no field added), so that guard stays
+  green unmodified.
+  - **Recorded deviation (survey-vs-disk, dispatch 000103):** the 000102 survey sketched `off` as
+    *selecting* `pses-stdio.ps1` (the direct launcher). In practice an in-process `& pses-stdio.ps1`
+    invoked from the shim two `&`-levels deep breaks PSES's stdio handoff (PSES dies rather than stalling
+    like the direct launcher), so `off` is instead a **transparent byte relay** through the same proven
+    spawn+pump machinery -- protocol-level behavior is identical (byte-for-byte pass-through), and the
+    **full removal lever** is the manifest command swap back to `pses-stdio.ps1` (the survey's ranked
+    option (a), unchanged). The shim is a workaround for an upstream Claude Code client bug, so it stays
+    default-off with a documented removal path (see `docs/upstream/claude-code-lsp-registration.md`);
+    flipping the default on is a later, evidence-backed dispatch.
 
 ---
 
