@@ -120,6 +120,10 @@ here rather than removed:
 
 Set these via the `/plugin` config UI for `powershell-lsp`, or leave the defaults.
 
+For the full reference -- every knob's allowed values, guards, and edge cases -- see
+[**docs/configuration.md**](docs/configuration.md). The config panel and the table below are
+summaries of it.
+
 | Key                | Default  | Meaning                                                                              |
 |--------------------|----------|--------------------------------------------------------------------------------------|
 | `ps_host`          | `pwsh`   | Host executable: `pwsh` (PowerShell 7+, recommended/tested) or `powershell` (Win 5.1) |

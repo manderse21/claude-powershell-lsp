@@ -40,6 +40,18 @@ with the macOS/Linux real-client status noted as untested. This is an upstream C
 (it also breaks the official `pyright-lsp` plugin), filed as `anthropics/claude-code#73961`; see dispatch
 000107 for the survey. No product code, knob, `CONTRACT.md`, or version change.
 
+DOCS + MANIFEST METADATA (no version bump): **capped every `userConfig` description for Claude Code
+config-panel height stability, and relocated the full per-knob semantics into a new
+`docs/configuration.md` reference.** Per verified dispatch 000109, the Claude Code `/plugin` config
+panel renders the selected knob's entire description with no height cap, so a long description (up to
+1295 chars) could push the panel past the terminal viewport on navigation and trip a renderer ghost-row
+corruption. All 17 manifest descriptions are trimmed to a height-stable cap (<= 200 chars each -- stating
+what the knob does, its allowed values with the default marked, and a pointer to its anchored section),
+and the full semantics are relocated -- **nothing deleted** -- into `docs/configuration.md`, one anchored
+section per knob, linked from the README. Behavior is byte-for-byte unchanged: no knob key, type, allowed
+value, default, or runtime change (a non-description manifest-invariance check proves plugin.json is
+unchanged outside the description fields). No product code, knob, `CONTRACT.md`, or version change.
+
 ## [1.23.0] - 2026-07-03
 MINOR: **native-serve removability probe -- an opt-in, report-only `doctor.ps1 -ProbeNativeServe` check
 that reports whether the `nativeServe` shim can be removed yet**. The report-only preflight doctor
