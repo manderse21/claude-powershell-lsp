@@ -5,10 +5,15 @@
 #      canonicalizer, and the server->client intercept answer table (scripts/lib/serve-shim-common.ps1).
 #   2. E2E (real PSES over the shim): a scripted CC-shaped LSP client drives the shimmed stack and
 #      asserts the shim's contract -- nav serves statically, interceptions are absorbed, off is a
-#      transparent pass-through, the lifecycle reaps with zero orphans. Runs on Windows, Linux, and
-#      macOS; the shim is spawned under the CURRENT interpreter so the four-leg CI matrix probes it
-#      under BOTH pwsh and Windows PowerShell 5.1. The ubuntu leg IS the Linux #2300 init-patch
-#      validation (the workspaceFolders-bearing initialize completing there is the closed risk).
+#      transparent pass-through, the lifecycle reaps with zero orphans. The shim is spawned under
+#      PWSH on every leg: that is what PRODUCTION does (the lspServers command is `pwsh`, so a user
+#      never 5.1-hosts the shim), and it is what the integration suite does (its children are pwsh),
+#      which is why 5.1-host writes -> pwsh-child stdin work on the windows-powershell CI runner --
+#      a 5.1-HOSTED child's Console stdin does not receive interactive writes on that headless
+#      runner. The PURE LIB (framing / init patch / knob / answer table) is still validated under
+#      Windows PowerShell 5.1 by the unit Describes above. The ubuntu leg IS the Linux #2300
+#      init-patch validation (the workspaceFolders-bearing initialize completing there is the risk
+#      the survey left open, now closed).
 #
 # Each E2E scenario launches EXACTLY ONE shim+PSES in its own Describe/BeforeAll, fully torn down
 # before the next, per the 000101 serialization lesson (never N daemons in a shared BeforeAll --
@@ -148,7 +153,7 @@ Describe 'ServeShim e2e: nativeServe=shim serves navigation end-to-end' -Skip:$s
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/serve-shim-common.ps1')
         . (Join-Path $PSScriptRoot 'ServeShim.Common.ps1')
         $srv = Initialize-ServeShimEnv -TestsDir $PSScriptRoot
-        $serveInterp = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }
+        $serveInterp = 'pwsh'   # production hosts the shim under pwsh (the lspServers command); see header
         $script:R = Invoke-ServeShimSession -ScriptsDir $srv.ScriptsDir -Interpreter $serveInterp -Mode 'shim' -DataRoot $srv.DataDir -RunNav
         Write-Host ('[serve-shim latency, host=' + $serveInterp + '] hover=' + $script:R.Timings['hover'] + 'ms definition=' + $script:R.Timings['definition'] + 'ms references=' + $script:R.Timings['references'] + 'ms (end-to-end round-trip; PSES compute dominates, the shim adds ~1%)')
     }
@@ -194,7 +199,7 @@ Describe 'ServeShim e2e: nativeServe=off is a transparent pass-through' -Skip:$s
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/serve-shim-common.ps1')
         . (Join-Path $PSScriptRoot 'ServeShim.Common.ps1')
         $srv = Initialize-ServeShimEnv -TestsDir $PSScriptRoot
-        $serveInterp = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }
+        $serveInterp = 'pwsh'   # production hosts the shim under pwsh (the lspServers command); see header
         $script:OR = Invoke-ServeShimSession -ScriptsDir $srv.ScriptsDir -Interpreter $serveInterp -Mode 'off' -DataRoot $srv.DataDir
     }
     It 'launched the shim without error' { $script:OR.Launched | Should -BeTrue; $script:OR.Error | Should -BeExactly '' }
@@ -217,7 +222,7 @@ Describe 'ServeShim e2e: lifecycle -- crash propagation, no orphans, no in-shim 
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/serve-shim-common.ps1')
         . (Join-Path $PSScriptRoot 'ServeShim.Common.ps1')
         $srv = Initialize-ServeShimEnv -TestsDir $PSScriptRoot
-        $serveInterp = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }
+        $serveInterp = 'pwsh'   # production hosts the shim under pwsh (the lspServers command); see header
         $script:C = Invoke-ServeShimCrash -ScriptsDir $srv.ScriptsDir -Interpreter $serveInterp -DataRoot $srv.DataDir
     }
     It 'launched and identified the PSES child' { $script:C.Launched | Should -BeTrue; $script:C.PsesPid | Should -BeGreaterThan 0 }
