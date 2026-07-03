@@ -30,6 +30,30 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **native serve -- an opt-in handshake shim un-gates hover / go-to-definition / find-references
+(`nativeServe` knob)**. A new off-by-default `userConfig` knob, `nativeServe`, ships a thin stdio proxy
+(`scripts/pses-serve-shim.ps1`) that wraps the PSES launcher so Claude Code's **native** LSP client can serve
+hover, go-to-definition, find-references, and documentSymbol on a `.ps1`/`.psm1`/`.psd1` -- un-gating the
+navigation tier past the upstream `#1359`-class client init-handshake bug **without** waiting on the fix. When
+`shim`, the proxy **patches** the forwarded `initialize` (disables `dynamicRegistration` so PSES advertises its
+nav providers statically and sends no `client/registerCapability`; drops the params-level `workspaceFolders`
+that trips a PSES v4.6.0 Linux init NRE; ensures a `rename` capability) and answers the residual
+`workspace/configuration` + `window/workDoneProgress/create` locally, forwarding everything else on the LSP
+transport **byte-exact** in both directions -- adding ~1-2 ms of framing per navigation round-trip (about 1% of
+PSES's own per-op compute, measured). When `off` (default) the proxy is a **transparent pass-through**: every
+LSP frame is relayed unchanged, no patch, no interception, so native nav stays gated exactly as before and the
+diagnostics surface is byte-for-byte unchanged (the warm PostToolUse diagnostics hook is wholly independent of
+this knob). Shipped as a **deliberate MINOR** (a new frozen knob name, amended in lockstep into the manifest,
+`CONTRACT.md`, and `README.md`); no new status token (native nav rides the LSP transport, not the diagnostics
+taxonomy) and no second PSES acquisition path. This is the contract-relevant event the 000075 forward-compat
+note flagged (native serve becoming real), adjudicated here as a MINOR. The shim is a workaround for an upstream
+client bug, so it is **default-off** and removable by pointing the `lspServers` command back at
+`pses-stdio.ps1` (see `docs/upstream/claude-code-lsp-registration.md`). Recorded deviation (dispatch 000103):
+the 000102 survey sketched `off` as delegating to `pses-stdio.ps1`; an in-process `& pses-stdio.ps1` breaks
+PSES's stdio handoff, so `off` is a transparent **relay** instead (protocol-identical). Validated end-to-end by
+a scripted-LSP-client Pester harness across the four-leg CI matrix (the ubuntu leg is the Linux #2300 init-patch
+validation). No version bump (the next release-prep cuts the version).
+
 MINOR: **module awareness -- a knob-gated "command from an uninstalled module" hint (PL-6 slice 1)**.
 A new off-by-default `userConfig` knob, `moduleAwareness`, adds an **Information**-severity diagnostic
 when a command in the edited file is a positive hit in a **shipped, offline command->module index**

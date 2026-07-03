@@ -26,18 +26,55 @@ not platform-wide**:
 - **Removing the two fields restores REGISTRATION.** Proven on the real tree: the shipped tree
   (both fields present) fails; the same tree with both fields removed registers and Claude Code
   launches `plugin:powershell-lsp:powershell`.
-- **End-to-end SERVE is still gated, upstream-side.** Once registered, Claude Code launches the
-  PSES launcher and PSES reaches "Starting Language Server", but the LSP client times out at
-  initialization (the `#1359`-class server->client init handshake). The launcher is provably
-  stdout-clean (its first stdout line is a valid `Content-Length:` header), so the remaining gap
-  is the **Claude Code LSP client**, not our launcher. Registration is restored here; serve is
-  tracked separately and is not this plugin's to fix.
+- **End-to-end SERVE is now un-gated LOCALLY via an opt-in shim (dispatch 000103).** Once
+  registered, Claude Code launches the launcher and PSES reaches "Starting Language Server", but the
+  LSP client rejects the standard server->client requests PSES sends at initialization (the
+  `#1359`-class handshake), so on the **direct** launcher (`pses-stdio.ps1`) init times out (~30 s).
+  The launcher is provably stdout-clean (its first stdout line is a valid `Content-Length:` header),
+  so the gap is the **Claude Code LSP client**, not our launcher. Dispatch 000103 ships an **opt-in
+  stdio proxy** (`scripts/pses-serve-shim.ps1`, selected by `nativeServe = shim`) that patches the
+  forwarded `initialize` (disable `dynamicRegistration` -> PSES advertises its nav providers
+  statically and sends no `client/registerCapability`; drop the params-level `workspaceFolders`
+  #2300 dodge; ensure a `rename` capability) and answers the residual `workspace/configuration` +
+  `window/workDoneProgress/create` locally -- so hover / definition / references / documentSymbol
+  serve end-to-end **without** the upstream fix, at ~1-2 ms added framing latency per round-trip.
+  Upstream `anthropics/claude-plugins-official#1359` remains **open** (open/unassigned as of
+  2026-07-02); the shim is a local workaround, **off by default**, removable when the client is fixed
+  (see "Removability, and how to learn the shim is removable" below).
 
 **Fix (shipped under dispatch 000075):** delete `restartOnCrash` and `shutdownTimeout` from
 `plugin.json` `lspServers.powershell`; keep `command`, `args`, `extensionToLanguage`, `transport`,
 `startupTimeout`, `maxRestarts`, `env` (all proven registrar-clean). A regression guard
 (`tests/PowerShellLsp.Unit.Tests.ps1`) fails CI if any `lspServers` entry ever re-declares a field
 outside that allowlist.
+
+## Removability, and how to learn the shim is removable (dispatch 000103)
+
+The `nativeServe` shim exists **only** to route around the upstream `#1359` client bug. When Claude
+Code's LSP client is fixed to answer the standard server->client requests natively, the shim is
+obsolete and should be removed. Because the shim withholds the intercepted requests from the client,
+it cannot itself observe the client handling them natively -- so removability is learned by a
+**deliberate re-probe**, not automatically:
+
+- **How Mike learns it is removable (the re-probe).** Re-run the 000069 registration/serve harness
+  (a real `claude -p` builtin-`LSP` `goToDefinition`, `raw-probes/` + `harness/run-lsp-probe.ps1`
+  under `projects/powershell-lsp/outbox/000069-artifacts/` in the Strategic Dispatch Hub) against the
+  **direct** launcher (`pses-stdio.ps1`, shim bypassed -- e.g. temporarily point `lspServers` back at
+  it, or set `nativeServe = off` which relays transparently). **Today that returns the ~30 s init
+  timeout.** When it instead returns a **served** result (`Defined in ...`), the Claude Code client is
+  answering the handshake natively and the shim is no longer needed.
+- **Removal path (ranked).** (a) **Manifest command swap (recommended, full removal):** point
+  `lspServers.powershell` `args` `-File` back at `scripts/pses-serve-shim.ps1` -> `scripts/pses-stdio.ps1`;
+  the shim file may stay dormant, no code deletion. (b) `nativeServe = off` (already the default) is a
+  transparent relay -- no serve behavior, but PSES still runs as a shim child. (c) Full deletion of
+  `scripts/pses-serve-shim.ps1` + `scripts/lib/serve-shim-common.ps1` + the `nativeServe` knob (a MAJOR,
+  since it removes a knob name) once the upstream fix has shipped widely. The shim adds no daemon,
+  diagnostics, or corpus coupling, so removal is transport-local.
+- **Deferred follow-on: an automated doctor re-probe.** A `scripts/doctor.ps1` check that runs the
+  above re-probe and reports "native serve now works directly -- the shim can be removed" is
+  **deliberately deferred** to a named follow-on dispatch: it needs a real `claude -p` builtin-LSP
+  round-trip, which is absent in CI and heavy to add to the report-only doctor. Until then, the manual
+  re-probe above is the learn-path. (Recorded per the 000103 OQ4 disposition.)
 
 ---
 

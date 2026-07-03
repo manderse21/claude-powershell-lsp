@@ -41,10 +41,12 @@ in Claude Code:
 Start a new session and you are running. The full prerequisites, the self-bootstrap
 sequence, and the preflight doctor are in [Quick start](#quick-start) below.
 
-> **What works today vs. what is coming.** The per-file diagnostic loop above is live
-> on every supported host right now. Hover, go-to-definition, find-references, and
-> workspace-wide analysis are on the roadmap -- native LSP serve is gated on an upstream
-> Claude Code initialization handshake, not on this plugin. Details:
+> **What works today.** The per-file diagnostic loop above is live on every supported host
+> right now. Hover, go-to-definition, and find-references now **also serve** to Claude Code's
+> native LSP client through an **opt-in** handshake shim (`nativeServe = shim`) that works
+> around the upstream Claude Code client init-handshake bug locally; it is **off by default**
+> while that upstream fix is pending, and workspace-wide analysis remains on the roadmap.
+> Details: [Native serve](#native-serve-hover--go-to-definition--find-references) and
 > [Why a hook, not native registration](#why-a-hook-not-native-lspjson-registration).
 
 ## Prerequisites
@@ -136,6 +138,7 @@ Set these via the `/plugin` config UI for `powershell-lsp`, or leave the default
 | `formatOnEdit`     | `off`    | When `suggest`, after an edit the warm daemon runs `Invoke-Formatter` on the file (honoring the repo's `PSScriptAnalyzerSettings.psd1`) and surfaces the formatted result as a **suggestion** -- a unified diff -- via the same channel as diagnostics; it **never rewrites your file**. `apply` additionally **writes it back**, guarded: a stale-write compare-and-swap aborts if the file changed since formatting (the newer edit wins), the write is atomic, and the original BOM + line-ending style are preserved (only the formatting changes); an applied write is announced so you re-read. `off` (default) does nothing and the diagnostics surface is unchanged. Values: `off` (default), `suggest`, `apply`; `apply` is doubly opt-in and aborts to a suggestion for mixed-EOL / non-UTF-8 files. See [Format-on-edit](#format-on-edit-suggest-or-guarded-apply) |
 | `ruleset`          | `pses-default` | Live diagnostics ruleset tier. `pses-default` (default) keeps PSES's built-in no-settings rule set (about 15 rules) -- unchanged from prior versions. `base` opts in to the plugin's shipped enumerated base ruleset (PSScriptAnalyzer's default-on set minus the compatibility rules), broadening the live surface so `PSAvoidUsingWriteHost` and the three Error-severity security rules surface. A repo-local `PSScriptAnalyzerSettings.psd1` and an explicit `settingsPath` always win over the base. See [Ruleset tiers](#ruleset-tiers-opt-in-broaden) |
 | `moduleAwareness`  | `off`    | When `suggest`, the warm daemon adds an **Information** hint when a command in the edited file is exported by a **known** module (a shipped, offline command->module index) that is **not installed** on this machine, so the call would not resolve (`Install-Module M or import it`). It fires only on positive identification and stays **silent** on any ambiguity (a not-yet-ready install snapshot, a dynamic include); it **never writes** your file and adds **no** edit-path network or latency. `off` (default) does nothing and the diagnostics surface is unchanged. Values: `off` (default), `suggest`. See [Module awareness](#module-awareness-uninstalled-module-hint) |
+| `nativeServe`      | `off`    | When `shim`, a thin stdio proxy serves **hover / go-to-definition / find-references / documentSymbol** to Claude Code's **native** LSP client -- un-gating the navigation tier past an upstream client init-handshake bug without waiting on the fix. `off` (default) is a **transparent pass-through** (every LSP frame relayed unchanged, no patch, no interception), so native nav stays gated exactly as today and nothing about the diagnostics hook changes. It is a workaround for an upstream bug, hence default-off and removable. Values: `off` (default), `shim`. See [Native serve](#native-serve-hover--go-to-definition--find-references) |
 
 Diagnostics are returned in a stable order (severity, then line, then column),
 deduped, threshold- and rule-filtered, then capped per file.
@@ -235,6 +238,45 @@ artifact (`rulesets/command-module-index.psd1`), regenerated offline from a vend
 `scripts/regen-command-module-index.ps1` and refreshed only by a deliberate release, so an edit never
 reaches the network or a live module query. The default is deliberately **not** flipped: the hint never
 appears unless you opt in. Values are `off` (default) and `suggest`.
+
+### Native serve (hover / go-to-definition / find-references)
+
+`nativeServe` is **off by default**. When set to `shim`, hover, go-to-definition, find-references, and
+documentSymbol serve to Claude Code's **native** LSP client on a `.ps1`/`.psm1`/`.psd1` -- so a
+go-to-definition or a hover in Claude Code resolves through PowerShell Editor Services, not just the
+diagnostics you get from the warm hook.
+
+**Why it needs a shim.** Once the server is registered, Claude Code launches PSES and it reaches
+"Starting Language Server", but Claude Code's LSP client currently rejects the standard server-to-client
+requests PSES sends during initialization (the upstream `#1359`-class handshake gap -- see [Why a hook,
+not native registration](#why-a-hook-not-native-lspjson-registration)), so init times out (~30 s) and
+nav never serves. `nativeServe = shim` inserts a thin stdio proxy (`scripts/pses-serve-shim.ps1`)
+between Claude Code and PSES that closes the gap locally, **without** waiting on the upstream fix:
+
+- It **patches the forwarded `initialize`** -- disabling `dynamicRegistration` so PSES advertises its
+  providers **statically** in the initialize result (and sends **no** `client/registerCapability` at
+  all), dropping the params-level `workspaceFolders` that trips a PSES v4.6.0 Linux init NRE, and
+  ensuring a `rename` capability (another PSES init NRE dodge).
+- It **answers the residual `workspace/configuration` and `window/workDoneProgress/create` locally**
+  (navigation is symbol-derived and settings-independent, so a null answer costs nothing).
+- It forwards **everything else on the LSP transport byte-exact**, in both directions.
+
+The added latency is ~1-2 ms of framing per navigation round-trip -- about **1%** of PSES's own
+per-operation compute (hover/definition/references run tens to hundreds of ms), so nav feels the same as
+direct.
+
+**`off` (the default) is a transparent pass-through.** The proxy still runs but neither patches nor
+intercepts anything -- every LSP frame is relayed unchanged -- so the protocol behavior is byte-for-byte
+what it is without the shim (native nav stays gated exactly as it does today). The warm PostToolUse
+**diagnostics** hook -- the plugin's primary value -- is wholly independent of this knob and unaffected in
+either mode.
+
+**It is a workaround, so it is default-off and removable.** The shim exists only to route around an
+upstream Claude Code client bug; when that bug is fixed, native nav will serve without it. To remove the
+shim entirely, point the manifest `lspServers` command back at `scripts/pses-stdio.ps1`. How you will
+*know* it is removable, and the full removal path, are recorded in
+[`docs/upstream/claude-code-lsp-registration.md`](docs/upstream/claude-code-lsp-registration.md). Values
+are `off` (default) and `shim`.
 
 > **Privacy note -- `enableStats` logs absolute paths.** When `enableStats` is on (it is
 > **off by default**), each timing line in `logs/stats.jsonl` records the **absolute path**
@@ -394,13 +436,18 @@ diagnostics over a **warm PostToolUse hook** for one reason: **registration is r
 end-to-end serve is not.**
 
 Once the server is registered, Claude Code launches it and PSES reaches "Starting Language
-Server", but Claude Code's LSP client currently times out during initialization (the
-`#1359`-class server->client init handshake). So a native `goToDefinition` / `hover` /
-`findReferences` on a `.ps1` does not complete yet -- it is gated **upstream**, on the Claude
-Code side, not on this plugin's launcher (which is provably stdout-clean: its first stdout line
-is a valid `Content-Length:` LSP header). The warm hook, by contrast, works on every supported
-host today and does not depend on the native path at all. The hook is the product; native
-registration is the bonus, now one upstream fix away from serving.
+Server", but Claude Code's LSP client rejects the standard server->client requests PSES sends
+during initialization (the `#1359`-class handshake), so on the **direct** path init times out
+(~30 s) and native nav does not serve -- it is gated **upstream**, on the Claude Code side, not
+on this plugin's launcher (which is provably stdout-clean: its first stdout line is a valid
+`Content-Length:` LSP header). As of dispatch 000103 the plugin ships an **opt-in handshake
+shim** (`nativeServe = shim`) that closes this gap **locally**, so a native `goToDefinition` /
+`hover` / `findReferences` on a `.ps1` **does** serve without waiting on the upstream fix -- see
+[Native serve](#native-serve-hover--go-to-definition--find-references). It is **off by default**
+(the shim is a workaround for an upstream client bug, removable once that bug is fixed). The
+warm hook, independently, works on every supported host today and does not depend on the native
+path at all: the hook is the product; native serve is the additive bonus, now shipped behind the
+shim rather than waiting on upstream.
 
 ### What used to block registration, and what fixed it
 
