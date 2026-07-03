@@ -5,15 +5,16 @@
 #      canonicalizer, and the server->client intercept answer table (scripts/lib/serve-shim-common.ps1).
 #   2. E2E (real PSES over the shim): a scripted CC-shaped LSP client drives the shimmed stack and
 #      asserts the shim's contract -- nav serves statically, interceptions are absorbed, off is a
-#      transparent pass-through, the lifecycle reaps with zero orphans. The shim is spawned under
-#      PWSH on every leg: that is what PRODUCTION does (the lspServers command is `pwsh`, so a user
-#      never 5.1-hosts the shim), and it is what the integration suite does (its children are pwsh),
-#      which is why 5.1-host writes -> pwsh-child stdin work on the windows-powershell CI runner --
-#      a 5.1-HOSTED child's Console stdin does not receive interactive writes on that headless
-#      runner. The PURE LIB (framing / init patch / knob / answer table) is still validated under
-#      Windows PowerShell 5.1 by the unit Describes above. The ubuntu leg IS the Linux #2300
-#      init-patch validation (the workspaceFolders-bearing initialize completing there is the risk
-#      the survey left open, now closed).
+#      transparent pass-through, the lifecycle reaps with zero orphans. The interactive client<->shim
+#      driving runs inside a PWSH SUBPROCESS (tests/ServeShim.Driver.ps1) that the leg's Pester spawns
+#      and reads a result file from -- because a Windows PowerShell 5.1 HOST's interactive writes to a
+#      child's stdin do NOT deliver on the headless windows-powershell CI runner (they arrive only on
+#      close; the integration suite never hit this because it write-then-closes one-shot). Driving from
+#      pwsh keeps the client<->shim stdio pwsh<->pwsh (the shim host is pwsh too, matching production,
+#      whose lspServers command is `pwsh`) on EVERY leg, so the e2e runs on all four. The PURE LIB
+#      (framing / init patch / knob / answer table) is separately validated under Windows PowerShell
+#      5.1 by the unit Describes above. The ubuntu leg IS the Linux #2300 init-patch validation (the
+#      workspaceFolders-bearing initialize completing there is the risk the survey left open, closed).
 #
 # Each E2E scenario launches EXACTLY ONE shim+PSES in its own Describe/BeforeAll, fully torn down
 # before the next, per the 000101 serialization lesson (never N daemons in a shared BeforeAll --
@@ -150,38 +151,27 @@ Describe 'ServeShim unit: the server->client intercept answer table' {
 Describe 'ServeShim e2e: nativeServe=shim serves navigation end-to-end' -Skip:$script:SkipServe {
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
-        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/serve-shim-common.ps1')
         . (Join-Path $PSScriptRoot 'ServeShim.Common.ps1')
         $srv = Initialize-ServeShimEnv -TestsDir $PSScriptRoot
-        $serveInterp = 'pwsh'   # production hosts the shim under pwsh (the lspServers command); see header
-        $script:R = Invoke-ServeShimSession -ScriptsDir $srv.ScriptsDir -Interpreter $serveInterp -Mode 'shim' -DataRoot $srv.DataDir -RunNav
-        Write-Host ('[serve-shim latency, host=' + $serveInterp + '] hover=' + $script:R.Timings['hover'] + 'ms definition=' + $script:R.Timings['definition'] + 'ms references=' + $script:R.Timings['references'] + 'ms (end-to-end round-trip; PSES compute dominates, the shim adds ~1%)')
+        $script:R = Invoke-ServeShimDriver -TestsDir $PSScriptRoot -Mode 'shim' -Scenario 'session' -DataRoot $srv.DataDir -RunNav
+        Write-Host ('[serve-shim latency] hover=' + (Get-Prop $script:R 'HoverMs') + 'ms definition=' + (Get-Prop $script:R 'DefinitionMs') + 'ms references=' + (Get-Prop $script:R 'ReferencesMs') + 'ms (end-to-end round-trip; PSES compute dominates, the shim adds ~1%)')
     }
     It 'launched the shim without error' { $script:R.Launched | Should -BeTrue; $script:R.Error | Should -BeExactly '' }
     It 'the patched initialize returns a result advertising the nav providers STATICALLY (dynamicRegistration=false took effect)' {
-        $script:R.InitResult | Should -Not -Be $null
+        $script:R.InitNotNull | Should -BeTrue
         $script:R.InitHasStaticNav | Should -BeTrue -Because 'the shim disables dynamicRegistration so PSES advertises hover/definition/references in the initialize result rather than via client/registerCapability'
     }
     It 'the workspaceFolders-bearing initialize completed -- the PSES #2300 dodge (on the ubuntu leg, the Linux init-patch validation)' {
         # The shim-mode client sends params-level workspaceFolders AND omits rename; only the shim's
         # patch (drop workspaceFolders + ensure rename) lets PSES complete init. A non-null init
         # result here is that dodge holding -- and on the ubuntu CI leg it closes the survey's open risk.
-        $script:R.InitResult | Should -Not -Be $null
+        $script:R.InitNotNull | Should -BeTrue
     }
-    It 'hover returns contents' {
-        $script:R.Hover | Should -Not -Be $null
-        (Get-Prop (Get-Prop $script:R.Hover 'result') 'contents') | Should -Not -Be $null
-    }
-    It 'definition returns at least one location' {
-        $arr = @(Get-Prop $script:R.Definition 'result')
-        $arr.Count | Should -BeGreaterThan 0
-        $arr[0] | Should -Not -Be $null
-    }
-    It 'references returns at least one location' {
-        @(Get-Prop $script:R.References 'result').Count | Should -BeGreaterThan 0
-    }
+    It 'hover returns contents' { $script:R.HoverOk | Should -BeTrue }
+    It 'definition returns at least one location' { $script:R.DefinitionCount | Should -BeGreaterThan 0 }
+    It 'references returns at least one location' { $script:R.ReferencesCount | Should -BeGreaterThan 0 }
     It 'ZERO server->client requests leaked to the client (configuration + workDoneProgress/create + registerCapability all absorbed)' {
-        $script:R.Leaks.Count | Should -Be 0 -Because ('the shim answers the intercept set locally; leaked: ' + ($script:R.Leaks -join ', '))
+        $script:R.LeaksCount | Should -Be 0 -Because ('the shim answers the intercept set locally; leaked: ' + (@($script:R.Leaks) -join ', '))
     }
     It 'a nav round-trip stays within a generous latency ceiling (OQ2 guard; per-leg numbers logged above)' {
         $script:R.MaxNavMs | Should -BeGreaterThan 0
@@ -196,19 +186,17 @@ Describe 'ServeShim e2e: nativeServe=shim serves navigation end-to-end' -Skip:$s
 Describe 'ServeShim e2e: nativeServe=off is a transparent pass-through' -Skip:$script:SkipServe {
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
-        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/serve-shim-common.ps1')
         . (Join-Path $PSScriptRoot 'ServeShim.Common.ps1')
         $srv = Initialize-ServeShimEnv -TestsDir $PSScriptRoot
-        $serveInterp = 'pwsh'   # production hosts the shim under pwsh (the lspServers command); see header
-        $script:OR = Invoke-ServeShimSession -ScriptsDir $srv.ScriptsDir -Interpreter $serveInterp -Mode 'off' -DataRoot $srv.DataDir
+        $script:OR = Invoke-ServeShimDriver -TestsDir $PSScriptRoot -Mode 'off' -Scenario 'session' -DataRoot $srv.DataDir
     }
     It 'launched the shim without error' { $script:OR.Launched | Should -BeTrue; $script:OR.Error | Should -BeExactly '' }
     It 'does NOT patch the initialize: nav providers are not statically advertised (transparent)' {
-        $script:OR.InitResult | Should -Not -Be $null
+        $script:OR.InitNotNull | Should -BeTrue
         $script:OR.InitHasStaticNav | Should -BeFalse -Because 'off relays the raw dynamicRegistration=true caps, so PSES keeps the providers dynamic (not in the static init result)'
     }
     It 'does NOT intercept: server->client request(s) LEAK to the client (transparent -- byte-for-byte today behavior)' {
-        $script:OR.Leaks.Count | Should -BeGreaterThan 0 -Because 'a transparent relay forwards PSES workspace/configuration + client/registerCapability to the client rather than answering them'
+        $script:OR.LeaksCount | Should -BeGreaterThan 0 -Because 'a transparent relay forwards PSES workspace/configuration + client/registerCapability to the client rather than answering them'
     }
     It 'the off-mode shim also exits cleanly and reaps its PSES child' {
         $script:OR.Exited | Should -BeTrue
@@ -219,11 +207,9 @@ Describe 'ServeShim e2e: nativeServe=off is a transparent pass-through' -Skip:$s
 Describe 'ServeShim e2e: lifecycle -- crash propagation, no orphans, no in-shim re-spawn' -Skip:$script:SkipServe {
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
-        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/serve-shim-common.ps1')
         . (Join-Path $PSScriptRoot 'ServeShim.Common.ps1')
         $srv = Initialize-ServeShimEnv -TestsDir $PSScriptRoot
-        $serveInterp = 'pwsh'   # production hosts the shim under pwsh (the lspServers command); see header
-        $script:C = Invoke-ServeShimCrash -ScriptsDir $srv.ScriptsDir -Interpreter $serveInterp -DataRoot $srv.DataDir
+        $script:C = Invoke-ServeShimDriver -TestsDir $PSScriptRoot -Mode 'shim' -Scenario 'crash' -DataRoot $srv.DataDir
     }
     It 'launched and identified the PSES child' { $script:C.Launched | Should -BeTrue; $script:C.PsesPid | Should -BeGreaterThan 0 }
     It 'killing PSES mid-session makes the shim EXIT promptly (EOF propagated to the client; no in-shim re-spawn)' {

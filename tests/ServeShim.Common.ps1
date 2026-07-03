@@ -276,3 +276,41 @@ function Invoke-ServeShimCrash {
     }
     return $result
 }
+
+function Invoke-ServeShimDriver {
+    # Run ONE e2e scenario in a PWSH SUBPROCESS (ServeShim.Driver.ps1) and return the parsed flat
+    # result. This is how the e2e BeforeAll drives the scenario on EVERY leg: the interactive
+    # client<->shim stdio is done by pwsh (pwsh<->pwsh), NOT by the Pester host -- because a 5.1 host's
+    # interactive writes to a child's stdin do not deliver on the headless windows-powershell CI
+    # runner. The leg's Pester (pwsh or 5.1) only spawns this pwsh driver and reads its result file.
+    param(
+        [Parameter(Mandatory = $true)][string]$TestsDir,
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [Parameter(Mandatory = $true)][string]$Scenario,
+        [Parameter(Mandatory = $true)][string]$DataRoot,
+        [switch]$RunNav,
+        [int]$CapMs = 120000
+    )
+    $resultPath = Join-Path $DataRoot ('serve-driver-' + ([guid]::NewGuid().ToString('N').Substring(0, 8)) + '.json')
+    $driver = Join-Path $TestsDir 'ServeShim.Driver.ps1'
+    $driverArgs = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $driver,
+        '-Mode', $Mode, '-Scenario', $Scenario, '-DataRoot', $DataRoot, '-ResultPath', $resultPath)
+    if ($RunNav) { $driverArgs += '-RunNav' }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+    Add-ProcessArguments $psi $driverArgs
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $null = $p.StandardOutput.ReadToEndAsync()
+    $null = $p.StandardError.ReadToEndAsync()
+    if (-not $p.WaitForExit($CapMs)) {
+        try { $p.Kill($true) } catch { }
+        return ([pscustomobject]@{ Launched = $false; Error = 'driver timed out' })
+    }
+    if (-not (Test-Path -LiteralPath $resultPath)) {
+        return ([pscustomobject]@{ Launched = $false; Error = ('driver produced no result (exit ' + $p.ExitCode + ')') })
+    }
+    $json = Get-Content -LiteralPath $resultPath -Raw
+    try { Remove-Item -LiteralPath $resultPath -Force -ErrorAction SilentlyContinue } catch { }
+    return ($json | ConvertFrom-Json)
+}
