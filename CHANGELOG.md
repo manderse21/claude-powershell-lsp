@@ -29,6 +29,17 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [Unreleased]
+DOCS (no version bump): **documented the Windows native-LSP launcher guard as a known issue.** On
+Windows, Claude Code 2.1.196-2.1.200 refuses to start the plugin's registered LSP server -- a
+launcher-level `where.exe` guard rejects the bare `pwsh` command pre-spawn -- so the opt-in
+`nativeServe` navigation tier does not start there even with `nativeServe = shim`. The plugin's core
+PostToolUse diagnostics are **unaffected** (a different, unguarded spawn path). Recorded in
+`docs/upstream/claude-code-lsp-registration.md` and the README `nativeServe` section, scoped to Windows,
+with the macOS/Linux real-client status noted as untested. This is an upstream Claude Code regression
+(it also breaks the official `pyright-lsp` plugin), filed as `anthropics/claude-code#73961`; see dispatch
+000107 for the survey. No product code, knob, `CONTRACT.md`, or version change.
+
 ## [1.23.0] - 2026-07-03
 MINOR: **native-serve removability probe -- an opt-in, report-only `doctor.ps1 -ProbeNativeServe` check
 that reports whether the `nativeServe` shim can be removed yet**. The report-only preflight doctor
