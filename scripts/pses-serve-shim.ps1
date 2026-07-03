@@ -120,8 +120,11 @@ if (Test-Path -LiteralPath $pssaDir) {
 
 $proc = $null
 $psesIn = $null
+$ccIn = $null
 $ccOut = $null
 $jobHandle = [IntPtr]::Zero
+$clientReaderPs = $null
+$clientReaderRs = $null
 $shimExit = 0
 try {
     Write-ShimLog ('launching PSES via ' + $hostExe)
@@ -182,18 +185,57 @@ public static bool AssignProcess(IntPtr hJob, IntPtr hProcess) { return AssignPr
     $ccIn = [Console]::OpenStandardInput()
     $ccOut = [Console]::OpenStandardOutput()
 
-    # --- the two-source pump ------------------------------------------------
+    # The client stdin is read on a BACKGROUND RUNSPACE with BLOCKING synchronous reads, NOT
+    # ReadAsync. Rationale (dispatch 000103, the windows-powershell CI leg): ReadAsync on the .NET
+    # Framework CONSOLE input stream does not reliably deliver buffered data on a headless Windows
+    # PowerShell 5.1 runner (the shim never saw the client's initialize and every ServeShim e2e
+    # timed out), whereas a blocking Read does. PROCESS-stream ReadAsync (the PSES stdout below) is
+    # fine on the same leg -- the warm daemon proves it -- so only the client console stream needs
+    # the blocking reader. The reader appends bytes to a shared queue under a Monitor lock; the pump
+    # drains it each iteration. Client EOF = the reader runspace completing. A raw runspace +
+    # BeginInvoke (NOT Start-ThreadJob, absent on 5.1) keeps it portable to both hosts.
+    $script:ClientQueue = New-Object System.Collections.Generic.List[byte]
+    $clientReaderRs = [runspacefactory]::CreateRunspace()
+    $clientReaderRs.Open()
+    $clientReaderPs = [powershell]::Create()
+    $clientReaderPs.Runspace = $clientReaderRs
+    [void]$clientReaderPs.AddScript({
+        param($stream, $queue)
+        $chunk = New-Object byte[] 65536
+        try {
+            while ($true) {
+                $n = $stream.Read($chunk, 0, $chunk.Length)
+                if ($n -le 0) { break }
+                $sub = New-Object byte[] $n
+                [System.Array]::Copy($chunk, 0, $sub, 0, $n)
+                [System.Threading.Monitor]::Enter($queue)
+                try { $queue.AddRange($sub) } finally { [System.Threading.Monitor]::Exit($queue) }
+            }
+        } catch { }
+    })
+    [void]$clientReaderPs.AddArgument($ccIn)
+    [void]$clientReaderPs.AddArgument($script:ClientQueue)
+    $clientReaderAsync = $clientReaderPs.BeginInvoke()
+    Write-ShimLog 'pump started (client stdin: background blocking reader; PSES stdout: async)'
+
+    # --- the pump -----------------------------------------------------------
     $ccBuf = New-Object System.Collections.Generic.List[byte]
     $psBuf = New-Object System.Collections.Generic.List[byte]
-    $ccChunk = New-Object byte[] 65536
     $psChunk = New-Object byte[] 65536
-    $ccPending = $null
     $psPending = $null
     $ccEof = $false
     $psEof = $false
     $initPatched = $false
 
     while ($true) {
+        # (pull) move whatever the background reader has queued from the client into ccBuf, THEN
+        #        (after draining) note client EOF if the reader has finished.
+        [System.Threading.Monitor]::Enter($script:ClientQueue)
+        try {
+            if ($script:ClientQueue.Count -gt 0) { $ccBuf.AddRange($script:ClientQueue.ToArray()); $script:ClientQueue.Clear() }
+        } finally { [System.Threading.Monitor]::Exit($script:ClientQueue) }
+        if ($clientReaderAsync.IsCompleted) { $ccEof = $true }
+
         # (a) client -> PSES: patch the initialize ONCE (shim mode only); forward everything
         #     else byte-exact. In transparent (off) mode nothing is patched -- pure relay.
         $cf = Read-ServeFrame $ccBuf
@@ -249,24 +291,12 @@ public static bool AssignProcess(IntPtr hJob, IntPtr hProcess) { return AssignPr
             break
         }
 
-        # (d) keep one outstanding async read per live source.
-        if ((-not $ccEof) -and ($null -eq $ccPending)) { $ccPending = $ccIn.ReadAsync($ccChunk, 0, $ccChunk.Length) }
+        # (d) poll PSES stdout (async -- proven on 5.1 by the warm daemon); the bounded Wait
+        #     doubles as the poll cadence for draining the client queue at the top of the loop.
         if ((-not $psEof) -and ($null -eq $psPending)) { $psPending = $psesOut.ReadAsync($psChunk, 0, $psChunk.Length) }
-
-        $waitList = New-Object System.Collections.Generic.List[System.Threading.Tasks.Task]
-        if ($null -ne $ccPending) { [void]$waitList.Add($ccPending) }
-        if ($null -ne $psPending) { [void]$waitList.Add($psPending) }
-        if ($waitList.Count -eq 0) { break }
-        $idx = [System.Threading.Tasks.Task]::WaitAny($waitList.ToArray(), 1000)
-        if ($idx -lt 0) { continue }   # 1s poll timeout -> re-check HasExited and re-drain
-
-        # (e) harvest whichever read(s) completed.
-        if (($null -ne $ccPending) -and $ccPending.IsCompleted) {
-            $c = -1; try { $c = $ccPending.Result } catch { $c = -1 }
-            $ccPending = $null
-            if ($c -le 0) { $ccEof = $true } else { $sub = New-Object byte[] $c; [System.Array]::Copy($ccChunk, 0, $sub, 0, $c); $ccBuf.AddRange($sub) }
-        }
-        if (($null -ne $psPending) -and $psPending.IsCompleted) {
+        if ($null -eq $psPending) {
+            Start-Sleep -Milliseconds 30
+        } elseif ($psPending.Wait(30)) {
             $c = -1; try { $c = $psPending.Result } catch { $c = -1 }
             $psPending = $null
             if ($c -le 0) { $psEof = $true } else { $sub = New-Object byte[] $c; [System.Array]::Copy($psChunk, 0, $sub, 0, $c); $psBuf.AddRange($sub) }
@@ -289,7 +319,18 @@ public static bool AssignProcess(IntPtr hJob, IntPtr hProcess) { return AssignPr
     } catch { }
     # Propagate EOF to the client if the pump did not already.
     try { if ($null -ne $ccOut) { $ccOut.Flush(); $ccOut.Close() } } catch { }
+    # Best-effort close of the client stdin (may unblock the background reader's pending Read). Do
+    # NOT Dispose the reader runspace here: its thread may be blocked in a synchronous Read on the
+    # STILL-OPEN client stdin (e.g. after a mid-session PSES death, when the client has not closed),
+    # and Disposing a running pipeline would HANG this finally. The reader runs on a background
+    # (thread-pool) thread, so the `exit` below terminates the process and reaps it -- no orphan
+    # (it is a thread, not a process).
+    try { if ($null -ne $ccIn) { $ccIn.Dispose() } } catch { }
     Write-ShimLog 'shim exiting; PSES reaped'
 }
 
-exit $shimExit
+# Terminate the PROCESS immediately (not `exit`, which performs a graceful runspace shutdown that
+# would WAIT for the background client-reader thread still blocked in a synchronous Read on an
+# unclosed client stdin -- e.g. after a mid-session PSES death). The finally above has already
+# reaped PSES + flushed the client, so an abrupt process exit is clean and reaps the reader thread.
+[System.Environment]::Exit($shimExit)
