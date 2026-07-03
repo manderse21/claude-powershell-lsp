@@ -1,0 +1,320 @@
+# Configuration reference
+
+This is the **authoritative reference** for every `powershell-lsp` `userConfig` knob. Each
+knob's one-line description in the plugin manifest (`.claude-plugin/plugin.json`, surfaced in
+the Claude Code `/plugin` config panel) is a **summary of the section here** -- the manifest
+descriptions are deliberately capped so the config panel stays height-stable (see dispatch
+000109), and the full semantics live below with one anchored section per knob.
+
+Set these via the `/plugin` config UI for `powershell-lsp`, or leave the defaults. Every knob
+is typed as a string in the manifest (Claude Code exports each as a `CLAUDE_PLUGIN_OPTION_<key>`
+environment variable, so numbers and booleans arrive as text such as `"20"` or `"true"`).
+Nothing here changes behavior; this build only relocated prose out of the manifest.
+
+The knobs, in manifest order:
+
+- [`ps_host`](#ps_host) -- PSES host executable
+- [`severityThreshold`](#severitythreshold) -- least-severe level surfaced
+- [`ruleInclude`](#ruleinclude) -- exclusive rule-code allowlist
+- [`ruleExclude`](#ruleexclude) -- rule-code suppression list
+- [`timeoutMs`](#timeoutms) -- client hard cap before log-only degrade
+- [`debounceMs`](#debouncems) -- edit-coalescing window
+- [`keepLastN`](#keeplastn) -- rolling log files kept per family
+- [`idleTtlMin`](#idlettlmin) -- daemon idle self-terminate window
+- [`perFileCap`](#perfilecap) -- max diagnostics surfaced per file
+- [`enableStats`](#enablestats) -- opt-in per-edit timing telemetry
+- [`settingsPath`](#settingspath) -- absolute PSScriptAnalyzerSettings.psd1 override
+- [`scopeToEdit`](#scopetoedit) -- scope diagnostics to the edited lines
+- [`editContextLines`](#editcontextlines) -- context lines around the touched range
+- [`formatOnEdit`](#formatonedit) -- format-on-edit suggestion / guarded apply
+- [`ruleset`](#ruleset) -- live diagnostics ruleset tier
+- [`moduleAwareness`](#moduleawareness) -- uninstalled-module command hint
+- [`nativeServe`](#nativeserve) -- native hover / definition / references serve
+
+---
+
+## ps_host
+
+**What it does.** Selects the executable used to host PowerShell Editor Services (PSES).
+
+**Type:** string. **Default:** `pwsh`.
+
+The value is used as-is as the host executable and is resolved on `PATH`; any resolvable
+PowerShell host is accepted, so this is not a fixed two-value enum. The two **recommended and
+supported** values are `pwsh` (PowerShell 7+, the default, and the only combination tested in
+CI) and `powershell` (Windows PowerShell 5.1). If the preferred executable cannot be resolved,
+the plugin falls back through `pwsh` then `powershell`.
+
+## severityThreshold
+
+**What it does.** Sets the least-severe diagnostic level to report. More-severe levels are
+always included, so a threshold of `Warning` reports Errors and Warnings only.
+
+**Type:** string. **Values:** `Error`, `Warning`, `Information`, `Hint` (default).
+
+Severity ranks are `Error` (1) > `Warning` (2) > `Information` (3) > `Hint` (4); a diagnostic is
+kept when its rank is at least as severe as the threshold. `Hint` (the default) keeps every
+severity. This filter applies on top of whatever PSES publishes, alongside `ruleInclude` /
+`ruleExclude`.
+
+## ruleInclude
+
+**What it does.** When set, reports **only** the listed PSScriptAnalyzer rule codes and drops
+everything else -- an exclusive allowlist.
+
+**Type:** string (comma-separated rule codes). **Default:** empty (report all rules).
+
+Example: `PSUseApprovedVerbs,PSAvoidUsingCmdletAliases`. An empty value applies no allowlist.
+
+## ruleExclude
+
+**What it does.** Suppresses the listed PSScriptAnalyzer rule codes from the surfaced
+diagnostics.
+
+**Type:** string (comma-separated rule codes). **Default:** empty (suppress nothing).
+
+Example: `PSAvoidUsingWriteHost`. An empty value suppresses no rules.
+
+## timeoutMs
+
+**What it does.** The total time, in milliseconds, the PostToolUse client waits for a
+diagnostics round-trip before degrading to log-only (it never blocks the edit).
+
+**Type:** string (integer milliseconds). **Default:** `5000`.
+
+## debounceMs
+
+**What it does.** Edits landing within this many milliseconds of each other fold into a single
+analysis pass, so a burst of rapid edits is analyzed once.
+
+**Type:** string (integer milliseconds). **Default:** `150`.
+
+## keepLastN
+
+**What it does.** At SessionStart the plugin sweeps each rolling log family down to this many
+newest files, bounding on-disk log growth.
+
+**Type:** string (integer count). **Default:** `10`.
+
+## idleTtlMin
+
+**What it does.** The warm daemon self-terminates after this many minutes with no diagnostics
+request, so an idle session does not leave a process running indefinitely.
+
+**Type:** string (integer minutes). **Default:** `30`.
+
+## perFileCap
+
+**What it does.** Caps the number of diagnostics reported per file; any beyond the cap collapse
+into a single `... and N more` line.
+
+**Type:** string (integer count). **Default:** `20`. A value of `0` disables the cap (report
+every diagnostic).
+
+## enableStats
+
+**What it does.** When enabled, appends one JSONL timing line per analyzed edit to
+`logs/stats.jsonl` for observing analysis latency.
+
+**Type:** string (boolean). **Values:** `false` (default), `true`. Boolean aliases are accepted
+case-insensitively: `true` / `1` / `yes` / `on` enable; `false` / `0` / `no` / `off` disable.
+
+It is **observe-only**: it never changes the diagnostics output. The log rotates (about 5 MB).
+View a summary with `scripts/show-stats.ps1`.
+
+> **Privacy note.** Each timing line records the **absolute path** of the analyzed file. All
+> logs stay under your plugin data directory and are never transmitted, but sanitize paths
+> before sharing a log for a bug report.
+
+## settingsPath
+
+**What it does.** An **absolute** path to a `PSScriptAnalyzerSettings.psd1` the analyzer should
+honor, overriding auto-discovery.
+
+**Type:** string (absolute path). **Default:** empty (auto-discover).
+
+Auto-discovery walks up from the edited file to the nearest `PSScriptAnalyzerSettings.psd1`,
+bounded at the project root. The path **must be absolute** -- a relative value is ignored -- and
+the plugin never parses or executes the file itself; PSES is the trusted consumer. An empty
+value uses auto-discovery.
+
+## scopeToEdit
+
+**What it does.** Filters the surfaced diagnostics to those overlapping the lines the edit
+touched (plus `editContextLines` of context), so the feedback is what the edit is responsible
+for rather than the whole file.
+
+**Type:** string (boolean). **Values:** `true` (default), `false`. `0` / `false` / `off` report
+whole-file.
+
+It **fails open to whole-file** whenever the touched range cannot be determined -- a new-file
+`Write`, a failed edit, or an unparseable payload -- so scoping **never hides a diagnostic**; the
+worst case is showing more than strictly necessary, never less.
+
+## editContextLines
+
+**What it does.** Extra lines of context kept above and below the touched range when
+`scopeToEdit` is on.
+
+**Type:** string (integer count). **Default:** `0`.
+
+The edit's structured patch already includes a few context lines, so the default of `0` is
+usually right; raise it to widen the window around each edited region.
+
+## formatOnEdit
+
+**What it does.** After an edit, optionally runs PSScriptAnalyzer's `Invoke-Formatter` over the
+edited file -- honoring the repo's own `PSScriptAnalyzerSettings.psd1` formatter rules when
+present -- and either suggests the formatted result or writes it back under guard.
+
+**Type:** string. **Values:** `off` (default), `suggest`, `apply`.
+
+- **`off` (default).** Does nothing; the diagnostics surface is unchanged.
+- **`suggest`.** Surfaces the formatted result as a **suggestion** -- a compact unified diff,
+  clearly labelled and distinct from a diagnostic. In this mode the hook **never rewrites your
+  file**; it only suggests, so editing is never disrupted.
+- **`apply`.** Additionally **writes the formatted result back** -- the one mode that ever
+  touches your file -- behind a deliberately strict guard:
+  - **Stale-write compare-and-swap.** The file's bytes are fingerprinted when formatting starts
+    and re-checked immediately before the write; if anything changed the file in between, the
+    apply **aborts** and your newer content is left untouched (the concurrent edit always wins).
+  - **Atomic write.** The formatted bytes are staged and swapped in atomically, so a crashed
+    write can never leave a torn or half-written file.
+  - **Byte fidelity.** The original BOM state and dominant line-ending style are preserved; the
+    only byte difference from your file is the formatting change itself.
+  - **Abort to suggestion for risky inputs.** A file with **mixed** line endings, or a non-UTF-8
+    (for example UTF-16) file, **aborts to a suggestion** rather than risk a broader rewrite.
+  - **Loud, and re-read.** An applied write is **announced loudly**, plainly stating the file
+    **was modified** and telling the agent to re-read before its next edit (its in-context copy
+    is now stale). Diagnostics for that turn are omitted to avoid stale line numbers.
+
+`apply` is **doubly opt-in**: only the exact value `apply` activates it -- a boolean-truthy value
+like `true` maps to the safe `suggest`, never to `apply`. Any failure or ambiguity degrades to a
+suggestion or to nothing, the hook always exits 0, and a file that already matches the configured
+style is never touched.
+
+## ruleset
+
+**What it does.** Selects which PSScriptAnalyzer rule set applies on the **live edit path** when
+no repo-local `PSScriptAnalyzerSettings.psd1` and no `settingsPath` override resolve first.
+
+**Type:** string. **Values:** `pses-default` (default), `base`.
+
+- **`pses-default` (default).** Keeps PowerShell Editor Services' built-in no-settings rule set
+  (about 15 rules) -- the live surface is unchanged from prior versions.
+- **`base`.** Opts in to the plugin's shipped, **explicitly enumerated** base ruleset
+  (`rulesets/base.psd1`): PSScriptAnalyzer's full default-on set **minus** the compatibility-profile
+  rules. It is enumerated explicitly so the surfaced set is deterministic and does not drift when
+  the pinned analyzer is bumped (regenerate with `scripts/regen-base-ruleset.ps1`). Opting in
+  broadens the live surface -- notably `PSAvoidUsingWriteHost` and the three Error-severity
+  security rules `PSAvoidUsingComputerNameHardcoded`,
+  `PSAvoidUsingConvertToSecureStringWithPlainText`, and `PSAvoidUsingUsernameAndPasswordParams`
+  start surfacing where the built-in set omits them.
+
+**Precedence: repo settings always win.** An explicit `settingsPath` and a repo-local
+`PSScriptAnalyzerSettings.psd1` **both win over the base** -- the base only fills the gap when
+neither is present. The existing noise controls (`scopeToEdit`, `perFileCap`,
+`severityThreshold`) still apply on top, and the default is deliberately **not** flipped: the
+broadened surface never activates unless you opt in.
+
+## moduleAwareness
+
+**What it does.** When enabled, adds an **Information**-severity hint when a command in the
+edited file is exported by a **known** module that is **not installed** on this machine, so the
+call would not resolve.
+
+**Type:** string. **Values:** `off` (default), `suggest`.
+
+The hint is driven by a **shipped, offline command-to-module index** (`rulesets/command-module-index.psd1`)
+-- a curated map of common first-party and Gallery modules (Az, Microsoft.Graph, Exchange Online,
+ActiveDirectory, Pester, and more) to the commands they export -- regenerated offline from a
+vendored source snapshot by `scripts/regen-command-module-index.ps1` and refreshed only by a
+deliberate release. The message is actionable, for example: *"`Get-MgUser` is exported by module
+`Microsoft.Graph.Users`, which is not installed on this machine; Install-Module
+Microsoft.Graph.Users or import it."*
+
+It is built to be quiet and correct: it fires **only on positive identification** and degrades to
+**silence** on any ambiguity.
+
+- It flags only a **literal command name** that is a hit in the shipped index -- never an unknown
+  command (an unknown name is not evidence of a missing module; it could be your own function or
+  private tooling).
+- It stays silent when the command is a **built-in**, is **defined in the file** (a function or
+  alias), is pulled in by a **literal dot-source** the check follows, or when the module is
+  **declared** via `#Requires -Modules`, the nearest manifest's `RequiredModules`, or a literal
+  `Import-Module`.
+- It suppresses the **whole file** on a **dynamic** include it cannot resolve (for example
+  `. $path` or `Import-Module $name`) -- it never guesses across something it cannot read.
+- Because PowerShell auto-loads an installed module on first use, a command whose module **is**
+  installed resolves fine -- so the hint fires **only** when the module is absent. Install-state is
+  read **once per session** by a background snapshot taken off the critical path; until that
+  snapshot is ready, the check stays **silent**.
+
+It **never rewrites your file** and adds **no** edit-path network or latency (the index is a
+shipped artifact; install-state is read once per session). `off` (the default) does nothing and
+the diagnostics surface is byte-for-byte unchanged.
+
+## nativeServe
+
+**What it does.** When set to `shim`, serves **hover**, **go-to-definition**, **find-references**,
+and **documentSymbol** to Claude Code's **native** LSP client on a `.ps1` / `.psm1` / `.psd1`, so
+navigation resolves through PowerShell Editor Services rather than only the diagnostics from the
+warm hook.
+
+**Type:** string. **Values:** `off` (default), `shim`.
+
+**Why it needs a shim.** Once the server is registered, Claude Code launches PSES but its LSP
+client currently rejects the standard server-to-client requests PSES sends during initialization
+(the upstream `#1359`-class handshake gap), so init times out (about 30 s) and nav never serves.
+`nativeServe = shim` inserts a thin stdio proxy (`scripts/pses-serve-shim.ps1`) between Claude
+Code and PSES that closes the gap locally, **without** waiting on the upstream fix. The proxy:
+
+- **Patches the forwarded `initialize`:** it disables `dynamicRegistration` so PSES advertises its
+  providers **statically** in the initialize result (and sends **no** `client/registerCapability`
+  at all); it drops the params-level `workspaceFolders` that trips a PSES v4.6.0 Linux
+  initialization NRE; and it ensures a `rename` capability (another PSES init NRE dodge).
+- **Answers the residual requests locally:** it answers `workspace/configuration` and
+  `window/workDoneProgress/create` itself (navigation is symbol-derived and settings-independent,
+  so a local answer costs nothing).
+- **Forwards everything else on the LSP transport byte-exact**, in both directions. Added latency
+  is about 1-2 ms of framing per navigation round-trip (roughly 1% of PSES's own per-operation
+  compute).
+
+**`off` (the default) is a byte-exact, transparent pass-through.** The proxy still runs but
+neither patches nor intercepts anything -- every LSP frame is relayed unchanged -- so the protocol
+behavior is byte-for-byte what it is without the shim (native nav stays gated exactly as it does
+today). The warm PostToolUse **diagnostics** hook -- the plugin's primary value -- is wholly
+independent of this knob and unaffected in either mode.
+
+**It is a workaround, so it is default-off and removable.** The shim exists only to route around
+the upstream Claude Code client bug; when that bug is fixed, native nav will serve without it. To
+remove the shim entirely, point the manifest `lspServers` command back at `scripts/pses-stdio.ps1`.
+How you will *know* it is removable, and the full removal path, are recorded in
+[`docs/upstream/claude-code-lsp-registration.md`](upstream/claude-code-lsp-registration.md).
+
+> **Known issue -- Windows (Claude Code 2.1.196-2.1.200).** On Windows, these Claude Code versions
+> refuse to start the plugin's LSP server -- a launcher-level guard rejects the bare `pwsh` command
+> pre-spawn (`Command 'pwsh' not found or is in an unsafe location`) -- so the native nav tier does
+> **not** start on Windows even with `nativeServe = shim`. This is an upstream Claude Code
+> regression (it also breaks the official `pyright-lsp` plugin), filed as
+> [`anthropics/claude-code#73961`](https://github.com/anthropics/claude-code/issues/73961). The
+> plugin's core **PostToolUse diagnostics are unaffected** -- they run through a different,
+> unguarded spawn path and keep working normally. The native-nav status on **macOS and Linux** under
+> these Claude Code versions is **untested** with the real client. Full analysis:
+> [`docs/upstream/claude-code-lsp-registration.md`](upstream/claude-code-lsp-registration.md)
+> (dispatch 000107).
+
+---
+
+## The config panel and this reference
+
+Claude Code's `/plugin` "Configure options" panel renders the selected knob's **entire**
+description with no height cap. Long descriptions can therefore push the panel past the terminal
+viewport, and on some terminals a navigation keypress that changes the panel height triggers a
+renderer ghost-row corruption (surveyed in dispatch 000109). To keep the panel height-stable, the
+manifest descriptions are capped and the full semantics relocated here.
+
+This mitigates but does not fix the underlying Claude Code behavior: on a terminal shorter than
+about 28 rows the 17-knob panel can still overflow regardless of description length (the base rows
+alone exceed the viewport), and the renderer bug and the absence of an enum picker remain upstream
+defects. This reference is the durable home for the details; the panel summaries point here.
