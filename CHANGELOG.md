@@ -30,6 +30,37 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **native-serve removability probe -- an opt-in, report-only `doctor.ps1 -ProbeNativeServe` check
+that reports whether the `nativeServe` shim can be removed yet**. The report-only preflight doctor
+(`scripts/doctor.ps1`) gains a seventh, OFF-BY-DEFAULT check (`-ProbeNativeServe`) that automates the
+manual removability re-probe the 000103 shim documented as deferred. It launches PSES via the **direct**
+launcher (`scripts/pses-stdio.ps1`, shim bypassed -- the removal lever) through a pwsh subprocess
+(`scripts/probe-native-serve.ps1`), sends a Claude-Code-shaped `initialize` (rich caps,
+`dynamicRegistration=true`), and inspects the initialize **result**: today PSES v4.6.0 defers the nav
+providers to the `client/registerCapability` handshake the upstream `#1359` client bug breaks, so the
+static result carries no hover / definition / references and the probe truthfully reports **"still
+gated -- the shim remains needed"**; the day the direct launcher advertises those providers
+**statically** it reports **"native serve now works directly -- the shim can be removed."** The
+discriminator is the result CONTENT (are the nav providers advertised statically?), not a race against
+the ~30 s stall, so it resolves as soon as the init result arrives (~1-2 s measured) within a bounded
+~20 s init-result cap -- and, unlike the manual re-probe, it needs **no** real `claude -p`, so it runs
+on every CI leg. It is **report-only** (like every doctor check) and NEVER `fail` -- a removability
+diagnostic must not move the doctor's exit code: "still gated" (the expected state) is a PASS,
+"removable" is a PASS, an indeterminate probe is UNKNOWN. **Decisions:** OQ1 -- switch-gated (a PSES
+cold-start is too heavy for every doctor run, so the default doctor stays byte-for-byte at six checks
+and the probe appears only when requested); OQ2 -- a 20 s init-result bound (~2.5x the 000102-measured
++7.8 s `registerCapability` landmark, ~10x the ~2 s observed init, half the 30 s gated stall; exceeding
+it reports UNKNOWN, never a false "gated"); OQ3 -- MINOR (an added, opt-in diagnostics capability).
+**Additive:** no new `userConfig` knob and no new status token (the 000027 drift-guards stay green), no
+`CONTRACT.md` change, and the shim / launcher / diagnostics surface are byte-for-byte unchanged (the
+probe only READS). Reuses the shipped framing lib (`Write-LspFrame` / `Read-LspFrame`) and the shim's
+server->client answer table; the interactive stdio runs in a pwsh subprocess (the 000103 5.1-stdin
+lesson). **Scope (honest):** the scripted client detects the STATIC-serving removability path; a purely
+client-side `#1359` fix (Claude Code completing the dynamic-registration handshake) would not show here
+and still needs the manual real-`claude -p` re-probe, which stays authoritative
+(`docs/upstream/claude-code-lsp-registration.md`). Dispatch 000104. No version bump (the next
+release-prep cuts the version).
+
 MINOR: **native serve -- an opt-in handshake shim un-gates hover / go-to-definition / find-references
 (`nativeServe` knob)**. A new off-by-default `userConfig` knob, `nativeServe`, ships a thin stdio proxy
 (`scripts/pses-serve-shim.ps1`) that wraps the PSES launcher so Claude Code's **native** LSP client can serve

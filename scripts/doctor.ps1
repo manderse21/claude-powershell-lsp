@@ -26,6 +26,7 @@
 #
 # Usage:  pwsh -File scripts/doctor.ps1
 #         pwsh -File scripts/doctor.ps1 -SessionId <claude-code-session-id>   # scope check 6
+#         pwsh -File scripts/doctor.ps1 -ProbeNativeServe                     # add opt-in check 7
 #
 # Exit 0 when no check FAILED (passes and honest unknowns are not failures); exit 1
 # when at least one check failed. The script is dot-source safe: dot-sourcing defines
@@ -40,10 +41,27 @@ param(
     # then discovers the live daemon(s) under the session data dir. A standalone run has no
     # session id (Claude Code passes it only on hook stdin, never as an env var to a
     # directly-invoked script), so the daemon check stays honest about what it can determine.
-    [string] $SessionId = ''
+    [string] $SessionId = '',
+
+    # OPT-IN (dispatch 000104): also run the native-serve REMOVABILITY probe (check 7). It launches
+    # PSES via the DIRECT launcher (scripts/pses-stdio.ps1, shim bypassed), sends a Claude-Code-shaped
+    # initialize, and reports whether native serve is still gated on the upstream #1359 handshake
+    # (today) or now serves statically (the nativeServe shim can be removed). It costs a PSES
+    # cold-start plus a bounded init wait, so it is OFF by default -- the routine doctor stays fast
+    # and this check appears ONLY when requested. Report-only, like every other check.
+    [switch] $ProbeNativeServe
 )
 
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
+
+# The native-serve removability probe's init-result wait bound (dispatch 000104, OQ2). Measured:
+# the direct launcher's initialize RESULT arrives ~1.9 s (warm, this repo's Windows dev host); the
+# 000102 survey measured the LATEST init-phase server->client event (client/registerCapability) at
+# +7.8 s. 20 s is ~2.5x that latest landmark and ~10x the observed init, giving margin on the
+# slowest cold CI leg. The discriminator is the init RESULT CONTENT (are the nav providers
+# advertised statically?), NOT a race against the ~30 s registration stall, so exceeding this bound
+# reports UNKNOWN (PSES did not init in time) -- never a false "still gated".
+$script:NativeServeInitTimeoutMs = 20000
 
 # ===========================================================================
 # Pure decision functions -- env-independent, mockable, unit-tested. Each takes
@@ -261,6 +279,54 @@ function Test-DoctorDaemon {
             -Remediation $restart)
 }
 
+function Test-DoctorNativeServe {
+    # Check 7 (dispatch 000104, the 000103 OQ4): is the nativeServe shim removable yet? The shim
+    # exists ONLY to route around the upstream #1359-class client init-handshake bug. This decision
+    # maps the removability observation (resolved by Get-DoctorNativeServeObservation, which drives
+    # the DIRECT launcher via a pwsh subprocess) to a status. REPORT-ONLY and NEVER 'fail' -- it is a
+    # removability diagnostic, not a health gate, so it must not move the doctor's exit code:
+    #   not determinable (no data dir / PSES not bootstrapped / no pwsh)  -> UNKNOWN + how to enable it
+    #   init result not received within the bound                        -> UNKNOWN (PSES did not init)
+    #   init received, nav NOT advertised statically (today)             -> PASS  "still gated" (expected)
+    #   init received, nav advertised STATICALLY                         -> PASS  "removable"
+    #
+    #   $Determinable : the probe could run (data root known + PSES bootstrapped + pwsh available).
+    #   $Reason       : when not determinable, the honest why (for the UNKNOWN detail).
+    #   $InitReceived : the direct launcher returned an initialize result within $TimeoutMs.
+    #   $HasStaticNav : that init result advertised hover/definition/references providers STATICALLY.
+    #   $ProbeError   : any error string the probe subprocess reported.
+    #   $ElapsedMs    : how long the init result took (for the served/gated detail).
+    #   $TimeoutMs    : the init-result wait bound (for the not-received message).
+    param(
+        [bool] $Determinable,
+        [string] $Reason = '',
+        [bool] $InitReceived = $false,
+        [bool] $HasStaticNav = $false,
+        [string] $ProbeError = '',
+        [int] $ElapsedMs = 0,
+        [int] $TimeoutMs = 0
+    )
+    $component = 'Native-serve removability (opt-in probe)'
+    if (-not $Determinable) {
+        $why = if ([string]::IsNullOrWhiteSpace($Reason)) { 'the removability probe could not run in this context.' } else { $Reason }
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('not probed -- ' + $why) `
+                -Remediation 'Run "pwsh -File scripts/doctor.ps1 -ProbeNativeServe" from inside a Claude Code session (where the PSES bundle is bootstrapped) for a definitive removability check.')
+    }
+    if (-not $InitReceived) {
+        $extra = if ([string]::IsNullOrWhiteSpace($ProbeError)) { '' } else { ' (' + $ProbeError + ')' }
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('the direct launcher (pses-stdio.ps1) did not return an initialize result within ' + [int]([math]::Round($TimeoutMs / 1000)) + ' s' + $extra + ', so removability is indeterminate -- PSES may have failed to start.') `
+                -Remediation 'Confirm the PSES bundle is healthy (see the PSES bundle check and logs/pses-lsp.log), then re-run with -ProbeNativeServe.')
+    }
+    if ($HasStaticNav) {
+        return (New-DoctorResult -Status pass -Component $component `
+                -Detail ('native serve now completes STATICALLY -- under a Claude-Code-shaped client the direct launcher advertised the nav providers in its initialize result (in ' + $ElapsedMs + ' ms), so the #1359 handshake gate is gone and the nativeServe shim can be REMOVED (point the lspServers command back at pses-stdio.ps1, or leave nativeServe=off; see docs/upstream/claude-code-lsp-registration.md). Confirm with the manual real claude -p re-probe before removing.'))
+    }
+    return (New-DoctorResult -Status pass -Component $component `
+            -Detail ('native serve is still GATED -- under a Claude-Code-shaped client the direct launcher deferred the nav providers to the client/registerCapability handshake (the init result carried no static hover/definition/references; result in ' + $ElapsedMs + ' ms), exactly the request the upstream #1359 client bug mishandles. The nativeServe shim remains needed; this is the expected state today. A purely client-side #1359 fix would not show here -- the manual real claude -p re-probe stays authoritative.'))
+}
+
 # ===========================================================================
 # Live probes -- the environment-dependent half. Kept OUT of the pure functions so
 # the decision logic stays unit-testable; these are exercised by the end-to-end run.
@@ -467,6 +533,76 @@ function Get-DoctorDaemonObservation {
     return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; State = $d.State; Reachable = $reachable; LiveCount = 1 }
 }
 
+function Get-DoctorNativeServeObservation {
+    # Resolve the native-serve removability observation the pure Test-DoctorNativeServe decides on,
+    # doing ALL the I/O here (kept out of the pure function so the decision stays unit-testable). It
+    # spawns scripts/probe-native-serve.ps1 as a PWSH SUBPROCESS (the 000103 5.1-stdin lesson: a
+    # Windows PowerShell 5.1 host cannot interactively drive a child's stdin on the headless CI
+    # runner, so the interactive client<->PSES stdio must be pwsh<->pwsh regardless of THIS doctor's
+    # own host) and reads its result file. Determinable requires the data root (CLAUDE_PLUGIN_DATA),
+    # a bootstrapped PSES bundle (the direct launcher needs it), pwsh (to host the driver), and the
+    # driver script. REPORT-ONLY: it drives a throwaway PSES that the driver reaps; it mutates nothing.
+    param([string] $ScriptsDir, [int] $InitTimeoutMs = 20000)
+    $none = @{ Determinable = $false; Reason = ''; InitReceived = $false; HasStaticNav = $false; Error = ''; ElapsedMs = 0 }
+    if (-not (Get-DoctorDataRootKnown)) {
+        $none.Reason = 'the plugin data directory is not known (CLAUDE_PLUGIN_DATA is unset), so PSES cannot be launched.'
+        return $none
+    }
+    if (-not (Test-Path -LiteralPath (Get-PsesStartScript))) {
+        $none.Reason = 'the PSES bundle is not bootstrapped, so the direct launcher cannot start (see the PSES bundle check).'
+        return $none
+    }
+    if (-not (Get-DoctorPwsh).Found) {
+        $none.Reason = 'pwsh was not found, and the probe drives PSES via a pwsh subprocess (see the pwsh host check).'
+        return $none
+    }
+    $driver = Join-Path $ScriptsDir 'probe-native-serve.ps1'
+    if (-not (Test-Path -LiteralPath $driver)) {
+        $none.Reason = 'the probe driver (scripts/probe-native-serve.ps1) is missing.'
+        return $none
+    }
+    $dataRoot = Get-PluginDataRoot
+    $resultPath = Join-Path ([System.IO.Path]::GetTempPath()) ('nsprobe-' + ([guid]::NewGuid().ToString('N').Substring(0, 8)) + '.json')
+    $err = ''
+    $flat = $null
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = 'pwsh'
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.CreateNoWindow = $true
+        Add-ProcessArguments $psi @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $driver,
+            '-DataRoot', $dataRoot, '-ResultPath', $resultPath, '-InitTimeoutMs', [string]$InitTimeoutMs)
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $null = $p.StandardOutput.ReadToEndAsync()
+        $null = $p.StandardError.ReadToEndAsync()
+        if (-not $p.WaitForExit($InitTimeoutMs + 30000)) {
+            try { $p.Kill($true) } catch { }
+            $err = 'the probe subprocess timed out'
+        }
+        if (Test-Path -LiteralPath $resultPath) {
+            $flat = (Get-Content -LiteralPath $resultPath -Raw) | ConvertFrom-Json
+        }
+    } catch {
+        $err = [string]$_.Exception.Message
+    } finally {
+        try { Remove-Item -LiteralPath $resultPath -Force -ErrorAction SilentlyContinue } catch { }
+    }
+    if ($null -eq $flat) {
+        if ([string]::IsNullOrWhiteSpace($err)) { $err = 'the probe produced no result' }
+        return @{ Determinable = $true; Reason = ''; InitReceived = $false; HasStaticNav = $false; Error = $err; ElapsedMs = 0 }
+    }
+    return @{
+        Determinable = $true
+        Reason       = ''
+        InitReceived = [bool](Get-Prop $flat 'InitReceived')
+        HasStaticNav = [bool](Get-Prop $flat 'InitHasStaticNav')
+        Error        = [string](Get-Prop $flat 'Error')
+        ElapsedMs    = [int](Get-Prop $flat 'InitElapsedMs')
+    }
+}
+
 # ===========================================================================
 # Compose + render
 # ===========================================================================
@@ -475,7 +611,9 @@ function Invoke-Doctor {
     # Gather the live probes, run the pure checks, and return the ordered result objects.
     # Separated from rendering so the structured results can be consumed programmatically.
     # $SessionId (optional) scopes the daemon-health check (6) to a specific session.
-    param([string] $SessionId = '')
+    # $ProbeNativeServe (optional, dispatch 000104) adds the opt-in native-serve removability
+    # probe (check 7); when $false the check is omitted entirely so the default doctor stays fast.
+    param([string] $SessionId = '', [bool] $ProbeNativeServe = $false)
     $scriptsDir = $PSScriptRoot
     $results = @()
 
@@ -537,6 +675,18 @@ function Invoke-Doctor {
     $results += (Test-DoctorDaemon -DataRootKnown $daemonObs.DataRootKnown -Determinable $daemonObs.Determinable `
             -DaemonPresent $daemonObs.DaemonPresent -State $daemonObs.State -Reachable $daemonObs.Reachable -LiveCount $daemonObs.LiveCount)
 
+    # 7) native-serve removability (dispatch 000104, the 000103 OQ4). OPT-IN via -ProbeNativeServe:
+    # it launches PSES via the DIRECT launcher and inspects the init handshake, which costs a PSES
+    # cold-start plus a bounded init wait -- too heavy for every doctor run, so the default doctor
+    # stays byte-for-byte as before (6 checks) and this 7th check appears ONLY when requested.
+    # Report-only, and never 'fail' (a removability diagnostic must not move the exit code).
+    if ($ProbeNativeServe) {
+        $nsObs = Get-DoctorNativeServeObservation -ScriptsDir $scriptsDir -InitTimeoutMs $script:NativeServeInitTimeoutMs
+        $results += (Test-DoctorNativeServe -Determinable $nsObs.Determinable -Reason $nsObs.Reason `
+                -InitReceived $nsObs.InitReceived -HasStaticNav $nsObs.HasStaticNav -ProbeError $nsObs.Error `
+                -ElapsedMs $nsObs.ElapsedMs -TimeoutMs $script:NativeServeInitTimeoutMs)
+    }
+
     return @($results)
 }
 
@@ -576,7 +726,7 @@ function Format-DoctorReport {
 if ($MyInvocation.InvocationName -ne '.') {
     Set-StrictMode -Version Latest
     $ErrorActionPreference = 'Stop'
-    $doctorResults = Invoke-Doctor -SessionId $SessionId
+    $doctorResults = Invoke-Doctor -SessionId $SessionId -ProbeNativeServe:([bool]$ProbeNativeServe)
     Write-Host (Format-DoctorReport -Results $doctorResults)
     $doctorFailures = @($doctorResults | Where-Object { $_.Status -eq 'fail' }).Count
     if ($doctorFailures -gt 0) { exit 1 } else { exit 0 }

@@ -54,7 +54,9 @@ The `nativeServe` shim exists **only** to route around the upstream `#1359` clie
 Code's LSP client is fixed to answer the standard server->client requests natively, the shim is
 obsolete and should be removed. Because the shim withholds the intercepted requests from the client,
 it cannot itself observe the client handling them natively -- so removability is learned by a
-**deliberate re-probe**, not automatically:
+**re-probe** of the direct launcher: an automated first-line doctor check (dispatch 000104, below)
+for the static-serving path, plus a deliberate manual real-`claude -p` re-probe that stays
+authoritative for a client-side fix:
 
 - **How Mike learns it is removable (the re-probe).** Re-run the 000069 registration/serve harness
   (a real `claude -p` builtin-`LSP` `goToDefinition`, `raw-probes/` + `harness/run-lsp-probe.ps1`
@@ -70,11 +72,24 @@ it cannot itself observe the client handling them natively -- so removability is
   `scripts/pses-serve-shim.ps1` + `scripts/lib/serve-shim-common.ps1` + the `nativeServe` knob (a MAJOR,
   since it removes a knob name) once the upstream fix has shipped widely. The shim adds no daemon,
   diagnostics, or corpus coupling, so removal is transport-local.
-- **Deferred follow-on: an automated doctor re-probe.** A `scripts/doctor.ps1` check that runs the
-  above re-probe and reports "native serve now works directly -- the shim can be removed" is
-  **deliberately deferred** to a named follow-on dispatch: it needs a real `claude -p` builtin-LSP
-  round-trip, which is absent in CI and heavy to add to the report-only doctor. Until then, the manual
-  re-probe above is the learn-path. (Recorded per the 000103 OQ4 disposition.)
+- **Automated first-line check (shipped, dispatch 000104, v1.23.0): `doctor.ps1 -ProbeNativeServe`.**
+  The report-only doctor carries an OPT-IN native-serve removability probe -- run
+  `pwsh -File scripts/doctor.ps1 -ProbeNativeServe`. It launches PSES via the **direct** launcher
+  (`pses-stdio.ps1`, shim bypassed) through a pwsh subprocess (`scripts/probe-native-serve.ps1`),
+  sends a Claude-Code-shaped `initialize` (rich caps, `dynamicRegistration=true`), and inspects the
+  initialize **result**: today PSES defers the nav providers to `client/registerCapability` (no
+  static nav in the result) and the probe reports **still gated -- the shim remains needed**; the day
+  the direct launcher advertises hover / definition / references **statically** it reports **native
+  serve now works directly -- the shim can be removed**. The discriminator is the result CONTENT (are
+  the nav providers advertised statically?), not a race against the ~30 s stall, so it is bounded (a
+  ~20 s init-result cap) and CI-runnable -- unlike the manual re-probe above it needs **no** real
+  `claude -p`. It is opt-in (off by default) because it costs a PSES cold-start. **Scope (honest):**
+  the scripted client detects the STATIC-serving removability path (PSES advertising nav statically
+  under rich caps -- the shim's own `dynamicRegistration=false` mechanism becoming native). A purely
+  **client-side** `#1359` fix (Claude Code completing the dynamic-registration handshake so nav
+  registers dynamically) serves WITHOUT changing the static init result and is **not** caught here --
+  that case still needs the manual real-`claude -p` re-probe above, which stays authoritative. The
+  probe never yields a false "removable"; it errs toward keeping the shim.
 
 ---
 
