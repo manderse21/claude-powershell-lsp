@@ -48,7 +48,7 @@ not platform-wide**:
 (`tests/PowerShellLsp.Unit.Tests.ps1`) fails CI if any `lspServers` entry ever re-declares a field
 outside that allowlist.
 
-## The native LSP launcher guard -- a second, independent blocker (Windows; dispatch 000107, upstream #73961)
+## The native LSP launcher guard -- a second, independent blocker (Windows; dispatch 000107, upstream `#73961`)
 
 **Status (2026-07-03, dispatch 000107 -- survey verified).** On **Windows**, Claude Code 2.1.200's
 native LSP launcher refuses to start this plugin's registered server before any plugin code runs.
@@ -72,7 +72,7 @@ separator) is sent to a resolver that returns null -- and null throws the refusa
 candidate both exists, sits outside the current directory, and ends in `.com`/`.exe`/`.bat`/`.cmd`. On
 the surveyed machine `where.exe pwsh` and `where.exe powershell` both resolve to real executables
 (Program Files / System32), yet both bare names are refused in a fresh session -- consistent with the
-sibling reports #67821 / #42135, where the launcher's spawn-context PATH is reduced/sanitized and a
+sibling reports `#67821` / `#42135`, where the launcher's spawn-context PATH is reduced/sanitized and a
 failed resolution is cached as null for the session. A separator-bearing command bypasses the resolver
 entirely: dispatch 000107 confirmed an absolute path and a `${CLAUDE_PLUGIN_ROOT}`-anchored `.cmd`
 wrapper both spawn, while bare `pwsh` and bare `powershell` both refuse.
@@ -99,8 +99,8 @@ direction.
 
 **Upstream: `anthropics/claude-code#73961` (open).** The guard is filed upstream as
 [anthropics/claude-code#73961](https://github.com/anthropics/claude-code/issues/73961) (labeled bug /
-platform:windows / area:lsp / area:plugins / has-repro), with the same-root-cause siblings **#67821**
-(bare `cmd` in `/desktop`) and **#42135** (bare `git` in marketplace update).
+platform:windows / area:lsp / area:plugins / has-repro), with the same-root-cause siblings `#67821`
+(bare `cmd` in `/desktop`) and `#42135` (bare `git` in marketplace update).
 
 **Verdict: wait for upstream.** Per dispatch 000107 the fix is not the plugin's to make cleanly. A single
 `lspServers.command` string cannot be both a Windows `.cmd` wrapper and a cross-platform launcher (Claude
@@ -110,12 +110,12 @@ rejects a `command` containing a space unless it starts with `/`. Because the sa
 an official Anthropic LSP plugin and the git/cmd subsystems, one upstream fix -- resolve via a full PATH,
 stop caching null, or add per-platform command support -- resolves it for every affected plugin at once.
 The native nav tier is therefore documented as **blocked on Windows Claude Code 2.1.196-2.1.200**, pending
-#73961.
+`#73961`.
 
 **Contingent build trigger.** A `${CLAUDE_PLUGIN_ROOT}`-anchored Windows `.cmd` wrapper is the only
 launcher-clean, machine-portable local lane (dispatch 000107 proved it spawns), and it becomes the
 **recommended build for Windows native nav if and only if** Claude Code ships per-platform
-`lspServers.command` support (suggested fix (c) in #73961) -- which would let the wrapper be Windows-only
+`lspServers.command` support (suggested fix (c) in `#73961`) -- which would let the wrapper be Windows-only
 while bare `pwsh` stays the Unix command -- **or** the launcher resolver/guard is fixed so a bare `pwsh`
 spawns again. Until one of those lands upstream, no local build is unblocked and none is minted here.
 
@@ -163,7 +163,7 @@ authoritative for a client-side fix:
   probe never yields a false "removable"; it errs toward keeping the shim. Note that this probe launches
   PSES **directly** (a pwsh subprocess) and so speaks only to the `#1359` serve handshake; it does not
   exercise Claude Code's native LSP launcher, so it cannot detect the separate Windows launcher guard
-  documented in "The native LSP launcher guard" above (dispatch 000107, upstream #73961). That guard is
+  documented in "The native LSP launcher guard" above (dispatch 000107, upstream `#73961`). That guard is
   client-side; whether it has been lifted is learned only from the manual real-`claude -p` re-probe, not
   from this check.
 
