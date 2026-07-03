@@ -2412,6 +2412,86 @@ Describe 'Preflight doctor -- daemon/pipe health (dispatch 000037)' {
 }
 
 # ===========================================================================
+# Preflight doctor -- native-serve removability (check 7, dispatch 000104)
+# ===========================================================================
+# The 000103 OQ4 probe, as a PURE decision over the removability observation
+# Get-DoctorNativeServeObservation resolves live (it drives the DIRECT launcher via a pwsh
+# subprocess and reads back InitReceived / InitHasStaticNav). The mapping is asserted here with
+# the observation INJECTED -- no live PSES, no process. Two invariants are load-bearing: (1) the
+# gated-today case (init received, nav NOT static) is a PASS, never a FAIL -- a removability
+# diagnostic must NOT move the doctor's exit code; (2) the vocabulary stays the frozen
+# pass/fail/unknown. The end-to-end drive (real PSES over the direct launcher) is a separate
+# serialized e2e (PowerShellLsp.NativeServeProbe.Tests.ps1), per the 000101 one-server lesson.
+
+Describe 'Preflight doctor -- native-serve removability (check 7, dispatch 000104)' {
+    BeforeAll {
+        . (Join-Path $script:ScriptsDir 'doctor.ps1')
+    }
+
+    Context 'Test-DoctorNativeServe -- check 7: is the nativeServe shim removable yet?' {
+        It 'PASS "still gated" when init is received but nav is NOT advertised statically (today)' {
+            # The load-bearing today case: PSES defers nav to the client/registerCapability handshake
+            # the #1359 client bug breaks, so the init result carries no static nav -> the shim is
+            # still needed. This is EXPECTED, so it must be a PASS.
+            $r = Test-DoctorNativeServe -Determinable $true -InitReceived $true -HasStaticNav $false -ElapsedMs 1200 -TimeoutMs 20000
+            $r.Status | Should -Be 'pass'
+            $r.Detail | Should -Match 'still GATED'
+            $r.Detail | Should -Match 'shim remains needed'
+        }
+        It 'PASS "still gated" is NEVER a fail -- a removability diagnostic must not move the exit code' {
+            # Adversarial control: flip the gated branch to fail and the doctor would exit 1 on the
+            # normal, expected state (the shim correctly still needed). That is the regression this
+            # guards -- the probe reports, it never fails the run.
+            (Test-DoctorNativeServe -Determinable $true -InitReceived $true -HasStaticNav $false).Status | Should -Not -Be 'fail'
+        }
+        It 'PASS "removable" when init is received and nav IS advertised statically' {
+            # The flip the probe exists to catch: native serve completes statically, so the shim can
+            # be removed. Adversarial control: collapse this into the gated branch and the removable
+            # message never fires.
+            $r = Test-DoctorNativeServe -Determinable $true -InitReceived $true -HasStaticNav $true -ElapsedMs 900 -TimeoutMs 20000
+            $r.Status | Should -Be 'pass'
+            $r.Detail | Should -Match 'can be REMOVED'
+        }
+        It 'UNKNOWN (not determinable) surfaces the honest reason and how to enable the probe' {
+            # Adversarial control: a context where PSES cannot be launched is UNKNOWN, never a
+            # verdict; the reason and the -ProbeNativeServe re-run path must be carried.
+            $r = Test-DoctorNativeServe -Determinable $false -Reason 'the PSES bundle is not bootstrapped, so the direct launcher cannot start (see the PSES bundle check).'
+            $r.Status | Should -Be 'unknown'
+            $r.Detail | Should -Match 'not bootstrapped'
+            $r.Remediation | Should -Match 'ProbeNativeServe'
+        }
+        It 'UNKNOWN when the direct launcher returned no initialize result within the bound' {
+            # Determinable but PSES did not init in time (or crashed): indeterminate, never a false
+            # "still gated". The bound (seconds) and any probe error are surfaced.
+            $r = Test-DoctorNativeServe -Determinable $true -InitReceived $false -ProbeError 'the probe produced no result' -TimeoutMs 20000
+            $r.Status | Should -Be 'unknown'
+            $r.Detail | Should -Match 'did not return an initialize result'
+            $r.Detail | Should -Match '20 s'
+        }
+        It 'keeps its status inside the frozen pass/fail/unknown vocabulary (no invented token)' {
+            foreach ($s in @(
+                    (Test-DoctorNativeServe -Determinable $true -InitReceived $true -HasStaticNav $false),
+                    (Test-DoctorNativeServe -Determinable $true -InitReceived $true -HasStaticNav $true),
+                    (Test-DoctorNativeServe -Determinable $true -InitReceived $false),
+                    (Test-DoctorNativeServe -Determinable $false -Reason 'x')
+                )) {
+                $s.Status | Should -BeIn @('pass', 'fail', 'unknown')
+            }
+        }
+        It 'NEVER returns fail on any input combination (report-only invariant)' {
+            foreach ($s in @(
+                    (Test-DoctorNativeServe -Determinable $true -InitReceived $true -HasStaticNav $false),
+                    (Test-DoctorNativeServe -Determinable $true -InitReceived $true -HasStaticNav $true),
+                    (Test-DoctorNativeServe -Determinable $true -InitReceived $false),
+                    (Test-DoctorNativeServe -Determinable $false -Reason 'x')
+                )) {
+                $s.Status | Should -Not -Be 'fail'
+            }
+        }
+    }
+}
+
+# ===========================================================================
 # Security-block classifier (dispatch 000038, building 000032 L3)
 # ===========================================================================
 # Honest degradation on a security-control block: attribute a bootstrap failure to the

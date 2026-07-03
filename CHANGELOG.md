@@ -29,7 +29,37 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
-## [Unreleased]
+## [1.23.0] - 2026-07-03
+MINOR: **native-serve removability probe -- an opt-in, report-only `doctor.ps1 -ProbeNativeServe` check
+that reports whether the `nativeServe` shim can be removed yet**. The report-only preflight doctor
+(`scripts/doctor.ps1`) gains a seventh, OFF-BY-DEFAULT check (`-ProbeNativeServe`) that automates the
+manual removability re-probe the 000103 shim documented as deferred. It launches PSES via the **direct**
+launcher (`scripts/pses-stdio.ps1`, shim bypassed -- the removal lever) through a pwsh subprocess
+(`scripts/probe-native-serve.ps1`), sends a Claude-Code-shaped `initialize` (rich caps,
+`dynamicRegistration=true`), and inspects the initialize **result**: today PSES v4.6.0 defers the nav
+providers to the `client/registerCapability` handshake the upstream `#1359` client bug breaks, so the
+static result carries no hover / definition / references and the probe truthfully reports **"still
+gated -- the shim remains needed"**; the day the direct launcher advertises those providers
+**statically** it reports **"native serve now works directly -- the shim can be removed."** The
+discriminator is the result CONTENT (are the nav providers advertised statically?), not a race against
+the ~30 s stall, so it resolves as soon as the init result arrives (~1-2 s measured) within a bounded
+~20 s init-result cap -- and, unlike the manual re-probe, it needs **no** real `claude -p`, so it runs
+on every CI leg. It is **report-only** (like every doctor check) and NEVER `fail` -- a removability
+diagnostic must not move the doctor's exit code: "still gated" (the expected state) is a PASS,
+"removable" is a PASS, an indeterminate probe is UNKNOWN. **Decisions:** OQ1 -- switch-gated (a PSES
+cold-start is too heavy for every doctor run, so the default doctor stays byte-for-byte at six checks
+and the probe appears only when requested); OQ2 -- a 20 s init-result bound (~2.5x the 000102-measured
++7.8 s `registerCapability` landmark, ~10x the ~2 s observed init, half the 30 s gated stall; exceeding
+it reports UNKNOWN, never a false "gated"); OQ3 -- MINOR (an added, opt-in diagnostics capability).
+**Additive:** no new `userConfig` knob and no new status token (the 000027 drift-guards stay green), no
+`CONTRACT.md` change, and the shim / launcher / diagnostics surface are byte-for-byte unchanged (the
+probe only READS). Reuses the shipped framing lib (`Write-LspFrame` / `Read-LspFrame`) and the shim's
+server->client answer table; the interactive stdio runs in a pwsh subprocess (the 000103 5.1-stdin
+lesson). **Scope (honest):** the scripted client detects the STATIC-serving removability path; a purely
+client-side `#1359` fix (Claude Code completing the dynamic-registration handshake) would not show here
+and still needs the manual real-`claude -p` re-probe, which stays authoritative
+(`docs/upstream/claude-code-lsp-registration.md`). Dispatch 000104.
+
 MINOR: **native serve -- an opt-in handshake shim un-gates hover / go-to-definition / find-references
 (`nativeServe` knob)**. A new off-by-default `userConfig` knob, `nativeServe`, ships a thin stdio proxy
 (`scripts/pses-serve-shim.ps1`) that wraps the PSES launcher so Claude Code's **native** LSP client can serve
@@ -52,7 +82,7 @@ client bug, so it is **default-off** and removable by pointing the `lspServers` 
 the 000102 survey sketched `off` as delegating to `pses-stdio.ps1`; an in-process `& pses-stdio.ps1` breaks
 PSES's stdio handoff, so `off` is a transparent **relay** instead (protocol-identical). Validated end-to-end by
 a scripted-LSP-client Pester harness across the four-leg CI matrix (the ubuntu leg is the Linux #2300 init-patch
-validation). No version bump (the next release-prep cuts the version).
+validation).
 
 MINOR: **module awareness -- a knob-gated "command from an uninstalled module" hint (PL-6 slice 1)**.
 A new off-by-default `userConfig` knob, `moduleAwareness`, adds an **Information**-severity diagnostic
@@ -78,7 +108,6 @@ new frozen knob name, amended in lockstep into the manifest, `CONTRACT.md`, and 
 status token and no second index/network path. Recorded design decision (dispatch 000101): the
 dedicated, orthogonal knob is a considered deviation from the survey's OQ3 first pick (folding into the
 `ruleset` enum) -- module awareness is about machine state, a different axis from which rule set runs.
-No version bump (the next release-prep cuts the version).
 
 MINOR: **format-on-edit `apply` activated -- the reserved enum value becomes a guarded write-back
 (PL-8 slice 2)**. `formatOnEdit=apply` now WRITES the formatter's result back to the edited file --
