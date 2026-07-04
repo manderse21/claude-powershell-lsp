@@ -30,7 +30,9 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
-DOCS (no version bump): **documented the Windows native-LSP launcher guard as a known issue.** On
+
+## [1.23.1] - 2026-07-04
+PATCH (docs): **documented the Windows native-LSP launcher guard as a known issue.** On
 Windows, Claude Code 2.1.196-2.1.200 refuses to start the plugin's registered LSP server -- a
 launcher-level `where.exe` guard rejects the bare `pwsh` command pre-spawn -- so the opt-in
 `nativeServe` navigation tier does not start there even with `nativeServe = shim`. The plugin's core
@@ -40,7 +42,7 @@ with the macOS/Linux real-client status noted as untested. This is an upstream C
 (it also breaks the official `pyright-lsp` plugin), filed as `anthropics/claude-code#73961`; see dispatch
 000107 for the survey. No product code, knob, `CONTRACT.md`, or version change.
 
-DOCS + MANIFEST METADATA (no version bump): **capped every `userConfig` description for Claude Code
+PATCH (docs + manifest metadata): **capped every `userConfig` description for Claude Code
 config-panel height stability, and relocated the full per-knob semantics into a new
 `docs/configuration.md` reference.** Per verified dispatch 000109, the Claude Code `/plugin` config
 panel renders the selected knob's entire description with no height cap, so a long description (up to
