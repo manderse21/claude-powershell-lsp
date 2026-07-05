@@ -163,13 +163,13 @@ real usage, not machinery.
   launch draft (docs/launch/reddit-powershell.md) merged via plugin PR #77 (000112). No longer pending,
   no longer horizon.
 - **Upstream posting -- partly done; the rest is Mike's gate.** Posted / filed: the Windows launcher
-  guard is filed as anthropics/claude-code#73961 (OPEN), and our refreshed comment on
+  guard is filed as anthropics/claude-code#73961 (OPEN); the Claude Code config-panel renderer bug
+  surveyed under 000109 (its manifest-side mitigation -- the description cap + configuration.md --
+  shipped in v1.23.1) is filed as anthropics/claude-code#74289 (OPEN); and our refreshed comment on
   anthropics/claude-plugins-official#1359 is posted (2026-07-05, the issue itself stays OPEN). Still
   UNPOSTED and Mike-gated: the registrar-field-rejection report (our corrected LSP-registration record
   lives internally in docs/upstream/claude-code-lsp-registration.md; the related upstream issue #66987
-  is open), and the Claude Code config-panel renderer-bug report drafted under 000109 (its manifest-side
-  mitigation -- the description cap + configuration.md -- shipped in v1.23.1; the upstream renderer issue
-  is drafted, not posted). The PSES rename-capability fix (issue #2297) was submitted as PR #2299 and is
+  is open). The PSES rename-capability fix (issue #2297) was submitted as PR #2299 and is
   now CLOSED unmerged (2026-06-11, verified live) -- settled, no longer a pending post; the on-disk notes
   that still call it "not submitted" / "open" (docs/upstream/pses-2297-pr.md, sitting-closeout.md) are
   superseded.
