@@ -118,32 +118,104 @@ current v1.23.1 was cut end-to-end by it:
 Together the gated pipeline + the local guard + server-side protection make the gated flow the ONLY
 path to main. v1.19.0 was the first release cut under all three; v1.23.1 is the latest.
 
-## 4. Open work (live dispatch state)
+## 4. Forward plan -- the four-horizon ladder (tactical -> strategic)
 
-No build dispatch is queued: the log holds no `accepted` or `drafted` dispatch carrying unstarted build
-work. (Two inboxes, 000112 and 000113, still read `accepted` while their outboxes read `verified` --
-the F2 inbox-flip lag, not open work; both are done. 000095, an earlier launch-draft refresh, is
-`abandoned`, superseded by 000112.) The prior roadmap's three named forward claims have all LANDED and
-are reclassified out of the horizon:
+Forward work is a ladder, not a set of parked lanes. It climbs Immediate tactical (unblocked now) ->
+Near-term tactical (survey-first cadence) -> Enterprise hardening (adoption-gating) -> Strategic /
+what-if (the bets). Every build item names its gate and its output. No build dispatch is queued today
+(the live `dispatch list` is authoritative on that -- Section 7); every item below is horizon work,
+each gated on a future accept. The feedback-derived items come from a prior planning triage of a
+10-item external-feedback set -- not a file in this repo -- carried here so they stop living only in
+chat.
 
-- Native navigation tier (hover / go-to-def / find-refs): SHIPPED opt-in via the `nativeServe` shim
-  (v1.23.0 / 000103). Not horizon. What remains is upstream, not buildable here: #1359 (serve
-  handshake) and, on Windows, #73961 (launcher guard) -- Section 1.
-- Format apply-mode: SHIPPED as the guarded `formatOnEdit=apply` write-back (v1.23.0 / 000099). The
-  reserved enum value is now real. Not horizon.
-- AI-era rule pack: CLOSED (v1.22.0 / 000097). Slices 1-3 shipped; slice 4 was already-covered; slice 5
-  (angle-bracket placeholders) and the Compatible-Cmdlet / Compatible-Type checks
-  (`PSUseCompatibleCommands` / `PSUseCompatibleTypes`) are deliberately DEFERRED on high false-positive
-  rates -- deferred by design, not open backlog.
+### The 10 feedback items -- disposition
 
-What genuinely remains is survey-identified but unqueued, or paced by usage (Section 5):
+| # | Suggestion | Verdict | Where it lands |
+|---|---|---|---|
+| 1 | Auto-fix write-back | SHIPPED | `formatOnEdit=apply`, v1.23.0 |
+| 2 | Symbol graph | PARTIAL / forward | project-intelligence slice 1 shipped (v1.19.0); reference surfacing -> N1.2 |
+| 3 | Cross-file reasoning | FORWARD (survey) | referenced-by-N via the diagnostic channel -> N1.2 |
+| 4 | Repository memory | RESIST | persistent learned state; the agent's memory layer, not the plugin -> S3.3 |
+| 5 | PS-specific refactoring | SCOPED to flagging | the plugin flags, no refactor engine -> N1.1 |
+| 6 | Risk analysis / score | DROP score, keep facts | deterministic graph facts only -> N1.3 |
+| 7 | Runtime intelligence | STATIC slice shipped | `moduleAwareness`, v1.23.0; the runtime version left -> S3.5 |
+| 8 | Teach PS idioms | STRONGEST fit | new rule-pack idiom slices -> N1.1 |
+| 9 | Explain why a rule exists | STANDOUT cheap win | a static rationale per finding -> I0.1 |
+| 10 | Learn from accepted fixes | SPLIT | closed-loop primitive shipped (v1.19.0); learn-team-style resisted -> S3.3 |
 
-- Deeper rule curation, config-tuning of the kept rules, and fix-suggestion quality -- gated on real
-  interactive dogfood captures, not on machinery (Section 5).
-- An optional closed-loop latency benchmark. The 000061 correction loop shipped its latency as a
-  STRUCTURAL claim (~free next-turn, reusing the warm pass), not a measured number; the measured
-  baseline it would cite (PL-2 / 000054) is `abandoned` (verified live). Quantifying the claim would
-  need a fresh benchmark dispatch -- optional, not critical-path.
+### Horizon 0 -- Immediate tactical (unblocked now; gated only on accept)
+
+- **I0.1 Rule-rationale strings (#9).** A short static "why" per finding on the existing
+  `additionalContext` channel -- no new knob. A cheap survey (rationale source + output shape), then a
+  build slice. Output: MINOR + a `CONTRACT.md` amendment.
+- **I0.2 Post the registrar-field-rejection upstream report (Mike-gated).** The novel silent-drop
+  finding (000069). The open decision is routing -- a comment on `anthropics/claude-code#66987` (OPEN)
+  vs a fresh issue. Strategic-Claude drafts; Mike posts. Output: no code.
+- **I0.3 Begin the dogfood accrual.** Dogfood normal edits of the canonical checkout, then run
+  `scripts/review-dogfood.ps1`. This is the only thing that unblocks the quality wave (N1.4);
+  behavioral, not a dispatch. Output: the ranking that authorizes the first curation slice.
+
+### Horizon 1 -- Near-term tactical (survey-first, one slice per dispatch)
+
+- **N1.1 Idiom rule-pack slices (#8; #5 as flagging).** Re-open the AI-era rule-pack pattern -- closed
+  at v1.22.0 -- with additive idiom rules (ShouldProcess, `Write-Host` -> `Write-Information`,
+  `ThrowTerminatingError`), survey-first, exclude-noisy, a measured 0% false-positive rate proven per
+  slice. The plugin flags; the agent transforms. A deliberate re-open of the v1.22.0 closure with new
+  slices. Output: MINOR per slice.
+- **N1.2 Cross-file reference surfacing (#2 / #3).** A deterministic "referenced by N files" signal via
+  the diagnostic channel -- NOT the gated native-nav path -- strengthening the headless story. Output:
+  MINOR + a dedicated opt-in enum knob.
+- **N1.3 Graph-facts surfacing (#6 core).** Reference count / is-exported / called-from-N as facts, the
+  score dropped. Folds into the N1.2 survey.
+- **N1.4 Quality-wave curation.** Exclude-only curation and config-tuning of the kept base rules, the
+  same discipline as v1.21.1; cut a rule only when `review-dogfood.ps1` over accrued genuine captures
+  ranks it net-noise. The clock is real usage (Section 5). Output: PATCH.
+- **N1.5 Closed-loop latency benchmark.** Turn the 000061 correction loop's structural latency claim
+  into a measured number; it needs a fresh baseline (the PL-2 / 000054 benchmark is `abandoned`,
+  verified live). Output: docs + a harness.
+- **N1.6 Project-intelligence slice 2.** The next deterministic manifest / cross-file slice beyond the
+  v1.19.0 slice 1, scoped to feeding signal. Survey -> build. Output: MINOR.
+
+### Horizon 2 -- Enterprise hardening (parallel track; adoption-gating)
+
+- **E2.1 SARIF / CI deepening.** SARIF upload to GitHub code scanning plus an exit-code policy gate,
+  building on the v1.19.0 standalone scan mode. Output: MINOR.
+- **E2.2 Org policy config.** Centrally-managed ruleset / settings precedence, extending the `ruleset`
+  knob under the existing knob doctrine. Output: MINOR + a `CONTRACT.md` amendment.
+- **E2.3 Catalog listing.** Get into `anthropics/claude-plugins-community` (and the official catalog if
+  it qualifies). Mike-gated. Output: no code.
+- **E2.4 Bus-factor mitigation.** The single-maintainer risk is the real enterprise blocker; the
+  CONTINUITY plan exists (000048), and the mitigation is a documented governance / key-custody path and
+  ideally a second maintainer. Output: docs / governance.
+- **E2.5 Rule-rationale as an audit surface.** The I0.1 strings double as auditability -- every finding
+  carries a verifiable "why". No extra build; note the enterprise framing when I0.1 ships.
+
+### Horizon 3 -- Strategic / what-if (the bets; not committed work)
+
+- **S3.1 Retire the native-nav workaround.** Upstream-gated, monitor-only. When the
+  `anthropics/claude-plugins-official#1359` (OPEN) client fix lands, `doctor.ps1 -ProbeNativeServe`
+  flips to removable and a PATCH drops the shim default; when `anthropics/claude-code#73961` (OPEN)
+  lands, the Windows known-issue note clears.
+- **S3.2 Positioning held firm (guardrail).** Concede the editor; own headless + in-loop + AI-era
+  correctness. Do NOT adopt the "AI Intelligence Layer" / "Architect" identity -- it is unfalsifiable,
+  it spends the earned credibility, and it licenses scope creep. This guardrail governs which what-ifs
+  move up.
+- **S3.3 Agent-layer memory -- deliberately out of plugin scope.** Repository memory (#4),
+  learn-team-style (#10), and risk scoring (#6 as a score) introduce persistent / learned /
+  unfalsifiable state; if ever wanted they belong in the agent's memory layer consuming the plugin's
+  deterministic signal, never in the plugin. Recorded, not backlog.
+- **S3.4 Deferred rules.** `PSUseCompatibleCommands` / `PSUseCompatibleTypes` and the
+  angle-bracket-placeholder check re-enter only as a MINOR at a proven 0% false-positive rate on the
+  widened corpus; the 000096 pre-PSSA AST pass is the mechanism.
+- **S3.5 Runtime intelligence, full (#7).** Runtime execution capture is a different architecture with
+  real privacy / scope questions; the static slice (`moduleAwareness`) is the committed extent, and the
+  runtime version is a deliberate leave.
+
+### How each step lands
+
+Every H0-H2 build entry becomes a survey-first dispatch pair under the existing flow: author ->
+accept -> CC executes in a worktree -> Mike holds all gates. Ground truth (the live `dispatch list`,
+the log, file inspection) stays authoritative over this roadmap.
 
 ## 5. Paced by the dogfood log (cannot compress)
 
