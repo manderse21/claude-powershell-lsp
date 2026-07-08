@@ -1,8 +1,11 @@
 # Claude Code plugin LSP registration -- root cause (corrected record)
 
 **What this is:** the corrected internal record of why this plugin's native LSP server did not
-register, and what actually fixes it. **Not posted upstream.** Any upstream comment (the
-`#66987`-class registrar-field-rejection report) is a separate Mike-gated draft.
+register, and what actually fixes it. **The registration root cause is now FILED upstream as
+[`anthropics/claude-code#66987`](https://github.com/anthropics/claude-code/issues/66987)** -- Mike
+rewrote that issue to exactly this root cause on 2026-07-06 (OPEN, re-confirmed on Claude Code
+2.1.201; see "#66987 is now the filed registrar-drop report" below). This stays the internal
+record; any FURTHER upstream comment remains Mike-gated (all external posting is Mike's gate).
 
 **Status (2026-06-27, dispatch 000069 -> 000075) -- root cause ISOLATED; the earlier
 "platform-inert" framing is SUPERSEDED.** This document previously argued that a plugin-provided
@@ -47,6 +50,50 @@ not platform-wide**:
 `startupTimeout`, `maxRestarts`, `env` (all proven registrar-clean). A regression guard
 (`tests/PowerShellLsp.Unit.Tests.ps1`) fails CI if any `lspServers` entry ever re-declares a field
 outside that allowlist.
+
+## #66987 is now the filed registrar-drop report -- live re-check + routing (dispatch 000120, 2026-07-08)
+
+**Live `gh` re-check (verified-from-gh 2026-07-08).** `anthropics/claude-code#66987` is **OPEN**,
+authored by manderse21, created 2026-06-10, last updated 2026-07-06; labels **bug, has repro,
+platform:windows, area:lsp, area:plugins**; **1 comment** (manderse21, 2026-07-06 -- the stale-bot
+holdoff that rewrote the issue to the root cause). Between 2026-06-10 and 2026-07-06 Mike **rewrote
+the issue body itself** to the registrar silent-drop root cause and **re-confirmed the drop on the
+current build (Claude Code 2.1.201)** via a two-plugin control differing only by the two fields. The
+OQ2 stop condition (issue closed, or materially changed so a refresh makes no sense) is **not** met:
+the issue is open, it is the same defect, and this re-check is exactly the reconciliation leg 3 exists
+to do.
+
+**What is now said upstream (so this record no longer carries it as an unfiled draft).** The issue
+body now states, in full: the schema-permits / registrar-rejects root cause; the environment (2.1.195
+isolation + 2.1.201 re-confirm, PSES v4.6.0, PSScriptAnalyzer 1.25.0, Windows 11); the reproduction;
+the single-field isolation matrix; the "which manifest is read" (`plugin.json` wins over
+`marketplace.json`) finding; a suggested resolution (honor the fields, reject them at
+`claude plugin validate`, or emit one drop warning); the relationship to `#14803` / `#379` / `#1359`
+/ `#73961`; and an explicit registration-only scope. That is the whole of this record's registration
+story -- it is upstream now.
+
+**The remainder (registration-relevant, still unsaid upstream) -- post-ready, UNPOSTED.** The only
+additive, in-scope point `#66987` does not carry is the plugin-side defense: powershell-lsp ships a
+regression guard (dispatch 000075) -- `tests/PowerShellLsp.Unit.Tests.ps1` fails CI if any
+`lspServers` entry ever re-declares a field outside the proven registrar-clean allowlist (`command`,
+`args`, `extensionToLanguage`, `transport`, `startupTimeout`, `maxRestarts`, `env`). A post-ready
+comment, should Mike choose to post it:
+
+> FWIW, on the plugin side we converged on an allowlist as the defense: our manifest test fails CI
+> if an `lspServers` entry declares any field outside the set we proved registrar-clean (`command`,
+> `args`, `extensionToLanguage`, `transport`, `startupTimeout`, `maxRestarts`, `env`) -- i.e. we now
+> treat `restartOnCrash` / `shutdownTimeout` as unsupported at the registrar. A named
+> `claude plugin validate` rejection for those two fields would let authors catch this at authoring
+> time instead of rediscovering the silent drop -- exactly what the "reject at validate time" option
+> in your Suggested resolution would give.
+
+**Routing recommendation (finding; posting is Mike's gate).** Do **not** open a fresh issue --
+`#66987` already IS the dedicated, open, has-repro registrar-drop issue, and a second issue would
+split the signal. A comment is **optional and low-priority**: the issue is already comprehensive and
+was re-confirmed on the current build on 2026-07-06, so the plugin-guard note above advances nothing
+toward a fix. Recommendation: **hold** posting; keep the note ready for the next natural occasion (a
+maintainer question, or another stale-bot holdoff nudge if the issue goes quiet). The full routing
+rationale is recorded in the dispatch 000120 outbox.
 
 ## The native LSP launcher guard -- a second, independent blocker (Windows; dispatch 000107, upstream `#73961`)
 
@@ -219,10 +266,12 @@ in `plugin.json`; putting it only in `marketplace.json` is inert while a `plugin
   registrar-clean (we register from `plugin.json`, which the installer does copy).
 - **`#1359`-class server->client init handshake.** The remaining **serve** gap after registration
   is restored. Upstream / Claude-Code-side.
-- **`#66987`.** The plugin-manifest LSP-registration tracking issue this plugin cites. The accurate
-  reframing: the platform registration path is effective; the registrar **silently rejects**
-  schema-valid `restartOnCrash` / `shutdownTimeout`, which is the report worth filing (separate,
-  Mike-gated, not posted here).
+- **`#66987` (OPEN) -- now the filed registrar-drop report.** The platform registration path is
+  effective; the registrar **silently rejects** schema-valid `restartOnCrash` / `shutdownTimeout`.
+  As of 2026-07-06 this is no longer an unfiled draft: Mike rewrote `#66987` to exactly this root
+  cause (body + a 2026-07-06 root-cause comment; labels bug / has-repro / platform:windows /
+  area:lsp / area:plugins; re-confirmed on Claude Code 2.1.201). See "#66987 is now the filed
+  registrar-drop report" above for the live re-check, the remainder, and the routing recommendation.
 
 ---
 

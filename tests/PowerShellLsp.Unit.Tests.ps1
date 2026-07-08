@@ -1407,6 +1407,31 @@ Describe 'PSSA .nupkg cache is verify-gated and pin-bound (dispatch 000049)' {
     }
 }
 
+Describe 'Pester bootstrap is bounded to the 5.x major (dispatch 000120)' {
+    # Pester 6.0.0 went GA on the PowerShell Gallery 2026-07-07. tests/run-tests.ps1 resolves
+    # Pester at THREE points that were all unbounded UPWARD, so a runner-image change or a
+    # fresh-install path could silently run the whole suite under Pester 6 with nobody deciding
+    # to upgrade. All three are now capped at the 5.x major. These text-pin guards read the LIVE
+    # source (the 000073 attest-pin Should-Match-on-the-literal pattern) so a future edit cannot
+    # silently UNBOUND any one of them -- remove a single cap and its assertion goes RED.
+    # Migrating to Pester 6 is a separate, later, Mike-minted decision; when it lands these
+    # literals are retargeted DELIBERATELY (as the 000073 pin is), never loosened by accident.
+    # Adversarial control: revert the detection filter to '-ge 5' and the first It goes RED.
+    BeforeAll {
+        $script:RunTestsSrc = Get-Content -LiteralPath (Join-Path (Join-Path $script:PluginRoot 'tests') 'run-tests.ps1') -Raw
+    }
+    It 'bounds the detection filter to the 5.x major (Version.Major -eq 5, never -ge 5)' {
+        $script:RunTestsSrc | Should -Match '\$_\.Version\.Major -eq 5'
+        $script:RunTestsSrc | Should -Not -Match '\$_\.Version\.Major -ge 5'
+    }
+    It 'caps the Install-Module fresh-install path at -MaximumVersion 5.99.99' {
+        $script:RunTestsSrc | Should -Match 'Install-Module Pester[^\r\n]*-MaximumVersion 5\.99\.99'
+    }
+    It 'caps the Import-Module import at -MaximumVersion 5.99.99 (imports by name, not the resolved $p5)' {
+        $script:RunTestsSrc | Should -Match 'Import-Module Pester[^\r\n]*-MaximumVersion 5\.99\.99'
+    }
+}
+
 # ===========================================================================
 # Format-on-edit: suggest, never rewrite (dispatch 000059, PL-8) -- pure helpers
 # ===========================================================================
