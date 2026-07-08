@@ -12,14 +12,18 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# Pester bootstrap bounded to the 5.x major (dispatch 000120): Pester 6.0.0 (GA on the
+# PowerShell Gallery 2026-07-07) is a breaking major, so all three resolution points below
+# -- detection, Install-Module, Import-Module -- are capped at 5.x; a runner-image change or
+# a fresh install must not silently run the suite under Pester 6. Upgrading is a later call.
 $p5 = Get-Module -ListAvailable Pester |
-    Where-Object { $_.Version.Major -ge 5 } | Sort-Object Version -Descending | Select-Object -First 1
+    Where-Object { $_.Version.Major -eq 5 } | Sort-Object Version -Descending | Select-Object -First 1
 if ($null -eq $p5) {
     Write-Host 'Pester 5 not found; installing to CurrentUser scope...'
     try { Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue } catch { }
-    Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck -MinimumVersion 5.0.0 -Repository PSGallery
+    Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck -MinimumVersion 5.0.0 -MaximumVersion 5.99.99 -Repository PSGallery
 }
-Import-Module Pester -MinimumVersion 5.0.0 -Force
+Import-Module Pester -MinimumVersion 5.0.0 -MaximumVersion 5.99.99 -Force
 
 $config = New-PesterConfiguration
 $config.Run.Path = $PSScriptRoot
