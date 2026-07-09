@@ -31,6 +31,46 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-07-08
+MINOR: **rule-rationale strings -- each surfaced rule now carries a short "why this rule matters"
+line on the existing `additionalContext` channel.** A finding used to arrive as
+code/message/severity/line plus an optional `fix:`; it now also carries a `why:` line explaining what
+the rule catches and what to do instead, so the agent reading the feedback has the reasoning, not just
+the verdict. The rationale is **additive prose** on the channel that already exists.
+
+The table (`rulesets/rule-rationales.psd1`) is **HYBRID** by evidence (dispatch 000120 survey):
+the **54** rationales for the `rulesets/base.psd1` PSScriptAnalyzer surface are **auto-derived offline**
+from the vendored pinned PSScriptAnalyzer 1.25.0 (`CommonName` + a whole-sentence prefix of
+`Description`, 180-char budget, cut at a word boundary and never mid-word), while the **4**
+plugin-owned finders -- which PSScriptAnalyzer knows nothing about -- are **hand-authored**, keyed by
+the ruleId each finder actually emits (`BashIsm`, `PS7OnlySyntax`, `NonAsciiChar`,
+`ModuleNotInstalled`). So the large analyzer surface stays zero-maintenance and pin-regenerable, and
+the hand-maintained surface is exactly four entries.
+
+Rendering is **deduplicated per RULE, not per finding**: if `PSUseApprovedVerbs` fires eight times in a
+file its rationale renders **once**, at the first finding. That bounds the added context to roughly
+(distinct rules in the file) x 180 chars rather than (findings) x 180.
+
+The table is **GENERATED, never hand-edited**: `scripts/regen-rule-rationales.ps1` writes it, and
+`-Check` re-derives and diffs it against the shipped file (exit 0 match / 1 drift), mirroring
+`regen-base-ruleset.ps1`. A pin-coupled unit guard asserts the shipped table's recorded pin equals the
+pin in `scripts/ensure-pssa.ps1` and that its PSSA half is exactly the enumerated base surface, so a
+pin bump or a base-ruleset edit goes RED until the table is regenerated in the same reviewed diff --
+never silent staleness.
+
+Two properties are preserved by construction. A **clean file still emits nothing**: rationales ride
+only existing findings, and the table is not even loaded when a file has none, so a clean pass is
+byte-identical to before (integration-proven). And a rule with **no entry degrades gracefully** -- its
+finding is surfaced with no rationale line, never fabricated, never blocking (the plugin's fifth owned
+code, `ManifestConsistency`, has no entry today and exercises exactly this path).
+
+**No `userConfig` knob** (default-on, additive prose; length is handled by the cap and the per-rule
+dedup, not by a toggle), **no `CONTRACT.md` change** (Tier-1 1.1 knob names and 1.2 status tokens are
+untouched, and the frozen "a clean pass adds nothing to `additionalContext`" property still holds), **no
+new status token**, and **no change to which rules run** (`base.psd1`, the PSES-15 default surface, the
+pinned analyzer, and the settings-precedence ladder are all unchanged). Rationales describe the surface;
+they do not alter it. See dispatch 000121.
+
 ## [1.23.1] - 2026-07-04
 PATCH (docs): **documented the Windows native-LSP launcher guard as a known issue.** On
 Windows, Claude Code 2.1.196-2.1.200 refuses to start the plugin's registered LSP server -- a
