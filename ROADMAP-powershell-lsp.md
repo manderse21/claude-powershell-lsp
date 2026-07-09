@@ -155,13 +155,15 @@ chat.
 
 ### Horizon 0 -- Immediate tactical (unblocked now; gated only on accept)
 
-- **I0.1 Rule-rationale strings (#9) -- SHIPPED (v1.24.0 / 000121).** Delivered as a MINOR, and the
-  survey found that neither the anticipated knob nor the anticipated `CONTRACT.md` amendment was
-  needed; the ship detail is in Section 2. **Residual (the only I0.1 work left):** the plugin's fifth
-  owned code, `ManifestConsistency`, has no entry in `rulesets/rule-rationales.psd1` and rides the
-  graceful-degrade path -- its finding surfaces with no rationale line, never fabricated, never
-  blocking. A future micro-slice hand-authors that single entry in `scripts/regen-rule-rationales.ps1`
-  and regenerates the table under `-Check`. Output: PATCH.
+- **I0.1 Rule-rationale strings (#9) -- SHIPPED (v1.24.0 / 000121).** Delivered as a MINOR and, as
+  planned, with no new knob; the `CONTRACT.md` amendment anticipated here turned out to be unnecessary,
+  because additive prose on an existing channel leaves the frozen Tier-1 surface (knob names, status
+  tokens, and the "a clean pass adds nothing" property) untouched. The ship detail is in Section 2.
+  **Residual (the only I0.1 work left):** the plugin's fifth owned code, `ManifestConsistency`, has no
+  entry in `rulesets/rule-rationales.psd1` and rides the graceful-degrade path -- its finding surfaces
+  with no rationale line, never fabricated, never blocking. A future micro-slice hand-authors that
+  single entry in `scripts/regen-rule-rationales.ps1` and regenerates the table under `-Check`.
+  Output: PATCH.
 - **I0.2 Post the registrar-field-rejection upstream report -- RESOLVED (no code).** The novel
   silent-drop finding (000069) is filed: Mike rewrote `anthropics/claude-code#66987` (OPEN) on
   2026-07-06 into the comprehensive registrar-drop report, re-confirmed on Claude Code 2.1.201. The
