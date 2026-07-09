@@ -1305,18 +1305,25 @@ Describe 'Import-RuleRationales / Get-RationaleForCode -- runtime lookup + per-r
         $rendered = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
         (Get-RationaleForCode -Code 'PSUseApprovedVerbs' -Table @{} -Rendered $rendered) | Should -BeExactly ''
     }
-    It 'Select-RationaleLines returns one line per distinct rule, in first-appearance order' {
+    It 'a whole-file render pass emits one rationale per distinct rule, in first-appearance order' {
+        # Drives the exact sequence lsp-client.ps1's render loop drives: one $Rendered set for the
+        # file, one Get-RationaleForCode call per finding, in render order.
         $records = @(
             [pscustomobject]@{ code = 'PSAvoidUsingWriteHost' }
             [pscustomobject]@{ code = 'PSUseApprovedVerbs' }
-            [pscustomobject]@{ code = 'PSAvoidUsingWriteHost' }   # repeat -> not emitted again
-            [pscustomobject]@{ code = 'ManifestConsistency' }     # no entry -> degrade
+            [pscustomobject]@{ code = 'PSAvoidUsingWriteHost' }   # repeat -> no second line
+            [pscustomobject]@{ code = 'ManifestConsistency' }     # owned, no entry -> degrade
             [pscustomobject]@{ code = '' }                        # parser -> skipped
         )
-        $lines = @(Select-RationaleLines -Records $records -Table $script:RatTable)
-        $lines.Count | Should -Be 2
-        $lines[0].code | Should -BeExactly 'PSAvoidUsingWriteHost'
-        $lines[1].code | Should -BeExactly 'PSUseApprovedVerbs'
+        $rendered = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
+        $emitted = @()
+        foreach ($r in $records) {
+            $why = Get-RationaleForCode -Code ([string]$r.code) -Table $script:RatTable -Rendered $rendered
+            if (-not [string]::IsNullOrWhiteSpace($why)) { $emitted += [string]$r.code }
+        }
+        $emitted.Count | Should -Be 2
+        $emitted[0] | Should -BeExactly 'PSAvoidUsingWriteHost'
+        $emitted[1] | Should -BeExactly 'PSUseApprovedVerbs'
     }
 }
 

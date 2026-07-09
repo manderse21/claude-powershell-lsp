@@ -1064,32 +1064,12 @@ function Import-RuleRationales {
     return $table
 }
 
-function Select-RationaleLines {
-    # PURE. Given the diagnostic records IN RENDER ORDER and a rationale table, return an ordered
-    # hashtable-like list of @{ code; rationale } -- ONE entry per DISTINCT rule code that both
-    # (a) appears in the records and (b) has a table entry -- in FIRST-APPEARANCE order.
-    #
-    # Dedup is per RULE, not per finding: if PSUseApprovedVerbs fires 8 times its rationale is
-    # rendered once. A code with no table entry is simply absent from the result (degrade). The
-    # parser's empty/'0' code never matches a rule name, so parser errors carry no rationale.
-    param([object[]]$Records, [hashtable]$Table)
-    if ($null -eq $Records -or $null -eq $Table -or $Table.Count -eq 0) { return @() }
-    $seen = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
-    $out = New-Object System.Collections.ArrayList
-    foreach ($r in $Records) {
-        $code = [string](Get-Prop $r 'code')
-        if ([string]::IsNullOrWhiteSpace($code) -or $code -eq '0') { continue }
-        if (-not $Table.ContainsKey($code)) { continue }
-        if (-not $seen.Add($code)) { continue }
-        [void]$out.Add([pscustomobject]@{ code = $code; rationale = [string]$Table[$code] })
-    }
-    return @($out)
-}
-
 function Get-RationaleForCode {
     # First-appearance lookup used by the render loop: the rationale for $Code if the table has one
     # AND $Code has not been rendered yet in this file. $Rendered is a HashSet the caller owns, so
-    # the dedup state lives with the render pass. Returns '' when there is nothing to render.
+    # the dedup state lives with the render pass -- that is what makes the rationale render ONCE per
+    # distinct rule per file, however many findings that rule produces. Returns '' when there is
+    # nothing to render (no code, no table, no entry, or already rendered).
     param([string]$Code, [hashtable]$Table, $Rendered)
     if ([string]::IsNullOrWhiteSpace($Code) -or $Code -eq '0') { return '' }
     if ($null -eq $Table -or $Table.Count -eq 0) { return '' }

@@ -57,7 +57,7 @@ $ErrorActionPreference = 'Stop'
 # the pin it was generated at.
 #
 # THE RUNTIME CONTRACT. The table is a lookup keyed by the diagnostic's `code` (the PSSA rule name,
-# or the owned finder's ruleId) -- see Import-RuleRationales / Select-RationaleLines in
+# or the owned finder's ruleId) -- see Import-RuleRationales / Get-RationaleForCode in
 # scripts/lib/lsp-common.ps1. A code with NO entry surfaces its finding with NO rationale line:
 # degrade, never fabricate, never block.
 #
