@@ -530,6 +530,14 @@ try {
         [void]$sb.AppendLine('Project intelligence: ' + ($indeterminateMsg -join '; '))
     }
     if ($diags.Count -gt 0) {
+        # Rule rationales (dispatch 000121): a static "why this rule matters" line, ADDITIVE prose
+        # on this same channel. Loaded ONLY when there is at least one finding, so a clean file
+        # never even reads the table and its emit stays byte-identical. An absent or unparseable
+        # table yields an empty lookup -- findings then render exactly as before (graceful degrade).
+        # $renderedRules carries the per-rule dedup state for THIS file: a rule's rationale is
+        # rendered once, at its first finding, however many times it fires.
+        $rationales = Import-RuleRationales
+        $renderedRules = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
         [void]$sb.AppendLine('PowerShell diagnostics (' + $diags.Count + ') for ' + $path + ':')
         foreach ($d in $diags) {
             $sev = [string](Get-Prop $d 'severity')
@@ -541,6 +549,10 @@ try {
             $hasCode = $code -and ($code -ne '0')
             $label = if ($hasCode -and $src) { $src + '/' + $code } elseif ($src) { $src } else { 'parser' }
             [void]$sb.AppendLine('  [' + $sev + '] line ' + $line + ', col ' + $col + ' -- ' + $msg + ' (' + $label + ')')
+            # The rationale is about the RULE, so it precedes the per-finding fix and renders only
+            # on this rule's FIRST finding. A code with no table entry adds nothing.
+            $why = Get-RationaleForCode -Code $code -Table $rationales -Rendered $renderedRules
+            if (-not [string]::IsNullOrWhiteSpace($why)) { [void]$sb.AppendLine('      why: ' + $why) }
             # Track C: surface the PSSA suggested fix (replacement text) when present.
             # Surface-only -- the model applies it; the hook never writes files. Q3:
             # primary correction plus a count of any further alternatives.

@@ -135,6 +135,73 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
         $out | Should -Match 'fix: Get-ChildItem'
     }
 
+    # --- rule rationales (dispatch 000121, I0.1 slice-1) --------------------------------------
+    # The four acceptance proofs: a PSSA finding carries its derived rationale; a rule that fires
+    # many times renders its rationale ONCE; an owned finder carries its hand-authored rationale;
+    # and a clean file's surface is byte-identical to pre-change (it emits nothing at all).
+
+    It 'a PSSA finding carries its DERIVED rationale line on additionalContext (000121)' {
+        # PSUseApprovedVerbs -> the rationale auto-derived from the pinned PSScriptAnalyzer's
+        # CommonName ('Cmdlet Verbs') + capped Description. Adversarial control: delete the
+        # 'why:' append in lsp-client.ps1 and this goes RED.
+        $fix = Join-Path $script:DataDir 'pester-rationale-pssa.ps1'
+        "function Frobnicate-Rationale {`n    Get-Process`n}" | Set-Content -LiteralPath $fix -Encoding ascii
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:Sid; tool_input = @{ file_path = $fix }; cwd = $script:DataDir } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
+        $ctx = ($out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $ctx | Should -Match 'PSUseApprovedVerbs'
+        $ctx | Should -Match 'why: Cmdlet Verbs -- Checks that all defined cmdlets use approved verbs'
+    }
+
+    It 'a repeated rule renders its rationale exactly ONCE per file (per-rule dedup, 000121)' {
+        # Three unapproved-verb functions -> three PSUseApprovedVerbs findings, ONE 'why:' line.
+        # This is the length-budget property: the rationale is per RULE, not per finding.
+        # Adversarial control: drop the $renderedRules dedup and the count becomes 3.
+        $fix = Join-Path $script:DataDir 'pester-rationale-dedup.ps1'
+        @(
+            'function Frobnicate-One { Get-Process }'
+            'function Frobnicate-Two { Get-Process }'
+            'function Frobnicate-Three { Get-Process }'
+        ) -join "`n" | Set-Content -LiteralPath $fix -Encoding ascii
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:Sid; tool_input = @{ file_path = $fix }; cwd = $script:DataDir } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
+        $ctx = ($out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        # The rule fired at least 3 times (non-vacuous: if it fired once the dedup claim is empty)...
+        ([regex]::Matches($ctx, 'PSUseApprovedVerbs')).Count | Should -BeGreaterOrEqual 3
+        # ...and its rationale rendered exactly once.
+        ([regex]::Matches($ctx, 'why: Cmdlet Verbs')).Count | Should -Be 1
+    }
+
+    It 'an OWNED finder carries its hand-authored rationale (BashIsm; 000121)' {
+        # PSScriptAnalyzer has no metadata for the plugin's own finders, so this rationale comes
+        # from the hand-authored half of the table -- keyed by the EMITTED ruleId ('BashIsm').
+        $fix = Join-Path $script:DataDir 'pester-rationale-owned.ps1'
+        "grep 'pattern'" | Set-Content -LiteralPath $fix -Encoding ascii
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:Sid; tool_input = @{ file_path = $fix }; cwd = $script:DataDir } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
+        $ctx = ($out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $ctx | Should -Match 'BashIsm'
+        $ctx | Should -Match 'why: Unix/bash command, not recognized as a PowerShell command here'
+    }
+
+    It 'a CLEAN file still emits NOTHING -- byte-identical to pre-change (frozen clean property; 000121)' {
+        # The load-bearing invariant. Rationales ride ONLY existing findings, and the table is not
+        # even loaded when there are none, so a clean, settled pass adds nothing to the surface.
+        # Uses the corpus's known-good clean sample (the 000091 FP oracle), not an ad-hoc fixture.
+        $src = Join-Path (Split-Path -Parent $script:ScriptsDir) 'tests/corpus/samples/clean/clean-advanced-function.ps1'
+        Test-Path -LiteralPath $src -PathType Leaf | Should -BeTrue
+        $fix = Join-Path $script:DataDir 'pester-rationale-clean.ps1'
+        Copy-Item -LiteralPath $src -Destination $fix -Force
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:Sid; tool_input = @{ file_path = $fix }; cwd = $script:DataDir } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
+        # A clean settled pass writes NOTHING to stdout at all (Write-HookContext is never called).
+        ([string]$out).Trim() | Should -BeExactly ''
+    }
+
     It 'surfaces a syntax error via the in-process parser with zero pipe call (Track B)' {
         # Broken file written to scratch (NOT the repo tree -- the repo ASCII/parse
         # unit test would fail on a deliberately broken .ps1). Use a session id with

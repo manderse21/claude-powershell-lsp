@@ -1185,6 +1185,177 @@ Describe 'rulesets/base.psd1 -- enumerated, deterministic base ruleset (dispatch
     }
 }
 
+# ===========================================================================
+# Rule rationales (dispatch 000121, I0.1 slice-1)
+# ===========================================================================
+
+Describe 'rulesets/rule-rationales.psd1 -- shipped table invariants (dispatch 000121)' {
+    # OFFLINE, parse-only: no PSScriptAnalyzer, no daemon, no network, so this runs on every leg.
+    # It pins the table's SHAPE and its coupling to the two things it derives over -- the PSSA pin
+    # in scripts/ensure-pssa.ps1 and the enumerated rulesets/base.psd1 surface. A pin bump or a
+    # base-ruleset edit therefore goes RED here until the table is regenerated in the same reviewed
+    # diff. The full text-level derivation match lives in the -Check Describe below.
+    BeforeAll {
+        $script:RatFile = Join-Path $script:PluginRoot 'rulesets/rule-rationales.psd1'
+        $script:RatData = Import-PowerShellDataFile -LiteralPath $script:RatFile
+        $script:RatEntries = $script:RatData['entries']
+        $script:RatOwned = @($script:RatData['owned'])
+        $script:RatBase = @((Import-PowerShellDataFile -LiteralPath (Join-Path $script:PluginRoot 'rulesets/base.psd1'))['IncludeRules'])
+    }
+    It 'exists and parses as a v1 table with entries, owned, pin and cap' {
+        Test-Path -LiteralPath $script:RatFile -PathType Leaf | Should -BeTrue
+        $script:RatData['schema'] | Should -BeExactly 'rule-rationales/v1'
+        $script:RatEntries.Count | Should -BeGreaterThan 0
+        $script:RatOwned.Count | Should -BeGreaterThan 0
+    }
+    It 'is PIN-COUPLED: pssa_version equals the pin in scripts/ensure-pssa.ps1' {
+        # The load-bearing coupling. Bump $PssaVersion without regenerating and this goes RED.
+        # Adversarial control: change pssa_version in the shipped table and this goes RED.
+        $pin = Get-PinnedPssaVersion
+        $pin | Should -Not -BeNullOrEmpty
+        [string]$script:RatData['pssa_version'] | Should -BeExactly $pin
+    }
+    It 'covers the base ruleset surface EXACTLY: entries = base-54 PSSA rules + the owned finders' {
+        $pssaKeys = @($script:RatEntries.Keys | Where-Object { $script:RatOwned -notcontains $_ } | Sort-Object)
+        $baseSorted = @($script:RatBase | Sort-Object)
+        ($pssaKeys -join ',') | Should -BeExactly ($baseSorted -join ',')
+        [int]$script:RatData['pssa_count'] | Should -Be $baseSorted.Count
+        [int]$script:RatData['owned_count'] | Should -Be $script:RatOwned.Count
+        $script:RatEntries.Count | Should -Be ($baseSorted.Count + $script:RatOwned.Count)
+    }
+    It 'hand-authors an entry for each of the 4 plugin-owned finders, keyed by the EMITTED ruleId' {
+        # NOT the finder FUNCTION names: Find-ModuleAwareness emits code 'ModuleNotInstalled', and
+        # the runtime lookup keys on the diagnostic `code`. An entry keyed 'ModuleAwareness' would
+        # silently never match. Adversarial control: rename any key here and this goes RED.
+        foreach ($c in @('BashIsm', 'PS7OnlySyntax', 'NonAsciiChar', 'ModuleNotInstalled')) {
+            $script:RatOwned | Should -Contain $c
+            [string]$script:RatEntries[$c] | Should -Not -BeNullOrEmpty
+        }
+    }
+    It 'every rationale is non-empty, within the declared cap, and never ends mid-word' {
+        $cap = [int]$script:RatData['max_length']
+        $cap | Should -BeGreaterThan 0
+        foreach ($k in @($script:RatEntries.Keys)) {
+            $v = [string]$script:RatEntries[$k]
+            $v | Should -Not -BeNullOrEmpty
+            $v.Length | Should -BeLessOrEqual $cap
+            # A truncated rationale ends '...' preceded by a whole word, never a bare fragment.
+            if ($v.EndsWith('...')) { $v | Should -Match '\w\.\.\.$' }
+        }
+    }
+    It 'every rationale is pure printable ASCII (the PS 5.1 no-BOM mojibake trap)' {
+        # Collect offenders then assert ONCE: a per-character Should is ~17k assertions and
+        # dominates the unit suite's runtime. Adversarial control: put an em-dash in any entry.
+        $bad = @()
+        foreach ($k in @($script:RatEntries.Keys)) {
+            foreach ($ch in ([string]$script:RatEntries[$k]).ToCharArray()) {
+                if ([int]$ch -lt 32 -or [int]$ch -gt 126) { $bad += ('{0}: U+{1:X4}' -f $k, [int]$ch) }
+            }
+        }
+        ($bad -join '; ') | Should -BeExactly ''
+    }
+    It 'the shipped file itself is no-BOM UTF-8 with no non-ASCII byte' {
+        # Deliberately does NOT assert "no CR". Line endings in the WORKING TREE are a property of the
+        # CHECKOUT, not of the artifact: this repo ships no .gitattributes, so a Windows runner with
+        # git's default core.autocrlf=true checks LF blobs out as CRLF. Asserting CR==0 here passes on
+        # macOS/Linux and can never pass on the Windows CI legs. The invariant that actually matters --
+        # the generator emits LF only -- is enforced at the source in regen-rule-rationales.ps1, whose
+        # whole-file Assert-AsciiText -AllowNewline permits 0x0A and rejects 0x0D (and every other
+        # control byte) before the file is ever written.
+        # BOM and non-ASCII bytes ARE checkout-invariant (git normalizes neither), so they are asserted.
+        $bytes = [System.IO.File]::ReadAllBytes($script:RatFile)
+        $bytes.Length | Should -BeGreaterThan 0
+        ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) | Should -BeFalse
+        @($bytes | Where-Object { $_ -gt 0x7E }).Count | Should -Be 0    # no non-ASCII
+    }
+}
+
+Describe 'Import-RuleRationales / Get-RationaleForCode -- runtime lookup + per-rule dedup (dispatch 000121)' {
+    # The rendering seam, PURE and offline. Adversarial control: drop the $Rendered.Add() guard in
+    # Get-RationaleForCode and the 'renders once per distinct rule' assertion goes RED.
+    BeforeAll {
+        $script:RatTable = Import-RuleRationales
+    }
+    It 'loads the shipped table keyed by rule code' {
+        $script:RatTable.Count | Should -BeGreaterThan 0
+        $script:RatTable.ContainsKey('PSAvoidUsingWriteHost') | Should -BeTrue
+        $script:RatTable.ContainsKey('BashIsm') | Should -BeTrue
+    }
+    It 'renders a rule rationale ONCE per file, however many times the rule fires (dedup per rule)' {
+        $rendered = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
+        $first = Get-RationaleForCode -Code 'PSUseApprovedVerbs' -Table $script:RatTable -Rendered $rendered
+        $second = Get-RationaleForCode -Code 'PSUseApprovedVerbs' -Table $script:RatTable -Rendered $rendered
+        $third = Get-RationaleForCode -Code 'PSUseApprovedVerbs' -Table $script:RatTable -Rendered $rendered
+        $first | Should -Not -BeNullOrEmpty
+        $second | Should -BeExactly ''
+        $third | Should -BeExactly ''
+    }
+    It 'a DIFFERENT rule in the same file still renders its own rationale' {
+        $rendered = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
+        (Get-RationaleForCode -Code 'PSUseApprovedVerbs' -Table $script:RatTable -Rendered $rendered) | Should -Not -BeNullOrEmpty
+        (Get-RationaleForCode -Code 'PSAvoidUsingWriteHost' -Table $script:RatTable -Rendered $rendered) | Should -Not -BeNullOrEmpty
+    }
+    It 'DEGRADES GRACEFULLY: a code with no table entry yields no rationale line, never a throw' {
+        $rendered = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
+        # ManifestConsistency is a REAL plugin-owned code with no hand-authored entry (see the
+        # 000121 outbox): it must surface its finding with no rationale, never fabricate one.
+        (Get-RationaleForCode -Code 'ManifestConsistency' -Table $script:RatTable -Rendered $rendered) | Should -BeExactly ''
+        (Get-RationaleForCode -Code 'PSTotallyMadeUpRule' -Table $script:RatTable -Rendered $rendered) | Should -BeExactly ''
+    }
+    It 'a parser finding (empty or 0 code) never carries a rationale' {
+        $rendered = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
+        (Get-RationaleForCode -Code '' -Table $script:RatTable -Rendered $rendered) | Should -BeExactly ''
+        (Get-RationaleForCode -Code '0' -Table $script:RatTable -Rendered $rendered) | Should -BeExactly ''
+    }
+    It 'an EMPTY table degrades to no rationale lines at all (absent/unparseable file)' {
+        $rendered = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
+        (Get-RationaleForCode -Code 'PSUseApprovedVerbs' -Table @{} -Rendered $rendered) | Should -BeExactly ''
+    }
+    It 'a whole-file render pass emits one rationale per distinct rule, in first-appearance order' {
+        # Drives the exact sequence lsp-client.ps1's render loop drives: one $Rendered set for the
+        # file, one Get-RationaleForCode call per finding, in render order.
+        $records = @(
+            [pscustomobject]@{ code = 'PSAvoidUsingWriteHost' }
+            [pscustomobject]@{ code = 'PSUseApprovedVerbs' }
+            [pscustomobject]@{ code = 'PSAvoidUsingWriteHost' }   # repeat -> no second line
+            [pscustomobject]@{ code = 'ManifestConsistency' }     # owned, no entry -> degrade
+            [pscustomobject]@{ code = '' }                        # parser -> skipped
+        )
+        $rendered = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
+        $emitted = @()
+        foreach ($r in $records) {
+            $why = Get-RationaleForCode -Code ([string]$r.code) -Table $script:RatTable -Rendered $rendered
+            if (-not [string]::IsNullOrWhiteSpace($why)) { $emitted += [string]$r.code }
+        }
+        $emitted.Count | Should -Be 2
+        $emitted[0] | Should -BeExactly 'PSAvoidUsingWriteHost'
+        $emitted[1] | Should -BeExactly 'PSUseApprovedVerbs'
+    }
+}
+
+Describe 'regen-rule-rationales.ps1 -Check -- the shipped table matches the derivation at the pin (dispatch 000121)' {
+    # The pin-coupled DERIVATION guard (the 000087 regen -Check shape). Vendors the pinned
+    # PSScriptAnalyzer through the plugin's own ensure-pssa.ps1 -- the SAME BeforeAll bootstrap the
+    # Corpus/Integration suites use -- then re-derives the whole table and diffs it against the
+    # shipped file. Proven RED in-session: perturbing one rationale text, and dropping one owned
+    # entry, each produced exit 1 with a precise diff; restoring produced exit 0 and the identical
+    # SHA-256. So the shipped table can never drift silently from the pin.
+    BeforeAll {
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:ScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+        $script:RegenScript = Join-Path $script:ScriptsDir 'regen-rule-rationales.ps1'
+    }
+    It 'the regen script ships and carries a -Check switch' {
+        Test-Path -LiteralPath $script:RegenScript -PathType Leaf | Should -BeTrue
+        (Get-Content -Raw -LiteralPath $script:RegenScript) | Should -Match '\[switch\]\s*\$Check'
+    }
+    It '-Check exits 0 against the shipped table (derived == shipped, offline at the pin)' {
+        $out = & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:RegenScript -Check 2>&1
+        $code = $LASTEXITCODE
+        if ($code -ne 0) { Write-Host ($out | Out-String) }
+        $code | Should -Be 0
+    }
+}
+
 Describe 'New-ScriptAnalysisSettings -- the PSES scriptAnalysis settings object (dispatch 000018)' {
     It 'always enables analysis (with or without a settings path)' {
         (New-ScriptAnalysisSettings).enable | Should -BeTrue
