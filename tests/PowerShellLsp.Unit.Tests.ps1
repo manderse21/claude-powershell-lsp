@@ -1254,12 +1254,18 @@ Describe 'rulesets/rule-rationales.psd1 -- shipped table invariants (dispatch 00
         }
         ($bad -join '; ') | Should -BeExactly ''
     }
-    It 'the shipped file itself is no-BOM UTF-8 with LF endings and no non-ASCII byte' {
+    It 'the shipped file itself is no-BOM UTF-8 with no non-ASCII byte' {
+        # Deliberately does NOT assert "no CR". Line endings in the WORKING TREE are a property of the
+        # CHECKOUT, not of the artifact: this repo ships no .gitattributes, so a Windows runner with
+        # git's default core.autocrlf=true checks LF blobs out as CRLF. Asserting CR==0 here passes on
+        # macOS/Linux and can never pass on the Windows CI legs. The invariant that actually matters --
+        # the generator emits LF only -- is enforced at the source in regen-rule-rationales.ps1, whose
+        # whole-file Assert-AsciiText -AllowNewline permits 0x0A and rejects 0x0D (and every other
+        # control byte) before the file is ever written.
+        # BOM and non-ASCII bytes ARE checkout-invariant (git normalizes neither), so they are asserted.
         $bytes = [System.IO.File]::ReadAllBytes($script:RatFile)
         $bytes.Length | Should -BeGreaterThan 0
-        # no UTF-8 BOM
         ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) | Should -BeFalse
-        @($bytes | Where-Object { $_ -eq 0x0D }).Count | Should -Be 0    # no CR -> LF only
         @($bytes | Where-Object { $_ -gt 0x7E }).Count | Should -Be 0    # no non-ASCII
     }
 }
