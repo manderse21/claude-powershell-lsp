@@ -1223,14 +1223,18 @@ Describe 'rulesets/rule-rationales.psd1 -- shipped table invariants (dispatch 00
         [int]$script:RatData['owned_count'] | Should -Be $script:RatOwned.Count
         $script:RatEntries.Count | Should -Be ($baseSorted.Count + $script:RatOwned.Count)
     }
-    It 'hand-authors an entry for each of the 4 plugin-owned finders, keyed by the EMITTED ruleId' {
+    It 'hand-authors an entry for each of the 5 plugin-owned finders, keyed by the EMITTED ruleId' {
         # NOT the finder FUNCTION names: Find-ModuleAwareness emits code 'ModuleNotInstalled', and
-        # the runtime lookup keys on the diagnostic `code`. An entry keyed 'ModuleAwareness' would
-        # silently never match. Adversarial control: rename any key here and this goes RED.
-        foreach ($c in @('BashIsm', 'PS7OnlySyntax', 'NonAsciiChar', 'ModuleNotInstalled')) {
+        # Test-ManifestConsistency emits 'ManifestConsistency'; the runtime lookup keys on the
+        # diagnostic `code`. An entry keyed 'ModuleAwareness' would silently never match.
+        # Adversarial control: rename any key here and this goes RED.
+        $owned = @('BashIsm', 'PS7OnlySyntax', 'NonAsciiChar', 'ModuleNotInstalled', 'ManifestConsistency')
+        foreach ($c in $owned) {
             $script:RatOwned | Should -Contain $c
             [string]$script:RatEntries[$c] | Should -Not -BeNullOrEmpty
         }
+        # The owned set is EXACTLY these five -- a sixth entry may not ride in silently (000124).
+        $script:RatOwned.Count | Should -Be $owned.Count
     }
     It 'every rationale is non-empty, within the declared cap, and never ends mid-word' {
         $cap = [int]$script:RatData['max_length']
@@ -1297,10 +1301,26 @@ Describe 'Import-RuleRationales / Get-RationaleForCode -- runtime lookup + per-r
     }
     It 'DEGRADES GRACEFULLY: a code with no table entry yields no rationale line, never a throw' {
         $rendered = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
-        # ManifestConsistency is a REAL plugin-owned code with no hand-authored entry (see the
-        # 000121 outbox): it must surface its finding with no rationale, never fabricate one.
-        (Get-RationaleForCode -Code 'ManifestConsistency' -Table $script:RatTable -Rendered $rendered) | Should -BeExactly ''
+        # LOAD-BEARING EXEMPLAR (000124). PSUseSingularNouns is a REAL PSScriptAnalyzer code that is
+        # deliberately entry-less: 000092 excluded it from the base-54 surface as measured-noisy, so
+        # the table derives no entry for it, yet a user's own PSScriptAnalyzerSettings.psd1 can still
+        # broaden the live surface and make PSES emit it (000085). That makes it the honest
+        # real-world degrade case now that all 5 owned codes carry entries. If a future curation
+        # slice re-admits it to base.psd1, or a pin bump renames it, THIS TEST is what goes RED --
+        # re-anchor it on another real entry-less code, do not delete the assertion.
+        (Get-RationaleForCode -Code 'PSUseSingularNouns' -Table $script:RatTable -Rendered $rendered) | Should -BeExactly ''
+        # Non-vacuity: the exemplar is only meaningful while it is genuinely absent from the table.
+        $script:RatTable.ContainsKey('PSUseSingularNouns') | Should -BeFalse
+        # And the purely synthetic case -- a code no analyzer will ever emit.
         (Get-RationaleForCode -Code 'PSTotallyMadeUpRule' -Table $script:RatTable -Rendered $rendered) | Should -BeExactly ''
+    }
+    It 'an OWNED code that DOES carry an entry renders it (ManifestConsistency; 000124)' {
+        # The complement of the degrade test above: the 000121 residual is closed, so the plugin's
+        # fifth owned code now resolves to its hand-authored rationale instead of degrading.
+        $rendered = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
+        $why = Get-RationaleForCode -Code 'ManifestConsistency' -Table $script:RatTable -Rendered $rendered
+        $why | Should -Not -BeNullOrEmpty
+        $why | Should -Match 'FunctionsToExport'
     }
     It 'a parser finding (empty or 0 code) never carries a rationale' {
         $rendered = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
@@ -1318,7 +1338,8 @@ Describe 'Import-RuleRationales / Get-RationaleForCode -- runtime lookup + per-r
             [pscustomobject]@{ code = 'PSAvoidUsingWriteHost' }
             [pscustomobject]@{ code = 'PSUseApprovedVerbs' }
             [pscustomobject]@{ code = 'PSAvoidUsingWriteHost' }   # repeat -> no second line
-            [pscustomobject]@{ code = 'ManifestConsistency' }     # owned, no entry -> degrade
+            [pscustomobject]@{ code = 'ManifestConsistency' }     # owned, HAS an entry -> renders (000124)
+            [pscustomobject]@{ code = 'PSUseSingularNouns' }      # real, entry-less -> degrade (000124)
             [pscustomobject]@{ code = '' }                        # parser -> skipped
         )
         $rendered = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
@@ -1327,9 +1348,10 @@ Describe 'Import-RuleRationales / Get-RationaleForCode -- runtime lookup + per-r
             $why = Get-RationaleForCode -Code ([string]$r.code) -Table $script:RatTable -Rendered $rendered
             if (-not [string]::IsNullOrWhiteSpace($why)) { $emitted += [string]$r.code }
         }
-        $emitted.Count | Should -Be 2
+        $emitted.Count | Should -Be 3
         $emitted[0] | Should -BeExactly 'PSAvoidUsingWriteHost'
         $emitted[1] | Should -BeExactly 'PSUseApprovedVerbs'
+        $emitted[2] | Should -BeExactly 'ManifestConsistency'
     }
 }
 
