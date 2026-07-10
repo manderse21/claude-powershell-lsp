@@ -150,20 +150,22 @@ chat.
 | 6 | Risk analysis / score | DROP score, keep facts | deterministic graph facts only -> N1.3 |
 | 7 | Runtime intelligence | STATIC slice shipped | `moduleAwareness`, v1.23.0; the runtime version left -> S3.5 |
 | 8 | Teach PS idioms | STRONGEST fit | new rule-pack idiom slices -> N1.1 |
-| 9 | Explain why a rule exists | SHIPPED | rule-rationale strings, v1.24.0; one-entry residual -> I0.1 |
+| 9 | Explain why a rule exists | SHIPPED | rule-rationale strings, v1.24.0; coverage closed v1.24.1 (000124) |
 | 10 | Learn from accepted fixes | SPLIT | closed-loop primitive shipped (v1.19.0); learn-team-style resisted -> S3.3 |
 
 ### Horizon 0 -- Immediate tactical (unblocked now; gated only on accept)
 
-- **I0.1 Rule-rationale strings (#9) -- SHIPPED (v1.24.0 / 000121).** Delivered as a MINOR and, as
-  planned, with no new knob; the `CONTRACT.md` amendment anticipated here turned out to be unnecessary,
-  because additive prose on an existing channel leaves the frozen Tier-1 surface (knob names, status
-  tokens, and the "a clean pass adds nothing" property) untouched. The ship detail is in Section 2.
-  **Residual (the only I0.1 work left):** the plugin's fifth owned code, `ManifestConsistency`, has no
-  entry in `rulesets/rule-rationales.psd1` and rides the graceful-degrade path -- its finding surfaces
-  with no rationale line, never fabricated, never blocking. A future micro-slice hand-authors that
-  single entry in `scripts/regen-rule-rationales.ps1` and regenerates the table under `-Check`.
-  Output: PATCH.
+- **I0.1 Rule-rationale strings (#9) -- SHIPPED (v1.24.0 / 000121); coverage CLOSED (000124).**
+  Delivered as a MINOR and, as planned, with no new knob; the `CONTRACT.md` amendment anticipated here
+  turned out to be unnecessary, because additive prose on an existing channel leaves the frozen Tier-1
+  surface (knob names, status tokens, and the "a clean pass adds nothing" property) untouched. The ship
+  detail is in Section 2. Dispatch 000124 then hand-authored the one missing entry, so all **five**
+  plugin-owned codes -- `BashIsm`, `ManifestConsistency`, `ModuleNotInstalled`, `NonAsciiChar`,
+  `PS7OnlySyntax` -- now carry a rationale, and `rulesets/rule-rationales.psd1` covers the plugin's
+  whole surfaceable set (54 PSSA + 5 owned) at the pin. Nothing about I0.1 is open. The
+  graceful-degrade path itself is unchanged and still load-bearing: a rule outside the `base.psd1`
+  surface (one a user's own settings file enables) surfaces its finding with no rationale line, never
+  fabricated, never blocking.
 - **I0.2 Post the registrar-field-rejection upstream report -- RESOLVED (no code).** The novel
   silent-drop finding (000069) is filed: Mike rewrote `anthropics/claude-code#66987` (OPEN) on
   2026-07-06 into the comprehensive registrar-drop report, re-confirmed on Claude Code 2.1.201. The
