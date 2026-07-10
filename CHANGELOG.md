@@ -31,6 +31,34 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.24.2] - 2026-07-10
+PATCH: **rule-rationale override layer -- four idiom-family rules now render hand-authored guidance
+instead of their weak auto-derived text.** The v1.24.0 rationale table derives each PSScriptAnalyzer
+rule's "why" line from the analyzer's own CommonName + Description. For a few idiom rules that text is
+circular (the why restates the rule name) or pure mechanism (it describes the checker, not the idiom,
+and offers no fix). This adds an owned OVERRIDE layer (dispatch 000125, N1.1 slice 1) that replaces the
+derived text for four codes -- `PSShouldProcess`, `PSUseSupportsShouldProcess`, `PSAvoidUsingWriteHost`,
+and `PSAvoidShouldContinueWithoutForce` -- with a why+fix rationale. `PSShouldProcess` is inside the
+PSES-15 default surface, so its improved line reaches every user; the other three are base-only (opt-in).
+The `Write-Host` guidance leads with `Write-Information` / `Write-Verbose`, never `Write-Output` (which
+writes to the success pipeline and would change a function's return value).
+
+The overrides are hand-authored in `scripts/regen-rule-rationales.ps1` and the table regenerated, never
+hand-edited; the artifact records the layer (`overrides`, `override_count = 4`) and the derived text each
+override replaced, so a `-Check` run goes RED if an override is dropped, retargeted, edited only in the
+artifact, or if a pin bump changes the derived text under an override. The generator throws if any
+override equals the text it replaces (a vacuous override). Every override key is a base-54 PSSA rule,
+never an owned finder, so an override can never shadow a plugin-owned rationale.
+
+Classified PATCH: a wording-quality improvement to rationale lines that already render, not a new
+capability -- **no `userConfig` knob**, **no `CONTRACT.md` change**, **no new detection rule**, and **no
+change to which rules run** (`base.psd1`, the PSES-15 default surface, and the pinned analyzer are all
+unchanged). Same content-fix class as the [1.23.1] wording PATCH and the [1.24.1] rationale-coverage
+PATCH. This deliberately does NOT lean on the [1.21.1] precedent: that PATCH rested on the *default*
+`pses-default` surface being byte-for-byte unchanged, whereas the `PSShouldProcess` override here does
+change rendered text on the default surface -- so PATCH is justified by "no new capability, better wording
+on findings that already render," not by default-surface invariance. See dispatch 000125.
+
 ## [1.24.1] - 2026-07-09
 PATCH: **rule-rationale coverage completed -- the plugin's fifth owned code, `ManifestConsistency`,
 now carries a rationale line.** v1.24.0 shipped the rationale feature with a recorded gap: four of the
