@@ -20,11 +20,12 @@
     pssa_version = '1.25.0'
     max_length = 180
     pssa_count = 54
-    owned_count = 4
+    owned_count = 5
     # The plugin-owned finders, hand-authored (PSScriptAnalyzer has no metadata for them).
     # Keyed by the finder ruleId/code as EMITTED, not by its function name.
     owned = @(
         'BashIsm'
+        'ManifestConsistency'
         'ModuleNotInstalled'
         'NonAsciiChar'
         'PS7OnlySyntax'
@@ -32,6 +33,7 @@
     # rule CODE -> rationale text (the runtime lookup; keyed by the diagnostic `code`).
     entries = @{
         'BashIsm' = 'Unix/bash command, not recognized as a PowerShell command here: it fails on a clean Windows host, or silently relies on Git Bash. Use a PowerShell equivalent, or call it with ''&''.'
+        'ManifestConsistency' = 'Manifest FunctionsToExport disagrees with the module: a listed function is never defined, or an exported one is unlisted, so the module exports the wrong commands. Align them.'
         'ModuleNotInstalled' = 'Command comes from a module that is not installed here and is not imported, required, or defined in this file, so the call fails at run time. Install or import the module.'
         'NonAsciiChar' = 'Non-ASCII smart punctuation in a file with no UTF-8 BOM: Windows PowerShell 5.1 reads it as Windows-1252 and mojibakes the text. Use plain ASCII, or save the file with a BOM.'
         'PS7OnlySyntax' = 'PowerShell 7-only syntax: a PARSE error under Windows PowerShell 5.1, so the whole file fails to load there. Use a 5.1-compatible form, or declare ''#Requires -Version 7''.'

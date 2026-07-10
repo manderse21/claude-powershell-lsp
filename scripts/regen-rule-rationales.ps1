@@ -22,7 +22,7 @@ $ErrorActionPreference = 'Stop'
 #     (Get-ScriptAnalyzerRule CommonName + Description) over EXACTLY the rule names enumerated in
 #     rulesets/base.psd1 -- the plugin's own opt-in surface, a superset of the PSES-15 live
 #     default. Zero maintenance; regenerated on a pin bump and reviewed in a diff.
-#   * The 4 PLUGIN-OWNED finders have NO PSScriptAnalyzer metadata (PSSA is blind to them), so
+#   * The 5 PLUGIN-OWNED finders have NO PSScriptAnalyzer metadata (PSSA is blind to them), so
 #     their rationales are HAND-AUTHORED in $OwnedRationales below -- an auditable in-script
 #     table, the $BaseRuleExclusions discipline of regen-base-ruleset.ps1.
 #
@@ -77,13 +77,13 @@ $script:MaxLength = 180
 # pin 1.25.0: the shortest is 11 chars, the next shortest is 25.
 $script:MinSummary = 24
 
-# --- hand-authored rationales for the 4 plugin-owned finders (dispatch 000121 OQ3) ----------
+# --- hand-authored rationales for the 5 plugin-owned finders (dispatch 000121 OQ3; 000124) -------
 # PSScriptAnalyzer is blind to these: they are the plugin's own AST/byte-level finders in
 # scripts/lib/lsp-common.ps1, all emitting source = 'powershell-lsp'. Each entry is keyed by the
 # finder's ACTUAL emitted ruleId/code -- NOT the finder's function name -- because the runtime
 # lookup keys on the diagnostic's `code` field. Each is written in the why+fix register (what the
 # rule catches, then what to do instead) and must stay FACTUALLY CONSISTENT with the finder's real
-# predicate, including its suppressions. Adding a 5th entry is a survey-first slice, never a silent
+# predicate, including its suppressions. Adding an entry is a survey-first slice, never a silent
 # ride-in here.
 $script:OwnedRationales = @{
     # Find-BashIsm. Fires on a bash command NAME used as a command. SUPPRESSED for an explicit
@@ -112,6 +112,17 @@ $script:OwnedRationales = @{
     'ModuleNotInstalled' =
     "Command comes from a module that is not installed here and is not imported, required, or " +
     "defined in this file, so the call fails at run time. Install or import the module."
+
+    # Test-ManifestConsistency. Emitted ruleId is 'ManifestConsistency' for BOTH of its finding
+    # kinds -- orphan-export (a name in FunctionsToExport that no function definition matches) and
+    # under-declared-export (a function the module defines AND exports that FunctionsToExport omits)
+    # -- so the rationale names both halves. It never claims the module is broken: an indeterminate
+    # shape (a '*' wildcard export, an empty/null FunctionsToExport, a dot-source or dynamic export,
+    # an unparseable module) DEGRADES to prose before any finding is emitted, so a finding only ever
+    # means the two determinate lists genuinely disagree.
+    'ManifestConsistency' =
+    "Manifest FunctionsToExport disagrees with the module: a listed function is never defined, or " +
+    "an exported one is unlisted, so the module exports the wrong commands. Align them."
 }
 
 function Resolve-PssaManifest {
@@ -240,7 +251,7 @@ function Get-RationaleText {
 }
 
 function Get-DerivedRationales {
-    # The reproducible derivation: the base-54 PSSA rules from the pin, plus the 4 hand-authored
+    # The reproducible derivation: the base-54 PSSA rules from the pin, plus the 5 hand-authored
     # owned finders. Returns @{ Entries = @{ code -> text }; Owned = @(sorted owned codes);
     # PssaRules = @(sorted PSSA codes); PssaVersion = '<pin>' }.
     param([string]$ManifestPath)
