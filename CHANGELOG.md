@@ -31,6 +31,35 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.24.1] - 2026-07-09
+PATCH: **rule-rationale coverage completed -- the plugin's fifth owned code, `ManifestConsistency`,
+now carries a rationale line.** v1.24.0 shipped the rationale feature with a recorded gap: four of the
+five plugin-owned finders had a hand-authored entry, and `ManifestConsistency` rode the
+graceful-degrade path with none, so its finding surfaced with no `why:` line. That entry is now
+hand-authored in `scripts/regen-rule-rationales.ps1` and the table regenerated, so
+`rulesets/rule-rationales.psd1` carries **59** entries -- the **54** auto-derived `rulesets/base.psd1`
+PSScriptAnalyzer rationales at the pinned 1.25.0, plus the **5** hand-authored owned finders
+(`BashIsm`, `ManifestConsistency`, `ModuleNotInstalled`, `NonAsciiChar`, `PS7OnlySyntax`). The plugin's
+whole surfaceable rule set is now covered.
+
+The rationale names **both halves** of what the finder actually detects -- a manifest that lists a
+function the module never defines, and a function the module defines and exports that
+`FunctionsToExport` omits -- because one code carries both findings. It deliberately does not claim the
+module is broken: an **indeterminate** manifest (a `'*'` wildcard export, an empty `FunctionsToExport`,
+a dot-sourced or dynamic export, an unparseable module) degrades to a prose note *before* any finding
+is emitted, and `lsp-client.ps1` routes that note away from the diagnostics stream, so it never
+acquires a rationale. An integration guard now pins that separation: were it ever removed, the
+"the lists disagree" text would render on a note that says the opposite, and the test goes RED.
+
+Nothing else moves. The **graceful-degrade path is unchanged** and still load-bearing -- a rule with no
+entry (any PSScriptAnalyzer rule outside the `base.psd1` surface, such as one a user's own
+`PSScriptAnalyzerSettings.psd1` enables) surfaces its finding with no rationale line, never fabricated,
+never blocking. A **clean file still emits nothing**, and per-rule dedup is untouched. There is **no
+`userConfig` knob**, **no `CONTRACT.md` change**, and **no change to which rules run**. Classified
+PATCH: the diagnostics capability shipped at v1.24.0, and this completes the coverage of its generated
+data table rather than adding a capability -- the same reading under which v1.21.1 shipped a change to
+the `base` rule surface as a PATCH. See dispatch 000124.
+
 ## [1.24.0] - 2026-07-08
 MINOR: **rule-rationale strings -- each surfaced rule now carries a short "why this rule matters"
 line on the existing `additionalContext` channel.** A finding used to arrive as

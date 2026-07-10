@@ -202,6 +202,73 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
         ([string]$out).Trim() | Should -BeExactly ''
     }
 
+    It 'the OWNED ManifestConsistency finding carries its hand-authored rationale (000124)' {
+        # Closes the 000121 residual end-to-end: the plugin's fifth owned code used to ride the
+        # graceful-degrade path with no entry; it now resolves to its hand-authored rationale.
+        # An orphan-export shape (a manifest naming a function the module never defines) is the
+        # DETERMINATE half of the finder's predicate, so it emits a real diagnostic.
+        $dir = Join-Path $script:DataDir 'rat-mc-orphan'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        @(
+            '@{'
+            "    RootModule = 'OrphanRat.psm1'"
+            "    ModuleVersion = '1.0.0'"
+            "    FunctionsToExport = @('Get-RatFoo', 'Get-RatMissing')"
+            '}'
+        ) -join "`n" | Set-Content -LiteralPath (Join-Path $dir 'OrphanRat.psd1') -Encoding ascii
+        @(
+            'function Get-RatFoo {'
+            '    param()'
+            "    'foo'"
+            '}'
+            'Export-ModuleMember -Function Get-RatFoo'
+        ) -join "`n" | Set-Content -LiteralPath (Join-Path $dir 'OrphanRat.psm1') -Encoding ascii
+        $fix = Join-Path $dir 'OrphanRat.psd1'
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:Sid; tool_input = @{ file_path = $fix }; cwd = $dir } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
+        $ctx = ($out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        # Non-vacuity: the finding itself must be present, else the 'why:' claim is empty.
+        $ctx | Should -Match 'powershell-lsp/ManifestConsistency'
+        $ctx | Should -Match 'why: Manifest FunctionsToExport disagrees with the module'
+    }
+
+    It 'an INDETERMINATE manifest gets its prose note and NO fabricated rationale (000124)' {
+        # The factual-consistency guard on the new entry. A wildcard export is INDETERMINATE: the
+        # daemon emits a 'cannot be determined' item flagged _indeterminate, which lsp-client.ps1
+        # routes to the prose note channel, NOT into $diags -- so it never reaches the rationale
+        # lookup. Were that split ever removed, the entry's text ('the lists disagree') would be
+        # rendered on a finding that says the opposite, and this test goes RED.
+        $dir = Join-Path $script:DataDir 'rat-mc-wild'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        @(
+            '@{'
+            "    RootModule = 'WildRat.psm1'"
+            "    ModuleVersion = '1.0.0'"
+            "    FunctionsToExport = @('*')"
+            '}'
+        ) -join "`n" | Set-Content -LiteralPath (Join-Path $dir 'WildRat.psd1') -Encoding ascii
+        # An unapproved verb gives PSES a real finding, so $diags is non-empty and the rationale
+        # render loop DOES run -- without this the 'no why: line' assertion would be vacuous.
+        @(
+            'function Frobnicate-RatWild {'
+            '    param()'
+            "    'wild'"
+            '}'
+        ) -join "`n" | Set-Content -LiteralPath (Join-Path $dir 'WildRat.psm1') -Encoding ascii
+        $fix = Join-Path $dir 'WildRat.psm1'
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:Sid; tool_input = @{ file_path = $fix }; cwd = $dir } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
+        $ctx = ($out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        # Non-vacuity: the rationale loop ran (a PSSA rule rendered its own 'why:' line)...
+        $ctx | Should -Match 'why: Cmdlet Verbs'
+        # ...and the indeterminate shape was surfaced as prose...
+        $ctx | Should -Match 'cannot be determined'
+        # ...but the ManifestConsistency rationale was NOT fabricated onto it.
+        $ctx | Should -Not -Match 'why: Manifest FunctionsToExport'
+    }
+
     It 'surfaces a syntax error via the in-process parser with zero pipe call (Track B)' {
         # Broken file written to scratch (NOT the repo tree -- the repo ASCII/parse
         # unit test would fail on a deliberately broken .ps1). Use a session id with
