@@ -1236,6 +1236,44 @@ Describe 'rulesets/rule-rationales.psd1 -- shipped table invariants (dispatch 00
         # The owned set is EXACTLY these five -- a sixth entry may not ride in silently (000124).
         $script:RatOwned.Count | Should -Be $owned.Count
     }
+    It 'records the idiom-family OVERRIDE layer and asserts the set from disk (dispatch 000125)' {
+        # The artifact is self-describing: override_count + an overrides map (code -> @{derived; text}).
+        # This invariant reads the set from disk, never a literal count, so a dropped/added override
+        # goes RED. Adversarial controls: change override_count, drop an override key, or repoint one
+        # at a non-base rule -- each fails here.
+        $expected = @('PSAvoidShouldContinueWithoutForce', 'PSAvoidUsingWriteHost', 'PSShouldProcess', 'PSUseSupportsShouldProcess')
+        $script:RatData.ContainsKey('overrides') | Should -BeTrue
+        $ov = $script:RatData['overrides']
+        $ovKeys = @($ov.Keys | Sort-Object)
+        ($ovKeys -join ',') | Should -BeExactly (($expected | Sort-Object) -join ',')
+        [int]$script:RatData['override_count'] | Should -Be $expected.Count
+        $cap = [int]$script:RatData['max_length']
+        foreach ($k in $ovKeys) {
+            # Constraint 4: an override may only replace an auto-derived base-54 PSSA rule, never an
+            # owned finder (which would shadow its hand-authored rationale).
+            $script:RatBase | Should -Contain $k
+            $script:RatOwned | Should -Not -Contain $k
+            $rec = $ov[$k]
+            [string]$rec['text'] | Should -Not -BeNullOrEmpty
+            [string]$rec['derived'] | Should -Not -BeNullOrEmpty
+            # The override text is what entries[] actually serves (the layer landed).
+            [string]$script:RatEntries[$k] | Should -BeExactly ([string]$rec['text'])
+            # Non-vacuity FROM DISK: the override differs from the derived text it replaced. Mirrors
+            # the generator's non-vacuity throw so a vacuous override can never sit in the shipped file.
+            ([string]$rec['text']) | Should -Not -BeExactly ([string]$rec['derived'])
+            ([string]$rec['text']).Length | Should -BeLessOrEqual $cap
+        }
+    }
+    It 'the Write-Host override leads its fix with Write-Information, never Write-Output (000124 content constraint)' {
+        # LOAD-BEARING guidance: Write-Output writes to the success pipeline and changes a function's
+        # return value, so it must not be the lead fix for a message-printing Write-Host. The override
+        # recommends Write-Information / Write-Verbose. Adversarial control: reword to lead with
+        # Write-Output ('Instead, use Write-Output ...' -- the derived phrasing) and this goes RED.
+        $wh = [string]$script:RatEntries['PSAvoidUsingWriteHost']
+        $wh | Should -Match 'Write-Information'
+        $wh | Should -Not -Match 'Instead, use Write-Output'
+        $wh | Should -Not -Match 'Use Write-Output'
+    }
     It 'every rationale is non-empty, within the declared cap, and never ends mid-word' {
         $cap = [int]$script:RatData['max_length']
         $cap | Should -BeGreaterThan 0

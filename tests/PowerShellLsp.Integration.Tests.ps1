@@ -269,6 +269,34 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
         $ctx | Should -Not -Match 'why: Manifest FunctionsToExport'
     }
 
+    It 'the PSShouldProcess OVERRIDE renders on the DEFAULT surface (dispatch 000125)' {
+        # Constraint-7 integration proof, default half. PSShouldProcess is inside the PSES-15
+        # no-settings allow-list (s_defaultRules), so it fires on the surface every user gets with
+        # no ruleset knob -- the reason it is the override layer's anchor. The rule is bidirectional;
+        # the form PSSA 1.25.0 reliably flags is the REVERSE case -- calling $PSCmdlet.ShouldProcess()
+        # WITHOUT declaring SupportsShouldProcess (verified empirically at the pin) -- which the
+        # override text names ("... or the reverse ..."). The rendered why: line must be the
+        # hand-authored OVERRIDE, NOT the derived "Should Process -- Checks that ..." text.
+        $fix = Join-Path $script:DataDir 'pester-shouldprocess-override.ps1'
+        @(
+            'function Set-RatThing {'
+            '    [CmdletBinding()]'
+            '    param([string] $Path)'
+            '    if ($PSCmdlet.ShouldProcess($Path)) { Remove-Item -LiteralPath $Path }'
+            '}'
+        ) -join "`n" | Set-Content -LiteralPath $fix -Encoding ascii
+        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:ScriptsDir 'lsp-client.ps1') `
+            -StdinJson (@{ session_id = $script:Sid; tool_input = @{ file_path = $fix }; cwd = $script:DataDir } | ConvertTo-Json -Compress) `
+            -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
+        $ctx = ($out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        # Non-vacuity: the finding itself must be present, else the 'why:' claim is empty.
+        $ctx | Should -Match 'PSShouldProcess'
+        # The OVERRIDE text renders...
+        $ctx | Should -Match 'why: SupportsShouldProcess is declared without a ShouldProcess call'
+        # ...and the weak DERIVED text does NOT (the layer actually replaced it).
+        $ctx | Should -Not -Match 'why: Should Process -- Checks that'
+    }
+
     It 'surfaces a syntax error via the in-process parser with zero pipe call (Track B)' {
         # Broken file written to scratch (NOT the repo tree -- the repo ASCII/parse
         # unit test would fail on a deliberately broken .ps1). Use a session id with
@@ -766,6 +794,28 @@ Describe 'Integration: opt-in ruleset=base broadens the live surface (dispatch 0
         $out | Should -Not -Match 'PSAvoidUsingConvertToSecureStringWithPlainText'
         $out | Should -Not -Match 'PSAvoidUsingUsernameAndPasswordParams'
         $out | Should -Not -Match 'PSAvoidUsingWriteHost'
+    }
+
+    It 'BASE: the Write-Host finding carries the OVERRIDE rationale, not the derived text (dispatch 000125)' {
+        # Constraint-7 integration proof, base half. PSAvoidUsingWriteHost is base-only (outside
+        # PSES-15), so it surfaces ONLY under ruleset=base -- the warm BASE daemon above. Its
+        # rendered why: line must be the hand-authored OVERRIDE. The load-bearing content constraint
+        # (000124): the fix must lead with Write-Information, NOT Write-Output (which writes to the
+        # success pipeline and would change a function's return value). The derived text's menu led
+        # with Write-Output ('Instead, use Write-Output, ...'); asserting that phrasing is ABSENT
+        # proves the override actually displaced it.
+        $out = Wait-RulesetDiagReady -Scenario 'BASE-override' -ReadyPattern 'PSAvoidUsingWriteHost' `
+            -GetDiag { Get-RulesetDiag -Sid $script:B87BaseSid -File $script:B87BaseFile -Cwd $script:B87BaseDir }
+        # Non-vacuity: the finding is present (guaranteed by the ready gate, re-asserted here).
+        $out | Should -Match 'PSAvoidUsingWriteHost'
+        # The OVERRIDE renders as the why: line, leading its fix with Write-Information...
+        $out | Should -Match 'why: Write-Host writes to the host, not the pipeline'
+        $out | Should -Match 'why: Write-Host writes to the host, not the pipeline, so its text is not part of the output\. Use Write-Information or Write-Verbose'
+        # ...and the weak DERIVED rationale ('why: Avoid Using Write-Host -- ... Instead, use
+        # Write-Output ...') does NOT render (the layer displaced it). Scoped to the why: prefix so
+        # PSSA's own rule MESSAGE -- which legitimately contains 'Instead, use Write-Output' -- is
+        # not mistaken for the rationale line.
+        $out | Should -Not -Match 'why: Avoid Using Write-Host'
     }
 }
 

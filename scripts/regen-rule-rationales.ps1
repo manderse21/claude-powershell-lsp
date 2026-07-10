@@ -25,6 +25,11 @@ $ErrorActionPreference = 'Stop'
 #   * The 5 PLUGIN-OWNED finders have NO PSScriptAnalyzer metadata (PSSA is blind to them), so
 #     their rationales are HAND-AUTHORED in $OwnedRationales below -- an auditable in-script
 #     table, the $BaseRuleExclusions discipline of regen-base-ruleset.ps1.
+#   * A small idiom-family OVERRIDE layer ($OwnedRationaleOverrides, dispatch 000125) REPLACES the
+#     auto-derived text for a few PSSA rules whose derived rationale is circular or pure mechanism.
+#     Applied AFTER derivation: an override must key a rule already in the derived surface, must
+#     differ from the text it replaces (non-vacuity throw), and records the replaced text so a pin
+#     bump that changes it surfaces under -Check. Overrides change GUIDANCE quality, not detection.
 #
 # THE EXTRACTION RULE (dispatch 000121 OQ2 -- deterministic, ASCII-safe, never mid-word).
 # For a PSSA rule, rationale = "<CommonName> -- <Summary>", where:
@@ -123,6 +128,52 @@ $script:OwnedRationales = @{
     'ManifestConsistency' =
     "Manifest FunctionsToExport disagrees with the module: a listed function is never defined, or " +
     "an exported one is unlisted, so the module exports the wrong commands. Align them."
+}
+
+# --- hand-authored rationale OVERRIDES for the idiom family (dispatch 000125, N1.1 slice 1) -------
+# For a handful of PSScriptAnalyzer rules, the auto-derived "<CommonName> -- <Description prefix>"
+# text is weak: circular (the "why" restates the rule name) or pure mechanism (it describes the
+# checker, not the idiom, and offers no fix). The 000124 leg-2 survey measured this and recommended
+# an OWNED override layer over the coherent idiom family -- rules that already fire, so this changes
+# guidance QUALITY, not detection. Each entry REPLACES the derived PSSA text for that code with a
+# why+fix rationale. The override is applied in Get-DerivedRationales AFTER derivation, so:
+#   * every override key MUST exist in the derived (base.psd1) surface, else it can never render
+#     (throws -- the same error class as keying an owned entry on a finder function name);
+#   * each override MUST differ from the derived text it replaces (throws on equality -- a
+#     no-op override proves nothing and a later pin bump could silently make it vacuous); and
+#   * the artifact records each override WITH the derived text it replaced, so a pin bump that
+#     changes that derived text surfaces under -Check rather than being masked by the override.
+# Anchor is PSShouldProcess: it is the only one of the four inside the PSES v4.6.0 15-rule
+# no-settings allow-list (AnalysisService.s_defaultRules, read by reflection 2026-07-10), so its
+# override reaches the DEFAULT surface every user gets; the other three are base-only (opt-in).
+# CONTENT constraint (load-bearing, 000124): the Write-Host fix must NOT lead with Write-Output --
+# that writes to the success pipeline and changes a function's return value. Lead with
+# Write-Information / Write-Verbose for messages.
+$script:OwnedRationaleOverrides = @{
+    # PSShouldProcess (in PSES-15 -> default surface). Bidirectional rule: SupportsShouldProcess
+    # declared but ShouldProcess never called, OR the reverse. Derived text is pure mechanism
+    # ("Checks that ...") with no fix.
+    'PSShouldProcess' =
+    "SupportsShouldProcess is declared without a ShouldProcess call, or the reverse, so -WhatIf " +
+    "and -Confirm silently do nothing. Call `$PSCmdlet.ShouldProcess() before the change."
+
+    # PSAvoidUsingWriteHost (base-only). Derived text is circular AND its fix menu leads with
+    # Write-Output, which is actively hazardous for a flag-not-transform plugin.
+    'PSAvoidUsingWriteHost' =
+    "Write-Host writes to the host, not the pipeline, so its text is not part of the output. Use " +
+    "Write-Information or Write-Verbose for messages, Write-Output only for return values."
+
+    # PSUseSupportsShouldProcess (base-only). Derived text carries a real why but no fix.
+    'PSUseSupportsShouldProcess' =
+    "Defines its own -WhatIf or -Confirm parameter instead of inheriting them. Declare " +
+    "[CmdletBinding(SupportsShouldProcess)] so PowerShell supplies both and honors ConfirmPreference."
+
+    # PSAvoidShouldContinueWithoutForce (base-only; NOT in PSES-15, resolved by reflection 000125).
+    # ShouldContinue is not governed by ConfirmPreference the way ShouldProcess is, so the fix is a
+    # Force parameter, not -Confirm.
+    'PSAvoidShouldContinueWithoutForce' =
+    "ShouldContinue always prompts and ignores -Confirm:`$false, so an unattended caller has no way " +
+    "past it. Add a Force parameter and skip the prompt when it is set."
 }
 
 function Resolve-PssaManifest {
@@ -282,9 +333,40 @@ function Get-DerivedRationales {
         if ($entries.ContainsKey($name)) { throw ('owned finder ' + $name + ' collides with a PSSA rule name.') }
         $entries[$name] = $text
     }
+    # Apply the hand-authored idiom overrides LAST, over the derived surface (dispatch 000125). Each
+    # override must key an existing derived rule (else it can never render), must be ASCII within the
+    # cap, and must DIFFER from the derived text it replaces (non-vacuity). The derived text it
+    # replaced is recorded so a pin bump that changes it surfaces under -Check.
+    $overrides = @{}
+    foreach ($name in @($script:OwnedRationaleOverrides.Keys)) {
+        # Constraint 4: an override may ONLY replace auto-derived PSSA text. Validate against the
+        # derived PSSA set ($baseRules), NOT the merged $entries -- otherwise an override keyed on an
+        # owned finder code would pass, shadow that owned hand-authored rationale, and record the
+        # owned text as its "derived" baseline. Guard the owned collision explicitly for a clear error.
+        if ($script:OwnedRationales.ContainsKey($name)) {
+            throw ('override keyed "' + $name + '" collides with a plugin-owned hand-authored rationale; overrides may only replace auto-derived PSSA text, not owned entries.')
+        }
+        if ($baseRules -notcontains $name) {
+            throw ('override keyed "' + $name + '" is not in the derived base.psd1 PSSA surface, so it has no derived rationale to replace and can never render.')
+        }
+        $override = Compress-Whitespace ([string]$script:OwnedRationaleOverrides[$name])
+        if ([string]::IsNullOrWhiteSpace($override)) { throw ('empty override rationale for ' + $name + '.') }
+        Assert-AsciiText -Text $override -Context ('the override rationale for ' + $name)
+        if ($override.Length -gt $script:MaxLength) {
+            throw ('override rationale for ' + $name + ' is ' + $override.Length + ' chars, over the ' + $script:MaxLength + '-char cap.')
+        }
+        $derivedText = [string]$entries[$name]
+        if ($override -ceq $derivedText) {
+            throw ('override for ' + $name + ' is identical to the derived text it replaces; a vacuous override proves nothing (dispatch 000125 non-vacuity guard).')
+        }
+        $entries[$name] = $override
+        $overrides[$name] = @{ derived = $derivedText; text = $override }
+    }
     return @{
         Entries = $entries
         Owned = @(@($script:OwnedRationales.Keys) | Sort-Object)
+        Overrides = $overrides
+        OverrideKeys = @(@($script:OwnedRationaleOverrides.Keys) | Sort-Object)
         PssaRules = @($baseRules)
         PssaVersion = (Get-PinnedPssaVersion)
     }
@@ -321,11 +403,25 @@ function Format-RationaleFile {
     & $add ("    max_length = " + $script:MaxLength)
     & $add ("    pssa_count = " + @($Derived.PssaRules).Count)
     & $add ("    owned_count = " + @($Derived.Owned).Count)
+    & $add ("    override_count = " + @($Derived.OverrideKeys).Count)
     & $add '    # The plugin-owned finders, hand-authored (PSScriptAnalyzer has no metadata for them).'
     & $add '    # Keyed by the finder ruleId/code as EMITTED, not by its function name.'
     & $add '    owned = @('
     foreach ($o in @($Derived.Owned)) { & $add ("        '" + $o + "'") }
     & $add '    )'
+    & $add '    # Idiom-family rules whose auto-derived PSSA text is replaced by a hand-authored override'
+    & $add '    # (dispatch 000125). derived = the PSSA text that was replaced, recorded so a pin bump that'
+    & $add '    # changes it surfaces under -Check; text = the override now in entries[] for that code.'
+    & $add '    overrides = @{'
+    foreach ($o in @($Derived.OverrideKeys)) {
+        $d = [string]$Derived.Overrides[$o].derived -replace "'", "''"
+        $t = [string]$Derived.Overrides[$o].text -replace "'", "''"
+        & $add ("        '" + $o + "' = @{")
+        & $add ("            derived = '" + $d + "'")
+        & $add ("            text = '" + $t + "'")
+        & $add '        }'
+    }
+    & $add '    }'
     & $add '    # rule CODE -> rationale text (the runtime lookup; keyed by the diagnostic `code`).'
     & $add '    entries = @{'
     foreach ($n in $names) {
@@ -338,12 +434,22 @@ function Format-RationaleFile {
 }
 
 function Get-RationaleCanonical {
-    # Canonical, order-independent string of a table for diffing.
-    param($Entries, $Owned, [string]$PssaVersion, [int]$MaxLength)
+    # Canonical, order-independent string of a table for diffing. $Overrides is code -> @{derived;
+    # text}. The E-line already carries an override's FINAL text, so an override edited only in the
+    # artifact drifts there; the OV line pins its presence/key (a dropped or retargeted override
+    # drifts); the OD line pins the DERIVED text it replaced, so a pin bump that changes that text
+    # surfaces here rather than being masked by the override (dispatch 000125 constraint 2).
+    param($Entries, $Owned, $Overrides, [string]$PssaVersion, [int]$MaxLength)
     $lines = New-Object System.Collections.ArrayList
     [void]$lines.Add('V ' + $PssaVersion)
     [void]$lines.Add('L ' + $MaxLength)
     foreach ($o in @($Owned | Sort-Object)) { [void]$lines.Add('O ' + $o) }
+    if ($null -ne $Overrides) {
+        foreach ($o in @($Overrides.Keys | Sort-Object)) {
+            [void]$lines.Add('OV ' + $o)
+            [void]$lines.Add('OD ' + $o + ' -> ' + [string]$Overrides[$o].derived)
+        }
+    }
     foreach ($n in @($Entries.Keys | Sort-Object)) { [void]$lines.Add('E ' + $n + ' -> ' + $Entries[$n]) }
     return ($lines -join "`n")
 }
@@ -363,12 +469,22 @@ if ($Check) {
     $shippedOwned = @(@($shipped['owned']) | ForEach-Object { [string]$_ })
     $shippedVersion = [string]$shipped['pssa_version']
     $shippedMax = [int]$shipped['max_length']
+    # Rebuild the shipped override map (code -> @{derived; text}); tolerate an absent key so a
+    # pre-000125 table drifts loudly (via the OV/OD canonical lines) rather than throwing here.
+    $shippedOverrides = @{}
+    if ($shipped.ContainsKey('overrides') -and $null -ne $shipped['overrides']) {
+        foreach ($k in @($shipped['overrides'].Keys)) {
+            $ov = $shipped['overrides'][$k]
+            $shippedOverrides[[string]$k] = @{ derived = [string]$ov['derived']; text = [string]$ov['text'] }
+        }
+    }
 
-    $derivedCanon = Get-RationaleCanonical -Entries $derived.Entries -Owned $derived.Owned -PssaVersion $derived.PssaVersion -MaxLength $script:MaxLength
-    $shippedCanon = Get-RationaleCanonical -Entries $shippedEntries -Owned $shippedOwned -PssaVersion $shippedVersion -MaxLength $shippedMax
+    $derivedCanon = Get-RationaleCanonical -Entries $derived.Entries -Owned $derived.Owned -Overrides $derived.Overrides -PssaVersion $derived.PssaVersion -MaxLength $script:MaxLength
+    $shippedCanon = Get-RationaleCanonical -Entries $shippedEntries -Owned $shippedOwned -Overrides $shippedOverrides -PssaVersion $shippedVersion -MaxLength $shippedMax
     if ($derivedCanon -eq $shippedCanon) {
         Write-Output ('OK: rulesets/rule-rationales.psd1 matches the derivation (' + @($derived.Entries.Keys).Count +
-            ' entries = ' + @($derived.PssaRules).Count + ' PSSA + ' + @($derived.Owned).Count + ' owned) at ' + $manifest)
+            ' entries = ' + @($derived.PssaRules).Count + ' PSSA + ' + @($derived.Owned).Count + ' owned; ' +
+            @($derived.OverrideKeys).Count + ' overrides applied) at ' + $manifest)
         exit 0
     }
     # Report the drift precisely (entry-level missing/extra/changed + the pin/cap/owned headers).
@@ -393,6 +509,15 @@ if ($Check) {
         }
     }
     if ($ownedDiff) { Write-Output ('OWNED LIST drifted: shipped=' + (($shippedOwned | Sort-Object) -join ',') + ' derived=' + ($derived.Owned -join ',')) }
+    $overrideDiff = ((@($derived.OverrideKeys) -join ',') -ne ((@($shippedOverrides.Keys) | Sort-Object) -join ','))
+    if ($overrideDiff) { Write-Output ('OVERRIDE SET drifted: shipped=' + ((@($shippedOverrides.Keys) | Sort-Object) -join ',') + ' derived=' + (@($derived.OverrideKeys) -join ',')) }
+    foreach ($o in @($derived.OverrideKeys)) {
+        if ($shippedOverrides.ContainsKey($o) -and ([string]$shippedOverrides[$o].derived -ne [string]$derived.Overrides[$o].derived)) {
+            Write-Output ('OVERRIDE BASE drifted for ' + $o + ' (a pin bump changed the derived text under the override):')
+            Write-Output ('      shipped derived: ' + $shippedOverrides[$o].derived)
+            Write-Output ('      current derived: ' + $derived.Overrides[$o].derived)
+        }
+    }
     [Console]::Error.WriteLine('regen-rule-rationales: shipped rule-rationales.psd1 DRIFTS from the derivation; re-run without -Check and review.')
     exit 1
 }
