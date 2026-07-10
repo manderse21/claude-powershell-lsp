@@ -149,7 +149,7 @@ chat.
 | 5 | PS-specific refactoring | SCOPED to flagging | the plugin flags, no refactor engine -> N1.1 |
 | 6 | Risk analysis / score | DROP score, keep facts | deterministic graph facts only -> N1.3 |
 | 7 | Runtime intelligence | STATIC slice shipped | `moduleAwareness`, v1.23.0; the runtime version left -> S3.5 |
-| 8 | Teach PS idioms | STRONGEST fit | new rule-pack idiom slices -> N1.1 |
+| 8 | Teach PS idioms | STRONGEST fit | rationale/fix-quality slices on shipped rules -> N1.1 |
 | 9 | Explain why a rule exists | SHIPPED | rule-rationale strings, v1.24.0; coverage closed v1.24.1 (000124) |
 | 10 | Learn from accepted fixes | SPLIT | closed-loop primitive shipped (v1.19.0); learn-team-style resisted -> S3.3 |
 
@@ -180,11 +180,20 @@ chat.
 
 ### Horizon 1 -- Near-term tactical (survey-first, one slice per dispatch)
 
-- **N1.1 Idiom rule-pack slices (#8; #5 as flagging).** Re-open the AI-era rule-pack pattern -- closed
-  at v1.22.0 -- with additive idiom rules (ShouldProcess, `Write-Host` -> `Write-Information`,
-  `ThrowTerminatingError`), survey-first, exclude-noisy, a measured 0% false-positive rate proven per
-  slice. The plugin flags; the agent transforms. A deliberate re-open of the v1.22.0 closure with new
-  slices. Output: MINOR per slice.
+- **N1.1 Idiom rule-pack slices -- rationale/fix quality (#8; #5 as flagging).** The 000124 survey
+  measured the idiom candidates and corrected the premise: none clears a 0%-measured-FP bar as NEW
+  detection. Two already ship built-ins -- `PSShouldProcess` (inside the PSES-15 default surface) and
+  `PSAvoidUsingWriteHost` (base-only) -- and the verb-triggered
+  `PSUseShouldProcessForStateChangingFunctions` was deliberately excluded as noisy (000092). So the
+  slices are GUIDANCE quality: hand-authored rationale/fix OVERRIDES on rules that ALREADY fire, riding
+  the v1.24.0 rationale channel -- not new rules. Slice 1 (000125): the owned rationale-override layer
+  over the 4-code idiom family (`Write-Host` -> `Write-Information`, `PSShouldProcess`,
+  `PSUseSupportsShouldProcess`, `PSAvoidShouldContinueWithoutForce`), anchored on `PSShouldProcess` (the
+  only one on the default surface). The `ThrowTerminatingError` candidate stays DEFERRED-unmeasurable:
+  the plugin's own source has zero `[CmdletBinding()]` advanced functions and the clean oracle no
+  `throw`, so no advanced-function rule can be FP-measured until a corpus tier is added. The plugin
+  flags; the agent transforms. Output: PATCH per slice (better guidance on findings that already
+  render, not a new capability).
 - **N1.2 Cross-file reference surfacing (#2 / #3).** A deterministic "referenced by N files" signal via
   the diagnostic channel -- NOT the gated native-nav path -- strengthening the headless story. Output:
   MINOR + a dedicated opt-in enum knob.

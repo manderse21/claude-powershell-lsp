@@ -21,6 +21,7 @@
     max_length = 180
     pssa_count = 54
     owned_count = 5
+    override_count = 4
     # The plugin-owned finders, hand-authored (PSScriptAnalyzer has no metadata for them).
     # Keyed by the finder ruleId/code as EMITTED, not by its function name.
     owned = @(
@@ -30,6 +31,27 @@
         'NonAsciiChar'
         'PS7OnlySyntax'
     )
+    # Idiom-family rules whose auto-derived PSSA text is replaced by a hand-authored override
+    # (dispatch 000125). derived = the PSSA text that was replaced, recorded so a pin bump that
+    # changes it surfaces under -Check; text = the override now in entries[] for that code.
+    overrides = @{
+        'PSAvoidShouldContinueWithoutForce' = @{
+            derived = 'Avoid Using ShouldContinue Without Boolean Force Parameter -- Functions that use ShouldContinue should have a boolean force parameter to allow user to bypass it.'
+            text = 'ShouldContinue always prompts and ignores -Confirm:$false, so an unattended caller has no way past it. Add a Force parameter and skip the prompt when it is set.'
+        }
+        'PSAvoidUsingWriteHost' = @{
+            derived = 'Avoid Using Write-Host -- Avoid using the Write-Host cmdlet. Instead, use Write-Output, Write-Verbose, or Write-Information.'
+            text = 'Write-Host writes to the host, not the pipeline, so its text is not part of the output. Use Write-Information or Write-Verbose for messages, Write-Output only for return values.'
+        }
+        'PSShouldProcess' = @{
+            derived = 'Should Process -- Checks that if the SupportsShouldProcess is present, the function calls ShouldProcess/ShouldContinue and vice versa.'
+            text = 'SupportsShouldProcess is declared without a ShouldProcess call, or the reverse, so -WhatIf and -Confirm silently do nothing. Call $PSCmdlet.ShouldProcess() before the change.'
+        }
+        'PSUseSupportsShouldProcess' = @{
+            derived = 'Use SupportsShouldProcess -- Commands typically provide Confirm and WhatIf parameters to give more control on its execution in an interactive environment.'
+            text = 'Defines its own -WhatIf or -Confirm parameter instead of inheriting them. Declare [CmdletBinding(SupportsShouldProcess)] so PowerShell supplies both and honors ConfirmPreference.'
+        }
+    }
     # rule CODE -> rationale text (the runtime lookup; keyed by the diagnostic `code`).
     entries = @{
         'BashIsm' = 'Unix/bash command, not recognized as a PowerShell command here: it fails on a clean Windows host, or silently relies on Git Bash. Use a PowerShell equivalent, or call it with ''&''.'
@@ -48,7 +70,7 @@
         'PSAvoidNullOrEmptyHelpMessageAttribute' = 'Avoid using null or empty HelpMessage parameter attribute -- Setting the HelpMessage attribute to an empty string or null value causes PowerShell interpreter to throw an error...'
         'PSAvoidOverwritingBuiltInCmdlets' = 'Avoid overwriting built in cmdlets -- Do not overwrite the definition of a cmdlet that is included with PowerShell'
         'PSAvoidReservedWordsAsFunctionNames' = 'Avoid reserved words as function names -- Avoid using reserved words as function names. Using reserved words as function names can cause errors or unexpected behavior in scripts.'
-        'PSAvoidShouldContinueWithoutForce' = 'Avoid Using ShouldContinue Without Boolean Force Parameter -- Functions that use ShouldContinue should have a boolean force parameter to allow user to bypass it.'
+        'PSAvoidShouldContinueWithoutForce' = 'ShouldContinue always prompts and ignores -Confirm:$false, so an unattended caller has no way past it. Add a Force parameter and skip the prompt when it is set.'
         'PSAvoidTrailingWhitespace' = 'Avoid trailing whitespace -- Each line should have no trailing whitespace.'
         'PSAvoidUsingAllowUnencryptedAuthentication' = 'Avoid AllowUnencryptedAuthentication Switch -- Avoid sending credentials and secrets over unencrypted connections.'
         'PSAvoidUsingBrokenHashAlgorithms' = 'Avoid Using Broken Hash Algorithms -- Avoid using the broken algorithms MD5 or SHA-1.'
@@ -62,7 +84,7 @@
         'PSAvoidUsingPositionalParameters' = 'Avoid Using Positional Parameters -- Readability and clarity should be the goal of any script we expect to maintain over time.'
         'PSAvoidUsingUsernameAndPasswordParams' = 'Avoid Using Username and Password Parameters -- Functions should take in a Credential parameter of type PSCredential (with a Credential transformation attribute defined after...'
         'PSAvoidUsingWMICmdlet' = 'Avoid Using Get-WMIObject, Remove-WMIObject, Invoke-WmiMethod, Register-WmiEvent, Set-WmiInstance -- Deprecated. Starting in Windows PowerShell 3.0, these cmdlets have been...'
-        'PSAvoidUsingWriteHost' = 'Avoid Using Write-Host -- Avoid using the Write-Host cmdlet. Instead, use Write-Output, Write-Verbose, or Write-Information.'
+        'PSAvoidUsingWriteHost' = 'Write-Host writes to the host, not the pipeline, so its text is not part of the output. Use Write-Information or Write-Verbose for messages, Write-Output only for return values.'
         'PSDSCDscExamplesPresent' = 'DSC examples are present -- Every DSC resource module should contain folder "Examples" with sample configurations for every resource.'
         'PSDSCDscTestsPresent' = 'Dsc tests are present -- Every DSC resource module should contain folder "Tests" with tests for every resource.'
         'PSDSCReturnCorrectTypesForDSCFunctions' = 'Return Correct Types For DSC Functions -- Set function in DSC class and Set-TargetResource in DSC resource must not return anything.'
@@ -78,7 +100,7 @@
         'PSProvideCommentHelp' = 'Basic Comment Help -- Checks that all cmdlets have a help comment. This rule only checks existence. It does not check the content of the comment.'
         'PSReservedCmdletChar' = 'Reserved Cmdlet Chars -- Checks for reserved characters in cmdlet names. These characters usually cause a parsing error. Otherwise they will generally cause runtime errors.'
         'PSReservedParams' = 'Reserved Parameters -- Checks for reserved parameters in function definitions. If these parameters are defined by the user, an error generally occurs.'
-        'PSShouldProcess' = 'Should Process -- Checks that if the SupportsShouldProcess is present, the function calls ShouldProcess/ShouldContinue and vice versa.'
+        'PSShouldProcess' = 'SupportsShouldProcess is declared without a ShouldProcess call, or the reverse, so -WhatIf and -Confirm silently do nothing. Call $PSCmdlet.ShouldProcess() before the change.'
         'PSUseApprovedVerbs' = 'Cmdlet Verbs -- Checks that all defined cmdlets use approved verbs. This is in line with PowerShell''s best practices.'
         'PSUseBOMForUnicodeEncodedFile' = 'Use BOM encoding for non-ASCII files -- For a file encoded with a format other than ASCII, ensure BOM is present to ensure that any application consuming this file can...'
         'PSUseCmdletCorrectly' = 'Use Cmdlet Correctly -- Cmdlet should be called with the mandatory parameters.'
@@ -87,7 +109,7 @@
         'PSUseOutputTypeCorrectly' = 'Use OutputType Correctly -- The return types of a cmdlet should be declared using the OutputType attribute.'
         'PSUseProcessBlockForPipelineCommand' = 'Use process block for command that accepts input from pipeline -- If a command parameter takes its value from the pipeline, the command must use a process block to bind the...'
         'PSUsePSCredentialType' = 'Use PSCredential type -- For PowerShell 4.0 and earlier, a parameter named Credential with type PSCredential must have a credential transformation attribute defined after the...'
-        'PSUseSupportsShouldProcess' = 'Use SupportsShouldProcess -- Commands typically provide Confirm and WhatIf parameters to give more control on its execution in an interactive environment.'
+        'PSUseSupportsShouldProcess' = 'Defines its own -WhatIf or -Confirm parameter instead of inheriting them. Declare [CmdletBinding(SupportsShouldProcess)] so PowerShell supplies both and honors ConfirmPreference.'
         'PSUseToExportFieldsInManifest' = 'Use the *ToExport module manifest fields -- In a module manifest, AliasesToExport, CmdletsToExport, FunctionsToExport and VariablesToExport fields should not use wildcards or...'
         'PSUseUsingScopeModifierInNewRunspaces' = 'Use ''Using:'' scope modifier in RunSpace ScriptBlocks -- If a ScriptBlock is intended to be run as a new RunSpace, variables inside it should use ''Using:'' scope modifier, or be...'
         'PSUseUTF8EncodingForHelpFile' = 'Use UTF8 Encoding For Help File -- PowerShell help file needs to use UTF8 Encoding.'
