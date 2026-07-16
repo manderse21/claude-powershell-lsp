@@ -31,6 +31,61 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.24.3] - 2026-07-16
+PATCH: **Base-ruleset curation slice 2 -- `PSUseOutputTypeCorrectly` excluded, so the opt-in `base`
+surface is now 0% measured false-positive on the known-good oracle, with the default `pses-default`
+surface byte-for-byte unchanged.** The 000125 leg-3 ranking re-ran the 000091 quality wave's method
+against the live v1.24.x surface and returned a single verdict: `PSUseOutputTypeCorrectly` was the
+SOLE rule in the base-54 set that fired on the known-good false-positive oracle -- two pedantic
+Information hits (`New-ServerConfig` -> `OrderedDictionary`, `Format-ReportHeader` -> `String`), both
+on correct functions the rule simply wants an `[OutputType()]` attribute on, plus zero hits on the
+plugin's own source. The rule never checks that the code is wrong, so on correct code it is pure
+pedantry with no defect behind it and no per-rule config that fixes the misfire. Excluding it takes
+`rulesets/base.psd1` from **54 -> 53** rules and makes the ENTIRE `base` surface 0% measured
+false-positive on that oracle. This is the second independent observation of the same wave method
+(000091 -> 000092 was the first), which is the evidence bar 000092 set for an exclude-only slice;
+000092 had deferred this rule once on volume grounds.
+
+EXCLUDE-ONLY, on the existing 000092 mechanism: the rule is added as a named, evidence-citing entry to
+`$BaseRuleExclusions` in `scripts/regen-base-ruleset.ps1`, and `rulesets/base.psd1` is REGENERATED from
+the generator (default-on minus the compatibility-profile family minus the exclude list), never
+hand-edited; `regen -Check` stays green, preserving the 000087 deterministic-enumeration property. The
+rationale table derives its PSSA half from `base.psd1`, so `rulesets/rule-rationales.psd1` is
+regenerated in the same reviewed diff: **58** entries (**53** auto-derived + **5** hand-authored owned
+finders), `pssa_count` 54 -> 53, with all **4** overrides from the v1.24.2 layer intact. No rule is
+added, no knob, no `CONTRACT.md` change, no pin change.
+
+`pses-default` is byte-for-byte unchanged. `PSUseOutputTypeCorrectly` is BASE-ONLY: it is not in PSES's
+built-in 15-rule no-settings allow-list (dispatch 000085 `AnalysisService.s_defaultRules`, re-resolved
+from disk by reflection on the vendored PSES 4.6.0 for this slice), so the default surface never
+evaluates it and cannot move. All four exclusions are now base-only by the same probe. The three
+Error-severity security rules (`PSAvoidUsingComputerNameHardcoded` /
+`PSAvoidUsingConvertToSecureStringWithPlainText` / `PSAvoidUsingUsernameAndPasswordParams`),
+`PSAvoidUsingWriteHost`, and all four override codes are RETAINED.
+
+Classified PATCH on the direct [1.21.1] precedent -- the same exclude-only curation of the same opt-in
+ruleset by the same mechanism. The frozen CONTRACT surface (the `ruleset` knob name, its enum values,
+its default) is untouched: `base`'s rule content is a regenerable implementation detail, not part of
+the frozen surface. Under the on-disk policy this adds no new capability (no `userConfig` knob, no
+added diagnostics feature, no newly CI-verified platform), so MINOR does not apply; it is a
+noise-reduction refinement of an opt-in ruleset with the default untouched. Unlike the [1.24.2]
+override layer -- which deliberately did NOT lean on [1.21.1] because its `PSShouldProcess` override
+changed rendered text on the default surface -- this slice rests on exactly the default-surface
+invariance [1.21.1] rests on. See dispatch 000126.
+
+### Changed
+
+- **`rulesets/base.psd1` -- 54 -> 53 rules.** Regenerated (not hand-edited) from the fourth
+  `$BaseRuleExclusions` entry in `scripts/regen-base-ruleset.ps1` -- still the pinned analyzer's
+  default-on set minus `PSUseCompatible*`, now also minus `PSUseOutputTypeCorrectly`.
+- **`rulesets/rule-rationales.psd1` -- 59 -> 58 entries** (`pssa_count` 54 -> 53). Regenerated through
+  `scripts/regen-rule-rationales.ps1`, which derives its PSSA half from `base.psd1`. The
+  `PSUseOutputTypeCorrectly` entry is gone; `owned_count` (5) and `override_count` (4) are unchanged.
+  A code with no entry surfaces its finding with no `why:` line -- degrade, never fabricate -- so a
+  user who broadens the live surface with their own `PSScriptAnalyzerSettings.psd1` and makes this
+  rule fire now sees the finding without a rationale line, the same designed path
+  `PSUseSingularNouns` has taken since v1.21.1.
+
 ## [1.24.2] - 2026-07-10
 PATCH: **rule-rationale override layer -- four idiom-family rules now render hand-authored guidance
 instead of their weak auto-derived text.** The v1.24.0 rationale table derives each PSScriptAnalyzer
