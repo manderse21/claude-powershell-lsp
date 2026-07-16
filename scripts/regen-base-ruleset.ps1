@@ -34,20 +34,26 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
 
-# --- survey-evidenced exclude list (dispatch 000092; from the 000091 quality wave) ----------
+# --- survey-evidenced exclude list (dispatch 000092, 000126; from the 000091 quality wave) --
 # EXCLUDE-ONLY curation. Each rule below is default-on in the pinned PSScriptAnalyzer (so the
-# derivation would otherwise include it) but was MEASURED noisy or false-positive on real code by
-# the 000091 whole-file survey over the 34-file known-good FP oracle (tests/corpus/samples/clean)
-# plus the plugin's own source. Excluding a rule here shrinks the regenerated rulesets/base.psd1 by
-# one and is the only curation lever for a misfire mode that has no per-rule config fix.
+# derivation would otherwise include it) but was MEASURED noisy or false-positive on real code by a
+# whole-file survey over the known-good FP oracle (tests/corpus/samples/clean) plus the plugin's own
+# source. Excluding a rule here shrinks the regenerated rulesets/base.psd1 by one and is the only
+# curation lever for a misfire mode that has no per-rule config fix. Two waves feed this list, the
+# second re-running the first's method against the later surface:
+#   * the 000091 wave (oracle of 34 .ps1 at the time) -- the first three entries (dispatch 000092);
+#   * its 000125 leg-3 re-run (same method; the oracle had grown to 44 .ps1) -- the fourth entry
+#     (dispatch 000126). The denominator grew by design-evolution, not defect: a larger known-good
+#     oracle strengthens a 0%-FP reading rather than weakening it.
 #
 # SAFE BY CONSTRUCTION: none of these rules is in the PSES v4.6.0 15-rule no-settings allow-list
 # (dispatch 000085 AnalysisService.s_defaultRules), so each is reachable ONLY under ruleset=base.
 # Removing one therefore tightens the opt-in base surface alone and CANNOT move the default
 # pses-default surface (which never evaluates them).
 #
-# EVIDENCE-GATED: every entry must trace to a 000091 finding. Adding a NEW rule is a separate
-# survey-first slice, never a silent ride-in here (this list only REMOVES measured-noisy rules).
+# EVIDENCE-GATED: every entry must trace to a MEASURED survey finding (the 000091 wave or its 000125
+# leg-3 re-run). Adding a NEW rule is a separate survey-first slice, never a silent ride-in here
+# (this list only REMOVES measured-noisy rules).
 # Script-scoped so Get-DerivedBaseRules (a nested scope) reads it explicitly.
 $script:BaseRuleExclusions = @(
     # PSReviewUnusedParameter -- 000091: 9 of 10 findings are systematic FALSE-POSITIVES. PSSA does
@@ -69,6 +75,20 @@ $script:BaseRuleExclusions = @(
     #   (dispatch 000085), so it is base-only: a clean base exclusion that cannot touch pses-default.
     #   No per-rule config fixes the verb-triggered misfire.
     'PSUseShouldProcessForStateChangingFunctions'
+    # PSUseOutputTypeCorrectly -- 000125 leg 3 (the 000091 method, re-run against the live v1.24.x
+    #   surface; second observation of that wave): "It is the SOLE base-54 rule that fires on the
+    #   known-good FP oracle (2 pedantic Information hits: New-ServerConfig -> OrderedDictionary,
+    #   Format-ReportHeader -> String -- both correct functions the rule only wants an [OutputType()]
+    #   on), 0 own-source hits, and it is base-only (NOT in PSES-15, reflection-confirmed), so
+    #   excluding it PREVENTS new opt-in noise ... Excluding it takes base 54 -> 53 and makes the
+    #   ENTIRE base surface 0% measured FP on the oracle." The rule wants an [OutputType()] attribute
+    #   declared; it does not check that the code is wrong, so on correct functions it is pure
+    #   pedantry with no defect behind it. Base-only re-confirmed from disk for 000126 by reflecting
+    #   AnalysisService.s_defaultRules on the vendored PSES 4.6.0 (dispatch 000085 method): the
+    #   15-set does not contain it, so this exclusion cannot touch pses-default. 000092 DEFERRED it
+    #   once on volume (Information severity, 2 hits) -- the second independent observation carries
+    #   it. No per-rule config fixes the misfire.
+    'PSUseOutputTypeCorrectly'
 )
 
 function Resolve-PssaManifest {

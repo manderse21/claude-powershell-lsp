@@ -19,7 +19,7 @@
     schema = 'rule-rationales/v1'
     pssa_version = '1.25.0'
     max_length = 180
-    pssa_count = 54
+    pssa_count = 53
     owned_count = 5
     override_count = 4
     # The plugin-owned finders, hand-authored (PSScriptAnalyzer has no metadata for them).
@@ -106,7 +106,6 @@
         'PSUseCmdletCorrectly' = 'Use Cmdlet Correctly -- Cmdlet should be called with the mandatory parameters.'
         'PSUseDeclaredVarsMoreThanAssignments' = 'Extra Variables -- Ensure declared variables are used elsewhere in the script and not just during assignment.'
         'PSUseLiteralInitializerForHashtable' = 'Create hashtables with literal initializers -- Use literal initializer, @{}, for creating a hashtable as they are case-insensitive by default'
-        'PSUseOutputTypeCorrectly' = 'Use OutputType Correctly -- The return types of a cmdlet should be declared using the OutputType attribute.'
         'PSUseProcessBlockForPipelineCommand' = 'Use process block for command that accepts input from pipeline -- If a command parameter takes its value from the pipeline, the command must use a process block to bind the...'
         'PSUsePSCredentialType' = 'Use PSCredential type -- For PowerShell 4.0 and earlier, a parameter named Credential with type PSCredential must have a credential transformation attribute defined after the...'
         'PSUseSupportsShouldProcess' = 'Defines its own -WhatIf or -Confirm parameter instead of inheriting them. Declare [CmdletBinding(SupportsShouldProcess)] so PowerShell supplies both and honors ConfirmPreference.'

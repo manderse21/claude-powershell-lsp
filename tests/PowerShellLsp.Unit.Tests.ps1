@@ -1119,12 +1119,12 @@ Describe 'base.psd1 is NOT auto-discovered as a repo-local settings file (dispat
     }
 }
 
-Describe 'rulesets/base.psd1 -- enumerated, deterministic base ruleset (dispatch 000087; curated 000092)' {
+Describe 'rulesets/base.psd1 -- enumerated, deterministic base ruleset (dispatch 000087; curated 000092, 000126)' {
     # The base ENUMERATES its rules explicitly (not IncludeDefaultRules=$true) so the surfaced
     # set is pin-independent and a pin bump is a deliberate regeneration. These guard the
     # shipped file's content directly (parse only -- no PSScriptAnalyzer needed, so they run on
     # every leg): the security rules + Write-Host are in, the formatting/compat rules are out, the
-    # three survey-evidenced noisy rules (dispatch 000092) are out, no duplicates.
+    # four survey-evidenced noisy rules (dispatch 000092, 000126) are out, no duplicates.
     BeforeAll {
         $script:BaseFile = Join-Path $script:PluginRoot 'rulesets/base.psd1'
         $script:BaseData = Import-PowerShellDataFile -LiteralPath $script:BaseFile
@@ -1139,33 +1139,42 @@ Describe 'rulesets/base.psd1 -- enumerated, deterministic base ruleset (dispatch
         # Adversarial control: switch base.psd1 to IncludeDefaultRules=$true and this goes RED.
         $script:BaseData.ContainsKey('IncludeDefaultRules') | Should -BeFalse
     }
-    It 'ships exactly the derived rule count at the current pin (54 at PSScriptAnalyzer 1.25.0)' {
+    It 'ships exactly the derived rule count at the current pin (53 at PSScriptAnalyzer 1.25.0)' {
         # Pin-coupled by design: a pinned-analyzer bump regenerates the base
         # (scripts/regen-base-ruleset.ps1) and updates this count in the same reviewed diff.
-        # 54 = 58 default-on minus 1 default-on compat rule (PSUseCompatibleCmdlets) minus the
-        # 3 survey-evidenced exclusions (dispatch 000092; down from 57 at 000087).
-        $script:BaseRules.Count | Should -Be 54
+        # 53 = 58 default-on minus 1 default-on compat rule (PSUseCompatibleCmdlets) minus the
+        # 4 survey-evidenced exclusions (dispatch 000092 x3 + 000126 x1; down from 57 at 000087).
+        $script:BaseRules.Count | Should -Be 53
     }
-    It 'includes the three Error-severity security rules and a Write-Host-class rule (RETAINED through 000092)' {
-        # These are load-bearing signal and MUST survive the 000092 exclude curation.
+    It 'includes the three Error-severity security rules, Write-Host, and all four override codes (RETAINED through 000126)' {
+        # These are load-bearing signal and MUST survive the exclude curation. The four override
+        # codes (dispatch 000125) are asserted here too: an override may only key a rule that is
+        # in base, so excluding any of them would break the rationale generator's constraint-4
+        # throw. This pins that coupling at the base-ruleset end.
         foreach ($r in @(
                 'PSAvoidUsingComputerNameHardcoded',
                 'PSAvoidUsingConvertToSecureStringWithPlainText',
                 'PSAvoidUsingUsernameAndPasswordParams',
-                'PSAvoidUsingWriteHost')) {
+                'PSAvoidUsingWriteHost',
+                'PSShouldProcess',
+                'PSUseSupportsShouldProcess',
+                'PSAvoidShouldContinueWithoutForce')) {
             $script:BaseRules | Should -Contain $r
         }
     }
-    It 'EXCLUDES the three survey-evidenced noisy rules (dispatch 000092, from the 000091 quality wave)' {
+    It 'EXCLUDES the four survey-evidenced noisy rules (dispatch 000092 + 000126, from the 000091 quality wave)' {
         # Removed as measured noise: PSReviewUnusedParameter (~90% FP on the param-block +
         # nested-functions shape), PSUseSingularNouns (0 true-issues; intentional plurals),
         # PSUseShouldProcessForStateChangingFunctions (verb-triggered FP on clean New-*/Set-*
-        # builders). All three are base-only (not in the PSES 15-rule allow-list), so their
-        # removal tightens the opt-in base surface alone and leaves pses-default unchanged.
+        # builders), and PSUseOutputTypeCorrectly (dispatch 000126: the sole base-54 rule firing
+        # on the known-good FP oracle -- 2 pedantic Information [OutputType()] nags on correct
+        # functions, 0 true issues). All four are base-only (not in the PSES 15-rule allow-list),
+        # so their removal tightens the opt-in base surface alone and leaves pses-default unchanged.
         foreach ($r in @(
                 'PSReviewUnusedParameter',
                 'PSUseSingularNouns',
-                'PSUseShouldProcessForStateChangingFunctions')) {
+                'PSUseShouldProcessForStateChangingFunctions',
+                'PSUseOutputTypeCorrectly')) {
             $script:BaseRules | Should -Not -Contain $r
         }
     }
@@ -1215,7 +1224,7 @@ Describe 'rulesets/rule-rationales.psd1 -- shipped table invariants (dispatch 00
         $pin | Should -Not -BeNullOrEmpty
         [string]$script:RatData['pssa_version'] | Should -BeExactly $pin
     }
-    It 'covers the base ruleset surface EXACTLY: entries = base-54 PSSA rules + the owned finders' {
+    It 'covers the base ruleset surface EXACTLY: entries = base-53 PSSA rules + the owned finders' {
         $pssaKeys = @($script:RatEntries.Keys | Where-Object { $script:RatOwned -notcontains $_ } | Sort-Object)
         $baseSorted = @($script:RatBase | Sort-Object)
         ($pssaKeys -join ',') | Should -BeExactly ($baseSorted -join ',')
@@ -1249,7 +1258,7 @@ Describe 'rulesets/rule-rationales.psd1 -- shipped table invariants (dispatch 00
         [int]$script:RatData['override_count'] | Should -Be $expected.Count
         $cap = [int]$script:RatData['max_length']
         foreach ($k in $ovKeys) {
-            # Constraint 4: an override may only replace an auto-derived base-54 PSSA rule, never an
+            # Constraint 4: an override may only replace an auto-derived base-53 PSSA rule, never an
             # owned finder (which would shadow its hand-authored rationale).
             $script:RatBase | Should -Contain $k
             $script:RatOwned | Should -Not -Contain $k
@@ -1340,7 +1349,7 @@ Describe 'Import-RuleRationales / Get-RationaleForCode -- runtime lookup + per-r
     It 'DEGRADES GRACEFULLY: a code with no table entry yields no rationale line, never a throw' {
         $rendered = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::Ordinal)
         # LOAD-BEARING EXEMPLAR (000124). PSUseSingularNouns is a REAL PSScriptAnalyzer code that is
-        # deliberately entry-less: 000092 excluded it from the base-54 surface as measured-noisy, so
+        # deliberately entry-less: 000092 excluded it from the base surface as measured-noisy, so
         # the table derives no entry for it, yet a user's own PSScriptAnalyzerSettings.psd1 can still
         # broaden the live surface and make PSES emit it (000085). That makes it the honest
         # real-world degrade case now that all 5 owned codes carry entries. If a future curation
