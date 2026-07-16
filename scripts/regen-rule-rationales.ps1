@@ -78,7 +78,7 @@ $ErrorActionPreference = 'Stop'
 # Length budget for a single rendered rationale string (000120 survey guidance).
 $script:MaxLength = 180
 # Below this, a one-sentence summary is a fragment ('Deprecated.') rather than a rationale, and the
-# next sentence is pulled in (step 3a). Chosen from the measured base-54 first-sentence lengths at
+# next sentence is pulled in (step 3a). Chosen from the measured base first-sentence lengths at
 # pin 1.25.0: the shortest is 11 chars, the next shortest is 25.
 $script:MinSummary = 24
 
@@ -302,7 +302,7 @@ function Get-RationaleText {
 }
 
 function Get-DerivedRationales {
-    # The reproducible derivation: the base-54 PSSA rules from the pin, plus the 5 hand-authored
+    # The reproducible derivation: the base.psd1 PSSA rules from the pin, plus the 5 hand-authored
     # owned finders. Returns @{ Entries = @{ code -> text }; Owned = @(sorted owned codes);
     # PssaRules = @(sorted PSSA codes); PssaVersion = '<pin>' }.
     param([string]$ManifestPath)
