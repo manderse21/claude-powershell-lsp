@@ -1,21 +1,26 @@
 # claude-powershell-lsp -- Roadmap
 
-Status as of 2026-07-09. Plugin on main: v1.24.0, GPL-3.0-or-later (both manifests + the latest
-CHANGELOG release heading at 1.24.0). The version is TAGGED, gitsign-signed, provenance-attested,
-and RELEASED: an annotated, gitsign-signed tag v1.24.0 -- cut from the release runner by
-`github-actions[bot]` under the gated `workflow_dispatch` pipeline -- sits at commit 05c6182 on
-origin (the #82 merge), `git describe --tags` returns v1.24.0, the v1.24.0 GitHub Release is
-published as Latest (2026-07-09), and the served marketplace listing resolves to 1.24.0 (Gate 5's
-tree-vs-published parity guard held at cut time). The old publish gap (the registry once served a
-stale 1.3.0) stays CLOSED.
+Status as of 2026-07-17. Plugin on main: **v1.24.3**, GPL-3.0-or-later (both manifests + the latest
+CHANGELOG release heading at 1.24.3 -- verified-from-disk). The version is TAGGED, gitsign-signed,
+and RELEASED (verified-from-web this session): an annotated, gitsign-signed tag v1.24.3 -- cut from
+the release runner by `github-actions[bot]` under the gated `workflow_dispatch` pipeline -- sits at
+commit 99f2b23 on origin (the #86 merge), `git describe --tags origin/main` returns v1.24.3, and the
+v1.24.3 GitHub Release is published as **Latest** (2026-07-17T00:09:43Z). The old publish gap (the
+registry once served a stale 1.3.0) stays CLOSED.
+
+The whole **v1.24.x band is closed out**: v1.24.0, v1.24.1, v1.24.2 and v1.24.3 are each tagged on
+origin and published as GitHub Releases (verified-from-web: `git ls-remote --tags origin` +
+`gh release list`). This matters because the three v1.24.1-3 rows below were, until this refresh,
+absent from Section 2 -- the doc claimed a v1.24.0 present that origin had already moved past.
 
 Provenance: every version, feature, and dispatch claim below is verified against live state THIS
 session -- `dispatch list --project powershell-lsp`, the dispatch log, `git log origin/main`, `git
-describe --tags`, the git tags + GitHub Releases, the CHANGELOG, and the plugin/marketplace
-manifests. Upstream issue/PR identifiers are confirmed against the in-repo citations under
-docs/upstream/ and the README AND re-checked against live GitHub this session, because two on-disk
-upstream notes had gone stale (the PSES PR #2299 state and the docs/upstream/sitting-closeout.md
-ledger); where a doc and live GitHub disagreed, live won.
+describe --tags`, `git ls-remote --tags origin`, `gh release list`, the CHANGELOG, and the
+plugin/marketplace manifests. **Each status claim in this document is labelled verified-from-disk
+(read out of this tree), verified-from-web (resolved live against origin / GitHub at run time), or
+inferred (reasoned, not observed).** Tag and release state is NEVER copied from memory or from a
+prior roadmap revision: it is resolved live, because that is exactly the claim that goes stale
+fastest -- v1.24.3 was released roughly an hour before this session began.
 
 Goal (Mike, confirmed): an open tool that is excellent and findable -- not a paid product, not
 adoption-chasing. That "findable" goal is now acted on: the r/PowerShell and r/ClaudeCode launch
@@ -80,6 +85,9 @@ dispatch(es); where an authored draft disagreed with the CHANGELOG, the CHANGELO
 
 | Version | Dispatch | Delivered |
 |---|---|---|
+| v1.24.3 | 000126 (ranking 000125 leg 3) | PATCH -- **base-ruleset curation slice 2, and the slice that CLOSES curation**. `PSUseOutputTypeCorrectly` was the sole rule of the base-54 still firing on the 44-file known-good oracle (2 pedantic Information hits, 0 own-source hits, base-only -- not in the PSES-15 set), so excluding it via the existing named `$BaseRuleExclusions` list takes base **54 -> 53** and makes the ENTIRE opt-in `base` surface **0% measured false-positive** on that oracle. `pses-default` is byte-for-byte unchanged; `rulesets/base.psd1` REGENERATED through `scripts/regen-base-ruleset.ps1` (never hand-edited) and the rationale table regenerated to `pssa_count` 53 with all four 000125 overrides intact. With a 0% measured FP rate there is no evidence for a further exclude slice, so **base curation is COMPLETE** and 000126 deliberately recorded `next_suggested: null`. Tag v1.24.3 gitsign-signed; GitHub Release published **Latest** (2026-07-17, verified-from-web) |
+| v1.24.2 | 000125 leg 1 (N1.1 slice 1) | PATCH -- **the rule-rationale OVERRIDE layer**: four idiom-family codes (`PSShouldProcess`, `PSUseSupportsShouldProcess`, `PSAvoidUsingWriteHost`, `PSAvoidShouldContinueWithoutForce`) now render hand-authored why+fix guidance instead of the weak text auto-derived from PSScriptAnalyzer's own CommonName + Description, which for idiom rules is circular (the "why" restates the rule name) or pure mechanism (it describes the checker, not the idiom, and offers no fix). The layer records each override's PRE-override `derived` text so a pin bump that changes the replaced text goes RED rather than being silently masked by the override -- drift-visible by construction. This is **N1.1 slice 1**: guidance quality on rules that already fire, not new detection. Tag v1.24.2 gitsign-signed; GitHub Release published (verified-from-web) |
+| v1.24.1 | 000124 | PATCH -- **rule-rationale coverage CLOSED**: the plugin's fifth owned code, `ManifestConsistency`, gained its hand-authored rationale. v1.24.0 shipped the feature with a recorded gap -- four of five owned finders had an entry and `ManifestConsistency` rode the graceful-degrade path with none, surfacing its finding with no `why:` line. Hand-authored through `scripts/regen-rule-rationales.ps1` and the table regenerated (never hand-edited). The 000124 survey also corrected the N1.1 premise: no NEW-detection idiom slice clears a 0%-measured-FP bar, which is what re-scoped N1.1 to guidance quality and produced v1.24.2. Tag v1.24.1 gitsign-signed; GitHub Release published (verified-from-web) |
 | v1.24.0 | 000121 (survey 000120 leg 2) | MINOR -- **rule-rationale strings** (feedback #9; horizon item I0.1). Every surfaced rule now carries a short static "why this rule matters" line on the EXISTING `additionalContext` channel, so a finding arrives with the reasoning attached, not just the verdict. The table `rulesets/rule-rationales.psd1` is HYBRID and GENERATED, never hand-edited: 58 entries = the 54 rationales for the `rulesets/base.psd1` PSScriptAnalyzer surface, auto-derived offline from the vendored pinned PSScriptAnalyzer 1.25.0 (`CommonName` + a whole-sentence `Description` prefix, 180-char budget, cut at a word boundary), plus 4 hand-authored entries for the plugin-owned finders PSScriptAnalyzer knows nothing about (`BashIsm`, `ModuleNotInstalled`, `NonAsciiChar`, `PS7OnlySyntax`). `scripts/regen-rule-rationales.ps1` writes it and its `-Check` drift guard re-derives and diffs it (exit 0 match / 1 drift), mirroring `regen-base-ruleset.ps1`; a pin-coupled unit guard goes RED unless a pin bump or a base-ruleset edit regenerates the table in the same reviewed diff. Rendering is deduplicated per RULE, not per finding -- a rule firing eight times in a file renders its rationale once -- bounding the added context to roughly (distinct rules in the file) x 180 chars. Two properties hold by construction: a clean file still emits NOTHING (byte-identical, integration-proven), and a rule with no entry degrades gracefully, surfaced with no rationale line, never fabricated. NO knob, NO `CONTRACT.md` change, NO new status token, and NO change to which rules run. Tag v1.24.0 gitsign-signed, provenance-attested; GitHub Release published Latest (2026-07-09) |
 | v1.23.1 | 000108 (survey 000107); 000110 (survey 000109); release-prep 000114 | PATCH (docs). Two documentation deliverables to installed users: (1) the Windows native-LSP launcher guard recorded as a known issue (docs/upstream/claude-code-lsp-registration.md + the README `nativeServe` section, scoped to Windows, upstream claude-code#73961); (2) every one of the 17 `userConfig` descriptions capped (<= ~200 chars each) for Claude Code config-panel height stability, with the full per-knob semantics relocated -- nothing deleted -- into a new docs/configuration.md, after 000109 found a long description could push the /plugin config panel past the viewport and trip a renderer ghost-row corruption. Behavior byte-for-byte unchanged: no knob key, type, value, default, `CONTRACT.md`, or product-code change. Tag v1.23.1 gitsign-signed; GitHub Release published Latest (2026-07-04) |
 | v1.23.0 | 000099; 000101 (survey 000100); 000103 (survey 000102); 000104 | MINOR (four features). 000099: format-on-edit `apply` activated -- `formatOnEdit=apply` becomes a guarded write-back (stale-write compare-and-swap, atomic-or-abort swap, BOM/EOL fidelity, no-change=no-write; a mixed-EOL / non-UTF-8 file aborts to a suggestion), the first feature that ever modifies the user's file; the default stays `off` and `off`/`suggest` are byte-for-byte unchanged. 000101: module awareness (`moduleAwareness` knob, default `off`) -- an Information-severity "command from an uninstalled module" hint from a shipped offline command->module index, design B (install-check-gated), silent on every ambiguity. 000103: the native-serve shim (`nativeServe` knob -- Section 1). 000104: the report-only `doctor.ps1 -ProbeNativeServe` removability probe, plus the v1.23.0 cut itself. Tag v1.23.0 gitsign-signed, provenance-attested |
@@ -100,6 +108,49 @@ carrying `-MaximumVersion 5.99.99`) and added a text-pin guard test, so the Pest
 post-rewrite `#66987` record (Section 6). Its third leg was the rule-rationale SURVEY that specified
 the v1.24.0 slice above -- it built nothing. Test-infra and docs only; no version moved.
 
+### HELD in PR (this dispatch, 000127) -- NOT merged, NOT released
+
+Everything in this subsection sits in ONE open plugin PR on `dispatch/000127-overnight-train`. It is
+**not on main, not tagged, not released**, and no version moved. It is listed here so the roadmap is
+not silently stale for a reader who pulls the branch -- never as shipped work. Merge, and any release,
+are Mike Andersen's gates. **Leg 8 classified this train NO-BUMP** (reasoning below).
+
+- **Leg 1 -- N1.2/N1.3 reference surfacing: BLOCKED, survey delivered, ZERO product edits.** The
+  design is settled and the single blocking decision is named (the `CONTRACT.md` FROZEN-KNOBS
+  amendment); see N1.2 in Horizon 1. Nothing was built and no workaround was attempted -- a
+  frozen-surface amendment is not an unattended decision. The survey is the leg's deliverable.
+- **Leg 2 -- the ServeShim lifecycle flake: ROOT-CAUSED and FIXED (test-infra only).** The 000125
+  outbox recorded two lifecycle tests (process reap + crash-propagation exit) failing intermittently
+  on BOTH hosts, the failing pair VARYING per run, one isolated run fully green, and all four CI legs
+  green. Root cause: the test harness's PSES-child lookup matched ANY `pwsh`/`powershell` whose
+  command line contained `Start-EditorServices.ps1` + `pses-serve-`, scoped to nothing -- so a PSES
+  leaked by a PRIOR session (000125 recorded six, aged 19-29h, and already suspected them of
+  "inflating the local ServeShim flake") was returned as "this shim's child". The reap assertion then
+  measured a foreign process, and the crash scenario KILLED one. That explains every recorded symptom,
+  including why CI never saw it: a clean runner has no orphans. The lookup is now scoped to the run
+  under test (start-time + parentage, both parameters mandatory so the unscoped scan is
+  unexpressible), and three fixed sleeps became bounded readiness gates. **Shim product code is
+  untouched** -- the semantics were never at fault.
+- **Leg 3 -- N1.5 latency harness + measured numbers (see N1.5, and `docs/benchmarks.md`).**
+- **Leg 4 -- N1.6 slice-2 survey: verdict recorded, ZERO product edits** (see N1.6).
+- **Leg 5 -- E2.1: exit-code policy matrix tests + the code-scanning upload workflow** (see E2.1). The
+  workflow is inert until merged by construction (no `pull_request` trigger), and the four named CI
+  legs plus the release pipeline are diff-proven byte-identical.
+- **Leg 6 -- catalog poll (read-only): `claude-powershell-lsp` is NOT present** in
+  `anthropics/claude-plugins-community`'s `marketplace.json` (HTTP 200, 2248 plugin entries, polled
+  2026-07-17T01:05:03Z, verified-from-web). Nothing is inferred about Console-side state in either
+  direction; see E2.3, which is Mike-gated and unchanged.
+- **Leg 7 -- this refresh.**
+- **Leg 8 -- NO-BUMP (recorded, unilateral).** Classified from the CHANGELOG's own on-disk policy over
+  what actually landed: MINOR requires "a new backward-compatible capability -- a new `userConfig`
+  knob, an added diagnostics feature, a newly CI-verified platform", and **none of those landed**. Leg
+  1 blocked, so there is no knob; leg 5's exit-code gate turned out to have shipped in v1.19.0 already,
+  so what it landed is tests, a repo-CI workflow, and one behavior-neutral internal refactor (the
+  `-FailOn` policy function moved into the scan library so it could be unit-tested at all). The
+  plugin's runtime behavior is byte-identical. That is exactly the **000120 precedent** -- a
+  test-infra-and-docs train that moved no version and took no Section 2 row. The docs improvements ride
+  the next release that has a real reason to cut.
+
 Earlier arc (v1.5.x through v1.17.0 -- launch-readiness, licensing MIT -> GPLv3, reliability /
 auto-relaunch, doctor self-check, dogfood capture + review tooling, the CI proof-framework, the
 enterprise trust-surface + measured-0%-FP corpus, community-release readiness, and release-engineering
@@ -110,7 +161,8 @@ is not re-transcribed per-version here.
 ## 3. Release process -- hardened (the gate is structural, not convention)
 
 The release path is enforced on three layers, all shipped, and every release from v1.19.0 through the
-current v1.24.0 was cut end-to-end by it:
+current v1.24.3 was cut end-to-end by it (verified-from-web: the v1.24.1/v1.24.2/v1.24.3 tags are all
+`github-actions[bot]`-tagged from the release runner, never a local tag):
 
 - The gated release pipeline (`.github/workflows/powershell-lsp-release.yml`, `workflow_dispatch` only
   -- it never auto-fires on push or merge): five gates make a bad tag structurally impossible -- Gate 1
@@ -126,7 +178,8 @@ current v1.24.0 was cut end-to-end by it:
   for admins, block force-push and deletion.
 
 Together the gated pipeline + the local guard + server-side protection make the gated flow the ONLY
-path to main. v1.19.0 was the first release cut under all three; v1.24.0 is the latest.
+path to main. v1.19.0 was the first release cut under all three; **v1.24.3 is the latest**
+(verified-from-web, published Latest 2026-07-17T00:09:43Z).
 
 ## 4. Forward plan -- the four-horizon ladder (tactical -> strategic)
 
@@ -162,7 +215,14 @@ chat.
   detail is in Section 2. Dispatch 000124 then hand-authored the one missing entry, so all **five**
   plugin-owned codes -- `BashIsm`, `ManifestConsistency`, `ModuleNotInstalled`, `NonAsciiChar`,
   `PS7OnlySyntax` -- now carry a rationale, and `rulesets/rule-rationales.psd1` covers the plugin's
-  whole surfaceable set (54 PSSA + 5 owned) at the pin. Nothing about I0.1 is open. The
+  whole surfaceable set (**53 PSSA + 5 owned = 58 entries**) at the pin (verified-from-disk this
+  session: `base.psd1` declares 53 `IncludeRules`, and the table's own `pssa_count` = 53,
+  `owned_count` = 5, entries = 58). The PSSA count dropped by one when v1.24.3 / 000126 excluded
+  `PSUseOutputTypeCorrectly` from base; this line still carried the pre-000126 count until this
+  refresh -- the residual 000126 recorded and this dispatch closes. (The superseded number is
+  deliberately not restated here: quoting a stale count inside the correction is what makes a
+  future drift-grep match the very string it is meant to catch -- the 000123 vacuity lesson.)
+  Nothing about I0.1 is open. The
   graceful-degrade path itself is unchanged and still load-bearing: a rule outside the `base.psd1`
   surface (one a user's own settings file enables) surfaces its finding with no rationale line, never
   fabricated, never blocking.
@@ -194,24 +254,112 @@ chat.
   `throw`, so no advanced-function rule can be FP-measured until a corpus tier is added. The plugin
   flags; the agent transforms. Output: PATCH per slice (better guidance on findings that already
   render, not a new capability).
-- **N1.2 Cross-file reference surfacing (#2 / #3).** A deterministic "referenced by N files" signal via
-  the diagnostic channel -- NOT the gated native-nav path -- strengthening the headless story. Output:
-  MINOR + a dedicated opt-in enum knob.
+- **N1.2 Cross-file reference surfacing (#2 / #3) -- SURVEYED (000127 leg 1); BUILD BLOCKED on ONE
+  Mike decision.** A deterministic "referenced by N files" signal via the diagnostic channel -- NOT the
+  gated native-nav path. The 000127 survey settled the design and then hit a named stop, so the design
+  is now specified and the gate is a decision, not more work:
+  - **Index strategy: SETTLED -- session-start index, not a per-edit scan** (measured this session,
+    verified-from-disk, pwsh 7.6.3, 30 iterations per point). A per-edit full workspace scan costs
+    **p50 1902 ms** on this repo (130 files), **1618 ms** at 200 files and **5359 ms** at 1000 --
+    11x-36x over the 150 ms per-edit budget at every size. It is not viable and no tuning saves it.
+    A session-start index costs **1.4-4.8 s ONCE** (130 / 200 / 1000 files) and then makes each edit a
+    parse of the EDITED FILE plus hashtable lookups: **p50 5.3 ms at 200 files and 3.9 ms at 1000**.
+    The structural point: per-edit cost is O(edited file), NOT O(repo) -- it does not grow with the
+    workspace. The one-off index build fits the 000101 session-start seam exactly, which already pays a
+    survey-measured ~6.3 s (pwsh) / ~11.7 s (5.1) installed-modules snapshot on a background runspace
+    off the critical path; 4.8 s at 1000 files sits inside that established budget.
+  - **The one measured caveat, recorded rather than smoothed:** on this repo the per-edit p50 is
+    **212 ms** -- over budget -- because the survey deliberately picked the WORST file in the tree
+    (`scripts/lib/lsp-common.ps1`, 2655 lines / 88 functions) and re-parsing it dominates. The fix is
+    named and cheap: the daemon ALREADY parses the edited file for `moduleAwareness`
+    (`Get-ModuleAwarenessFindings`), so the reference pass must SHARE that parse rather than add a
+    second one. Budget-met is a design constraint on the build, not an open question.
+  - **Ambiguity ledger, every entry resolving to SILENCE** (the 000101 rung discipline, reused
+    verbatim): dynamic invocation (`& $name` -- `GetCommandName()` returns `$null`); a dynamic
+    dot-source (`. $path`) or any include that does not resolve to a readable, parseable file
+    (suppress the file); string-built names; duplicate definitions of one name across files (a
+    "referenced by N" that cannot say WHICH definition is referenced is not a fact); and a splatted or
+    computed call target. A missing count costs nothing; a WRONG count teaches the user to distrust
+    every count.
+  - **Shape: BARE FACTS, no new plugin-owned diagnostic code** (000127 OQ1, decided). `owned_count`
+    stays **5**; `rulesets/rule-rationales.psd1` and its generator are untouched. All five existing
+    owned codes name something WRONG that the user should fix; "referenced by 3 files" names nothing
+    wrong -- there is no defect and no fix. A diagnostic code carries an implicit "change this", and
+    the rationale layer those codes now attract (000121/000124/000125) answers "why does this rule
+    matter" -- a question a fact does not have; satisfying the coverage guard would mean fabricating a
+    rationale for a non-rule. The right shape is the one the tree already uses for non-defect signal:
+    a distinct labelled section on the existing `additionalContext` channel, as `Project
+    intelligence:` (000062) and `Correction check:` (000061) already do. No new status token.
+  - **NAMED STOP (the reason this is blocked, verified this session, not asserted):** the build needs a
+    `referenceSurfacing` userConfig knob, and `CONTRACT.md` section 1.1 freezes the knob-name SET
+    drift-guarded to equal `.claude-plugin/plugin.json` **exactly**. Adding the knob to the manifest
+    was PROVEN to turn BOTH the CONTRACT guard and the README guard RED (run this session, then
+    reverted; the guards were re-run green afterwards). So the knob cannot ship without a
+    `CONTRACT.md` FROZEN-KNOBS amendment -- which every prior knob got as a deliberate, documented
+    MINOR (`formatOnEdit`/000059, `ruleset`/000087, `moduleAwareness`/000101, `nativeServe`/000103).
+    That amendment is a frozen-surface decision reserved to Mike, and 000127 ran unattended under
+    NIGHT_PROTOCOL, which names a CONTRACT need as a stop. **Nothing was built; nothing was worked
+    around.** Output when unblocked: MINOR + a dedicated opt-in enum knob + the CONTRACT amendment.
 - **N1.3 Graph-facts surfacing (#6 core).** Reference count / is-exported / called-from-N as facts, the
-  score dropped. Folds into the N1.2 survey.
+  score dropped. Folded into the N1.2 survey above (000127 leg 1) and blocked with it on the same
+  single CONTRACT decision.
 - **N1.4 Quality-wave curation.** Exclude-only curation and config-tuning of the kept base rules, the
   same discipline as v1.21.1; cut a rule only when `review-dogfood.ps1` over accrued genuine captures
   ranks it net-noise. The clock is real usage (Section 5). Output: PATCH.
-- **N1.5 Closed-loop latency benchmark.** Turn the 000061 correction loop's structural latency claim
-  into a measured number; it needs a fresh baseline (the PL-2 / 000054 benchmark is `abandoned`,
-  verified live). Output: docs + a harness.
-- **N1.6 Project-intelligence slice 2.** The next deterministic manifest / cross-file slice beyond the
-  v1.19.0 slice 1, scoped to feeding signal. Survey -> build. Output: MINOR.
+- **N1.5 Closed-loop latency benchmark -- BUILT, HELD in PR (000127 leg 3).** Turns the 000061
+  correction loop's structural latency claim into a measured median + p95 alongside the warm-hook
+  baseline, from a rerunnable on-demand harness (`tests/bench/Invoke-LatencyBench.ps1`, reusing the
+  000040 `tests/bench/` primitives -- which is where the placement question was already answered on
+  disk). Cold start is excluded and said so; the harness verifies the lifecycle signal ACTUALLY fired
+  rather than timing a plain warm turn and labelling it a closed loop. Numbers + method live in
+  `docs/benchmarks.md`. Not CI-wired, deliberately: a single-machine number is indicative, not a
+  regression gate (`tests/PowerShellLsp.Benchmark.Tests.ps1` still owns the guarded thresholds).
+  See the HELD subsection below -- not merged.
+- **N1.6 Project-intelligence slice 2 -- SURVEYED (000127 leg 4); verdict BUILD (qualified), oracle
+  first.** The survey ranked three candidates by measured FP on a known-good oracle (the machine's 72
+  installed, shipping, working module manifests) rather than by architectural taste -- and the
+  measurement overturned the prior:
+  - **Ranked first: `AliasesToExport` orphan** -- a name in `AliasesToExport` with no matching alias
+    definition. It is the residual the SHIPPED code names itself (`Test-ManifestConsistency` in
+    lsp-common.ps1 records "Only FunctionsToExport is checked in slice 1; CmdletsToExport and
+    AliasesToExport are recorded but not cross-referenced"), it is exactly symmetric with the
+    orphan-export check slice 1 already ships, and the machinery exists
+    (`Get-AliasDefinitionNameFromCommand` + the degrade ladder).
+  - **The measurement, and the correction it forced:** a naive root-module-only implementation fired on
+    **2 of 5** alias-declaring modules (40%). Both hits were FALSE POSITIVES *of the probe*, and each
+    named a REQUIRED degrade rung: Pester defines its aliases through an indirection
+    (`& $SafeCommands['Set-Alias'] ...`, so `GetCommandName()` is `$null` -- the 000101 rung-0
+    predicate already silences this), and BurntToast manages alias export via
+    `Export-ModuleMember -Alias`. So the 2 hits are the candidate's REQUIREMENTS SPEC, not evidence
+    against it.
+  - **FP-measurement path (named, and the reason this is "qualified"):** this box offers only **5**
+    alias-declaring script-rooted modules -- far too small a denominator for the 0%-FP bar this project
+    holds itself to (000091 measured on 34, 000126 on 44). The path is: enlarge the module oracle to a
+    defensible denominator (a pinned, offline-able snapshot of top PSGallery modules), implement the
+    two rungs the measurement named plus nested-module and dot-source degrades, then require 0% FP with
+    every hit triaged by hand. **Do not build this slice until the oracle exists** -- otherwise the
+    0%-FP claim is unmeasurable, which is precisely the trap the 000124 N1.1 survey caught.
+  - Deferred behind it: nested-module consistency (medium value, more machinery); `RequiredModules`
+    vs project reality (FP-hostile -- a module legitimately required for types/formats/side effects is
+    referenced by no `CommandAst`, and the probe's 0% rests on a denominator of **1**, which settles
+    nothing). Output when built: MINOR.
 
 ### Horizon 2 -- Enterprise hardening (parallel track; adoption-gating)
 
-- **E2.1 SARIF / CI deepening.** SARIF upload to GitHub code scanning plus an exit-code policy gate,
-  building on the v1.19.0 standalone scan mode. Output: MINOR.
+- **E2.1 SARIF / CI deepening -- LARGELY CLOSED; the remainder is HELD in PR (000127 leg 5).** This
+  item was written as "SARIF upload to code scanning **plus an exit-code policy gate**". Half of it was
+  already shipped and the roadmap did not know: **the exit-code policy gate has existed since v1.19.0 /
+  000057** as `lsp-scan.ps1 -FailOn none|note|warning|error` (default `none` never gates; exit 2 when a
+  finding is at or above the threshold) -- verified-from-disk this session in the script, the README,
+  and the CHANGELOG's v1.19.0 entry. What was genuinely missing, and is what 000127 leg 5 built: (a) an
+  exit-code MATRIX pinning that policy (it had none, so it could drift silently) plus a wiring test
+  proving the CLI flag reaches the exit code; (b) the code-scanning UPLOAD itself
+  (`.github/workflows/powershell-lsp-code-scanning.yml`) -- a separate workflow, inert until merged (no
+  `pull_request` trigger), `upload-sarif` pinned by commit SHA because it is the only step in the
+  repository holding `security-events: write`, scanning `scripts/` rather than the root because
+  `tests/corpus/samples/` is deliberately-bad code by construction. See the HELD subsection below --
+  not merged. Output: **not the MINOR this item assumed** -- see leg 8's NO-BUMP reasoning; the gate
+  it named was already released, and a repo-CI workflow is not a user-visible capability.
 - **E2.2 Org policy config.** Centrally-managed ruleset / settings precedence, extending the `ruleset`
   knob under the existing knob doctrine. Output: MINOR + a `CONTRACT.md` amendment.
 - **E2.3 Catalog listing.** Get into `anthropics/claude-plugins-community` (and the official catalog if
