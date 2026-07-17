@@ -113,8 +113,14 @@ function Start-ServeShimClient {
     $psi.EnvironmentVariables['CLAUDE_PLUGIN_OPTION_NATIVESERVE'] = $Mode
     $psi.EnvironmentVariables['CLAUDE_PLUGIN_OPTION_PS_HOST'] = 'pwsh'
     $p = [System.Diagnostics.Process]::Start($psi)
+    # ShimStart is load-bearing, not diagnostic: Get-ServeShimPsesPid scopes candidate PSES hosts
+    # to those that started at/after this shim, which is what excludes a host leaked by a prior
+    # session (the 000125 flake). Read once here, from the live handle, so the scope is exact.
+    $shimStart = [datetime]::MinValue
+    try { $shimStart = $p.StartTime } catch { $shimStart = (Get-Date).AddSeconds(-5) }
     $st = @{
         Proc = $p
+        ShimStart = $shimStart
         To   = $p.StandardInput.BaseStream
         From = $p.StandardOutput.BaseStream
         Buf  = New-Object System.Collections.Generic.List[byte]
@@ -139,16 +145,125 @@ function Stop-ServeShimClient {
     } catch { }
 }
 
+function Get-ServeShimProcessParentId {
+    # Best-effort PARENT pid by pid, cross-platform. Mirrors Get-ProcessCommandLine's platform
+    # ladder in scripts/lib/lsp-common.ps1 (CIM on Windows, /proc on Linux, the native ps binary
+    # elsewhere) so it behaves on all four CI legs. Returns 0 when unavailable -- every caller
+    # treats 0 as "unknown" and falls back to the start-time factor rather than guessing.
+    param([int]$ProcessIdValue)
+    try {
+        if (Test-OnWindows) {
+            $cim = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $ProcessIdValue) -ErrorAction SilentlyContinue
+            if ($null -ne $cim) { return [int]$cim.ParentProcessId }
+            return 0
+        }
+        $statFs = "/proc/$ProcessIdValue/stat"   # Linux: field 4 is the ppid
+        if (Test-Path -LiteralPath $statFs) {
+            $raw = [string](Get-Content -LiteralPath $statFs -Raw -ErrorAction SilentlyContinue)
+            # comm (field 2) is parenthesized and MAY contain spaces or parens, so anchor the
+            # split on the LAST ')' rather than splitting the whole line on whitespace.
+            $idx = $raw.LastIndexOf(')')
+            if ($idx -ge 0) {
+                $rest = @(($raw.Substring($idx + 1).Trim()) -split '\s+')
+                if ($rest.Count -ge 2) {
+                    $n = 0
+                    if ([int]::TryParse($rest[1], [ref]$n)) { return $n }
+                }
+            }
+            return 0
+        }
+        $psBin = Get-Command 'ps' -CommandType Application -ErrorAction SilentlyContinue
+        if ($null -ne $psBin) {
+            $out = ((& $psBin.Source -o ppid= -p $ProcessIdValue 2>$null) -join ' ').Trim()
+            $n = 0
+            if ([int]::TryParse($out, [ref]$n)) { return $n }
+        }
+        return 0
+    } catch { return 0 }
+}
+
 function Get-ServeShimPsesPid {
-    # Best-effort: the PSES child pid the shim spawned (a Start-EditorServices host launched with
-    # a pses-serve- log path). Returns 0 if not found. Used only to PROVE the orphan reap.
+    # The PSES child pid THIS shim spawned. Returns 0 if not found.
+    #
+    # SCOPED TO THIS RUN (dispatch 000127). The pre-000127 implementation scanned EVERY
+    # pwsh/powershell process on the machine and returned the first whose command line contained
+    # 'Start-EditorServices.ps1' + 'pses-serve-' -- scoped to nothing: not this shim, not this
+    # run, not even this hour. A PSES leaked by a PRIOR session (dispatch 000125 recorded six
+    # lingering hosts aged 19-29h, and named them as "inflating the local ServeShim flake")
+    # matches that predicate exactly, so the harness returned a FOREIGN pid and the lifecycle
+    # assertions then measured the wrong process:
+    #   - Invoke-ServeShimSession: PsesReaped tested the leaked host (still alive) -> $false.
+    #   - Invoke-ServeShimCrash:   Stop-Process killed the leaked host, this shim's real PSES
+    #                              lived on, no EOF propagated, WaitForExit(15000) -> $false.
+    # Which of the pair failed depended on process enumeration order, which is why the 000125
+    # evidence recorded the failing pair as VARYING per run, host-independent, green in an
+    # isolated run, and green on all four CI legs (clean runners carry no orphans).
+    #
+    # Both parameters are MANDATORY so the unscoped global scan is not merely discouraged but
+    # unexpressible: there is no overload that can return a process this shim did not spawn.
+    param(
+        [Parameter(Mandatory = $true)][int]$ShimPid,
+        [Parameter(Mandatory = $true)][datetime]$ShimStart
+    )
     try {
         foreach ($proc in @(Get-Process -Name 'pwsh', 'powershell' -ErrorAction SilentlyContinue)) {
+            # FACTOR 1 -- start time (always available, and alone enough to exclude every
+            # leaked host from a prior session): a process that started BEFORE this shim did
+            # cannot be a child this shim spawned.
+            $st = $null
+            try { $st = $proc.StartTime } catch { $st = $null }
+            if ($null -eq $st -or $st -lt $ShimStart) { continue }
             $cl = Get-ProcessCommandLine $proc.Id
-            if (($cl -match 'Start-EditorServices\.ps1') -and ($cl -match 'pses-serve-')) { return $proc.Id }
+            if (-not (($cl -match 'Start-EditorServices\.ps1') -and ($cl -match 'pses-serve-'))) { continue }
+            # FACTOR 2 -- parentage (authoritative where the platform answers): this shim spawns
+            # PSES directly, so the child's parent IS the shim. An unknown ppid (0) does not veto,
+            # so a platform that cannot answer degrades to factor 1 rather than finding nothing.
+            $pp = Get-ServeShimProcessParentId $proc.Id
+            if ($pp -gt 0 -and $pp -ne $ShimPid) { continue }
+            return $proc.Id
         }
     } catch { }
     return 0
+}
+
+function Wait-ServeShimPsesPid {
+    # READINESS GATE (replaces a fixed Start-Sleep): poll until THIS shim's PSES child is
+    # identifiable, or $TimeoutMs elapses. Returns the pid, or 0 on timeout. A fixed sleep
+    # encodes a guess about spawn latency that a loaded CI runner is free to violate; this
+    # returns the instant the child is visible and only spends the full budget when it never is.
+    param(
+        [Parameter(Mandatory = $true)][int]$ShimPid,
+        [Parameter(Mandatory = $true)][datetime]$ShimStart,
+        [int]$TimeoutMs = 15000,
+        [int]$PollMs = 100
+    )
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
+    while ($true) {
+        $found = Get-ServeShimPsesPid -ShimPid $ShimPid -ShimStart $ShimStart
+        if ($found -gt 0) { return $found }
+        if ((Get-Date) -ge $deadline) { return 0 }
+        Start-Sleep -Milliseconds $PollMs
+    }
+}
+
+function Wait-ServeShimProcessGone {
+    # READINESS GATE (replaces a fixed Start-Sleep): poll until pid $ProcessIdValue is gone, or
+    # $TimeoutMs elapses. Returns $true when reaped. A reap is near-instant in the good case, so
+    # this returns immediately then; the budget only funds a genuinely slow teardown instead of
+    # a fixed sleep that is simultaneously too long (in the good case) and too short (on a
+    # loaded runner) -- the shape that makes a lifecycle assertion flake.
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessIdValue,
+        [int]$TimeoutMs = 10000,
+        [int]$PollMs = 100
+    )
+    if ($ProcessIdValue -le 0) { return $true }
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
+    while ($true) {
+        if (-not [bool](Get-Process -Id $ProcessIdValue -ErrorAction SilentlyContinue)) { return $true }
+        if ((Get-Date) -ge $deadline) { return $false }
+        Start-Sleep -Milliseconds $PollMs
+    }
 }
 
 function Invoke-ServeShimSession {
@@ -166,7 +281,8 @@ function Invoke-ServeShimSession {
     $result = @{
         Launched = $false; InitResult = $null; InitHasStaticNav = $false; Leaks = @();
         Hover = $null; Definition = $null; References = $null;
-        Timings = @{}; MaxNavMs = 0; Exited = $false; ExitCode = -999; PsesPid = 0; PsesReaped = $false; Error = ''
+        Timings = @{}; MaxNavMs = 0; Exited = $false; ExitCode = -999; PsesPid = 0; PsesReaped = $false
+        PsesIdentified = $true; Error = ''
     }
     $st = $null
     try {
@@ -221,7 +337,8 @@ function Invoke-ServeShimSession {
             Receive-ServeShimResponse -St $st -TargetId 999999 -TimeoutMs 3000 | Out-Null
         }
 
-        $result.PsesPid = Get-ServeShimPsesPid
+        # Identify THIS shim's PSES child while the session is still live (scoped: pid + start time).
+        $result.PsesPid = Get-ServeShimPsesPid -ShimPid $st.Proc.Id -ShimStart $st.ShimStart
 
         Write-LspFrame -Stream $st.To -Json (@{ jsonrpc = '2.0'; id = 9; method = 'shutdown' } | ConvertTo-Json -Depth 5 -Compress)
         Receive-ServeShimResponse -St $st -TargetId 9 -TimeoutMs 8000 | Out-Null
@@ -230,11 +347,18 @@ function Invoke-ServeShimSession {
         $result.Exited = $st.Proc.WaitForExit(15000)
         if ($result.Exited) { $result.ExitCode = $st.Proc.ExitCode } else { try { $st.Proc.Kill($true) } catch { } }
 
-        Start-Sleep -Milliseconds 800
+        # Readiness gate, not a fixed sleep: wait (bounded) for the identified child to actually
+        # go away. Returns the instant it does.
         if ($result.PsesPid -gt 0) {
-            $result.PsesReaped = -not [bool](Get-Process -Id $result.PsesPid -ErrorAction SilentlyContinue)
+            $result.PsesReaped = Wait-ServeShimProcessGone -ProcessIdValue $result.PsesPid -TimeoutMs 10000
+            if (-not $result.PsesReaped) {
+                $result.Error = 'PSES child pid ' + $result.PsesPid + ' was still alive 10000ms after the shim exited (orphan leak)'
+            }
         } else {
-            $result.PsesReaped = $true   # could not identify a child (e.g. very fast teardown); not a leak signal
+            # Non-vacuity: the scoped lookup found no child for THIS shim. Pre-000127 this
+            # silently reported "reaped" and the assertion passed having measured nothing.
+            $result.PsesReaped = $true
+            $result.PsesIdentified = $false
         }
         $result.Leaks = @($st.Leaks | Select-Object -Unique)
     } catch {
@@ -260,15 +384,22 @@ function Invoke-ServeShimCrash {
         Write-LspFrame -Stream $st.To -Json (@{ jsonrpc = '2.0'; id = 1; method = 'initialize'; params = $initParams } | ConvertTo-Json -Depth 30 -Compress)
         $null = Receive-ServeShimResponse -St $st -TargetId 1 -TimeoutMs $CapMs
         Write-LspFrame -Stream $st.To -Json (@{ jsonrpc = '2.0'; method = 'initialized'; params = @{} } | ConvertTo-Json -Depth 5 -Compress)
-        Start-Sleep -Milliseconds 500
-        $result.PsesPid = Get-ServeShimPsesPid
-        if ($result.PsesPid -gt 0) {
-            try { Stop-Process -Id $result.PsesPid -Force -ErrorAction Stop } catch { }
+        # Readiness gate, not a fixed sleep: wait (bounded) for THIS shim's PSES child to become
+        # identifiable. The old fixed 500ms both guessed at spawn latency AND, because the lookup
+        # was unscoped, could return a foreign host -- and this scenario KILLS what it finds, so a
+        # misidentification killed an unrelated process while the real PSES lived on and the shim
+        # never saw the EOF the assertion below is about.
+        $result.PsesPid = Wait-ServeShimPsesPid -ShimPid $st.Proc.Id -ShimStart $st.ShimStart -TimeoutMs 15000
+        if ($result.PsesPid -le 0) {
+            # Explicit, non-vacuous failure text: without a positively identified child there is
+            # nothing to crash, so the scenario proves nothing and must say so rather than pass.
+            $result.Error = 'could not identify this shim (pid ' + $st.Proc.Id + ') PSES child within 15000ms; the crash scenario was not exercised'
+            return $result
         }
+        try { Stop-Process -Id $result.PsesPid -Force -ErrorAction Stop } catch { }
         # The shim must notice PSES's stdout EOF and exit promptly (bounded).
         $result.ShimExitedAfterCrash = $st.Proc.WaitForExit(15000)
-        Start-Sleep -Milliseconds 500
-        if ($result.PsesPid -gt 0) { $result.PsesReaped = -not [bool](Get-Process -Id $result.PsesPid -ErrorAction SilentlyContinue) } else { $result.PsesReaped = $true }
+        $result.PsesReaped = Wait-ServeShimProcessGone -ProcessIdValue $result.PsesPid -TimeoutMs 10000
     } catch {
         $result.Error = [string]$_.Exception.Message
     } finally {

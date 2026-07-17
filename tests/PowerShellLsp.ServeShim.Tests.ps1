@@ -148,6 +148,85 @@ Describe 'ServeShim unit: the server->client intercept answer table' {
     }
 }
 
+Describe 'ServeShim harness: the PSES-child lookup is scoped to THIS run (dispatch 000127)' -Skip:$script:SkipServe {
+    # The 000125 outbox recorded two ServeShim lifecycle tests (process reap + crash-propagation
+    # exit) failing intermittently on BOTH hosts, with the failing pair VARYING every run, one
+    # isolated run fully green, and all four CI legs green -- and, separately, six leaked PSES
+    # hosts aged 19-29h on the local box, named there as "inflating the local ServeShim flake".
+    #
+    # This Describe pins the mechanism that connected those two observations: the harness's
+    # PSES-child lookup used to match ANY pwsh/powershell whose command line contained
+    # 'Start-EditorServices.ps1' + 'pses-serve-', scoped to nothing -- so a leaked host from a
+    # prior session was returned as "this shim's child". These are the RED-proving guards: each
+    # fails against the pre-000127 harness, and no real shim is spawned, so they cost ~2s and run
+    # on every leg (a clean CI runner has no orphans, which is exactly why CI never caught this).
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'ServeShim.Common.ps1')
+
+        # A DECOY with the shape of a leaked prior-session PSES: its command line matches the
+        # lookup predicate, but it is nobody's shim child. Long-lived enough to outlast the Its.
+        $script:DecoyArgs = @('-NoLogo', '-NoProfile', '-Command',
+            "# Start-EditorServices.ps1 -LogPath pses-serve-decoy.log `nStart-Sleep -Seconds 90")
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+        Add-ProcessArguments $psi $script:DecoyArgs
+        $script:Decoy = [System.Diagnostics.Process]::Start($psi)
+        # Let the OS register the command line before any lookup reads it.
+        $deadline = (Get-Date).AddSeconds(20)
+        while ((Get-Date) -lt $deadline) {
+            $cl = Get-ProcessCommandLine $script:Decoy.Id
+            if (($cl -match 'Start-EditorServices\.ps1') -and ($cl -match 'pses-serve-')) { break }
+            Start-Sleep -Milliseconds 100
+        }
+        $script:DecoyCmdLine = Get-ProcessCommandLine $script:Decoy.Id
+    }
+    AfterAll {
+        try { if ($null -ne $script:Decoy) { $script:Decoy.Kill($true) } } catch {
+            try { $script:Decoy.Kill() } catch { }
+        }
+    }
+
+    It 'the decoy really does match the lookup predicate (the guard cannot pass vacuously)' {
+        # Non-vacuity: if the decoy did NOT look like a leaked PSES, the Its below would pass for
+        # the wrong reason -- they would be excluding a process nothing would have matched anyway.
+        $script:DecoyCmdLine | Should -Match 'Start-EditorServices\.ps1'
+        $script:DecoyCmdLine | Should -Match 'pses-serve-'
+    }
+
+    It 'does NOT return a look-alike host that started BEFORE the shim (the 000125 orphan class)' {
+        # A shim "started" after the decoy: the decoy is older, so it can never be its child.
+        # Pre-000127 this returned the decoy's pid -- the whole flake in one assertion.
+        $laterStart = (Get-Date).AddSeconds(5)
+        Get-ServeShimPsesPid -ShimPid $PID -ShimStart $laterStart | Should -Be 0
+    }
+
+    It 'does NOT return a look-alike host that is not a child of THIS shim (parentage factor)' {
+        # Same era as the shim, but the wrong parent: an unrelated pid must never be claimed.
+        # 99999 is a pid this decoy is definitionally not a child of.
+        $earlyStart = (Get-Date).AddSeconds(-600)
+        Get-ServeShimPsesPid -ShimPid 99999 -ShimStart $earlyStart | Should -Be 0
+    }
+
+    It 'cannot be called unscoped -- both scoping parameters are mandatory' {
+        # Structural, not advisory: the unscoped global scan that caused the flake is not an
+        # option a future caller can reach for by omitting an argument.
+        $cmd = Get-Command Get-ServeShimPsesPid
+        [bool]$cmd.Parameters['ShimPid'].Attributes.Mandatory | Should -BeTrue
+        [bool]$cmd.Parameters['ShimStart'].Attributes.Mandatory | Should -BeTrue
+    }
+
+    It 'Wait-ServeShimProcessGone returns true promptly once a process is gone, and false while it lives' {
+        # The reap gate that replaced the fixed Start-Sleep 800 / 500: correct in BOTH directions.
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        Wait-ServeShimProcessGone -ProcessIdValue 99999 -TimeoutMs 5000 | Should -BeTrue
+        $sw.Stop()
+        $sw.ElapsedMilliseconds | Should -BeLessThan 4000 -Because 'an already-gone process must not burn the whole budget'
+        # Adversarial: a LIVE process must NOT read as reaped -- else the gate passes vacuously.
+        Wait-ServeShimProcessGone -ProcessIdValue $script:Decoy.Id -TimeoutMs 700 | Should -BeFalse
+    }
+}
+
 Describe 'ServeShim e2e: nativeServe=shim serves navigation end-to-end' -Skip:$script:SkipServe {
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
@@ -179,7 +258,14 @@ Describe 'ServeShim e2e: nativeServe=shim serves navigation end-to-end' -Skip:$s
     }
     It 'the shim exits cleanly and reaps its PSES child (zero orphans)' {
         $script:R.Exited | Should -BeTrue
-        $script:R.PsesReaped | Should -BeTrue
+        $script:R.PsesReaped | Should -BeTrue -Because ('reap detail: ' + [string](Get-Prop $script:R 'Error'))
+    }
+    It 'positively identified THIS shim PSES child, so the reap assertion is not vacuous (dispatch 000127)' {
+        # PsesReaped defaults to $true when no child is identified -- correct (a child we never
+        # saw is not an orphan we leaked), but it means the assertion above can pass having
+        # measured nothing. This names that case instead of letting it hide inside a green run.
+        [bool](Get-Prop $script:R 'PsesIdentified') | Should -BeTrue
+        [int](Get-Prop $script:R 'PsesPid') | Should -BeGreaterThan 0
     }
 }
 
@@ -211,7 +297,12 @@ Describe 'ServeShim e2e: lifecycle -- crash propagation, no orphans, no in-shim 
         $srv = Initialize-ServeShimEnv -TestsDir $PSScriptRoot
         $script:C = Invoke-ServeShimDriver -TestsDir $PSScriptRoot -Mode 'shim' -Scenario 'crash' -DataRoot $srv.DataDir
     }
-    It 'launched and identified the PSES child' { $script:C.Launched | Should -BeTrue; $script:C.PsesPid | Should -BeGreaterThan 0 }
+    It 'launched and identified the PSES child' {
+        # Non-vacuity gate for the whole Describe: without a positively identified child there is
+        # nothing to crash, so the two assertions below would prove nothing. The driver reports WHY.
+        $script:C.Launched | Should -BeTrue
+        $script:C.PsesPid | Should -BeGreaterThan 0 -Because ('the scoped lookup must find THIS shim child; driver said: ' + [string](Get-Prop $script:C 'Error'))
+    }
     It 'killing PSES mid-session makes the shim EXIT promptly (EOF propagated to the client; no in-shim re-spawn)' {
         $script:C.ShimExitedAfterCrash | Should -BeTrue -Because 'on PSES death the shim closes the client stdout and exits -- the manifest maxRestarts owns restart, so the shim must not re-spawn'
     }

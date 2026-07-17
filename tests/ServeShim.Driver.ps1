@@ -64,6 +64,8 @@ try {
             ReferencesMs     = [int]$r.Timings['references']
             Exited           = [bool]$r.Exited
             PsesReaped       = [bool]$r.PsesReaped
+            PsesPid          = [int]$r.PsesPid
+            PsesIdentified   = [bool]$r.PsesIdentified
         }
     }
 } catch {
