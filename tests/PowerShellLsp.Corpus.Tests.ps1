@@ -234,6 +234,21 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
                 'dynamic-export' {
                     $d.Count | Should -Be 0 -Because "$($s.Label) uses dynamic Export-ModuleMember (honest degrade, no false orphan)"
                 }
+                'alias-consistent' {
+                    $d.Count | Should -Be 0 -Because "$($s.Label) declares AliasesToExport for an alias it defines (consistent)"
+                }
+                'alias-orphan' {
+                    # dispatch 000128 slice 2: an alias in AliasesToExport with no matching Set-Alias definition.
+                    $d.Count | Should -BeGreaterThan 0 -Because "$($s.Label) has an AliasesToExport orphan"
+                    ($d | Select-Object -First 1).source | Should -BeExactly 'powershell-lsp'
+                    ($d | Select-Object -First 1).ruleId | Should -BeExactly 'ManifestConsistency'
+                }
+                'alias-dynamic-good' {
+                    $d.Count | Should -Be 0 -Because "$($s.Label) defines its alias by a dynamic invocation (Pester shape -- honest degrade, no false orphan)"
+                }
+                'alias-exportmember-good' {
+                    $d.Count | Should -Be 0 -Because "$($s.Label) manages alias exports via Export-ModuleMember -Alias (BurntToast shape -- honest degrade, no false orphan)"
+                }
                 default {
                     $true | Should -BeFalse -Because "$($s.Label) is not a known module fixture type"
                 }

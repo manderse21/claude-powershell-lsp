@@ -1,0 +1,8 @@
+[{
+  "ruleId": "ManifestConsistency",
+  "source": "powershell-lsp",
+  "severity": "Warning",
+  "line": 1,
+  "col": 1,
+  "message": "Alias 'gaoMissing' is listed in AliasesToExport but no matching Set-Alias/New-Alias definition was found in the module."
+}]

@@ -180,6 +180,8 @@ $script:moduleCacheCmdExports = @() # CmdletsToExport
 $script:moduleCacheAliasExports = @()  # AliasesToExport
 $script:moduleCacheDefinedNames = @()  # defined function names from the module
 $script:moduleCacheExportedNames = $null  # $null = implicitly all; @(...) = explicit list
+$script:moduleCacheDefinedAliases = @()          # literal Set-Alias/New-Alias names (dispatch 000128 slice 2)
+$script:moduleCacheAliasesIndeterminate = $true  # alias surface cannot be statically verified -> alias check silent
 # Format-on-edit (dispatch 000059, PL-8): the vendored PSScriptAnalyzer is imported into THIS
 # daemon process ONCE (lazy, on the first format request) so Invoke-Formatter runs on the warm
 # path with no cold-start. Latched here so the import cost is paid at most once per daemon.
@@ -747,6 +749,11 @@ function Update-ModuleSurfaceCache {
     if ($script:moduleCacheManifest -eq $manifestPath -and $script:moduleCacheHash -eq $currentHash) {
         return   # cache is still fresh
     }
+    # Reset the alias-surface cache to the SAFE default (dispatch 000128): every degrade path below inherits
+    # "no defined aliases, indeterminate=true" (alias check silent), and only the fully determinate path
+    # overrides it -- so a stale alias surface from a previously-cached module can never leak into a degrade.
+    $script:moduleCacheDefinedAliases = @()
+    $script:moduleCacheAliasesIndeterminate = $true
     # Parse the manifest.
     $exports = Get-ModuleManifestExports -ManifestPath $manifestPath
     if ($null -eq $exports) {
@@ -806,6 +813,13 @@ function Update-ModuleSurfaceCache {
         return
     }
     # Cache the fully determinate surface.
+    # Alias surface (dispatch 000128 slice 2): the module's literal alias definitions and whether the
+    # alias-orphan check must degrade. A non-empty manifest NestedModules also forces the degrade (aliases
+    # could live in a nested module this cross-reference does not parse).
+    $aliasSurface = Get-ModuleAliasSurface -ModuleFilePath $rootModulePath
+    $nested = @()
+    try { $nested = @($exports.Data['NestedModules']) } catch { $nested = @() }
+    $nestedPresent = (@($nested | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0)
     $script:moduleCacheManifest = $manifestPath
     $script:moduleCacheHash = $currentHash
     $script:moduleCacheDegrade = ''
@@ -814,7 +828,9 @@ function Update-ModuleSurfaceCache {
     $script:moduleCacheAliasExports = $aliasExport
     $script:moduleCacheDefinedNames = $moduleInfo.DefinedNames
     $script:moduleCacheExportedNames = $moduleInfo.ExportedNames
-    Write-DLog ('module cache: cached surface for ' + $manifestPath + ' (' + $fnExport.Count + ' exports, ' + $moduleInfo.DefinedNames.Count + ' defined functions)')
+    $script:moduleCacheDefinedAliases = $aliasSurface.DefinedAliases
+    $script:moduleCacheAliasesIndeterminate = ([bool]$aliasSurface.Indeterminate -or $nestedPresent)
+    Write-DLog ('module cache: cached surface for ' + $manifestPath + ' (' + $fnExport.Count + ' exports, ' + $moduleInfo.DefinedNames.Count + ' defined functions, ' + @($aliasSurface.DefinedAliases).Count + ' defined aliases, aliasesIndeterminate=' + [bool]$script:moduleCacheAliasesIndeterminate + ')')
 }
 
 function Get-CachedProjectFindings {
@@ -865,7 +881,9 @@ function Get-CachedProjectFindings {
         -AliasesToExport $script:moduleCacheAliasExports `
         -DefinedNames $script:moduleCacheDefinedNames `
         -ExportedNames $script:moduleCacheExportedNames `
-        -ManifestPath $script:moduleCacheManifest
+        -ManifestPath $script:moduleCacheManifest `
+        -DefinedAliases $script:moduleCacheDefinedAliases `
+        -AliasesIndeterminate $script:moduleCacheAliasesIndeterminate
     return @($result.Findings)
 }
 

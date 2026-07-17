@@ -2419,18 +2419,24 @@ function Get-ModuleDefinedFunctionNames {
                             }
                         }
                         if ($hasDynamic) { $degrade = 'dynamic Export-ModuleMember'; break }
-                        # Extract static -Function / -Cmdlet / -Alias names.
+                        # Extract static -Function / -Cmdlet names into the FUNCTION exported-set. NOT
+                        # -Alias: an alias is not a function, and folding an Export-ModuleMember -Alias name
+                        # into the function set falsely flagged it as an under-declared FUNCTION (the
+                        # BurntToast shape -- dispatch 000128 slice 2). Alias exports are a separate namespace
+                        # tracked by Get-ModuleAliasSurface; a -Alias parameter is still SCANNED (so a dynamic
+                        # -Alias value still degrades) but its names are not added here.
                         $i = 0
                         while ($i -lt $elems.Count) {
                             $ceStr = [string]$elems[$i]
                             if ($ceStr -eq '-Function' -or $ceStr -eq '-Cmdlet' -or $ceStr -eq '-Alias') {
+                                $collectFn = ($ceStr -ne '-Alias')
                                 $i++
                                 while ($i -lt $elems.Count) {
                                     $val = $elems[$i]
                                     $valStr = [string]$val
                                     if ($valStr.StartsWith('-')) { break }
                                     if ($val -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
-                                        $exported.Add($val.Value)
+                                        if ($collectFn) { $exported.Add($val.Value) }
                                     } elseif ($val -is [System.Management.Automation.Language.VariableExpressionAst]) {
                                         $hasDynamic = $true; break
                                     }
@@ -2458,6 +2464,47 @@ function Get-ModuleDefinedFunctionNames {
     return @{ DefinedNames = @($defined | Sort-Object); ExportedNames = $null; Degrade = ''; HasDotSource = $hasDotSource }
 }
 
+function Get-ModuleAliasSurface {
+    # The ALIAS half of a module's surface (dispatch 000128, N1.6 slice-2): the literal Set-Alias/New-Alias
+    # names the root module defines, and whether the alias-orphan check must DEGRADE to silence. Indeterminate
+    # is TRUE on any shape that could define or export an alias the static check cannot see -- the 000127
+    # leg-4 requirements spec, whose two probe hits name these rungs:
+    #   - a DYNAMIC invocation (GetCommandName() is $null) -- e.g. Pester's `& $SafeCommands['Set-Alias']`;
+    #   - a Set-Alias/New-Alias whose NAME is not a literal (splat / variable);
+    #   - an `Export-ModuleMember -Alias` -- e.g. BurntToast's explicit alias-export management.
+    # (Dot-source and a binary/absent RootModule already degrade the WHOLE surface upstream, so this pure
+    # function need not re-detect them.) FAIL-SAFE: Indeterminate=$true on any error -- never fire against a
+    # surface we could not fully read. PURE over the file; no new diagnostic code (the caller reuses the
+    # existing ManifestConsistency ruleId).
+    param([string]$ModuleFilePath)
+    $safe = @{ DefinedAliases = @(); Indeterminate = $true }
+    if ([string]::IsNullOrWhiteSpace($ModuleFilePath) -or -not (Test-Path -LiteralPath $ModuleFilePath -PathType Leaf)) { return $safe }
+    try {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($ModuleFilePath, [ref]$null, [ref]$null)
+        if ($null -eq $ast) { return $safe }
+        $defined = New-Object System.Collections.Generic.List[string]
+        $indeterminate = $false
+        $cmdNodes = @($ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true))
+        foreach ($cmd in $cmdNodes) {
+            $cn = $null
+            try { $cn = $cmd.GetCommandName() } catch { $cn = $null }
+            if ([string]::IsNullOrWhiteSpace($cn)) { $indeterminate = $true; continue }   # dynamic invocation (& $x)
+            $cnl = $cn.ToLowerInvariant()
+            if ($cnl -eq 'set-alias' -or $cnl -eq 'new-alias' -or $cnl -eq 'sal' -or $cnl -eq 'nal') {
+                $an = Get-AliasDefinitionNameFromCommand $cmd
+                if (-not [string]::IsNullOrWhiteSpace($an)) { $defined.Add($an) } else { $indeterminate = $true }   # non-literal name
+            } elseif ($cnl -eq 'export-modulemember') {
+                foreach ($ce in @($cmd.CommandElements)) {
+                    $isAlias = $false
+                    try { $isAlias = ($ce -is [System.Management.Automation.Language.CommandParameterAst]) -and (([string]$ce.ParameterName).ToLowerInvariant() -eq 'alias') } catch { $isAlias = $false }
+                    if ($isAlias) { $indeterminate = $true; break }
+                }
+            }
+        }
+        return @{ DefinedAliases = @($defined); Indeterminate = $indeterminate }
+    } catch { return $safe }
+}
+
 function Test-ManifestConsistency {
     # Core manifest-consistency check (PURE over injected data). Given the manifest
     # export lists and the module's defined/exported function names, return findings
@@ -2477,7 +2524,14 @@ function Test-ManifestConsistency {
         [string[]]$AliasesToExport,
         [string[]]$DefinedNames,
         $ExportedNames,              # $null = implicitly all defined are exported
-        [string]$ManifestPath
+        [string]$ManifestPath,
+        # Alias-orphan check (dispatch 000128, slice 2). DefinedAliases = the literal Set-Alias/New-Alias
+        # names the module defines; AliasesIndeterminate = the alias surface cannot be statically verified
+        # (dynamic invocation / non-literal alias name / Export-ModuleMember -Alias / nested modules), in
+        # which case the alias-orphan check DEGRADES to silence. DEFAULTS keep the alias check OFF for any
+        # caller that does not supply alias data -- the function-export semantics are unchanged.
+        [string[]]$DefinedAliases = @(),
+        [bool]$AliasesIndeterminate = $true
     )
     $findings = New-Object System.Collections.ArrayList
     # Check for wildcard -- '*' means "export all" and cannot be inconsistent.
@@ -2531,6 +2585,28 @@ function Test-ManifestConsistency {
             })
         }
     }
+    # 3. ALIAS-ORPHAN EXPORT (dispatch 000128, slice 2): an alias in AliasesToExport with no matching literal
+    #    Set-Alias/New-Alias definition in the module. Symmetric with the function orphan check (rung 1),
+    #    same ManifestConsistency code -- NO new owned diagnostic code, NO rationale change. GATED on a
+    #    DETERMINATE alias surface: when AliasesIndeterminate the whole alias check is SILENT (a dynamic
+    #    invocation / non-literal alias name / Export-ModuleMember -Alias / nested module could define the
+    #    alias invisibly -- the 000127 leg-4 requirements spec, whose two probe hits are Pester and BurntToast).
+    if (-not $AliasesIndeterminate -and $null -ne $AliasesToExport -and @($AliasesToExport).Count -gt 0) {
+        $definedAliasSet = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($a in $DefinedAliases) { $an = [string]$a; if (-not [string]::IsNullOrWhiteSpace($an)) { [void]$definedAliasSet.Add($an) } }
+        foreach ($aliasName in $AliasesToExport) {
+            $nn = [string]$aliasName
+            if ([string]::IsNullOrWhiteSpace($nn)) { continue }
+            if (-not $definedAliasSet.Contains($nn)) {
+                [void]$findings.Add([pscustomobject]@{
+                    ruleId = 'ManifestConsistency'; code = 'ManifestConsistency'
+                    source = 'powershell-lsp'
+                    severity = 'Warning'; line = 1; col = 1
+                    message = "Alias '$nn' is listed in AliasesToExport but no matching Set-Alias/New-Alias definition was found in the module."
+                })
+            }
+        }
+    }
     return @{ Findings = @($findings); Degrade = '' }
 }
 
@@ -2563,6 +2639,13 @@ function Get-ProjectIntelligenceFindings {
     if (-not [string]::IsNullOrWhiteSpace($moduleInfo.Degrade)) {
         return @{ Findings = @(); Degrade = $moduleInfo.Degrade }
     }
+    # Alias surface (dispatch 000128, slice 2): the module's literal alias definitions and whether the
+    # alias check must degrade. A non-empty manifest NestedModules ALSO forces the alias check to degrade --
+    # aliases could be defined in a nested module this cross-reference does not parse.
+    $aliasSurface = Get-ModuleAliasSurface -ModuleFilePath $rootModulePath
+    $nested = @()
+    try { $nested = @($exports.Data['NestedModules']) } catch { $nested = @() }
+    $nestedPresent = (@($nested | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0)
     # Cross-reference.
     return Test-ManifestConsistency `
         -FunctionsToExport $exports.FunctionsToExport `
@@ -2570,7 +2653,9 @@ function Get-ProjectIntelligenceFindings {
         -AliasesToExport $exports.AliasesToExport `
         -DefinedNames $moduleInfo.DefinedNames `
         -ExportedNames $moduleInfo.ExportedNames `
-        -ManifestPath $manifestPath
+        -ManifestPath $manifestPath `
+        -DefinedAliases $aliasSurface.DefinedAliases `
+        -AliasesIndeterminate ([bool]$aliasSurface.Indeterminate -or $nestedPresent)
 }
 
 function Get-ScopedCappedResult {
