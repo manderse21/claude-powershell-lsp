@@ -110,6 +110,12 @@
       "title": "Native LSP serve (hover / go-to-definition / find-references)",
       "description": "Native nav (hover, go-to-definition, find-references) via a stdio shim around upstream #1359; 'off' is a byte-exact relay. Values: 'off' (default), 'shim'. See docs/configuration.md#nativeserve.",
       "default": "off"
+    },
+    "referenceSurfacing": {
+      "type": "string",
+      "title": "Reference surfacing (workspace reference counts)",
+      "description": "Surfaces bare per-function facts (referenced-by-N, exported, defined-in) from a session workspace index. Values: 'off' (default), 'counts'. See docs/configuration.md#referencesurfacing.",
+      "default": "off"
     }
   },
   "lspServers": {

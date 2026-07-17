@@ -24,7 +24,8 @@ param(
     [int] $PerFileCap = 20,
     [string] $SettingsPath = '',
     [string] $Ruleset = 'pses-default',
-    [string] $ModuleAwareness = 'off'
+    [string] $ModuleAwareness = 'off',
+    [string] $ReferenceSurfacing = 'off'
 )
 
 Set-StrictMode -Version Latest
@@ -55,6 +56,8 @@ $Ruleset           = Get-PluginOption    'ruleset'            $Ruleset
 # Canonicalize the moduleAwareness knob here (off|suggest); the daemon receives the canonical value
 # and Start-PsesDaemonDetached passes it ONLY when 'suggest' (byte-identical default launch otherwise).
 $ModuleAwareness   = ConvertTo-ModuleAwarenessMode (Get-PluginOption 'moduleAwareness' $ModuleAwareness)
+# Canonicalize the referenceSurfacing knob here (off|counts); passed ONLY when 'counts' (dispatch 000128).
+$ReferenceSurfacing = ConvertTo-ReferenceSurfacingMode (Get-PluginOption 'referenceSurfacing' $ReferenceSurfacing)
 
 $logDir = Get-LogDir
 $sessionDir = Get-SessionDir
@@ -249,7 +252,7 @@ try {
     $launched = Start-PsesDaemonDetached -SessionId $sessionId -HostExe $hostExe `
         -SeverityThreshold $SeverityThreshold -RuleInclude $RuleInclude -RuleExclude $RuleExclude `
         -DebounceMs $DebounceMs -IdleTtlMin $IdleTtlMin -PerFileCap $PerFileCap -SettingsPath $SettingsPath `
-        -Ruleset $Ruleset -ModuleAwareness $ModuleAwareness
+        -Ruleset $Ruleset -ModuleAwareness $ModuleAwareness -ReferenceSurfacing $ReferenceSurfacing
     Write-SLog ('launched daemon (detached) for session ' + $sessionId + ' via ' + $hostExe + ' (ok=' + $launched + ')')
     exit 0
 }

@@ -58,6 +58,7 @@ change rules, not a second copy of the prose.
 | `ruleset` | live diagnostics ruleset tier (`pses-default` by default; `base` opt-in) |
 | `moduleAwareness` | uninstalled-module command hint (off by default; `suggest` opt-in) |
 | `nativeServe` | native hover/definition/references serve via the handshake shim (off by default; `shim` opt-in) |
+| `referenceSurfacing` | workspace reference-count facts for the edited file (off by default; `counts` opt-in) |
 
 <!-- FROZEN-KNOBS:END -->
 
@@ -379,6 +380,34 @@ cold. None is a contract change; each is banked here deliberately.
     option (a), unchanged). The shim is a workaround for an upstream Claude Code client bug, so it stays
     default-off with a documented removal path (see `docs/upstream/claude-code-lsp-registration.md`);
     flipping the default on is a later, evidence-backed dispatch.
+- **`referenceSurfacing` knob (DELIBERATE MINOR amendment) -- dispatch 000128.** A new optional, defaulted
+  userConfig knob, `referenceSurfacing`, was added to the manifest (and so to the FROZEN-KNOBS table above,
+  which the drift-guard validates). This is the contract-relevant event the freeze exists to record: a new
+  knob is a **deliberate, documented MINOR**, not a silent drift -- the table row IS the amendment, and the
+  guard passes **because** the contract was updated, not bypassed. The knob's **default is `off`**, and with
+  it off the diagnostics surface and all behavior are **byte-for-byte unchanged**: the daemon builds no
+  workspace index and the check never runs. When `counts`, the daemon builds a **session workspace reference
+  index** ONCE (a background, off-the-critical-path parse of the workspace's `.ps1` / `.psm1` / `.psd1`, so
+  the first edit is never blocked) and each edit adds bare, additive **Information** facts on the existing
+  `additionalContext` channel: for a function DEFINED in the edited file, how many OTHER workspace files
+  reference it and whether it is exported; for a command CALLED in the edited file whose UNIQUE definition is
+  elsewhere, where it is defined -- deduplicated per function. It fires only on positive, unambiguous
+  identification and degrades to **silence** on every ambiguity (dynamic invocation, dynamic dot-source or
+  import, string-built names, duplicate definitions across the workspace, a name that shadows a builtin
+  cmdlet); it **never writes** a file and adds **no** edit-path network. The knob is an **enum** (`off` |
+  `counts`, default `off`), shaped like `moduleAwareness` so a future additive value could be added
+  **without** a breaking knob change; it is never a boolean.
+  - **Recorded design (dispatch 000127 survey -> 000128 build):** **NO new owned diagnostic code and NO
+    rationale-table change** -- a reference count names nothing WRONG (there is no defect and no fix), so it
+    rides a distinct labelled `References:` section exactly as `Project intelligence:` (000062) and
+    `Correction check:` (000061) do, and introduces **no new status token** (the 1.2 diagnostics taxonomy is
+    untouched -- reference facts are a different axis from analyzer health). The session-start **index** was
+    chosen over a per-edit workspace scan from MEASUREMENT (a per-edit full scan measured 11x-36x over the
+    150 ms budget; the index makes per-edit cost O(edited file) -- ~3.9 ms p50 at 1000 files -- because repo
+    size is not in the per-edit path), and the edited file's parse is **shared** with module awareness
+    rather than duplicated (the survey's budget constraint). `moduleAwareness` and `referenceSurfacing` are
+    **independent knobs on independent axes** (machine install-state vs workspace reference shape) and do
+    not interact; there is no precedence between them.
 
 ---
 

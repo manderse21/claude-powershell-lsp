@@ -304,6 +304,50 @@ How you will *know* it is removable, and the full removal path, are recorded in
 > [`docs/upstream/claude-code-lsp-registration.md`](upstream/claude-code-lsp-registration.md)
 > (dispatch 000107).
 
+## referenceSurfacing
+
+**What it does.** When enabled, surfaces **bare per-function facts** for the edited file, drawn from a
+**session workspace index**: for a function DEFINED in the file, how many OTHER workspace files reference
+it and whether it is exported; for a command CALLED in the file whose UNIQUE definition is elsewhere,
+where it is defined.
+
+**Type:** string. **Values:** `off` (default), `counts`.
+
+The facts ride the existing `additionalContext` channel in a distinct `References:` section as additive
+**Information** -- they are **facts, not diagnostics**. A reference count names nothing wrong, so this
+adds **no new diagnostic rule code, no "fix", and no new status token** (the 1.2 diagnostics taxonomy is
+untouched); it is the shape `Project intelligence:` (dispatch 000062) and `Correction check:` (dispatch
+000061) already use for non-defect signal. Example lines:
+
+- `Get-Widget -- referenced by 3 files, exported`
+- `Invoke-Helper -- defined in scripts/lib/helper.ps1`
+
+Like module awareness, it is built to be quiet and correct -- a *wrong* count would teach you to distrust
+every count -- so it fires only on **positive, unambiguous identification** and degrades to **silence**
+on any ambiguity:
+
+- A **dynamic invocation** (`& $name`), a **string-built** name, or any call with no literal name
+  contributes nothing to a count and never surfaces.
+- A **dynamic** dot-source or `Import-Module` (`. $path`, `Import-Module $name`) suppresses the **whole
+  file** -- a dynamic include could define names the index cannot see, so it never guesses across it.
+- A name **defined in more than one** workspace file is silent (a count cannot say WHICH definition is
+  referenced); a name that **shadows a builtin cmdlet** is silent (ambiguous at the call site).
+- A definition with **no** cross-file references AND no export has nothing positive to say, so it is
+  silent; the section only lists functions it has a fact about. Export state is read from a manifest's
+  literal `FunctionsToExport` (a wildcard export is treated as indeterminate).
+
+**How the index is built.** Once per session, a **background** parse of the workspace's `.ps1` / `.psm1`
+/ `.psd1` files, rooted at the project directory and taken **off the critical path** so it **never
+delays your first edit**; until it latches ready the check stays **silent**. It is bounded (noise
+directories such as `.git` and `node_modules` are skipped, and the file count is capped) and best-effort
+(a per-file parse error is skipped). Each subsequent edit costs only a parse of the edited file --
+**shared** with module awareness, never a second parse -- plus a few hashtable lookups (survey-measured
+at a few milliseconds; the per-edit budget bar is 150 ms). Because the index is a **session snapshot**,
+cross-file counts reflect the workspace as of session start.
+
+It **never rewrites your file** and adds **no** edit-path network. `off` (the default) builds no index,
+runs no check, and the diagnostics surface is byte-for-byte unchanged.
+
 ---
 
 ## The config panel and this reference
@@ -315,6 +359,6 @@ renderer ghost-row corruption (surveyed in dispatch 000109). To keep the panel h
 manifest descriptions are capped and the full semantics relocated here.
 
 This mitigates but does not fix the underlying Claude Code behavior: on a terminal shorter than
-about 28 rows the 17-knob panel can still overflow regardless of description length (the base rows
+about 28 rows the 18-knob panel can still overflow regardless of description length (the base rows
 alone exceed the viewport), and the renderer bug and the absence of an enum picker remain upstream
 defects. This reference is the durable home for the details; the panel summaries point here.

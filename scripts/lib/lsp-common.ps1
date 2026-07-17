@@ -663,7 +663,8 @@ function Start-PsesDaemonDetached {
         [int]$PerFileCap = 20,
         [string]$SettingsPath = '',
         [string]$Ruleset = 'pses-default',
-        [string]$ModuleAwareness = 'off'
+        [string]$ModuleAwareness = 'off',
+        [string]$ReferenceSurfacing = 'off'
     )
     $scriptsDir = Split-Path -Parent $script:LspCommonDir   # scripts/lib -> scripts
     if ([string]::IsNullOrWhiteSpace($scriptsDir)) { $scriptsDir = Split-Path -Parent $PSScriptRoot }
@@ -687,6 +688,10 @@ function Start-PsesDaemonDetached {
     # default path's daemon invocation is byte-identical to pre-000101 (no extra arg, no index load,
     # no installed-modules snapshot). The value is canonicalized upstream (ConvertTo-ModuleAwarenessMode).
     if ($ModuleAwareness -eq 'suggest') { $daemonArgs += @('-ModuleAwareness', 'suggest') }
+    # Pass -ReferenceSurfacing ONLY when opted in ('counts'); the daemon defaults to 'off', so the default
+    # path's daemon invocation is byte-identical to pre-000128 (no extra arg, no index build). Canonicalized
+    # upstream (ConvertTo-ReferenceSurfacingMode).
+    if ($ReferenceSurfacing -eq 'counts') { $daemonArgs += @('-ReferenceSurfacing', 'counts') }
     try {
         if (Test-OnWindows) {
             # -WindowStyle Hidden routes through ShellExecute, which STRUCTURALLY does not pass
@@ -1909,6 +1914,320 @@ function Import-CommandModuleIndex {
         if ($null -eq $entries) { return @{} }
         return $entries
     } catch { return @{} }
+}
+
+# --- reference surfacing (dispatch 000128, N1.2/N1.3) ----------------------
+# Bare per-function facts on the existing additionalContext channel, driven by a session workspace
+# index built ONCE (the 000127 leg-1 survey: session-start index; per-edit is O(edited file)). Every
+# ambiguity resolves to SILENCE (the survey ledger). No new owned diagnostic code; no rationale change.
+
+function ConvertTo-ReferenceSurfacingMode {
+    # Map the raw referenceSurfacing knob string to a mode: 'off' | 'counts'. Default-safe: absent /
+    # blank / an unexpanded '${user_config...}' token / any unrecognized value -> 'off' (opt-in; an
+    # unparseable knob NEVER silently turns it on -- mirrors the 000101 acceptance). Boolean-truthy
+    # aliases map to 'counts' so a user who reaches for a boolean gets the advisory behavior. There is
+    # no 'apply'-class value: reference surfacing only ADDS Information prose, it never writes a file.
+    param([string]$Raw)
+    $v = ([string]$Raw).Trim().ToLowerInvariant()
+    switch ($v) {
+        'counts' { return 'counts' }
+        'true'   { return 'counts' }
+        'on'     { return 'counts' }
+        '1'      { return 'counts' }
+        'yes'    { return 'counts' }
+        default  { return 'off' }
+    }
+}
+
+function Get-ReferenceFilePlural {
+    param([int]$Count)
+    if ($Count -eq 1) { return 'file' } else { return 'files' }
+}
+
+function Get-ReferenceRelativePath {
+    # Best-effort relative path of $Full under $Root, forward-slashed. Falls back to the leaf name so a
+    # 'defined in' fact never leaks an unexpected absolute path.
+    param([string]$Full, [string]$Root)
+    if ([string]::IsNullOrWhiteSpace($Full)) { return $Full }
+    try {
+        $rootFull = ''
+        if (-not [string]::IsNullOrWhiteSpace($Root)) { $rootFull = [System.IO.Path]::GetFullPath($Root) }
+        if (-not [string]::IsNullOrWhiteSpace($rootFull)) {
+            $sep = [System.IO.Path]::DirectorySeparatorChar
+            $prefix = $rootFull.TrimEnd($sep) + $sep
+            if ($Full.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return ($Full.Substring($prefix.Length) -replace '\\', '/')
+            }
+        }
+    } catch { }
+    try { return [System.IO.Path]::GetFileName($Full) } catch { return $Full }
+}
+
+function Get-ManifestExportedFunctionNames {
+    # Return the LITERAL FunctionsToExport names from a .psd1 manifest (Import-PowerShellDataFile is
+    # data-only, no code execution). A wildcard '*' entry makes the export set indeterminate -> return
+    # @() (contribute nothing; the survey's silence-on-ambiguity). FAIL-SAFE: @() on any error.
+    param([string]$Path)
+    try {
+        $data = Import-PowerShellDataFile -LiteralPath $Path -ErrorAction Stop
+        if ($null -eq $data) { return @() }
+        $fte = $data['FunctionsToExport']
+        if ($null -eq $fte) { return @() }
+        $names = @()
+        foreach ($x in @($fte)) {
+            $s = [string]$x
+            if ([string]::IsNullOrWhiteSpace($s)) { continue }
+            if ($s.Contains('*')) { return @() }   # wildcard export -> indeterminate -> contribute nothing
+            $names += $s
+        }
+        return @($names)
+    } catch { return @() }
+}
+
+function Add-ReferenceNameToFileSet {
+    # Record that $File defines or references $Name (a case-insensitive HashSet of files per name).
+    param($Map, [string]$Name, [string]$File)
+    if ($null -eq $Map) { return }
+    if (-not $Map.ContainsKey($Name)) {
+        $Map[$Name] = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    }
+    [void]$Map[$Name].Add($File)
+}
+
+function Add-ReferenceIndexFile {
+    # Fold ONE parsed workspace file into the reference index: its function / alias DEFINITIONS, its
+    # command REFERENCES (literal names only -- a dynamic/computed target's GetCommandName() is $null and
+    # contributes nothing), and, for a .psd1, its literal FunctionsToExport. FAIL-SAFE per node.
+    param($Index, $Ast, [string]$FilePath)
+    if ($null -eq $Ast -or $null -eq $Index) { return }
+    $nodes = @()
+    try {
+        $nodes = @($Ast.FindAll({ param($n)
+                    $tn = $n.GetType().Name
+                    ($tn -eq 'CommandAst') -or ($tn -eq 'FunctionDefinitionAst') }, $true))
+    } catch { return }
+    foreach ($n in $nodes) {
+        $tn = ''
+        try { $tn = $n.GetType().Name } catch { $tn = '' }
+        if ($tn -eq 'FunctionDefinitionAst') {
+            $nm = ''
+            try { $nm = [string]$n.Name } catch { $nm = '' }
+            if (-not [string]::IsNullOrWhiteSpace($nm)) { Add-ReferenceNameToFileSet $Index['Defs'] $nm $FilePath }
+            continue
+        }
+        $cn = $null
+        try { $cn = $n.GetCommandName() } catch { $cn = $null }
+        if ([string]::IsNullOrWhiteSpace($cn)) { continue }
+        $cnl = $cn.ToLowerInvariant()
+        if ($cnl -eq 'set-alias' -or $cnl -eq 'new-alias' -or $cnl -eq 'sal' -or $cnl -eq 'nal') {
+            $aliasName = Get-AliasDefinitionNameFromCommand $n
+            if (-not [string]::IsNullOrWhiteSpace($aliasName)) { Add-ReferenceNameToFileSet $Index['Defs'] $aliasName $FilePath }
+            continue
+        }
+        Add-ReferenceNameToFileSet $Index['Refs'] $cn $FilePath
+    }
+    $ext = ''
+    try { $ext = [System.IO.Path]::GetExtension($FilePath).ToLowerInvariant() } catch { $ext = '' }
+    if ($ext -eq '.psd1') {
+        foreach ($en in @(Get-ManifestExportedFunctionNames -Path $FilePath)) {
+            if (-not [string]::IsNullOrWhiteSpace($en)) { [void]$Index['Exported'].Add($en) }
+        }
+    }
+}
+
+function Get-ReferenceIndexFiles {
+    # Enumerate the workspace PowerShell files to index -- a manual prune-and-cap walk so a pathological
+    # tree cannot make the session build unbounded and so noise dirs (.git / node_modules / a vendored
+    # PSES bundle) are never descended. Returns @() on any error.
+    param([string]$Root, [int]$MaxFiles = 5000)
+    $out = New-Object System.Collections.ArrayList
+    if ([string]::IsNullOrWhiteSpace($Root)) { return @($out) }
+    $full = ''
+    try { $full = [System.IO.Path]::GetFullPath($Root) } catch { return @($out) }
+    if (-not (Test-Path -LiteralPath $full -PathType Container)) { return @($out) }
+    $excludeDir = @('.git', 'node_modules', 'PowerShellEditorServices', '.vs', '.svn', '.hg')
+    $stack = New-Object System.Collections.Stack
+    $stack.Push($full)
+    while ($stack.Count -gt 0 -and $out.Count -lt $MaxFiles) {
+        $dir = [string]$stack.Pop()
+        $children = $null
+        try { $children = Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue } catch { $children = $null }
+        foreach ($c in @($children)) {
+            if ($out.Count -ge $MaxFiles) { break }
+            if ($c.PSIsContainer) {
+                if ($excludeDir -notcontains $c.Name) { $stack.Push($c.FullName) }
+            } else {
+                $ext = ''
+                try { $ext = $c.Extension.ToLowerInvariant() } catch { $ext = '' }
+                if ($ext -eq '.ps1' -or $ext -eq '.psm1' -or $ext -eq '.psd1') { [void]$out.Add([string]$c.FullName) }
+            }
+        }
+    }
+    return @($out)
+}
+
+function Build-ReferenceIndex {
+    # Build the session workspace reference index: parse every workspace .ps1/.psm1/.psd1 ONCE and record,
+    # per literal function/alias name, the files that DEFINE it and the files that REFERENCE it, plus the
+    # exported-name set (manifest FunctionsToExport literals) and the builtin-cmdlet name set (the call-site
+    # collision guard). This is the O(repo) session build the 000127 survey measured (~2.4s at 130 files);
+    # per-edit is then O(edited file). FAIL-SAFE: a per-file parse error is skipped; a total failure yields
+    # an empty index (the check then never fires -- a positive fact against an empty index is impossible).
+    param([string]$Root, [int]$MaxFiles = 5000)
+    $idx = @{
+        Root      = ''
+        Defs      = @{}
+        Refs      = @{}
+        Exported  = (New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase))
+        Builtins  = (New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase))
+        FileCount = 0
+    }
+    try { $idx['Root'] = [System.IO.Path]::GetFullPath($Root) } catch { $idx['Root'] = [string]$Root }
+    # Builtin-cmdlet collision guard: a workspace function that SHADOWS a real cmdlet cannot be told from
+    # the cmdlet at a bare call site, so such names are silenced at surface time. Cmdlets are compiled and
+    # stable across hosts, so this set is deterministic enough for the guard.
+    try {
+        foreach ($c in @(Get-Command -CommandType Cmdlet -ErrorAction SilentlyContinue)) {
+            $cn = [string]$c.Name
+            if (-not [string]::IsNullOrWhiteSpace($cn)) { [void]$idx['Builtins'].Add($cn) }
+        }
+    } catch { }
+    foreach ($f in @(Get-ReferenceIndexFiles -Root $Root -MaxFiles $MaxFiles)) {
+        $ast = $null
+        try { $ast = [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$null) } catch { $ast = $null }
+        if ($null -eq $ast) { continue }
+        $idx['FileCount'] = [int]$idx['FileCount'] + 1
+        Add-ReferenceIndexFile -Index $idx -Ast $ast -FilePath $f
+    }
+    return $idx
+}
+
+function Find-ReferenceSurfacing {
+    <#
+    .SYNOPSIS
+        From the edited file's AST + the session workspace index, surface BARE per-function facts:
+        for a function DEFINED in this file -- how many OTHER workspace files reference it, and whether it
+        is exported; for a command CALLED in this file that resolves to a UNIQUE workspace definition
+        elsewhere -- where it is defined. Every ambiguity resolves to SILENCE (the 000127 survey ledger).
+    .DESCRIPTION
+        PURE over the supplied AST + injected index. Returns @() when $Ast/$Index is $null, when the file
+        has a DYNAMIC dot-source or DYNAMIC Import-Module (the whole file is suppressed -- a dynamic include
+        could define names we cannot see), or when nothing survives the guards. Dedup per name (a definition
+        fact wins over a reference fact for the same name); deterministic order (by name). Each record
+        carries structured fields AND a rendered `message`; the client prints the messages under a single
+        'References:' section. NO new diagnostic code / status token -- these are additive facts, not defects.
+
+        GUARDS (each -> silence for that name, never a wrong fact):
+          - the name SHADOWS a builtin cmdlet (ambiguous at the call site);
+          - the workspace DEFINES the name in more than one file (cannot say WHICH is referenced);
+          - a DYNAMIC dot-source / Import-Module is present (suppress the whole file);
+          - a definition with NO cross-file references AND not exported (nothing positive to say);
+          - a called name with 0 or >1 workspace definitions (not a unique cross-file target).
+    #>
+    param(
+        $Ast,
+        $Index,
+        [string]$EditedFilePath = ''
+    )
+    if ($null -eq $Ast -or $null -eq $Index) { return @() }
+    $defs = $Index['Defs']; $refs = $Index['Refs']; $exported = $Index['Exported']; $builtins = $Index['Builtins']
+    if ($null -eq $defs) { return @() }
+
+    $editedFull = ''
+    try { if (-not [string]::IsNullOrWhiteSpace($EditedFilePath)) { $editedFull = [System.IO.Path]::GetFullPath($EditedFilePath) } } catch { $editedFull = '' }
+
+    $nodes = @()
+    try {
+        $nodes = @($Ast.FindAll({ param($n)
+                    $tn = $n.GetType().Name
+                    ($tn -eq 'CommandAst') -or ($tn -eq 'FunctionDefinitionAst') }, $true))
+    } catch { return @() }
+
+    $localDefs = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $defOrder = New-Object System.Collections.ArrayList
+    $callNodes = New-Object System.Collections.ArrayList
+    $suppressFile = $false
+    foreach ($n in $nodes) {
+        $tn = ''
+        try { $tn = $n.GetType().Name } catch { $tn = '' }
+        if ($tn -eq 'FunctionDefinitionAst') {
+            $nm = ''
+            try { $nm = [string]$n.Name } catch { $nm = '' }
+            if (-not [string]::IsNullOrWhiteSpace($nm) -and $localDefs.Add($nm)) { [void]$defOrder.Add($nm) }
+            continue
+        }
+        $ds = Get-DotSourceClass $n
+        if ($ds.IsDotSource) {
+            if ($ds.Dynamic) { $suppressFile = $true }
+            continue   # a dot-source's "name" is a path, never a command reference
+        }
+        $cn = $null
+        try { $cn = $n.GetCommandName() } catch { $cn = $null }
+        if (-not [string]::IsNullOrWhiteSpace($cn)) {
+            $cnl = $cn.ToLowerInvariant()
+            if ($cnl -eq 'import-module' -or $cnl -eq 'ipmo') {
+                $imp = Get-ImportModuleModuleNames $n
+                if ($imp.Dynamic) { $suppressFile = $true }
+                continue
+            }
+        }
+        [void]$callNodes.Add($n)
+    }
+    if ($suppressFile) { return @() }
+
+    $records = New-Object System.Collections.ArrayList
+    $emitted = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+
+    # (1) DEFINITION facts -- functions defined in THIS file.
+    foreach ($name in $defOrder) {
+        if ($null -ne $builtins -and $builtins.Contains($name)) { continue }        # shadows a cmdlet
+        $defFiles = $null
+        if ($defs.ContainsKey($name)) { $defFiles = $defs[$name] }
+        if ($null -ne $defFiles -and $defFiles.Count -gt 1) { continue }            # duplicate defs -> ambiguous
+        $cnt = 0
+        if ($null -ne $refs -and $refs.ContainsKey($name)) {
+            foreach ($rf in @($refs[$name])) {
+                $rfull = ''
+                try { $rfull = [System.IO.Path]::GetFullPath([string]$rf) } catch { $rfull = [string]$rf }
+                if ($rfull -ne $editedFull) { $cnt++ }
+            }
+        }
+        $isExp = ($null -ne $exported -and $exported.Contains($name))
+        if ($cnt -lt 1 -and -not $isExp) { continue }                              # nothing positive to say
+        if (-not $emitted.Add($name)) { continue }
+        $facts = @()
+        if ($cnt -ge 1) { $facts += ('referenced by ' + $cnt + ' ' + (Get-ReferenceFilePlural $cnt)) }
+        if ($isExp) { $facts += 'exported' }
+        [void]$records.Add([pscustomobject]@{
+                source = 'powershell-lsp'; kind = 'definition'; name = $name
+                refCount = $cnt; exported = $isExp; definedIn = ''
+                message = ($name + ' -- ' + ($facts -join ', '))
+            })
+    }
+
+    # (2) REFERENCE facts -- a command called here whose UNIQUE workspace definition is ELSEWHERE.
+    foreach ($node in $callNodes) {
+        $name = $null
+        try { $name = $node.GetCommandName() } catch { $name = $null }
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        if ($localDefs.Contains($name)) { continue }                               # defined here -> not cross-file
+        if ($null -ne $builtins -and $builtins.Contains($name)) { continue }
+        if (-not $defs.ContainsKey($name)) { continue }
+        $defFiles = @($defs[$name])
+        if ($defFiles.Count -ne 1) { continue }                                    # 0 or ambiguous -> silence
+        $defFull = ''
+        try { $defFull = [System.IO.Path]::GetFullPath([string]$defFiles[0]) } catch { $defFull = [string]$defFiles[0] }
+        if ($defFull -eq $editedFull) { continue }                                 # defined in this very file
+        if (-not $emitted.Add($name)) { continue }
+        $rel = Get-ReferenceRelativePath -Full $defFull -Root ([string]$Index['Root'])
+        [void]$records.Add([pscustomobject]@{
+                source = 'powershell-lsp'; kind = 'reference'; name = $name
+                refCount = 0; exported = $false; definedIn = $rel
+                message = ($name + ' -- defined in ' + $rel)
+            })
+    }
+
+    return @($records | Sort-Object -Property name)
 }
 
 function Get-NearestManifestRequiredModules {

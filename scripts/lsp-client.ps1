@@ -214,7 +214,8 @@ function Start-DaemonRelaunchIfRecoverable {
         -PerFileCap (Get-PluginOptionInt 'perFileCap' 20) `
         -SettingsPath (Get-PluginOption 'settingsPath' '') `
         -Ruleset (Get-PluginOption 'ruleset' 'pses-default') `
-        -ModuleAwareness (ConvertTo-ModuleAwarenessMode (Get-PluginOption 'moduleAwareness' 'off')))
+        -ModuleAwareness (ConvertTo-ModuleAwarenessMode (Get-PluginOption 'moduleAwareness' 'off')) `
+        -ReferenceSurfacing (ConvertTo-ReferenceSurfacingMode (Get-PluginOption 'referenceSurfacing' 'off')))
     Write-CLog ('auto-relaunch: daemon launch ' + $(if ($result.LaunchOk) { 'fired' } else { 'FAILED (spawn threw)' }))
     return $result
 }
@@ -503,6 +504,13 @@ try {
     # (the 000062 read-before-assign / @($null) phantom class). Filtering makes absent == empty.
     $clearedItems = @(@(Get-Prop $resp 'cleared') | Where-Object { $null -ne $_ })
     $stillPresentItems = @(@(Get-Prop $resp 'stillPresent') | Where-Object { $null -ne $_ })
+    # Reference surfacing (dispatch 000128): the daemon's additive referenceFindings -- bare per-function
+    # facts (referenced-by-N / exported / defined-in) computed from the session workspace index. Init-then-
+    # guard + null-filter, exactly like $projectFinds above: @(Get-Prop ...) on an ABSENT property is
+    # @($null) (Count 1, a lone $null), which left unfiltered would dereference $null in the render loop and
+    # (under StrictMode + ErrorActionPreference=Stop) abort the whole emit on every edit with the knob off.
+    # Filtering makes an absent property an empty set -> the surface is byte-identical when off / not ready.
+    $refFinds = @(@(Get-Prop $resp 'referenceFindings') | Where-Object { $null -ne $_ })
     # Analysis status (dispatch 000022/000024): '' / 'ok' = a clean, settled pass (behave
     # exactly as before); 'incomplete' = the pass did NOT settle (this edit was not checked);
     # 'degraded' = a settled but parser-only pass (PSScriptAnalyzer unavailable); 'unavailable'
@@ -599,6 +607,18 @@ try {
             } else {
                 [void]$sb.AppendLine('  still present: ' + $srLbl + ' at line ' + $sl + ' not resolved by your edit (attempt ' + $sa + ' of 2) -- ' + $sm)
             }
+        }
+    }
+    # Reference surfacing note (PL-6, dispatch 000128): bare per-function facts in their OWN labelled
+    # 'References:' section, kept visibly distinct from diagnostics -- these are FACTS, not defects (no
+    # "fix" attaches). The daemon pre-renders each fact's message (deduped per function, ordered by name);
+    # the client only prints them. Absent (knob off, index not ready, or nothing provable) -> nothing added
+    # -> byte-identical. Placed after diagnostics + the correction check so facts never sit above findings.
+    if ($refFinds.Count -gt 0) {
+        [void]$sb.AppendLine('References:')
+        foreach ($rf in $refFinds) {
+            $rm = ((Get-Prop $rf 'message') -replace "[`r`n`t]", ' ').Trim()
+            if (-not [string]::IsNullOrWhiteSpace($rm)) { [void]$sb.AppendLine('  ' + $rm) }
         }
     }
     # Format-on-edit SUGGESTION (000059, PL-8): a SEPARATE warm round-trip, gated on the knob and
