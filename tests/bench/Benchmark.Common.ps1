@@ -106,12 +106,29 @@ function Get-BenchMedian {
     return [int][math]::Round((([double]$sorted[$n / 2 - 1] + [double]$sorted[$n / 2]) / 2.0), 0)
 }
 
+function Get-BenchPercentile {
+    # NEAREST-RANK percentile (dispatch 000127): sort ascending, take ceil(p*n) as a 1-based
+    # rank. No interpolation -- at the sample sizes this harness runs (30-ish), interpolating
+    # between two neighbours invents precision the data does not carry. Every reported p95 is
+    # therefore an OBSERVED sample, never a synthesized one. Returns -1 on an empty set.
+    param([int[]]$Values, [double]$Percentile = 0.95)
+    $clean = @(@($Values) | Where-Object { $_ -ge 0 })
+    $n = $clean.Count
+    if ($n -eq 0) { return -1 }
+    $sorted = @($clean | Sort-Object)
+    $rank = [int][math]::Ceiling($Percentile * $n) - 1
+    if ($rank -lt 0) { $rank = 0 }
+    if ($rank -ge $n) { $rank = $n - 1 }
+    return [int]$sorted[$rank]
+}
+
 function Get-BenchStats {
-    # min / median / max over a sample set, plus the raw samples.
+    # min / median / p95 / max over a sample set, plus the raw samples. p95Ms is ADDITIVE
+    # (dispatch 000127): existing consumers key on medianMs and are unaffected.
     param([int[]]$Values)
     $clean = @(@($Values) | Where-Object { $_ -ge 0 })
     if ($clean.Count -eq 0) {
-        return [ordered]@{ samples = @(); count = 0; minMs = -1; medianMs = -1; maxMs = -1 }
+        return [ordered]@{ samples = @(); count = 0; minMs = -1; medianMs = -1; p95Ms = -1; maxMs = -1 }
     }
     $sorted = @($clean | Sort-Object)
     return [ordered]@{
@@ -119,8 +136,53 @@ function Get-BenchStats {
         count    = $clean.Count
         minMs    = [int]$sorted[0]
         medianMs = (Get-BenchMedian -Values $clean)
+        p95Ms    = (Get-BenchPercentile -Values $clean -Percentile 0.95)
         maxMs    = [int]$sorted[-1]
     }
+}
+
+# --- the 000061 closed-loop re-check turn (dispatch 000127, N1.5) -----------
+# The closed loop fires ONLY on a fresh, settled, ok, NON-CACHED pass (Add-LifecycleSignal's
+# gating in pses-daemon.ps1), so a re-check turn is inherently TWO edits: turn 1 surfaces a
+# finding, turn 2 changes the file such that the finding is gone and the daemon emits cleared[].
+# Only turn 2 -- the re-check -- is timed. Timing a single edit would measure the warm path and
+# mislabel it as the closed loop.
+
+# A file whose unapproved verb makes PSUseApprovedVerbs fire (the warm-PSES default surface;
+# Write-Host does NOT fire there -- it is not in the PSES 15-rule no-settings set).
+$script:BenchLoopDirty = "function Frobnicate-BenchTarget {`n    param([string]`$Name)`n    Get-Process -Name `$Name`n}`n"
+# The same file with the finding FIXED (approved verb) -- so turn 2 emits cleared[].
+$script:BenchLoopClean = "function Get-BenchTarget {`n    param([string]`$Name)`n    Get-Process -Name `$Name`n}`n"
+
+function Measure-BenchClosedLoopMs {
+    # Time ONE 000061 closed-loop re-check turn against an already-warm daemon. Returns
+    # @{ Ms; LoopFired } -- Ms is the re-check round-trip, LoopFired reports whether the
+    # response actually carried the lifecycle signal. LoopFired is not decoration: if the loop
+    # never fires, Ms is just a warm-path number wearing the wrong label, and the harness must
+    # say so rather than publish it. $Nonce keeps each iteration's content unique so the
+    # daemon's cache-hit path (which skips the loop) is never taken.
+    param([string]$ScriptsDir, [string]$DataRoot, [string]$SessionId, [string]$ScratchFile, [int]$Nonce, [int]$CapMs = 25000)
+    $stdin = (@{ session_id = $SessionId; tool_input = @{ file_path = $ScratchFile }; cwd = (Split-Path -Parent $ScratchFile) } | ConvertTo-Json -Compress)
+    $enc = New-Object System.Text.UTF8Encoding($false)
+
+    # --- turn 1 (NOT timed): surface the finding so the daemon records a prior set ---
+    [System.IO.File]::WriteAllText($ScratchFile, ($script:BenchLoopDirty + "# dirty $Nonce`n"), $enc)
+    Invoke-BenchHook -ScriptPath (Join-Path $ScriptsDir 'lsp-client.ps1') `
+        -StdinJson $stdin -CapMs $CapMs -DataRoot $DataRoot `
+        -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' } | Out-Null
+
+    # --- turn 2 (TIMED): the finding is fixed -> the re-check emits cleared[] ---
+    [System.IO.File]::WriteAllText($ScratchFile, ($script:BenchLoopClean + "# fixed $Nonce`n"), $enc)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $out = Invoke-BenchHook -ScriptPath (Join-Path $ScriptsDir 'lsp-client.ps1') `
+        -StdinJson $stdin -CapMs $CapMs -DataRoot $DataRoot `
+        -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+    $sw.Stop()
+
+    # The client renders the lifecycle signal under its own labelled section.
+    $fired = $false
+    try { $fired = ([string]$out) -match 'Correction check' } catch { $fired = $false }
+    return @{ Ms = [int]$sw.ElapsedMilliseconds; LoopFired = $fired }
 }
 
 function Write-BenchmarkResults {
