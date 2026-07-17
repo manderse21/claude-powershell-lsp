@@ -74,18 +74,9 @@ function Write-ScanOutput {
     }
 }
 
-function Get-FailExitCode {
-    # 2 when any finding's SARIF level is at or above the -FailOn threshold, else 0.
-    # Rank: error(1) < warning(2) < note(3); 'none' never gates.
-    param([object[]]$Findings, [string]$FailOn)
-    if ($FailOn -eq 'none') { return 0 }
-    $threshold = switch ($FailOn) { 'error' { 1 } 'warning' { 2 } 'note' { 3 } default { 99 } }
-    foreach ($f in @($Findings)) {
-        $rank = switch (ConvertTo-SarifLevel ([string](Get-Prop $f 'severity'))) { 'error' { 1 } 'warning' { 2 } 'note' { 3 } default { 99 } }
-        if ($rank -le $threshold) { return 2 }
-    }
-    return 0
-}
+# Get-FailExitCode (the -FailOn policy) lives in lib/lsp-scan-common.ps1, dot-sourced above --
+# moved there by dispatch 000127 so the policy is unit-testable as a pure function. Behavior is
+# unchanged; this script runs analysis on dot-source, so the matrix could not reach it in place.
 
 # --- resolve host + targets ------------------------------------------------
 $hostExe = Resolve-PsHost $PsHost

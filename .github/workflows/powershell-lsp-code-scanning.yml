@@ -1,0 +1,117 @@
+name: powershell-lsp code scanning
+
+# Uploads the plugin's OWN PowerShell diagnostics to GitHub code scanning as SARIF
+# (dispatch 000127, E2.1 -- deepening the standalone SARIF scan that shipped in 000057 /
+# v1.19.0). This is a SEPARATE workflow file: the four named CI legs
+# (.github/workflows/powershell-lsp-ci.yml -- ubuntu-pwsh, windows-powershell, windows-pwsh,
+# macos-pwsh) and the gated release pipeline (powershell-lsp-release.yml) are untouched, so
+# nothing here can turn a merge gate red.
+#
+# INERT UNTIL MERGED, by construction: there is no `pull_request` trigger. `push` is scoped to
+# main and `schedule` only ever runs on the default branch, so this workflow cannot run from a
+# topic branch -- it adds no check to the dispatch PR that introduces it, and the first run
+# happens after a human merges. `workflow_dispatch` is the manual escape hatch.
+#
+# WHY IT SCANS scripts/ AND NOT THE REPO ROOT: tests/corpus/samples/ is DELIBERATELY-bad code
+# (the known-bad half of the diagnostic-correctness oracle -- files that exist precisely to make
+# rules fire). Scanning the root would upload those intentional findings to the Security tab as
+# if they were defects in the product, which is exactly the noise that teaches a maintainer to
+# ignore the tab. scripts/ is the plugin's shipped product code: the surface a real finding
+# would matter on.
+#
+# WHY IT DOES NOT GATE: -FailOn is left at its default ('none', shipped 000057), so a finding
+# NEVER fails this job -- the SARIF-upload pattern is to emit and let code scanning surface and
+# triage. Turning this into a merge gate is a deliberate, separate decision, not a side effect
+# of enabling the upload.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly, Monday 06:00 UTC -- code scanning wants a periodic baseline even when main is quiet.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: sarif-upload
+    runs-on: ubuntu-24.04
+    permissions:
+      # The ONLY elevated grant, and the reason upload-sarif below is pinned by commit SHA
+      # rather than by a movable tag: this is the highest-privilege action in the repository.
+      security-events: write
+      contents: read
+    env:
+      PSSA_CACHE_DIR: ${{ github.workspace }}/.pssa-nupkg-cache
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Same pinned-PSSA .nupkg cache the CI legs use (dispatch 000049): the scan brings up the
+      # real warm daemon, which vendors the pinned, hash-verified PSScriptAnalyzer through the
+      # single existing acquisition path (scripts/ensure-pssa.ps1). No second acquisition path.
+      - name: Resolve PSSA pin (cache key binds to version + SHA-256)
+        id: pin
+        shell: pwsh
+        run: ./scripts/print-pssa-pin.ps1 >> $env:GITHUB_OUTPUT
+
+      - name: Cache pinned PSScriptAnalyzer .nupkg
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.PSSA_CACHE_DIR }}
+          key: pssa-${{ runner.os }}-${{ steps.pin.outputs.version }}-${{ steps.pin.outputs.sha256 }}
+
+      - name: Scan scripts/ and emit SARIF
+        id: scan
+        shell: pwsh
+        env:
+          POWERSHELL_LSP_PSSA_CACHE: ${{ env.PSSA_CACHE_DIR }}
+          CLAUDE_PLUGIN_DATA: ${{ github.workspace }}/psls-scan-data
+        run: |
+          ./scripts/lsp-scan.ps1 ./scripts -Format sarif -OutputPath results.sarif
+          $code = $LASTEXITCODE
+          # Exit-code contract (scripts/lsp-scan.ps1): 0 = completed (no -FailOn threshold met,
+          # and none is set here), 2 = threshold met (unreachable at -FailOn none), 3 = usage
+          # error, 4 = INCOMPLETE (the daemon never became ready, or a file could not be
+          # analyzed). 4 is the one that must never pass quietly: an unanalyzed file must not
+          # read as a clean one, and uploading a SARIF derived from a partial scan would show a
+          # shrinking finding count that looks like progress. Record it and fail AFTER upload.
+          "code=$code" >> $env:GITHUB_OUTPUT
+          if ($code -eq 3 -or $code -eq 4) {
+            Write-Host "::warning::lsp-scan exited $code (3=usage, 4=incomplete scan); the SARIF below may be partial."
+          }
+          exit 0
+
+      - name: Upload SARIF to code scanning
+        # Pinned by COMMIT SHA, not by the movable v4 tag: this step runs with
+        # security-events: write, so a retagged upstream release must not silently change what
+        # executes here. (Note: the four CI legs pin actions by major-version tag; this file
+        # deliberately does not follow that convention for THIS action, because it is the only
+        # one in the repository holding a write scope. Re-pin by resolving the desired release
+        # tag to its commit: gh api repos/github/codeql-action/tags.)
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        with:
+          sarif_file: results.sarif
+          category: powershell-lsp
+
+      - name: Upload SARIF as an artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: powershell-lsp-sarif
+          path: results.sarif
+          if-no-files-found: warn
+
+      - name: Fail the run if the scan was INCOMPLETE
+        # Deliberately last: the SARIF is uploaded and archived first, so a partial scan is still
+        # inspectable, and only then does the run go red. Never-silent (the 000024 discipline):
+        # a scan that did not analyze everything must not present as a clean one.
+        if: steps.scan.outputs.code == '3' || steps.scan.outputs.code == '4'
+        shell: pwsh
+        run: |
+          throw "lsp-scan exited $($env:SCAN_CODE) -- the scan did not complete; the uploaded SARIF is partial."
+        env:
+          SCAN_CODE: ${{ steps.scan.outputs.code }}

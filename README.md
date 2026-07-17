@@ -431,14 +431,34 @@ threshold met; `3` = usage error (no PowerShell host, or the path does not exist
 scan incomplete (the analyzer was not reachable -- an unanalyzed file is never reported as a
 clean one).
 
-A minimal GitHub Actions step that uploads the results to code scanning:
+**This repository scans itself.** `.github/workflows/powershell-lsp-code-scanning.yml` runs the
+scan over `scripts/` and uploads the SARIF to GitHub code scanning on every push to `main`,
+weekly, and on demand (`workflow_dispatch`). It is a **separate** workflow from the four CI legs
+and the release pipeline, so it can never turn a merge gate red, and it does **not** pass
+`-FailOn` -- findings are surfaced in the Security tab, not used to fail the build. Copy it as a
+starting point for your own repository.
+
+Two details in that file are deliberate and worth keeping if you adapt it:
+
+- It scans `scripts/` rather than the repository root, because `tests/corpus/samples/` is
+  **deliberately-bad code** (the known-bad half of the correctness oracle). Uploading those
+  intentional findings would fill the Security tab with noise that trains you to ignore it.
+- It pins `upload-sarif` by **commit SHA**, not by tag. That step is the only one holding
+  `security-events: write`, and a tag can be moved under you.
+
+A minimal step for your own repository:
 
 ```yaml
-- shell: pwsh
-  run: ./scripts/lsp-scan.ps1 . -OutputPath results.sarif
-- uses: github/codeql-action/upload-sarif@v3
-  with:
-    sarif_file: results.sarif
+permissions:
+  security-events: write
+steps:
+  - shell: pwsh
+    run: ./scripts/lsp-scan.ps1 ./src -OutputPath results.sarif
+  # Pin by commit SHA; resolve one with:
+  #   gh api repos/github/codeql-action/tags --jq '.[] | "\(.name) \(.commit.sha)"'
+  - uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+    with:
+      sarif_file: results.sarif
 ```
 
 ## Why a hook, not native `.lsp.json` registration
