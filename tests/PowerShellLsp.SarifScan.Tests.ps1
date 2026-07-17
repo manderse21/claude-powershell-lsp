@@ -54,6 +54,73 @@ Describe 'SARIF scan -- pure helpers (no daemon)' {
         $script:Parsed = $script:ReportJson | ConvertFrom-Json
     }
 
+    Context 'the -FailOn exit-code policy matrix (dispatch 000127; policy shipped 000057)' {
+        # -FailOn has existed since dispatch 000057 (v1.19.0); what did NOT exist was a matrix
+        # pinning its semantics, so the policy could drift silently. These are pure over injected
+        # findings -- no daemon, no analysis -- so the whole matrix runs in milliseconds and the
+        # e2e Describe below only has to prove the WIRING, not re-derive the policy.
+        BeforeAll {
+            # One finding per severity the tool actually emits (ConvertTo-DiagRecord's set).
+            $script:FErr = @([pscustomobject]@{ severity = 'Error' })
+            $script:FWarn = @([pscustomobject]@{ severity = 'Warning' })
+            $script:FInfo = @([pscustomobject]@{ severity = 'Information' })
+            $script:FHint = @([pscustomobject]@{ severity = 'Hint' })
+        }
+
+        It 'the DEFAULT (none) never gates -- exit 0 even with an Error finding' {
+            # THE regression guard: absent -FailOn, the exit code is what it has been since
+            # 000057. If this ever returns 2, every existing SARIF-upload caller breaks.
+            Get-FailExitCode -Findings $script:FErr -FailOn 'none' | Should -Be 0
+            Get-FailExitCode -Findings @() -FailOn 'none' | Should -Be 0
+        }
+
+        It 'gates at-or-ABOVE the threshold, never below (the whole point of a threshold)' {
+            # -FailOn error: only an Error trips it.
+            Get-FailExitCode -Findings $script:FErr -FailOn 'error' | Should -Be 2
+            Get-FailExitCode -Findings $script:FWarn -FailOn 'error' | Should -Be 0
+            Get-FailExitCode -Findings $script:FInfo -FailOn 'error' | Should -Be 0
+            # -FailOn warning: Error and Warning trip it; Information (-> note) does not.
+            Get-FailExitCode -Findings $script:FErr -FailOn 'warning' | Should -Be 2
+            Get-FailExitCode -Findings $script:FWarn -FailOn 'warning' | Should -Be 2
+            Get-FailExitCode -Findings $script:FInfo -FailOn 'warning' | Should -Be 0
+            # -FailOn note: everything the tool emits trips it (Information AND Hint fold to note).
+            Get-FailExitCode -Findings $script:FErr -FailOn 'note' | Should -Be 2
+            Get-FailExitCode -Findings $script:FWarn -FailOn 'note' | Should -Be 2
+            Get-FailExitCode -Findings $script:FInfo -FailOn 'note' | Should -Be 2
+            Get-FailExitCode -Findings $script:FHint -FailOn 'note' | Should -Be 2
+        }
+
+        It 'no findings never gates, at any threshold (a clean scan is a clean gate)' {
+            foreach ($t in @('none', 'note', 'warning', 'error')) {
+                Get-FailExitCode -Findings @() -FailOn $t | Should -Be 0 -Because "an empty scan must not fail -FailOn $t"
+            }
+        }
+
+        It 'gates on the MOST severe finding present, not the first one seen (order-independent)' {
+            # Adversarial: a Warning listed BEFORE an Error must not mask the Error at -FailOn error.
+            $mixed = @([pscustomobject]@{ severity = 'Warning' }, [pscustomobject]@{ severity = 'Error' })
+            Get-FailExitCode -Findings $mixed -FailOn 'error' | Should -Be 2
+            $mixedRev = @([pscustomobject]@{ severity = 'Error' }, [pscustomobject]@{ severity = 'Warning' })
+            Get-FailExitCode -Findings $mixedRev -FailOn 'error' | Should -Be 2
+        }
+
+        It 'an unknown severity maps to warning and gates accordingly (never silently dropped)' {
+            # ConvertTo-SarifLevel maps an unknown severity to 'warning' rather than dropping it;
+            # the gate must honor that rather than treating it as un-rankable.
+            $weird = @([pscustomobject]@{ severity = 'Banana' })
+            Get-FailExitCode -Findings $weird -FailOn 'warning' | Should -Be 2
+            Get-FailExitCode -Findings $weird -FailOn 'error' | Should -Be 0
+        }
+
+        It 'ranks severity most-severe-first, with a never-gates rank outside the ordered set' {
+            Get-ScanSeverityRank 'error' | Should -Be 1
+            Get-ScanSeverityRank 'warning' | Should -Be 2
+            Get-ScanSeverityRank 'note' | Should -Be 3
+            Get-ScanSeverityRank 'none' | Should -Be 99
+            Get-ScanSeverityRank '' | Should -Be 99
+        }
+    }
+
     Context 'target enumeration (Get-ScanTargets)' {
         BeforeAll {
             $script:Tree = Join-Path $TestDrive 'tree'
@@ -309,6 +376,62 @@ Describe 'SARIF scan -- finding identity (one engine)' -Skip:$script:SkipDaemon 
     }
 }
 
+Describe 'code-scanning workflow: inert until merged, SHA-pinned, CI legs untouched (dispatch 000127)' {
+    # Text-level guards on the NEW upload workflow, mirroring the release-workflow guards in
+    # PowerShellLsp.Release.Tests.ps1 (dispatch 000042): the full parse-and-execute proof is
+    # GitHub's own, so what is worth pinning here is the handful of properties whose silent
+    # regression would be expensive -- the trigger set, the pin, and the blast radius.
+    BeforeAll {
+        $script:PluginRoot = Split-Path -Parent $PSScriptRoot
+        $script:ScanWf = Join-Path $script:PluginRoot '.github/workflows/powershell-lsp-code-scanning.yml'
+        $script:ScanWfText = if (Test-Path -LiteralPath $script:ScanWf) { [System.IO.File]::ReadAllText($script:ScanWf) } else { '' }
+        $script:ScanWfLines = $script:ScanWfText -split "\r?\n"
+        $script:CiWfText = [System.IO.File]::ReadAllText((Join-Path $script:PluginRoot '.github/workflows/powershell-lsp-ci.yml'))
+    }
+
+    It 'the workflow file exists and is non-empty (the guard cannot pass vacuously)' {
+        $script:ScanWfText.Length | Should -BeGreaterThan 0
+    }
+
+    It 'is INERT until merged: no pull_request trigger (it adds no check to the PR that introduces it)' {
+        # push is scoped to main and schedule only runs on the default branch, so the absence of
+        # pull_request is what makes this workflow unable to fire from a topic branch.
+        @($script:ScanWfLines | Where-Object { $_ -match '^\s*pull_request:\s*$' }).Count | Should -Be 0
+        $script:ScanWfText | Should -Match '(?m)^\s+workflow_dispatch:'
+    }
+
+    It 'pins upload-sarif by a 40-hex COMMIT SHA, never by a movable tag' {
+        # This action runs with security-events: write -- the only write scope in the repo. A tag
+        # can be moved under us; a commit SHA cannot.
+        $script:ScanWfText | Should -Match 'github/codeql-action/upload-sarif@[0-9a-f]{40}'
+        # Adversarial: assert no TAG-pinned form of this action slipped in alongside.
+        $script:ScanWfText | Should -Not -Match 'github/codeql-action/upload-sarif@v\d'
+    }
+
+    It 'requests security-events: write, and only where it is needed (job scope, not workflow-wide)' {
+        # A workflow-level write grant would hand every step the token; keep it on the one job.
+        $script:ScanWfText | Should -Match '(?m)^\s+security-events:\s+write'
+        # The workflow-level permissions block stays read-only.
+        $script:ScanWfText | Should -Match '(?m)^permissions:\r?\n\s+contents:\s+read'
+    }
+
+    It 'does not gate on findings: -FailOn is left at its default (emit, do not fail the build)' {
+        $script:ScanWfText | Should -Not -Match '-FailOn\s+(note|warning|error)'
+    }
+
+    It 'leaves the four named CI legs intact (this workflow is additive, never a merge-gate change)' {
+        # The blast-radius guard: the labels the branch protection names must still be declared by
+        # the CI workflow, whatever this file does.
+        foreach ($leg in @('ubuntu-pwsh', 'windows-powershell', 'windows-pwsh', 'macos-pwsh')) {
+            $script:CiWfText | Should -Match ([regex]::Escape('label: ' + $leg))
+        }
+    }
+
+    It 'indents with spaces only (no tabs -- YAML indentation safety)' {
+        $script:ScanWfText | Should -Not -Match "`t"
+    }
+}
+
 Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:SkipDaemon {
 
     BeforeAll {
@@ -335,11 +458,17 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
         Set-Content -LiteralPath (Join-Path $script:InputDir 'notes.txt') -Value 'not powershell' -Encoding ascii
 
         $script:SarifOut = Join-Path $script:InputDir 'out.sarif'
+        $script:FailOnOut = Join-Path $script:InputDir 'failon.sarif'
         $prevData = $env:CLAUDE_PLUGIN_DATA
         $env:CLAUDE_PLUGIN_DATA = $script:DataDir
         try {
             & $script:HostExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:ScanScript $script:InputDir -Format sarif -OutputPath $script:SarifOut 2>$null | Out-Null
             $script:SarifExit = $LASTEXITCODE
+            # WIRING proof for -FailOn (dispatch 000127): the pure matrix above pins the POLICY;
+            # this pins that the CLI parameter actually reaches it. Same tree, same findings --
+            # the ONLY difference is the flag, so a differing exit code isolates the wiring.
+            & $script:HostExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:ScanScript $script:InputDir -Format sarif -OutputPath $script:FailOnOut -FailOn warning 2>$null | Out-Null
+            $script:FailOnExit = $LASTEXITCODE
         } finally {
             $env:CLAUDE_PLUGIN_DATA = $prevData
         }
@@ -356,6 +485,15 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
     It 'exits 0 and writes a SARIF file' {
         $script:SarifExit | Should -Be 0
         $script:Sarif | Should -Not -BeNullOrEmpty
+    }
+
+    It '-FailOn warning gates the SAME tree the default invocation passed (wiring, dispatch 000127)' {
+        # The default run above exits 0 over a tree that DOES carry a Warning finding
+        # (nested/bad.ps1 -> PSUseApprovedVerbs). Adding only -FailOn warning must flip it to 2.
+        # Asserting both halves here is what makes this a wiring proof rather than a restatement
+        # of the pure matrix: same tree, same engine, same findings -- only the flag differs.
+        $script:SarifExit | Should -Be 0 -Because 'the default (-FailOn none) must never gate -- the 000057 behavior'
+        $script:FailOnExit | Should -Be 2 -Because '-FailOn warning must exit 2 on a tree carrying a Warning finding'
     }
 
     It 'emits a conformant SARIF 2.1.0 envelope' {

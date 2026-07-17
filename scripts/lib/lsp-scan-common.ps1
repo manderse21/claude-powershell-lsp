@@ -104,6 +104,38 @@ function Get-ScanRelativeUri {
 # result from code-scanning views): an unknown severity maps to 'warning', so a finding is
 # never silently dropped by a mapping gap. Documented in CHANGELOG.md and README.md.
 
+function Get-ScanSeverityRank {
+    # Rank a SARIF level for threshold comparison: LOWER means MORE severe, so an at-or-above
+    # test is a single `-le`. 99 is the never-gates rank for a level outside the ordered set
+    # ('none', or an unmappable value) -- it can never satisfy `-le` against any real threshold.
+    param([string]$SarifLevel)
+    switch (([string]$SarifLevel).ToLowerInvariant()) {
+        'error'   { return 1 }
+        'warning' { return 2 }
+        'note'    { return 3 }
+        default   { return 99 }
+    }
+}
+
+function Get-FailExitCode {
+    # The -FailOn exit-code policy (dispatch 000057; moved here from lsp-scan.ps1 by dispatch
+    # 000127 so the policy is unit-testable as a PURE function -- lsp-scan.ps1 runs a scan on
+    # dot-source, so a matrix test could not reach it in place. Behavior is unchanged: the
+    # script dot-sources this library, and the default 'none' still never gates).
+    #
+    # Returns 2 when ANY finding's SARIF level is at or above $FailOn, else 0. 'none' (the
+    # default) never gates: absent the parameter, the exit code is exactly what it has been
+    # since 000057 -- the SARIF-upload pattern is to emit and let code scanning surface.
+    param([object[]]$Findings, [string]$FailOn)
+    if ($FailOn -eq 'none') { return 0 }
+    $threshold = Get-ScanSeverityRank $FailOn
+    foreach ($f in @($Findings)) {
+        $rank = Get-ScanSeverityRank (ConvertTo-SarifLevel ([string](Get-Prop $f 'severity')))
+        if ($rank -le $threshold) { return 2 }
+    }
+    return 0
+}
+
 function ConvertTo-SarifLevel {
     param([string]$Severity)
     switch (([string]$Severity).ToLowerInvariant()) {
