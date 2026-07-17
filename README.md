@@ -143,6 +143,7 @@ summaries of it.
 | `ruleset`          | `pses-default` | Live diagnostics ruleset tier. `pses-default` (default) keeps PSES's built-in no-settings rule set (about 15 rules) -- unchanged from prior versions. `base` opts in to the plugin's shipped enumerated base ruleset (PSScriptAnalyzer's default-on set minus the compatibility rules), broadening the live surface so `PSAvoidUsingWriteHost` and the three Error-severity security rules surface. A repo-local `PSScriptAnalyzerSettings.psd1` and an explicit `settingsPath` always win over the base. See [Ruleset tiers](#ruleset-tiers-opt-in-broaden) |
 | `moduleAwareness`  | `off`    | When `suggest`, the warm daemon adds an **Information** hint when a command in the edited file is exported by a **known** module (a shipped, offline command->module index) that is **not installed** on this machine, so the call would not resolve (`Install-Module M or import it`). It fires only on positive identification and stays **silent** on any ambiguity (a not-yet-ready install snapshot, a dynamic include); it **never writes** your file and adds **no** edit-path network or latency. `off` (default) does nothing and the diagnostics surface is unchanged. Values: `off` (default), `suggest`. See [Module awareness](#module-awareness-uninstalled-module-hint) |
 | `nativeServe`      | `off`    | When `shim`, a thin stdio proxy serves **hover / go-to-definition / find-references / documentSymbol** to Claude Code's **native** LSP client -- un-gating the navigation tier past an upstream client init-handshake bug without waiting on the fix. `off` (default) is a **transparent pass-through** (every LSP frame relayed unchanged, no patch, no interception), so native nav stays gated exactly as today and nothing about the diagnostics hook changes. It is a workaround for an upstream bug, hence default-off and removable. Values: `off` (default), `shim`. See [Native serve](#native-serve-hover--go-to-definition--find-references) |
+| `referenceSurfacing`| `off`   | When `counts`, the warm daemon surfaces **bare per-function facts** for the edited file from a **session workspace index** (built once, in the background, so the first edit is never blocked): for a function you define, how many **other** workspace files reference it and whether it is **exported**; for a call whose **unique** definition is elsewhere, **where** it is defined. They ride the existing channel in a distinct `References:` section -- additive **Information**, never a diagnostic (a reference count names nothing wrong, so there is no new rule and no fix). It fires only on positive, unambiguous identification and stays **silent** on any ambiguity (dynamic invocation, a dynamic include, duplicate definitions, a name shadowing a builtin); it **never writes** your file and adds **no** edit-path network. `off` (default) does nothing and the diagnostics surface is unchanged. Values: `off` (default), `counts`. See [Reference surfacing](#reference-surfacing-workspace-reference-counts) |
 
 Diagnostics are returned in a stable order (severity, then line, then column),
 deduped, threshold- and rule-filtered, then capped per file.
@@ -293,6 +294,42 @@ shim entirely, point the manifest `lspServers` command back at `scripts/pses-std
 *know* it is removable, and the full removal path, are recorded in
 [`docs/upstream/claude-code-lsp-registration.md`](docs/upstream/claude-code-lsp-registration.md). Values
 are `off` (default) and `shim`.
+
+### Reference surfacing (workspace reference counts)
+
+`referenceSurfacing` is **off by default**. When set to `counts`, the warm daemon surfaces **bare
+per-function facts** for the edited file, drawn from a **session workspace index** it builds **once** in
+the background:
+
+- For a function you **define** in the edited file: how many **other** workspace files reference it, and
+  whether it is **exported** (for example, `Get-Widget -- referenced by 3 files, exported`).
+- For a command you **call** whose **unique** definition lives in **another** workspace file: **where** it
+  is defined (for example, `Invoke-Helper -- defined in scripts/lib/helper.ps1`).
+
+The facts ride the existing feedback channel in a distinct `References:` section, as additive
+**Information** -- they are **facts, not diagnostics**: a reference count names nothing wrong, so there is
+no new rule code, no "fix", and no new status token.
+
+Like module awareness, it is built to be **quiet and correct** -- a *wrong* count would teach you to
+distrust every count -- so it fires only on **positive, unambiguous identification** and degrades to
+**silence** on every ambiguity:
+
+- A **dynamic invocation** (`& $name`), a **string-built** name, or any call with no literal name is not
+  counted -- it contributes nothing to a count and never surfaces.
+- A **dynamic** dot-source or `Import-Module` (`. $path`, `Import-Module $name`) suppresses the **whole
+  file** -- a dynamic include could define names the index cannot see, so it never guesses across it.
+- A name **defined in more than one** workspace file is silent (a count cannot say *which* definition is
+  referenced), as is a name that **shadows a builtin cmdlet** (ambiguous at the call site).
+- A definition with **no** cross-file references **and** no export has nothing positive to say, so it is
+  silent -- the section only lists functions it has a fact about.
+
+The index is built by a **background** parse of the workspace's `.ps1` / `.psm1` / `.psd1` files, taken
+**off the critical path** so it **never delays your first edit**; until it is ready the check stays
+**silent**, and each subsequent edit costs only a parse of the edited file (**shared** with module
+awareness) plus a few hashtable lookups. It **never rewrites your file** and adds **no network on the
+edit path**. It is a session snapshot, so cross-file counts reflect the workspace as of session start.
+The default is deliberately **not** flipped: nothing surfaces unless you opt in. Values are `off`
+(default) and `counts`.
 
 > **Privacy note -- `enableStats` logs absolute paths.** When `enableStats` is on (it is
 > **off by default**), each timing line in `logs/stats.jsonl` records the **absolute path**

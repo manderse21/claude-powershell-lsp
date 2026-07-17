@@ -76,7 +76,17 @@ param(
     # production launcher (session-start / lsp-client). '' = production (the real background pre-warm);
     # '__defer__' = the snapshot never latches ready (the fail-safe not-ready fixture); '__empty__' =
     # ready with an EMPTY installed-set (kb1: module absent -> fires); 'A,B' = ready with those names.
-    [string] $ModuleAwarenessInstalledInject = ''
+    [string] $ModuleAwarenessInstalledInject = '',
+    # Reference surfacing (dispatch 000128, N1.2/N1.3): 'off' (default) keeps the diagnostics surface
+    # byte-for-byte unchanged (no index, no build, no check); 'counts' turns on the session workspace
+    # reference index and the per-edit bare-facts pass. The value arrives already canonicalized
+    # (off|counts) from session-start / lsp-client (ConvertTo-ReferenceSurfacingMode), passed ONLY when
+    # 'counts' (mirrors -ModuleAwareness), so the default path's daemon invocation is byte-identical.
+    [string] $ReferenceSurfacing = 'off',
+    # TEST-ONLY injectable seam for the 000128 corpus -- force the reference index to build SYNCHRONOUSLY
+    # from this root at load, so the fixtures do not depend on background timing. NEVER passed by the
+    # production launcher (which kicks a BACKGROUND build from the first request's cwd). '' = production.
+    [string] $ReferenceSurfacingRootInject = ''
 )
 
 Set-StrictMode -Version Latest
@@ -170,6 +180,8 @@ $script:moduleCacheCmdExports = @() # CmdletsToExport
 $script:moduleCacheAliasExports = @()  # AliasesToExport
 $script:moduleCacheDefinedNames = @()  # defined function names from the module
 $script:moduleCacheExportedNames = $null  # $null = implicitly all; @(...) = explicit list
+$script:moduleCacheDefinedAliases = @()          # literal Set-Alias/New-Alias names (dispatch 000128 slice 2)
+$script:moduleCacheAliasesIndeterminate = $true  # alias surface cannot be statically verified -> alias check silent
 # Format-on-edit (dispatch 000059, PL-8): the vendored PSScriptAnalyzer is imported into THIS
 # daemon process ONCE (lazy, on the first format request) so Invoke-Formatter runs on the warm
 # path with no cold-start. Latched here so the import cost is paid at most once per daemon.
@@ -206,6 +218,34 @@ if ($script:moduleAwarenessMode -eq 'suggest') {
             $script:installedSnapshotReady = $true
             Write-DLog ('module awareness: installed snapshot INJECTED (' + $script:installedModulesSet.Count + ' names; ready)')
         }
+    }
+}
+
+# Reference surfacing (PL-6, dispatch 000128): the session WORKSPACE index (Defs/Refs/Exported/Builtins)
+# is built ONCE per session by a BACKGROUND runspace (off the critical path, mirroring the 000101 installed
+# snapshot) so the O(repo) parse (survey-measured ~2.4s at 130 files) NEVER delays first-edit diagnostics.
+# The build is kicked from the FIRST request's cwd (the project root) -- the daemon has no cwd at launch.
+# Until the index latches ready the check is SILENT (fail-safe). With the knob 'off' (default) NONE of this
+# runs and the surface is byte-for-byte unchanged. Per-edit is then O(edited file): a parse (SHARED with
+# module awareness) + hashtable lookups.
+$script:referenceSurfacingMode = ConvertTo-ReferenceSurfacingMode $ReferenceSurfacing
+$script:referenceIndex = $null
+$script:referenceIndexReady = $false
+$script:referenceIndexStarted = $false
+$script:refIndexPs = $null                    # background [PowerShell] instance
+$script:refIndexAsync = $null                 # its IAsyncResult
+$script:refIndexRunspace = $null              # its dedicated runspace
+if ($script:referenceSurfacingMode -eq 'counts' -and -not [string]::IsNullOrWhiteSpace($ReferenceSurfacingRootInject)) {
+    # TEST seam: synchronous, deterministic build at load (the corpus). Production ('') kicks the real
+    # background build at the first request (Start-ReferenceIndexPrewarm).
+    try {
+        $script:referenceIndex = Build-ReferenceIndex -Root $ReferenceSurfacingRootInject
+        $script:referenceIndexStarted = $true
+        $script:referenceIndexReady = $true
+        Write-DLog ('reference surfacing: index INJECTED (root=' + $ReferenceSurfacingRootInject + '; ' +
+            (@($script:referenceIndex['Defs'].Keys).Count) + ' defs, ' + [int]$script:referenceIndex['FileCount'] + ' files; ready)')
+    } catch {
+        Write-DLog ('reference surfacing: injected build failed (' + $_.Exception.Message + '); staying silent')
     }
 }
 
@@ -709,6 +749,11 @@ function Update-ModuleSurfaceCache {
     if ($script:moduleCacheManifest -eq $manifestPath -and $script:moduleCacheHash -eq $currentHash) {
         return   # cache is still fresh
     }
+    # Reset the alias-surface cache to the SAFE default (dispatch 000128): every degrade path below inherits
+    # "no defined aliases, indeterminate=true" (alias check silent), and only the fully determinate path
+    # overrides it -- so a stale alias surface from a previously-cached module can never leak into a degrade.
+    $script:moduleCacheDefinedAliases = @()
+    $script:moduleCacheAliasesIndeterminate = $true
     # Parse the manifest.
     $exports = Get-ModuleManifestExports -ManifestPath $manifestPath
     if ($null -eq $exports) {
@@ -768,6 +813,13 @@ function Update-ModuleSurfaceCache {
         return
     }
     # Cache the fully determinate surface.
+    # Alias surface (dispatch 000128 slice 2): the module's literal alias definitions and whether the
+    # alias-orphan check must degrade. A non-empty manifest NestedModules also forces the degrade (aliases
+    # could live in a nested module this cross-reference does not parse).
+    $aliasSurface = Get-ModuleAliasSurface -ModuleFilePath $rootModulePath
+    $nested = @()
+    try { $nested = @($exports.Data['NestedModules']) } catch { $nested = @() }
+    $nestedPresent = (@($nested | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0)
     $script:moduleCacheManifest = $manifestPath
     $script:moduleCacheHash = $currentHash
     $script:moduleCacheDegrade = ''
@@ -776,7 +828,9 @@ function Update-ModuleSurfaceCache {
     $script:moduleCacheAliasExports = $aliasExport
     $script:moduleCacheDefinedNames = $moduleInfo.DefinedNames
     $script:moduleCacheExportedNames = $moduleInfo.ExportedNames
-    Write-DLog ('module cache: cached surface for ' + $manifestPath + ' (' + $fnExport.Count + ' exports, ' + $moduleInfo.DefinedNames.Count + ' defined functions)')
+    $script:moduleCacheDefinedAliases = $aliasSurface.DefinedAliases
+    $script:moduleCacheAliasesIndeterminate = ([bool]$aliasSurface.Indeterminate -or $nestedPresent)
+    Write-DLog ('module cache: cached surface for ' + $manifestPath + ' (' + $fnExport.Count + ' exports, ' + $moduleInfo.DefinedNames.Count + ' defined functions, ' + @($aliasSurface.DefinedAliases).Count + ' defined aliases, aliasesIndeterminate=' + [bool]$script:moduleCacheAliasesIndeterminate + ')')
 }
 
 function Get-CachedProjectFindings {
@@ -827,7 +881,9 @@ function Get-CachedProjectFindings {
         -AliasesToExport $script:moduleCacheAliasExports `
         -DefinedNames $script:moduleCacheDefinedNames `
         -ExportedNames $script:moduleCacheExportedNames `
-        -ManifestPath $script:moduleCacheManifest
+        -ManifestPath $script:moduleCacheManifest `
+        -DefinedAliases $script:moduleCacheDefinedAliases `
+        -AliasesIndeterminate $script:moduleCacheAliasesIndeterminate
     return @($result.Findings)
 }
 
@@ -890,21 +946,105 @@ function Get-ModuleAwarenessFindings {
     # RequiredModules, and calls the PURE Find-ModuleAwareness with the session snapshot + shipped
     # index. NEVER throws past its own frame (a throw would be caught by the caller, but this returns
     # @() on any error so the diagnostics pass is untouched). Per-edit cost is O(index membership).
-    param([string]$FilePath)
+    # -Ast (dispatch 000128): reuse a SHARED edited-file parse when the serve loop already made one (the
+    # 000127 survey's budget constraint -- never add a second parse). $null -> parse here (backward compat,
+    # and every existing call site / test that omits -Ast is unchanged).
+    param([string]$FilePath, $Ast = $null)
     if ($script:moduleAwarenessMode -ne 'suggest') { return @() }
     Update-InstalledSnapshotFromBackground
     if (-not $script:installedSnapshotReady) { return @() }              # snapshot not ready -> SILENT
     if (@($script:commandModuleIndex.Keys).Count -eq 0) { return @() }   # empty/failed index -> nothing to hit
     try {
         $full = [System.IO.Path]::GetFullPath($FilePath)
-        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return @() }
-        $ast = [System.Management.Automation.Language.Parser]::ParseFile($full, [ref]$null, [ref]$null)
-        if ($null -eq $ast) { return @() }
+        $useAst = $Ast
+        if ($null -eq $useAst) {
+            if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return @() }
+            $useAst = [System.Management.Automation.Language.Parser]::ParseFile($full, [ref]$null, [ref]$null)
+        }
+        if ($null -eq $useAst) { return @() }
         $reqMods = Get-NearestManifestRequiredModules -FilePath $full
-        return @(Find-ModuleAwareness -Ast $ast -Index $script:commandModuleIndex `
+        return @(Find-ModuleAwareness -Ast $useAst -Index $script:commandModuleIndex `
                 -InstalledModules $script:installedModulesSet -ManifestRequiredModules $reqMods -FilePath $full)
     } catch {
         Write-DLog ('module awareness: check errored (ignored, silent): ' + $_.Exception.Message)
+        return @()
+    }
+}
+
+# --- reference surfacing: session workspace index + check (dispatch 000128) --
+function Start-ReferenceIndexPrewarm {
+    # Kick the once-per-session workspace reference-index build on a BACKGROUND runspace (off the critical
+    # path, mirroring Start-InstalledSnapshotPrewarm) rooted at $Root (the first request's cwd -- the daemon
+    # has no cwd at launch). One-shot per daemon. The background script dot-sources the shared lib (no import
+    # side effects) and calls Build-ReferenceIndex, returning the index hashtable across the in-process
+    # runspace. Best-effort: any failure leaves ready=$false, so the check simply stays silent.
+    param([string]$Root)
+    if ($script:referenceSurfacingMode -ne 'counts') { return }
+    if ($script:referenceIndexStarted) { return }        # already started, or resolved by test injection
+    if ([string]::IsNullOrWhiteSpace($Root)) { return }  # no project root yet -> wait for a request that has one
+    $script:referenceIndexStarted = $true
+    try {
+        $libPath = Join-Path $PSScriptRoot 'lib/lsp-common.ps1'
+        $rs = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+        $rs.Open()
+        $ps = [System.Management.Automation.PowerShell]::Create()
+        $ps.Runspace = $rs
+        [void]$ps.AddScript('param($LibPath,$Root) . $LibPath; Build-ReferenceIndex -Root $Root').AddArgument($libPath).AddArgument($Root)
+        $script:refIndexRunspace = $rs
+        $script:refIndexPs = $ps
+        $script:refIndexAsync = $ps.BeginInvoke()
+        Write-DLog ('reference surfacing: index build started (background runspace, off the critical path) root=' + $Root)
+    } catch {
+        Write-DLog ('reference surfacing: index build could not start (' + $_.Exception.Message + '); check stays silent')
+    }
+}
+
+function Update-ReferenceIndexFromBackground {
+    # If the background index build completed, harvest the index hashtable and latch ready. Cheap poll;
+    # a no-op once ready or when no background build is running. FAIL-SAFE: any harvest error latches
+    # nothing (the check stays silent). Disposes the runspace exactly once, on completion.
+    if ($script:referenceIndexReady) { return }
+    if ($null -eq $script:refIndexAsync -or $null -eq $script:refIndexPs) { return }
+    if (-not $script:refIndexAsync.IsCompleted) { return }
+    try {
+        $result = $script:refIndexPs.EndInvoke($script:refIndexAsync)
+        $idx = $null
+        foreach ($o in @($result)) { if ($null -ne $o) { $idx = $o; break } }
+        if ($null -ne $idx) {
+            $script:referenceIndex = $idx
+            $script:referenceIndexReady = $true
+            Write-DLog ('reference surfacing: index ready (' + (@($idx['Defs'].Keys).Count) + ' defs, ' + [int]$idx['FileCount'] + ' files)')
+        }
+    } catch {
+        Write-DLog ('reference surfacing: index harvest failed (' + $_.Exception.Message + '); staying silent')
+    } finally {
+        try { $script:refIndexPs.Dispose() } catch { }
+        try { if ($null -ne $script:refIndexRunspace) { $script:refIndexRunspace.Dispose() } } catch { }
+        $script:refIndexPs = $null; $script:refIndexAsync = $null; $script:refIndexRunspace = $null
+    }
+}
+
+function Get-ReferenceSurfacingFindings {
+    # Daemon wrapper for the 000128 reference-surfacing pass (rides the diagnostics payload as an additive
+    # referenceFindings field). Gated: @() unless the knob is 'counts' AND the session index has latched
+    # ready (fail-safe -- never surface against a not-ready index). Uses the SHARED edited-file AST when
+    # provided (the 000127 budget constraint -- never add a second parse); parses only as a fallback.
+    # NEVER throws past its own frame; per-edit cost is O(edited file) + lookups.
+    param([string]$FilePath, $Ast = $null)
+    if ($script:referenceSurfacingMode -ne 'counts') { return @() }
+    Update-ReferenceIndexFromBackground
+    if (-not $script:referenceIndexReady -or $null -eq $script:referenceIndex) { return @() }   # not ready -> SILENT
+    try {
+        $full = [System.IO.Path]::GetFullPath($FilePath)
+        $useAst = $Ast
+        if ($null -eq $useAst) {
+            if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return @() }
+            $useAst = [System.Management.Automation.Language.Parser]::ParseFile($full, [ref]$null, [ref]$null)
+        }
+        if ($null -eq $useAst) { return @() }
+        return @(Find-ReferenceSurfacing -Ast $useAst -Index $script:referenceIndex -EditedFilePath $full)
+    } catch {
+        Write-DLog ('reference surfacing: check errored (ignored, silent): ' + $_.Exception.Message)
         return @()
     }
 }
@@ -1347,6 +1487,12 @@ try {
                     'diagnostics' {
                         $file = [string](Get-Prop $req 'file')
                         $reqCwd = [string](Get-Prop $req 'cwd')   # project root for settings bound (000018)
+                        # Reference surfacing (dispatch 000128): kick the once-per-session BACKGROUND
+                        # workspace-index build from the FIRST request's cwd (the project root -- the daemon
+                        # has none at launch). One-shot; silent until ready; a no-op when the knob is off or
+                        # the index already started. NEVER on the critical path (the build runs on its own
+                        # runspace; this call just starts it and returns).
+                        if ($script:referenceSurfacingMode -eq 'counts') { Start-ReferenceIndexPrewarm -Root $reqCwd }
                         # Edit-range scoping (000019): the client derives the touched line
                         # range from the PostToolUse structuredPatch and sends it here.
                         # Absent => no scoping (whole-file, byte-identical to pre-000019).
@@ -1363,10 +1509,32 @@ try {
                             # returns @() when the snapshot is not ready or on any error, and this
                             # try/catch guarantees a throw never zeroes or blocks the diagnostics pass.
                             # With the knob OFF the whole block is skipped -> byte-for-byte unchanged.
+                            # Shared edited-file parse (dispatch 000128): module awareness (000101) and
+                            # reference surfacing (000128) both need the edited file's AST. Parse it AT MOST
+                            # ONCE here and hand it to both -- the 000127 survey's budget constraint (never
+                            # add a second parse). Only on a CLEAN settled pass, and only when at least one of
+                            # the two knobs is active, so the knob-off path parses nothing extra and the
+                            # surface is byte-for-byte unchanged.
                             $maRecords = @()
-                            if ($script:moduleAwarenessMode -eq 'suggest' -and -not $res.Contains('status')) {
-                                try { $maRecords = @(Get-ModuleAwarenessFindings -FilePath $file) }
-                                catch { $maRecords = @(); Write-DLog ('module awareness merge error (ignored): ' + $_.Exception.Message) }
+                            $refRecords = @()
+                            if (-not $res.Contains('status')) {
+                                $sharedEditedAst = $null
+                                if ($script:moduleAwarenessMode -eq 'suggest' -or $script:referenceSurfacingMode -eq 'counts') {
+                                    try {
+                                        $sharedFull = [System.IO.Path]::GetFullPath($file)
+                                        if (Test-Path -LiteralPath $sharedFull -PathType Leaf) {
+                                            $sharedEditedAst = [System.Management.Automation.Language.Parser]::ParseFile($sharedFull, [ref]$null, [ref]$null)
+                                        }
+                                    } catch { $sharedEditedAst = $null }
+                                }
+                                if ($script:moduleAwarenessMode -eq 'suggest') {
+                                    try { $maRecords = @(Get-ModuleAwarenessFindings -FilePath $file -Ast $sharedEditedAst) }
+                                    catch { $maRecords = @(); Write-DLog ('module awareness merge error (ignored): ' + $_.Exception.Message) }
+                                }
+                                if ($script:referenceSurfacingMode -eq 'counts') {
+                                    try { $refRecords = @(Get-ReferenceSurfacingFindings -FilePath $file -Ast $sharedEditedAst) }
+                                    catch { $refRecords = @(); Write-DLog ('reference surfacing merge error (ignored): ' + $_.Exception.Message) }
+                                }
                             }
                             # Stable order + dedupe, then severity threshold + rule
                             # include/exclude, then scope to the edit, then cap per file.
@@ -1390,6 +1558,14 @@ try {
                             if ($null -ne $projectFinds -and @($projectFinds).Count -gt 0) {
                                 $payload['projectFindings'] = @($projectFinds)
                                 Write-DLog ('project findings: ' + @($projectFinds).Count + ' for ' + $file)
+                            }
+                            # Reference surfacing (dispatch 000128): the bare per-function facts computed
+                            # above ride here as an ADDITIVE referenceFindings field, rendered by the client
+                            # in its own 'References:' section. Absent when the knob is off or the index is
+                            # not ready or the file has nothing provable -> the payload is byte-identical.
+                            if ($refRecords.Count -gt 0) {
+                                $payload['referenceFindings'] = @($refRecords)
+                                Write-DLog ('reference surfacing: ' + $refRecords.Count + ' fact(s) for ' + $file)
                             }
                             # Closed-loop agentic correction (dispatch 000061): diff this pass
                             # against last turn's surfaced set for this URI -> additive cleared[]/

@@ -31,6 +31,42 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-07-17
+MINOR: **reference surfacing -- a knob-gated "who references this function" fact layer (`referenceSurfacing`
+knob)**. A new off-by-default `userConfig` knob, `referenceSurfacing`, surfaces **bare per-function facts**
+for the edited file, drawn from a **session workspace index** the daemon builds ONCE in the background: for a
+function you DEFINE, how many OTHER workspace files reference it and whether it is exported; for a command you
+CALL whose UNIQUE definition is elsewhere, where it is defined. The facts ride the existing
+`additionalContext` channel in a distinct `References:` section as additive **Information** -- they are
+FACTS, not diagnostics (a reference count names nothing wrong), so there is **no new diagnostic rule code, no
+"fix", and no new status token** (the 1.2 taxonomy is untouched) and `rulesets/rule-rationales.psd1` is
+byte-for-byte unchanged. It fires only on positive, unambiguous identification and stays **silent** on every
+ambiguity (a dynamic invocation, a dynamic dot-source or import, a string-built name, a name defined in more
+than one workspace file, a name that shadows a builtin cmdlet). The design is settled by the 000127 leg-1
+survey: a per-edit full workspace scan measured 11x-36x over the 150 ms budget, so the daemon builds a
+**session-start-style index** instead (per-edit cost is O(edited file) -- ~3.9 ms p50 at 1000 files, because
+repo size is not in the per-edit path -- re-measured here at p50 ~44 ms on a representative file and ~144 ms
+on the plugin's own largest file, both under the 150 ms bar), and the edited file's parse is **shared** with
+module awareness rather than duplicated. When `off` (the default) the daemon builds no index and the
+diagnostics surface is byte-for-byte unchanged. Shipped as a **deliberate MINOR** (a new frozen knob name,
+amended in lockstep into the manifest, `CONTRACT.md`, and `README.md`); the 000087/000101 knob precedent.
+Dispatch 000128 leg 1.
+
+MINOR: **AliasesToExport orphan detection -- the always-on ManifestConsistency check now cross-references
+exported ALIASES (PL-6 slice 2)**. The existing, always-on `ManifestConsistency` finder gains a third check:
+an alias listed in a manifest's `AliasesToExport` with no matching literal `Set-Alias` / `New-Alias`
+definition in the module surfaces a Warning under the **same `ManifestConsistency` rule code** -- **no new
+owned diagnostic code and no rationale-table change**. Like the slice-1 function-export checks it is
+deterministic static `.psd1` / `.psm1` analysis and rides **no knob**. It fires only when the alias surface
+is fully determinate and degrades to **silence** on every shape that could define or export an alias
+invisibly -- a dynamic invocation (Pester's `& $SafeCommands['Set-Alias']`), a non-literal alias name, an
+`Export-ModuleMember -Alias` (the BurntToast shape), a nested module, or a dot-source -- so it never
+false-fires on a known-good module. Measured **0% false-positive** on an enlarged oracle (the machine's 79
+installed manifests plus four new corpus fixtures modeling the two probe shapes the 000127 leg-4 survey
+named), which is the evidence bar this project holds a new detection to (000091 / 000092 / 000125). Also
+corrects a latent slice-1 false positive: an `Export-ModuleMember -Alias` name is no longer folded into the
+exported-**function** set (where it wrongly read as an under-declared function). Dispatch 000128 leg 3.
+
 ## [1.24.3] - 2026-07-16
 PATCH: **Base-ruleset curation slice 2 -- `PSUseOutputTypeCorrectly` excluded, so the opt-in `base`
 surface is now 0% measured false-positive on the known-good oracle, with the default `pses-default`
