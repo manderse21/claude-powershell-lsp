@@ -25,7 +25,14 @@ param(
     [string] $SettingsPath = '',
     [string] $Ruleset = 'pses-default',
     [string] $ModuleAwareness = 'off',
-    [string] $ReferenceSurfacing = 'off'
+    [string] $ReferenceSurfacing = 'off',
+    # Daemon settle cap (ms) -- forwarded to the daemon's MaxWaitMs (dispatch 000133). INTERNAL, NOT a
+    # userConfig knob: it is NOT self-sourced from CLAUDE_PLUGIN_OPTION_* below, so it adds no CONTRACT
+    # surface. 0 (the default) forwards nothing, so the daemon keeps its own 5000 default and the real
+    # SessionStart hook launch is byte-identical to pre-000133. Only the scan's Start-ScanDaemon passes a
+    # raised value (as an explicit arg, the -PreferredHost precedent), giving the SCAN daemon more room to
+    # settle its largest files without touching in-agent edit latency (option B).
+    [int] $MaxWaitMs = 0
 )
 
 Set-StrictMode -Version Latest
@@ -252,7 +259,8 @@ try {
     $launched = Start-PsesDaemonDetached -SessionId $sessionId -HostExe $hostExe `
         -SeverityThreshold $SeverityThreshold -RuleInclude $RuleInclude -RuleExclude $RuleExclude `
         -DebounceMs $DebounceMs -IdleTtlMin $IdleTtlMin -PerFileCap $PerFileCap -SettingsPath $SettingsPath `
-        -Ruleset $Ruleset -ModuleAwareness $ModuleAwareness -ReferenceSurfacing $ReferenceSurfacing
+        -Ruleset $Ruleset -ModuleAwareness $ModuleAwareness -ReferenceSurfacing $ReferenceSurfacing `
+        -MaxWaitMs $MaxWaitMs
     Write-SLog ('launched daemon (detached) for session ' + $sessionId + ' via ' + $hostExe + ' (ok=' + $launched + ')')
     exit 0
 }

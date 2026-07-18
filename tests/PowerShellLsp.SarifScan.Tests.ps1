@@ -713,3 +713,116 @@ Describe 'SARIF scan -- a client-cap kill is never a clean file (dispatch 000132
         $r.Analyzed | Should -BeFalse -Because 'a cap-killed analysis produced no verdict and must not read as a clean file'
     }
 }
+
+Describe 'SARIF scan -- the scan daemon honors a raised MaxWaitMs settle cap (dispatch 000133)' -Skip:$script:SkipDaemon {
+    # Option B (dispatch 000133): the daemon's settle cap (pses-daemon.ps1 MaxWaitMs) -- the BINDING
+    # per-file budget 000132 identified -- is plumbed end-to-end from Start-ScanDaemon -> session-start.ps1
+    # -> Start-PsesDaemonDetached -> the daemon, so the SCAN can settle its largest files while the in-agent
+    # daemon keeps 5000. This proves the plumbing REACHES and GATES the daemon settle: a scan daemon launched
+    # with MaxWaitMs = 1 ms cannot settle ANY analysis in time, so a real file is reported NOT analyzed (the
+    # settle-timeout -> 'incomplete' status -> the 'NOT checked' banner -> Analyzed=$false, the 000024 path).
+    # MUTATION-PROVABLE: strip the -MaxWaitMs forward at ANY hop and the 1 ms never reaches the daemon, which
+    # then uses its own 5000 default, settles this trivial file, and reports Analyzed=$true -- flipping the
+    # assertion RED. (The DEFAULT-cap direction -- a real file DOES settle -- is the sibling one-engine and
+    # entry-point Describes above, which run the scan daemon at its production cap over real corpus files.)
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
+        $script:MwScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:MwHostExe = Resolve-PsHost 'pwsh'
+        $script:MwPrevData = $env:CLAUDE_PLUGIN_DATA
+        $script:MwDataRoot = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $env:PSLS_TEST_DATA_DIR
+        } else {
+            Join-Path ([System.IO.Path]::GetTempPath()) 'psls-maxwait-test-data'
+        }
+        New-Item -ItemType Directory -Force -Path $script:MwDataRoot | Out-Null
+        $env:CLAUDE_PLUGIN_DATA = $script:MwDataRoot
+        if ($null -ne $script:MwHostExe) {
+            # Idempotent bootstrap (no-op when the sibling Describes already vendored PSES + pinned PSSA).
+            & $script:MwHostExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:MwScriptsDir 'ensure-pses.ps1') 2>&1 | Out-Null
+            & $script:MwHostExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:MwScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+        }
+        $script:MwSid = 'maxwait-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        # The lever under test: a 1 ms scan-daemon settle cap, threaded through the real launch path.
+        $script:MwDaemon = if ($null -ne $script:MwHostExe) {
+            Start-ScanDaemon -ScriptsDir $script:MwScriptsDir -DataRoot $script:MwDataRoot -SessionId $script:MwSid -HostExe $script:MwHostExe -MaxWaitMs 1
+        } else { $null }
+        if ($null -ne $script:MwDaemon) {
+            # A ready diagnostics round-trip (000051): the daemon answers a well-formed 'incomplete' in the
+            # not-settled state, so this returns TRUE for a 1 ms cap -- readiness is not settle.
+            [void](Wait-DaemonRequestReady -SessionId $script:MwSid -DataRoot $script:MwDataRoot -TimeoutMs 30000)
+        }
+        $script:MwTarget = Join-Path $script:MwDataRoot ('settle-probe-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.ps1')
+        Set-Content -LiteralPath $script:MwTarget -Value 'function Get-Probe { Get-Process }' -Encoding ascii
+    }
+
+    AfterAll {
+        if (Get-Command Stop-ScanDaemon -ErrorAction SilentlyContinue) {
+            Stop-ScanDaemon -ScriptsDir $script:MwScriptsDir -DataRoot $script:MwDataRoot -SessionId $script:MwSid -HostExe $script:MwHostExe -DaemonInfo $script:MwDaemon
+        }
+        if ($script:MwTarget -and (Test-Path -LiteralPath $script:MwTarget)) {
+            Remove-Item -LiteralPath $script:MwTarget -Force -ErrorAction SilentlyContinue
+        }
+        $env:CLAUDE_PLUGIN_DATA = $script:MwPrevData
+    }
+
+    It 'brings up the scan daemon with the plumbed cap (the probe cannot pass vacuously)' {
+        if ($null -eq $script:MwHostExe) { Set-ItResult -Skipped -Because 'no PowerShell host available to spawn'; return }
+        $script:MwDaemon | Should -Not -BeNullOrEmpty -Because 'a 1 ms settle cap must still let the daemon come up and answer requests -- readiness is not settle'
+    }
+
+    It 'a 1 ms settle cap reports a real file NOT analyzed (the -MaxWaitMs forward reaches + gates the daemon settle)' {
+        if ($null -eq $script:MwHostExe -or $null -eq $script:MwDaemon) { Set-ItResult -Skipped -Because 'scan daemon not available to probe'; return }
+        $r = Invoke-ScanFileDiagnostics -ScriptsDir $script:MwScriptsDir -DataRoot $script:MwDataRoot `
+            -SessionId $script:MwSid -HostExe $script:MwHostExe -FilePath $script:MwTarget
+        $r.Analyzed | Should -BeFalse -Because 'a 1 ms MaxWaitMs cannot settle any analysis, so the scan daemon must report this file NOT analyzed -- if the -MaxWaitMs forward were broken the daemon would use its own 5000 default and settle this trivial file (Analyzed=$true)'
+    }
+}
+
+Describe 'SARIF scan -- MaxWaitMs plumbing is additive, in-agent-preserving, and NOT a userConfig knob (dispatch 000133)' {
+    # The option-B INVARIANT, asserted structurally (mirrors the workflow text-guard Describe above): the
+    # settle-cap forward exists at every hop, is additive/default-preserving so the in-agent daemon launch
+    # is byte-identical to pre-000133, and is INTERNAL -- never sourced from the CLAUDE_PLUGIN_OPTION_*
+    # userConfig namespace, so it adds no CONTRACT surface (OQ3: not a userConfig knob). Each assertion is
+    # mutation-provable: edit the named line out and it flips RED.
+    BeforeAll {
+        $script:PluginRoot = Split-Path -Parent $PSScriptRoot
+        $script:SsText = [System.IO.File]::ReadAllText((Join-Path $script:PluginRoot 'scripts/session-start.ps1'))
+        $script:CommonText = [System.IO.File]::ReadAllText((Join-Path $script:PluginRoot 'scripts/lib/lsp-common.ps1'))
+        $script:ScanCommonText = [System.IO.File]::ReadAllText((Join-Path $script:PluginRoot 'scripts/lib/lsp-scan-common.ps1'))
+        $script:DaemonText = [System.IO.File]::ReadAllText((Join-Path $script:PluginRoot 'scripts/pses-daemon.ps1'))
+        $script:PluginManifest = [System.IO.File]::ReadAllText((Join-Path $script:PluginRoot '.claude-plugin/plugin.json'))
+    }
+
+    It 'the daemon still owns the 5000 ms settle-cap default (the in-agent budget is unchanged)' {
+        $script:DaemonText | Should -Match '\[int\]\s*\$MaxWaitMs\s*=\s*5000'
+    }
+
+    It 'Start-PsesDaemonDetached forwards -MaxWaitMs ADDITIVELY -- only when a caller set it (> 0)' {
+        # The default (0) emits no arg, so the daemon keeps 5000 and the in-agent launch is byte-identical.
+        $script:CommonText | Should -Match '\[int\]\$MaxWaitMs\s*=\s*0'
+        $script:CommonText | Should -Match "if\s*\(\s*\`$MaxWaitMs\s*-gt\s*0\s*\)\s*\{\s*\`$daemonArgs\s*\+=\s*@\(\s*'-MaxWaitMs'"
+    }
+
+    It 'session-start.ps1 defaults -MaxWaitMs to 0 (unset) and forwards it to the daemon launch' {
+        $script:SsText | Should -Match '\[int\]\s*\$MaxWaitMs\s*=\s*0'
+        $script:SsText | Should -Match '-MaxWaitMs\s+\$MaxWaitMs'
+    }
+
+    It 'session-start.ps1 does NOT self-source MaxWaitMs from the userConfig namespace (internal, not a knob)' {
+        # Every real userConfig knob is read via Get-PluginOption[Int] 'name'; MaxWaitMs must NOT be, or it
+        # would silently join the CLAUDE_PLUGIN_OPTION_* set (a CONTRACT amendment this dispatch must not make).
+        $script:SsText | Should -Not -Match "Get-PluginOption(Int)?\s+'[^']*[Mm]axWait"
+    }
+
+    It 'MaxWaitMs is absent from the plugin.json userConfig surface (OQ3: not a userConfig knob)' {
+        $script:PluginManifest | Should -Not -Match '(?i)maxWaitMs'
+    }
+
+    It 'Start-ScanDaemon passes -MaxWaitMs to the real SessionStart hook (option B: only the scan raises it)' {
+        $script:ScanCommonText | Should -Match "'-MaxWaitMs'\s*,\s*\[string\]\`$MaxWaitMs"
+        $script:ScanCommonText | Should -Match '\[int\]\$MaxWaitMs\s*=\s*\d+'
+    }
+}
