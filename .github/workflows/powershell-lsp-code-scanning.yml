@@ -83,6 +83,22 @@ jobs:
           if ($code -eq 3 -or $code -eq 4) {
             Write-Host "::warning::lsp-scan exited $code (3=usage, 4=incomplete scan); the SARIF below may be partial."
           }
+          # Diagnosability (dispatch 000131): when the scan was INCOMPLETE, NAME the file(s) it
+          # could not analyze -- read straight from the SARIF's own invocation notifications, so the
+          # culprit is visible in the Actions tab without a local repro (previously only a count
+          # reached the log). Informational; the never-silent fail step below is unchanged.
+          if ($code -eq 4 -and (Test-Path results.sarif)) {
+            try {
+              $sarif = Get-Content results.sarif -Raw | ConvertFrom-Json
+              $notes = @($sarif.runs[0].invocations[0].toolExecutionNotifications)
+              foreach ($n in $notes) {
+                $t = [string]$n.message.text
+                if ($t) { Write-Host "::warning::$t" }
+              }
+            } catch {
+              Write-Host "::warning::lsp-scan INCOMPLETE, but the SARIF notifications could not be read: $($_.Exception.Message)"
+            }
+          }
           exit 0
 
       - name: Upload SARIF to code scanning

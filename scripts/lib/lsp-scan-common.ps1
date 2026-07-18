@@ -189,19 +189,51 @@ function New-SarifResult {
     }
 }
 
+# Bounded enumeration cap for not-analyzed file names surfaced to CI (the SARIF invocation
+# notifications and the incomplete-scan stderr line). scripts/ holds ~two dozen PowerShell
+# files, so a realistic INCOMPLETE names every unanalyzed file; the cap only engages on a
+# pathological large-tree scan, where it shows the first $Cap (sorted) names and states the
+# total. Text mode (a local, human-invoked full report) is intentionally NOT capped.
+$script:ScanNotAnalyzedNameCap = 50
+
+function Get-ScanNotAnalyzedNames {
+    # Map a set of not-analyzed file paths to sorted, root-relative names, bounded to $Cap.
+    # ONE source so the SARIF notifications and the incomplete-scan stderr line bound and order
+    # the names identically. Returns @{ Names = <string[]> (<= Cap, sorted, forward-slash
+    # relative); Total = <int>; Overflow = <int> }. $Cap <= 0 means no cap (enumerate all).
+    # Blank/null entries are dropped; never throws on an empty set.
+    param(
+        [string[]]$NotAnalyzed,
+        [string]$Root,
+        [int]$Cap = $script:ScanNotAnalyzedNameCap
+    )
+    $rels = @(@($NotAnalyzed) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object { Get-ScanRelativeUri -FilePath $_ -Root $Root } |
+        Sort-Object)
+    $total = $rels.Count
+    $shown = if ($Cap -gt 0 -and $total -gt $Cap) { @($rels[0..($Cap - 1)]) } else { @($rels) }
+    return @{ Names = @($shown); Total = $total; Overflow = ($total - @($shown).Count) }
+}
+
 function New-SarifReport {
     # Assemble a SARIF 2.1.0 log object (ready for ConvertTo-Json) from the flat finding set.
     # Each finding is expected to carry file / line / col / severity / ruleId / source / message.
     # The single run declares the tool driver (name/version/informationUri) and a deduplicated
     # rule table (reportingDescriptor[]); each result references its rule by index. A scan that
     # could not fully analyze every file is reported via invocations[].executionSuccessful=$false
-    # (never a silent clean report). originalUriBaseIds.SRCROOT anchors the relative URIs to the
-    # scan root.
+    # (never a silent clean report), and each unanalyzed file is NAMED via an
+    # invocations[].toolExecutionNotifications[] entry (dispatch 000131 -- diagnosability: a timeout
+    # you cannot attribute to a file is one you cannot fix). That notification vehicle keeps the
+    # SARIF schema-valid and is ingested as tool status by code scanning (never a spurious alert),
+    # so the finding set is byte-identical to before and a COMPLETE scan grows no notifications
+    # array at all. originalUriBaseIds.SRCROOT anchors the relative URIs to the scan root.
     param(
         [object[]]$Findings,
         [string]$Root,
         [string]$ToolVersion = '',
-        [bool]$ExecutionSuccessful = $true
+        [bool]$ExecutionSuccessful = $true,
+        [string[]]$NotAnalyzed = @()
     )
     $items = @(@($Findings) | Where-Object { $null -ne $_ })
     if ([string]::IsNullOrWhiteSpace($ToolVersion)) { $ToolVersion = Get-PluginVersion }
@@ -239,10 +271,40 @@ function New-SarifReport {
         informationUri = 'https://github.com/manderse21/claude-powershell-lsp'
         rules          = @($rules)
     }
+    $invocation = [ordered]@{ executionSuccessful = [bool]$ExecutionSuccessful }
+    # Name the unanalyzed files (dispatch 000131). Only when there ARE any, so a complete scan's
+    # invocation stays byte-identical to before. Each name is a SARIF toolExecutionNotification --
+    # a runtime tool-status entry (NOT a result), carrying the file's SRCROOT-relative location so
+    # it is navigable in code scanning without becoming a spurious alert. Bounded to the cap, with
+    # a trailing summary notification when the set overflows.
+    $na = Get-ScanNotAnalyzedNames -NotAnalyzed $NotAnalyzed -Root $Root
+    if ($na.Total -gt 0) {
+        $notifs = New-Object System.Collections.ArrayList
+        foreach ($rel in $na.Names) {
+            [void]$notifs.Add([ordered]@{
+                level     = 'error'
+                message   = [ordered]@{ text = ('powershell-lsp: could not analyze ' + [string]$rel + ' (scan INCOMPLETE for this file).') }
+                locations = @(
+                    [ordered]@{
+                        physicalLocation = [ordered]@{
+                            artifactLocation = [ordered]@{ uri = [string]$rel; uriBaseId = 'SRCROOT' }
+                        }
+                    }
+                )
+            })
+        }
+        if ($na.Overflow -gt 0) {
+            [void]$notifs.Add([ordered]@{
+                level   = 'error'
+                message = [ordered]@{ text = ('powershell-lsp: and ' + $na.Overflow + ' more file(s) could not be analyzed (' + $na.Total + ' total).') }
+            })
+        }
+        $invocation['toolExecutionNotifications'] = @($notifs)
+    }
     $run = [ordered]@{
         tool        = [ordered]@{ driver = $driver }
         results     = @($results)
-        invocations = @( [ordered]@{ executionSuccessful = [bool]$ExecutionSuccessful } )
+        invocations = @( $invocation )
     }
     # Anchor relative URIs to the scan root so a code-scanning consumer can resolve them.
     $rootUri = ''

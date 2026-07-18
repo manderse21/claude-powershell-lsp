@@ -143,7 +143,7 @@ $execOk = (@($notAnalyzed).Count -eq 0)
 
 # --- emit ------------------------------------------------------------------
 if ($Format -eq 'sarif') {
-    $report = New-SarifReport -Findings $findings -Root $root -ToolVersion (Get-PluginVersion) -ExecutionSuccessful $execOk
+    $report = New-SarifReport -Findings $findings -Root $root -ToolVersion (Get-PluginVersion) -ExecutionSuccessful $execOk -NotAnalyzed @($notAnalyzed)
     Write-ScanOutput -Text ($report | ConvertTo-Json -Depth 16) -OutFile $OutputPath
 } else {
     Write-ScanOutput -Text (Format-ScanTextReport -Findings $findings -Root $root -Skipped $skipped `
@@ -152,7 +152,14 @@ if ($Format -eq 'sarif') {
 
 # --- exit ------------------------------------------------------------------
 if (@($notAnalyzed).Count -gt 0) {
-    [Console]::Error.WriteLine('lsp-scan: ' + @($notAnalyzed).Count + ' file(s) could NOT be analyzed -- scan is INCOMPLETE (executionSuccessful=false).')
+    # Name the files, not just the count (dispatch 000131): the SARIF carries them too, but the
+    # stderr is what lands in the CI step log, so a future INCOMPLETE is diagnosable from the run
+    # output alone. Bounded to the shared cap (the leading count line is preserved verbatim so
+    # anything grepping "file(s) could NOT be analyzed" keeps working).
+    $na = Get-ScanNotAnalyzedNames -NotAnalyzed @($notAnalyzed) -Root $root
+    [Console]::Error.WriteLine('lsp-scan: ' + $na.Total + ' file(s) could NOT be analyzed -- scan is INCOMPLETE (executionSuccessful=false):')
+    foreach ($rel in $na.Names) { [Console]::Error.WriteLine('  ' + $rel) }
+    if ($na.Overflow -gt 0) { [Console]::Error.WriteLine('  ... and ' + $na.Overflow + ' more (' + $na.Total + ' total).') }
     exit 4
 }
 exit (Get-FailExitCode -Findings $findings -FailOn $FailOn)
