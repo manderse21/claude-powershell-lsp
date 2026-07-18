@@ -548,22 +548,21 @@ Describe 'code-scanning workflow: inert until merged, SHA-pinned, CI legs untouc
         $script:ScanWfText | Should -Match 'toolExecutionNotifications'
     }
 
-    It 'exposes a DIAGNOSTIC daemon-budget override as an OPT-IN workflow_dispatch input (dispatch 000132 leg 3)' {
-        # The measurement lever: a workflow_dispatch input that raises the daemon per-file budget for a
-        # single run. It must be OPT-IN -- absent the input, the scan command is the production one, so a
-        # normal push/schedule run is byte-for-byte the shipped 18000 ms behavior. RED on the pre-change
-        # tree (no such input existed).
-        $script:ScanWfText | Should -Match 'diagnostic_daemon_budget_ms'
-        # The override is applied ONLY when the input is non-empty; an absent/empty input runs the
-        # production command verbatim (byte-for-byte the shipped default).
-        $script:ScanWfText | Should -Match 'IsNullOrWhiteSpace\(\$diagBudget\)'
-        $script:ScanWfText | Should -Match '-DaemonBudgetMs \$diagBudget -DiagnosticTiming'
-        # The default (no-override) branch runs the production invocation exactly as before.
+    It 'exposes a DIAGNOSTIC per-file-timing flag as an OPT-IN workflow_dispatch input (dispatch 000132 leg 3)' {
+        # The measurement instrument: a workflow_dispatch input that emits per-file timing for a single
+        # run. It changes NO budget (000132 leg 3 found the binding budget is the daemon settle cap,
+        # unreachable from here) and must be OPT-IN -- absent the input, the scan command is the
+        # production one, so a normal push/schedule run is byte-for-byte the shipped behavior.
+        $script:ScanWfText | Should -Match 'diagnostic_timing'
+        # The timing flag is applied ONLY when the input is 'true'; otherwise the production command runs.
+        $script:ScanWfText | Should -Match "diagTiming -ne 'true'"
+        $script:ScanWfText | Should -Match '-DiagnosticTiming'
+        # The default branch runs the production invocation exactly as before.
         $script:ScanWfText | Should -Match 'lsp-scan\.ps1 ./scripts -Format sarif -OutputPath results\.sarif'
     }
 
-    It 'defaults the diagnostic input to empty so a non-dispatch run is byte-for-byte unchanged (dispatch 000132 leg 3)' {
-        $script:ScanWfText | Should -Match "default: ''"
+    It 'defaults the diagnostic input to false so a non-dispatch run is byte-for-byte unchanged (dispatch 000132 leg 3)' {
+        $script:ScanWfText | Should -Match 'default: false'
     }
 
     It 'indents with spaces only (no tabs -- YAML indentation safety)' {
@@ -663,7 +662,7 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
         # LEG 3 measurement surface: -DiagnosticTiming records EVERY file's true elapsed, not only the
         # timed-out ones -- the number a measurement run needs to learn what a file costs when it
         # COMPLETES. Both input files analyze cleanly here (analyzed=True), so this proves the timing is
-        # emitted for completing files. The daemon budget is unchanged (no -DaemonBudgetMs), so exit is 0.
+        # emitted for completing files. -DiagnosticTiming changes no budget, so the scan exits 0.
         $diagErr = Join-Path $script:InputDir 'diag.err'
         $diagSarif = Join-Path $script:InputDir 'diag.sarif'
         $prevData = $env:CLAUDE_PLUGIN_DATA

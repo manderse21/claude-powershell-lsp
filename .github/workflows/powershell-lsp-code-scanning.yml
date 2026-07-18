@@ -32,14 +32,14 @@ on:
     - cron: '0 6 * * 1'
   workflow_dispatch:
     inputs:
-      diagnostic_daemon_budget_ms:
+      diagnostic_timing:
         description: >-
-          DIAGNOSTIC ONLY (dispatch 000132 leg 3). Raise the daemon per-file analysis budget (ms) for
-          THIS run to measure the true per-file cost on the runner, and emit a per-file elapsed line for
-          every file. Leave EMPTY for production behavior -- the shipped 18000 ms budget, byte-for-byte.
+          DIAGNOSTIC ONLY (dispatch 000132 leg 3). Emit a per-file 'lsp-scan diag:' timing line (name,
+          analyzed, elapsed ms) for EVERY file, to measure the true per-file analysis cost on the runner.
+          Changes NO budget -- leave unchecked for production behavior (byte-for-byte the shipped default).
         required: false
-        default: ''
-        type: string
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -80,16 +80,17 @@ jobs:
           POWERSHELL_LSP_PSSA_CACHE: ${{ env.PSSA_CACHE_DIR }}
           CLAUDE_PLUGIN_DATA: ${{ github.workspace }}/psls-scan-data
         run: |
-          # DIAGNOSTIC override (dispatch 000132 leg 3): raise the daemon per-file budget ONLY when the
-          # workflow_dispatch input is supplied. Absent (push / schedule / a dispatch with an empty
-          # input) the DEFAULT branch runs the production invocation VERBATIM, so behavior is byte-for-
-          # byte the shipped default -- the never-silent red still fires on a genuine INCOMPLETE.
-          $diagBudget = "${{ github.event.inputs.diagnostic_daemon_budget_ms }}"
-          if ([string]::IsNullOrWhiteSpace($diagBudget)) {
+          # DIAGNOSTIC timing (dispatch 000132 leg 3): emit per-file timing ONLY when the
+          # workflow_dispatch input is 'true'. Absent (push / schedule / a dispatch left unchecked) the
+          # DEFAULT branch runs the production invocation VERBATIM, so behavior is byte-for-byte the
+          # shipped default -- no budget change of any kind, and the never-silent red still fires on a
+          # genuine INCOMPLETE.
+          $diagTiming = "${{ github.event.inputs.diagnostic_timing }}"
+          if ($diagTiming -ne 'true') {
             ./scripts/lsp-scan.ps1 ./scripts -Format sarif -OutputPath results.sarif
           } else {
-            Write-Host "::warning::DIAGNOSTIC RUN -- daemon per-file budget raised to $diagBudget ms for this run (NOT production behavior)."
-            ./scripts/lsp-scan.ps1 ./scripts -Format sarif -OutputPath results.sarif -DaemonBudgetMs $diagBudget -DiagnosticTiming
+            Write-Host "::warning::DIAGNOSTIC RUN -- per-file timing enabled (no budget change; production behavior otherwise)."
+            ./scripts/lsp-scan.ps1 ./scripts -Format sarif -OutputPath results.sarif -DiagnosticTiming
           }
           $code = $LASTEXITCODE
           # Exit-code contract (scripts/lsp-scan.ps1): 0 = completed (no -FailOn threshold met,
