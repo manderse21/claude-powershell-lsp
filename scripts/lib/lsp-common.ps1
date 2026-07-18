@@ -664,7 +664,14 @@ function Start-PsesDaemonDetached {
         [string]$SettingsPath = '',
         [string]$Ruleset = 'pses-default',
         [string]$ModuleAwareness = 'off',
-        [string]$ReferenceSurfacing = 'off'
+        [string]$ReferenceSurfacing = 'off',
+        # Daemon settle cap (ms) forward (dispatch 000133). The daemon's own MaxWaitMs (pses-daemon.ps1,
+        # default 5000) is the hard cap on the settle wait -- the BINDING per-file budget (dispatch 000132).
+        # Internal / daemon-level ONLY: NOT a userConfig knob, never sourced from CLAUDE_PLUGIN_OPTION_*, so
+        # it adds no CONTRACT surface. 0 (the default) means "unset" -- no arg is emitted and the daemon
+        # keeps its own 5000 default, so the in-agent launch is byte-identical to pre-000133. Only the scan
+        # (Start-ScanDaemon, option B) passes a raised value; in-agent editing is untouched.
+        [int]$MaxWaitMs = 0
     )
     $scriptsDir = Split-Path -Parent $script:LspCommonDir   # scripts/lib -> scripts
     if ([string]::IsNullOrWhiteSpace($scriptsDir)) { $scriptsDir = Split-Path -Parent $PSScriptRoot }
@@ -692,6 +699,10 @@ function Start-PsesDaemonDetached {
     # path's daemon invocation is byte-identical to pre-000128 (no extra arg, no index build). Canonicalized
     # upstream (ConvertTo-ReferenceSurfacingMode).
     if ($ReferenceSurfacing -eq 'counts') { $daemonArgs += @('-ReferenceSurfacing', 'counts') }
+    # Pass -MaxWaitMs ONLY when a caller set it (> 0); the daemon defaults to 5000, so the default path's
+    # daemon invocation is byte-identical to pre-000133 (no extra arg). Only the scan raises it (option B,
+    # dispatch 000133) -- the in-agent daemon keeps the 5000 settle cap, so edit latency is unchanged.
+    if ($MaxWaitMs -gt 0) { $daemonArgs += @('-MaxWaitMs', [string]$MaxWaitMs) }
     try {
         if (Test-OnWindows) {
             # -WindowStyle Hidden routes through ShellExecute, which STRUCTURALLY does not pass
