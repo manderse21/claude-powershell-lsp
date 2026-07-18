@@ -30,6 +30,29 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **Raise the SCAN daemon's settle cap so the largest scripts settle on ubuntu (dispatch 000133)**.
+Chartered by 000132, which identified the true binding per-file budget as the daemon's own settle cap
+`MaxWaitMs` (`scripts/pses-daemon.ps1`, default 5000 ms) -- NOT the client `timeoutMs`. On a loaded ubuntu-24.04
+runner the largest scripts (`lib/lsp-common.ps1`, `ensure-pssa.ps1`, ~6-7 s of PSScriptAnalyzer analysis)
+settle right at that 5000 ms boundary and were intermittently reported INCOMPLETE, reddening the code-scanning
+run. The fix gives the SCAN's daemon a larger settle cap while the in-agent daemon keeps 5000, so scan
+completeness is fixed with ZERO in-agent edit-latency cost (option B). `MaxWaitMs` is now plumbed additively
+through the launch path (`session-start.ps1` -> `Start-PsesDaemonDetached` -> the daemon) and forwarded ONLY
+by `Start-ScanDaemon`, at **15000 ms**; the in-agent launch emits no `-MaxWaitMs` arg, so its daemon is
+byte-identical to before (the 5000 default stands). It is an INTERNAL daemon-level setting, NOT a userConfig
+knob -- never sourced from `CLAUDE_PLUGIN_OPTION_*`, absent from `plugin.json`, no CONTRACT surface change.
+
+15000 ms is sized from measurement, not a round number: across four `diagnostic_timing` runs on ubuntu-24.04
+the binding file `lib/lsp-common.ps1` settled at 5643-8784 ms client round-trip (a 1.56x run-to-run swing;
+~1.5 s of that is spawn/connect/read overhead, so ~7.3 s worst-case daemon settle). 15000 is ~2.05x that
+worst settle / 1.71x the worst round-trip -- above the observed variance envelope with a further safety
+factor for an unobserved heavier-load tail, and ~2x the typical ~7.3 s settle so a variance spike stays under
+the ceiling rather than crossing it. The client caps are UNCHANGED and stay strictly above the settle cap
+(`Invoke-ScanFileDiagnostics` `timeoutMs` 18000 < `lsp-scan.ps1` `-TimeoutMs` 25000; both > 15000), and were
+proven non-truncating at this cap in the measurement runs. No exit code changed (000130 stop). The 000024
+never-silent red is retained: a file whose analysis genuinely cannot settle within the cap is still reported
+NOT analyzed AFTER upload -- no retry, no backoff, no excluded file.
+
 PATCH: **INCOMPLETE-scan correctness + the true per-file budget identified (dispatch 000132)**.
 Chartered by 000131. Two fixes and a measurement, and NO budget moved. (1) Never-silent (000024): a file whose
 analysis the client process cap KILLS (`Invoke-ScanHook`'s `WaitForExit`) is now recorded NOT analyzed instead of
