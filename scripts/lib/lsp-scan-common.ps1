@@ -450,11 +450,25 @@ function Start-ScanDaemon {
     # faithful set, mapped honestly to SARIF afterward. Returns the daemon details object (the
     # session file once it reports state 'ready'), or $null on timeout (the caller fails loud --
     # an unready daemon must never read as a clean scan).
-    param([string]$ScriptsDir, [string]$DataRoot, [string]$SessionId, [string]$HostExe)
+    # MaxWaitMs (dispatch 000133, option B -- scan-specific settle cap): the SCAN's daemon gets a larger
+    # settle cap than the in-agent daemon's 5000 default, because the largest scripts (lib/lsp-common.ps1,
+    # ensure-pssa.ps1) need ~6-7 s of PSSA analysis on a loaded ubuntu runner and were reported INCOMPLETE
+    # at 5000 (dispatch 000132). Only the scan raises it -- a batch job with no interactive waiter absorbs
+    # the longer worst case for free; the in-agent daemon keeps 5000, so edit latency is untouched (the
+    # forward is INTERNAL, not a userConfig knob). Passed as an explicit arg to the real SessionStart hook,
+    # the same way -PreferredHost is (session-start.ps1 does NOT self-source it from CLAUDE_PLUGIN_OPTION_*).
+    # 15000 ms is sized from measurement, NOT the worst measured value: across 4 ubuntu-24.04 diagnostic runs
+    # the binding file lib/lsp-common.ps1 settled at 5643-8784 ms CLIENT round-trip (~1.5 s of that is
+    # spawn/connect/read overhead, so ~7.3 s worst-case daemon SETTLE), a 1.56x run-to-run swing. 15000 is
+    # ~2.05x that worst settle / 1.71x the worst round-trip -- above the observed variance envelope with a
+    # further safety factor for an unobserved heavier-load tail. The client caps stay strictly above it and
+    # were proven non-truncating at this cap (Invoke-ScanFileDiagnostics timeoutMs 18000 < lsp-scan.ps1
+    # -TimeoutMs 25000; both > 15000). Full arithmetic: the 000133 outbox and CHANGELOG.
+    param([string]$ScriptsDir, [string]$DataRoot, [string]$SessionId, [string]$HostExe, [int]$MaxWaitMs = 15000)
     New-Item -ItemType Directory -Force -Path $DataRoot | Out-Null
     Invoke-ScanHook -HostExe $HostExe -ScriptPath (Join-Path $ScriptsDir 'session-start.ps1') `
         -StdinJson (@{ session_id = $SessionId } | ConvertTo-Json -Compress) `
-        -ExtraArgs @('-PreferredHost', $HostExe) -CapMs 180000 -DataRoot $DataRoot `
+        -ExtraArgs @('-PreferredHost', $HostExe, '-MaxWaitMs', [string]$MaxWaitMs) -CapMs 180000 -DataRoot $DataRoot `
         -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_perFileCap = '0'; CLAUDE_PLUGIN_OPTION_severityThreshold = 'Hint' } | Out-Null
     $sf = Join-Path $DataRoot ('session/' + $SessionId + '.json')
     for ($i = 0; $i -lt 200; $i++) {
