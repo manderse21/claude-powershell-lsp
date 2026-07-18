@@ -554,12 +554,12 @@ Describe 'code-scanning workflow: inert until merged, SHA-pinned, CI legs untouc
         # normal push/schedule run is byte-for-byte the shipped 18000 ms behavior. RED on the pre-change
         # tree (no such input existed).
         $script:ScanWfText | Should -Match 'diagnostic_daemon_budget_ms'
-        # The override is applied ONLY inside an IsNullOrWhiteSpace guard, so an absent/empty input adds
-        # no argument to the invocation.
+        # The override is applied ONLY when the input is non-empty; an absent/empty input runs the
+        # production command verbatim (byte-for-byte the shipped default).
         $script:ScanWfText | Should -Match 'IsNullOrWhiteSpace\(\$diagBudget\)'
-        $script:ScanWfText | Should -Match '-DaemonBudgetMs'
-        # The base (no-override) invocation still scans scripts/ to results.sarif exactly as before.
-        $script:ScanWfText | Should -Match "OutputPath', 'results\.sarif'"
+        $script:ScanWfText | Should -Match '-DaemonBudgetMs \$diagBudget -DiagnosticTiming'
+        # The default (no-override) branch runs the production invocation exactly as before.
+        $script:ScanWfText | Should -Match 'lsp-scan\.ps1 ./scripts -Format sarif -OutputPath results\.sarif'
     }
 
     It 'defaults the diagnostic input to empty so a non-dispatch run is byte-for-byte unchanged (dispatch 000132 leg 3)' {

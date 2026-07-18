@@ -82,15 +82,15 @@ jobs:
         run: |
           # DIAGNOSTIC override (dispatch 000132 leg 3): raise the daemon per-file budget ONLY when the
           # workflow_dispatch input is supplied. Absent (push / schedule / a dispatch with an empty
-          # input) the arg list is exactly the production invocation, so behavior is byte-for-byte the
-          # shipped default -- the never-silent red still fires on a genuine INCOMPLETE.
-          $scanArgs = @('./scripts', '-Format', 'sarif', '-OutputPath', 'results.sarif')
+          # input) the DEFAULT branch runs the production invocation VERBATIM, so behavior is byte-for-
+          # byte the shipped default -- the never-silent red still fires on a genuine INCOMPLETE.
           $diagBudget = "${{ github.event.inputs.diagnostic_daemon_budget_ms }}"
-          if (-not [string]::IsNullOrWhiteSpace($diagBudget)) {
-            $scanArgs += @('-DaemonBudgetMs', $diagBudget, '-DiagnosticTiming')
+          if ([string]::IsNullOrWhiteSpace($diagBudget)) {
+            ./scripts/lsp-scan.ps1 ./scripts -Format sarif -OutputPath results.sarif
+          } else {
             Write-Host "::warning::DIAGNOSTIC RUN -- daemon per-file budget raised to $diagBudget ms for this run (NOT production behavior)."
+            ./scripts/lsp-scan.ps1 ./scripts -Format sarif -OutputPath results.sarif -DaemonBudgetMs $diagBudget -DiagnosticTiming
           }
-          ./scripts/lsp-scan.ps1 @scanArgs
           $code = $LASTEXITCODE
           # Exit-code contract (scripts/lsp-scan.ps1): 0 = completed (no -FailOn threshold met,
           # and none is set here), 2 = threshold met (unreachable at -FailOn none), 3 = usage
