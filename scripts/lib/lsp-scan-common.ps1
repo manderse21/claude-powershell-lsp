@@ -385,7 +385,13 @@ function Invoke-ScanHook {
         [int]$CapMs,
         [string]$DataRoot,
         [string[]]$ExtraArgs = @(),
-        [hashtable]$ExtraEnv
+        [hashtable]$ExtraEnv,
+        # A [ref][bool] the caller may pass to learn whether the process was KILLED because it did
+        # not exit within $CapMs (the client cap). Untyped so an omitted argument stays $null and
+        # StrictMode-safe; when supplied it is set $true on the cap kill so the caller can treat a
+        # killed analysis as NOT analyzed (dispatch 000132 leg 1 -- never-silent: a killed file is
+        # not a clean file). The stdout return is unchanged ('' on a kill).
+        $Killed = $null
     )
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $HostExe; $psi.UseShellExecute = $false
@@ -401,7 +407,7 @@ function Invoke-ScanHook {
         $p.StandardInput.BaseStream.Flush()
     }
     $p.StandardInput.Close()
-    if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+    if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; if ($null -ne $Killed) { $Killed.Value = $true }; return '' }
     [void]$stdoutTask.Wait(1500)
     if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
 }
@@ -484,8 +490,9 @@ function Invoke-ScanFileDiagnostics {
         CLAUDE_PLUGIN_OPTION_scopeToEdit = 'false'
         CLAUDE_PLUGIN_OPTION_timeoutMs   = '18000'
     }
+    $killed = $false
     $stdout = Invoke-ScanHook -HostExe $HostExe -ScriptPath (Join-Path $ScriptsDir 'lsp-client.ps1') `
-        -StdinJson $stdin -CapMs $CapMs -DataRoot $DataRoot -ExtraEnv $extraEnv
+        -StdinJson $stdin -CapMs $CapMs -DataRoot $DataRoot -ExtraEnv $extraEnv -Killed ([ref]$killed)
 
     $findings = New-Object System.Collections.ArrayList
     if (Test-Path -LiteralPath $log) {
@@ -506,10 +513,18 @@ function Invoke-ScanFileDiagnostics {
         }
         try { Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue } catch { }
     }
-    # Never-silent: a 'NOT checked' banner means the analyzer was not reachable for this file, so
-    # zero captured findings does NOT mean "clean." Flag it so the caller can report honestly.
+    # Never-silent: a file is "analyzed" only with POSITIVE evidence the analysis reached a verdict.
+    # It did NOT in two cases: (1) the client cap KILLED the process (dispatch 000132 leg 1) -- an
+    # empty stdout that must not read as clean; or (2) a 'NOT checked' banner (the daemon per-file
+    # budget was exhausted). Either way the file is NOT analyzed, so the caller drops it into
+    # $notAnalyzed -- it is NAMED by 000131 and the scan exits 4 -- never reporting a killed or
+    # degraded file as a clean one.
     $analyzed = $true
-    if (-not [string]::IsNullOrWhiteSpace($stdout) -and $stdout -match 'NOT checked') { $analyzed = $false }
+    if ($killed) {
+        $analyzed = $false
+    } elseif (-not [string]::IsNullOrWhiteSpace($stdout) -and $stdout -match 'NOT checked') {
+        $analyzed = $false
+    }
     return [pscustomobject]@{
         File     = $full
         Findings = @(@($findings) | Where-Object { $null -ne $_ })

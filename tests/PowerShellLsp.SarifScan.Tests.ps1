@@ -604,3 +604,31 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
         (Test-Json -Json $script:SarifText -Schema $schema) | Should -BeTrue
     }
 }
+
+Describe 'SARIF scan -- a client-cap kill is never a clean file (dispatch 000132 leg 1)' {
+    # LEG 1 (never-silent, 000024): the client per-file cap enforces itself by KILLING the analysis
+    # process (Invoke-ScanHook's WaitForExit), which returns '' (empty stdout). Pre-change,
+    # Invoke-ScanFileDiagnostics defaulted Analyzed=$true and only flipped it on a 'NOT checked'
+    # banner, so an empty (killed) stdout left the file marked analyzed -- a cap-killed file read as
+    # a CLEAN file, the latent gap 000131 named. This forces the kill deterministically (CapMs = 1 ms,
+    # so WaitForExit fires before lsp-client.ps1 can emit anything -- no daemon required, the process
+    # is terminated at start) and asserts the file is recorded NOT analyzed, so it flows into the same
+    # $notAnalyzed naming path (000131) and the scan takes the INCOMPLETE exit-4 branch.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        $script:ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:HostExe = Resolve-PsHost 'pwsh'
+        $script:KillDataRoot = Join-Path $TestDrive 'killdata'
+        New-Item -ItemType Directory -Force -Path $script:KillDataRoot | Out-Null
+        $script:KillTarget = Join-Path $TestDrive 'slow.ps1'
+        Set-Content -LiteralPath $script:KillTarget -Value 'function Get-Slow { Get-Process }' -Encoding ascii
+    }
+
+    It 'reports a cap-killed file as NOT analyzed (never-silent -- a killed analysis is not a clean one)' {
+        if ($null -eq $script:HostExe) { Set-ItResult -Skipped -Because 'no PowerShell host available to spawn'; return }
+        $r = Invoke-ScanFileDiagnostics -ScriptsDir $script:ScriptsDir -DataRoot $script:KillDataRoot `
+            -SessionId 'kill-test' -HostExe $script:HostExe -FilePath $script:KillTarget -CapMs 1
+        $r.Analyzed | Should -BeFalse -Because 'a cap-killed analysis produced no verdict and must not read as a clean file'
+    }
+}
