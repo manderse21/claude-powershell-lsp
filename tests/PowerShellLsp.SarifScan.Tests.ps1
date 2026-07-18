@@ -261,6 +261,83 @@ Describe 'SARIF scan -- pure helpers (no daemon)' {
             $txt | Should -Match 'could NOT be analyzed'
         }
     }
+
+    Context 'not-analyzed name surfacing (dispatch 000131 -- diagnosability first)' {
+        # LEG 1: an INCOMPLETE scan must name WHICH files could not be analyzed, not merely how
+        # many. Pure over injected not-analyzed paths (no daemon), so the SARIF vehicle
+        # (invocation.toolExecutionNotifications) and the bounded enumeration are pinned in
+        # milliseconds. RED on the pre-change tree: New-SarifReport had no -NotAnalyzed parameter
+        # and Get-ScanNotAnalyzedNames did not exist (today only a COUNT is surfaced in SARIF mode).
+        BeforeAll {
+            $script:NaPaths = @(
+                (Join-Path $TestDrive 'zeta.ps1'),
+                (Join-Path $TestDrive 'sub/alpha.ps1'),
+                (Join-Path $TestDrive 'mid.psm1')
+            )
+            $script:NaReport = New-SarifReport -Findings $script:Synth -Root $TestDrive -ToolVersion '9.9.9' -ExecutionSuccessful $false -NotAnalyzed $script:NaPaths
+            $script:NaJson = $script:NaReport | ConvertTo-Json -Depth 16
+            $script:NaParsed = $script:NaJson | ConvertFrom-Json
+        }
+
+        It 'relativizes, sorts, and reports total + overflow for a small set (Get-ScanNotAnalyzedNames)' {
+            $r = Get-ScanNotAnalyzedNames -NotAnalyzed $script:NaPaths -Root $TestDrive
+            @($r.Names) | Should -Be @('mid.psm1', 'sub/alpha.ps1', 'zeta.ps1')
+            [int]$r.Total | Should -Be 3
+            [int]$r.Overflow | Should -Be 0
+        }
+
+        It 'caps the enumerated names and reports the overflow when the set exceeds the cap' {
+            $many = @(1..10 | ForEach-Object { Join-Path $TestDrive ('f{0:D2}.ps1' -f $_) })
+            $r = Get-ScanNotAnalyzedNames -NotAnalyzed $many -Root $TestDrive -Cap 4
+            @($r.Names).Count | Should -Be 4
+            [int]$r.Total | Should -Be 10
+            [int]$r.Overflow | Should -Be 6
+        }
+
+        It 'ignores blank entries and never throws on an empty set' {
+            $r = Get-ScanNotAnalyzedNames -NotAnalyzed @('', $null) -Root $TestDrive
+            @($r.Names).Count | Should -Be 0
+            [int]$r.Total | Should -Be 0
+        }
+
+        It 'names the unanalyzed files in the SARIF invocation notifications, not just a count' {
+            $notifs = @($script:NaParsed.runs[0].invocations[0].toolExecutionNotifications)
+            $notifs.Count | Should -BeGreaterOrEqual 3
+            $joined = (@($notifs | ForEach-Object { [string]$_.message.text }) -join "`n")
+            $joined | Should -Match 'zeta\.ps1'
+            $joined | Should -Match 'sub/alpha\.ps1'
+            $joined | Should -Match 'mid\.psm1'
+        }
+
+        It 'attaches a SRCROOT-relative navigable location to each named file' {
+            $notifs = @($script:NaParsed.runs[0].invocations[0].toolExecutionNotifications)
+            $withLoc = @($notifs | Where-Object { $null -ne $_.locations })
+            $withLoc.Count | Should -BeGreaterOrEqual 3
+            foreach ($n in $withLoc) {
+                [string]$n.locations[0].physicalLocation.artifactLocation.uriBaseId | Should -BeExactly 'SRCROOT'
+                [string]$n.locations[0].physicalLocation.artifactLocation.uri | Should -Not -BeNullOrEmpty
+            }
+        }
+
+        It 'marks the incomplete scan executionSuccessful=false alongside the names' {
+            [bool]$script:NaParsed.runs[0].invocations[0].executionSuccessful | Should -BeFalse
+        }
+
+        It 'a COMPLETE scan grows no notifications (the added surface is inert when nothing is unanalyzed)' {
+            # scope_out guard: SARIF is byte-identical apart from the added unanalyzed reporting,
+            # so a clean scan must NOT sprout a toolExecutionNotifications array.
+            $clean = New-SarifReport -Findings $script:Synth -Root $TestDrive -ToolVersion '9.9.9' -ExecutionSuccessful $true -NotAnalyzed @()
+            $cj = $clean | ConvertTo-Json -Depth 16 | ConvertFrom-Json
+            $inv = $cj.runs[0].invocations[0]
+            [bool]$inv.executionSuccessful | Should -BeTrue
+            ($inv.PSObject.Properties.Name -contains 'toolExecutionNotifications') | Should -BeFalse
+        }
+
+        It 'keeps the notification-bearing SARIF valid against the vendored 2.1.0 schema' -Skip:($PSVersionTable.PSVersion.Major -lt 6) {
+            $schema = Get-Content -LiteralPath $script:SchemaPath -Raw
+            (Test-Json -Json $script:NaJson -Schema $schema) | Should -BeTrue -Because 'toolExecutionNotifications must keep the SARIF schema-valid so code scanning still ingests it'
+        }
+    }
 }
 
 Describe 'SARIF scan -- finding identity (one engine)' -Skip:$script:SkipDaemon {
@@ -425,6 +502,13 @@ Describe 'code-scanning workflow: inert until merged, SHA-pinned, CI legs untouc
         foreach ($leg in @('ubuntu-pwsh', 'windows-powershell', 'windows-pwsh', 'macos-pwsh')) {
             $script:CiWfText | Should -Match ([regex]::Escape('label: ' + $leg))
         }
+    }
+
+    It 'surfaces the not-analyzed file NAMES from the SARIF on an INCOMPLETE scan (dispatch 000131)' {
+        # Diagnosability: on exit 4 the scan step reads results.sarif's invocation notifications and
+        # emits the culprit file name(s) so a future INCOMPLETE is resolvable from the Actions tab
+        # alone. RED on the pre-change tree (the workflow named no files, only a bare count).
+        $script:ScanWfText | Should -Match 'toolExecutionNotifications'
     }
 
     It 'indents with spaces only (no tabs -- YAML indentation safety)' {
