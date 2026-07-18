@@ -132,7 +132,9 @@ try {
         $r = Invoke-ScanFileDiagnostics -ScriptsDir $PSScriptRoot -DataRoot $dataRoot -SessionId $sessionId `
             -HostExe $hostExe -FilePath $file -Cwd $root -CapMs $TimeoutMs
         foreach ($f in @($r.Findings)) { [void]$allFindings.Add($f) }
-        if (-not $r.Analyzed) { [void]$notAnalyzed.Add([string]$r.File) }
+        # Carry each unanalyzed file's elapsed ms (dispatch 000132 leg 2) so the INCOMPLETE surfaces
+        # can report how long it ran before the budget cut it, not merely that it ran out.
+        if (-not $r.Analyzed) { [void]$notAnalyzed.Add([pscustomobject]@{ Path = [string]$r.File; ElapsedMs = [int]$r.ElapsedMs }) }
     }
 } finally {
     Stop-ScanDaemon -ScriptsDir $PSScriptRoot -DataRoot $dataRoot -SessionId $sessionId -HostExe $hostExe -DaemonInfo $daemon
@@ -147,7 +149,7 @@ if ($Format -eq 'sarif') {
     Write-ScanOutput -Text ($report | ConvertTo-Json -Depth 16) -OutFile $OutputPath
 } else {
     Write-ScanOutput -Text (Format-ScanTextReport -Findings $findings -Root $root -Skipped $skipped `
-            -FilesScanned $files.Count -NotAnalyzed @($notAnalyzed)) -OutFile $OutputPath
+            -FilesScanned $files.Count -NotAnalyzed @(@($notAnalyzed) | ForEach-Object { [string]$_.Path })) -OutFile $OutputPath
 }
 
 # --- exit ------------------------------------------------------------------
@@ -158,7 +160,11 @@ if (@($notAnalyzed).Count -gt 0) {
     # anything grepping "file(s) could NOT be analyzed" keeps working).
     $na = Get-ScanNotAnalyzedNames -NotAnalyzed @($notAnalyzed) -Root $root
     [Console]::Error.WriteLine('lsp-scan: ' + $na.Total + ' file(s) could NOT be analyzed -- scan is INCOMPLETE (executionSuccessful=false):')
-    foreach ($rel in $na.Names) { [Console]::Error.WriteLine('  ' + $rel) }
+    foreach ($it in $na.Items) {
+        $line = '  ' + [string]$it.Name
+        if ($null -ne $it.ElapsedMs) { $line = $line + ' (' + [int]$it.ElapsedMs + 'ms)' }
+        [Console]::Error.WriteLine($line)
+    }
     if ($na.Overflow -gt 0) { [Console]::Error.WriteLine('  ... and ' + $na.Overflow + ' more (' + $na.Total + ' total).') }
     exit 4
 }

@@ -197,23 +197,45 @@ function New-SarifResult {
 $script:ScanNotAnalyzedNameCap = 50
 
 function Get-ScanNotAnalyzedNames {
-    # Map a set of not-analyzed file paths to sorted, root-relative names, bounded to $Cap.
-    # ONE source so the SARIF notifications and the incomplete-scan stderr line bound and order
-    # the names identically. Returns @{ Names = <string[]> (<= Cap, sorted, forward-slash
-    # relative); Total = <int>; Overflow = <int> }. $Cap <= 0 means no cap (enumerate all).
-    # Blank/null entries are dropped; never throws on an empty set.
+    # Map a set of not-analyzed files to sorted, root-relative names (bounded to $Cap), each with the
+    # elapsed ms it ran before the budget cut it (dispatch 000132 leg 2). ONE source so the SARIF
+    # notifications and the incomplete-scan stderr line bound, order, and time the names identically.
+    # Accepts EITHER bare path strings (elapsed unknown -> $null) OR objects carrying .Path (or .File)
+    # and .ElapsedMs. Returns @{
+    #   Names    = <string[]> (<= Cap, sorted, forward-slash relative) -- the unchanged 000131 surface;
+    #   Items    = <object[]> of @{ Name = <rel>; ElapsedMs = <int|$null> }, in the same order as Names;
+    #   Total    = <int>; Overflow = <int> }.
+    # $Cap <= 0 means no cap (enumerate all). Blank/null entries are dropped; never throws on empty.
     param(
-        [string[]]$NotAnalyzed,
+        [object[]]$NotAnalyzed,
         [string]$Root,
         [int]$Cap = $script:ScanNotAnalyzedNameCap
     )
-    $rels = @(@($NotAnalyzed) |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-        ForEach-Object { Get-ScanRelativeUri -FilePath $_ -Root $Root } |
-        Sort-Object)
-    $total = $rels.Count
-    $shown = if ($Cap -gt 0 -and $total -gt $Cap) { @($rels[0..($Cap - 1)]) } else { @($rels) }
-    return @{ Names = @($shown); Total = $total; Overflow = ($total - @($shown).Count) }
+    $items = New-Object System.Collections.ArrayList
+    foreach ($entry in @($NotAnalyzed)) {
+        if ($null -eq $entry) { continue }
+        $path = ''
+        $elapsed = $null
+        if ($entry -is [string]) {
+            $path = [string]$entry
+        } else {
+            $path = [string](Get-Prop $entry 'Path')
+            if ([string]::IsNullOrWhiteSpace($path)) { $path = [string](Get-Prop $entry 'File') }
+            $ev = Get-Prop $entry 'ElapsedMs'
+            if ($null -ne $ev -and "$ev" -ne '') { $elapsed = [int]$ev }
+        }
+        if ([string]::IsNullOrWhiteSpace($path)) { continue }
+        [void]$items.Add([pscustomobject]@{ Name = (Get-ScanRelativeUri -FilePath $path -Root $Root); ElapsedMs = $elapsed })
+    }
+    $sorted = @(@($items) | Sort-Object -Property Name)
+    $total = $sorted.Count
+    $shown = if ($Cap -gt 0 -and $total -gt $Cap) { @($sorted[0..($Cap - 1)]) } else { @($sorted) }
+    return @{
+        Names    = @(@($shown) | ForEach-Object { [string]$_.Name })
+        Items    = @($shown)
+        Total    = $total
+        Overflow = ($total - @($shown).Count)
+    }
 }
 
 function New-SarifReport {
@@ -233,7 +255,7 @@ function New-SarifReport {
         [string]$Root,
         [string]$ToolVersion = '',
         [bool]$ExecutionSuccessful = $true,
-        [string[]]$NotAnalyzed = @()
+        [object[]]$NotAnalyzed = @()
     )
     $items = @(@($Findings) | Where-Object { $null -ne $_ })
     if ([string]::IsNullOrWhiteSpace($ToolVersion)) { $ToolVersion = Get-PluginVersion }
@@ -272,7 +294,9 @@ function New-SarifReport {
         rules          = @($rules)
     }
     $invocation = [ordered]@{ executionSuccessful = [bool]$ExecutionSuccessful }
-    # Name the unanalyzed files (dispatch 000131). Only when there ARE any, so a complete scan's
+    # Name the unanalyzed files (dispatch 000131), each WITH the elapsed ms it ran before the budget
+    # cut it (dispatch 000132 leg 2 -- the elapsed rides IN the message text so the workflow annotation,
+    # which echoes message.text, surfaces it for free). Only when there ARE any, so a complete scan's
     # invocation stays byte-identical to before. Each name is a SARIF toolExecutionNotification --
     # a runtime tool-status entry (NOT a result), carrying the file's SRCROOT-relative location so
     # it is navigable in code scanning without becoming a spurious alert. Bounded to the cap, with
@@ -280,14 +304,21 @@ function New-SarifReport {
     $na = Get-ScanNotAnalyzedNames -NotAnalyzed $NotAnalyzed -Root $Root
     if ($na.Total -gt 0) {
         $notifs = New-Object System.Collections.ArrayList
-        foreach ($rel in $na.Names) {
+        foreach ($it in $na.Items) {
+            $rel = [string]$it.Name
+            $elapsed = $it.ElapsedMs
+            $text = if ($null -ne $elapsed) {
+                'powershell-lsp: could not analyze ' + $rel + ' after ' + [int]$elapsed + 'ms (scan INCOMPLETE for this file).'
+            } else {
+                'powershell-lsp: could not analyze ' + $rel + ' (scan INCOMPLETE for this file).'
+            }
             [void]$notifs.Add([ordered]@{
                 level     = 'error'
-                message   = [ordered]@{ text = ('powershell-lsp: could not analyze ' + [string]$rel + ' (scan INCOMPLETE for this file).') }
+                message   = [ordered]@{ text = $text }
                 locations = @(
                     [ordered]@{
                         physicalLocation = [ordered]@{
-                            artifactLocation = [ordered]@{ uri = [string]$rel; uriBaseId = 'SRCROOT' }
+                            artifactLocation = [ordered]@{ uri = $rel; uriBaseId = 'SRCROOT' }
                         }
                     }
                 )
@@ -458,7 +489,10 @@ function Invoke-ScanFileDiagnostics {
     # it (the same engine the in-agent edit path uses), with the dogfood capture log redirected
     # to a hermetic throwaway file and whole-file scoping (scopeToEdit=false -- a scan has no
     # edit range). Reads back the structured records the tool teed and returns:
-    #   @{ File; Findings = @({ file; ruleId; source; severity; line; col; message }); Analyzed }
+    #   @{ File; Findings = @({ file; ruleId; source; severity; line; col; message }); Analyzed; ElapsedMs }
+    # ElapsedMs (dispatch 000132 leg 2) is the wall-clock the per-file hook round-trip took -- for a
+    # timed-out or cap-killed file this is ~the budget it hit, the "how long did it run" a bare count
+    # lacked, so an INCOMPLETE can name the file AND how long it ran before the budget cut it.
     # Analyzed=$false when the hook output signals the analyzer was not reachable for this file
     # (a 'NOT checked' banner) -- surfaced by the caller so a degraded analysis is never reported
     # as a clean file (the project's never-silent rule). The file is analyzed IN PLACE so SARIF
@@ -491,8 +525,11 @@ function Invoke-ScanFileDiagnostics {
         CLAUDE_PLUGIN_OPTION_timeoutMs   = '18000'
     }
     $killed = $false
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $stdout = Invoke-ScanHook -HostExe $HostExe -ScriptPath (Join-Path $ScriptsDir 'lsp-client.ps1') `
         -StdinJson $stdin -CapMs $CapMs -DataRoot $DataRoot -ExtraEnv $extraEnv -Killed ([ref]$killed)
+    $sw.Stop()
+    $elapsedMs = [int]$sw.Elapsed.TotalMilliseconds
 
     $findings = New-Object System.Collections.ArrayList
     if (Test-Path -LiteralPath $log) {
@@ -526,8 +563,9 @@ function Invoke-ScanFileDiagnostics {
         $analyzed = $false
     }
     return [pscustomobject]@{
-        File     = $full
-        Findings = @(@($findings) | Where-Object { $null -ne $_ })
-        Analyzed = $analyzed
+        File      = $full
+        Findings  = @(@($findings) | Where-Object { $null -ne $_ })
+        Analyzed  = $analyzed
+        ElapsedMs = $elapsedMs
     }
 }

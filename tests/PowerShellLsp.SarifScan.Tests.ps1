@@ -337,6 +337,43 @@ Describe 'SARIF scan -- pure helpers (no daemon)' {
             $schema = Get-Content -LiteralPath $script:SchemaPath -Raw
             (Test-Json -Json $script:NaJson -Schema $schema) | Should -BeTrue -Because 'toolExecutionNotifications must keep the SARIF schema-valid so code scanning still ingests it'
         }
+
+        # LEG 2 (dispatch 000132): each named unanalyzed file carries how long it actually ran before
+        # the budget cut it, not merely that it ran out. The elapsed rides IN the notification message
+        # text, so the workflow annotation (which echoes message.text) surfaces it for free. RED on the
+        # pre-change tree: -NotAnalyzed took bare path strings and no surface carried an elapsed.
+        It 'names each unanalyzed file WITH its elapsed ms in the SARIF notification text (dispatch 000132 leg 2)' {
+            $withElapsed = @(
+                [pscustomobject]@{ Path = (Join-Path $TestDrive 'zeta.ps1'); ElapsedMs = 18042 },
+                [pscustomobject]@{ Path = (Join-Path $TestDrive 'sub/alpha.ps1'); ElapsedMs = 25001 }
+            )
+            $rep = New-SarifReport -Findings @() -Root $TestDrive -ToolVersion '9.9.9' -ExecutionSuccessful $false -NotAnalyzed $withElapsed
+            $notifs = @($rep.runs[0].invocations[0].toolExecutionNotifications)
+            $joined = (@($notifs | ForEach-Object { [string]$_.message.text }) -join "`n")
+            $joined | Should -Match 'zeta\.ps1 after 18042ms'
+            $joined | Should -Match 'sub/alpha\.ps1 after 25001ms'
+        }
+
+        It 'carries elapsed ms alongside each sorted name in the shared bounding helper (Get-ScanNotAnalyzedNames)' {
+            $withElapsed = @(
+                [pscustomobject]@{ Path = (Join-Path $TestDrive 'zeta.ps1'); ElapsedMs = 18042 },
+                [pscustomobject]@{ Path = (Join-Path $TestDrive 'mid.psm1'); ElapsedMs = 20500 }
+            )
+            $r = Get-ScanNotAnalyzedNames -NotAnalyzed $withElapsed -Root $TestDrive
+            @($r.Names) | Should -Be @('mid.psm1', 'zeta.ps1')
+            $byName = @{}
+            foreach ($it in @($r.Items)) { $byName[[string]$it.Name] = [int]$it.ElapsedMs }
+            [int]$byName['zeta.ps1'] | Should -Be 18042
+            [int]$byName['mid.psm1'] | Should -Be 20500
+        }
+
+        It 'still surfaces a plain name (no elapsed) when a bare path string is passed (backward compatible)' {
+            $r = Get-ScanNotAnalyzedNames -NotAnalyzed @((Join-Path $TestDrive 'only.ps1')) -Root $TestDrive
+            @($r.Names) | Should -Be @('only.ps1')
+            $rep = New-SarifReport -Findings @() -Root $TestDrive -ToolVersion '9.9.9' -ExecutionSuccessful $false -NotAnalyzed @((Join-Path $TestDrive 'only.ps1'))
+            $txt = [string]$rep.runs[0].invocations[0].toolExecutionNotifications[0].message.text
+            $txt | Should -Match 'could not analyze only\.ps1 \(scan INCOMPLETE'
+        }
     }
 }
 
