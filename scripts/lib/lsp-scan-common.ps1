@@ -506,7 +506,13 @@ function Invoke-ScanFileDiagnostics {
         [string]$FilePath,
         [string]$Cwd = '',
         [int]$CapMs = 25000,
-        [string]$CaptureDir = ''
+        [string]$CaptureDir = '',
+        # The daemon per-file analysis budget (ms) -- the BINDING per-file budget (dispatch 000131/000132):
+        # passed to lsp-client.ps1 as CLAUDE_PLUGIN_OPTION_timeoutMs -> $HardCapMs. Default 18000 is the
+        # shipped value, so an omitted argument is byte-for-byte today's behavior. Raised only by the
+        # leg-3 diagnostic override to measure the true per-file cost on a runner. Keep $CapMs (the
+        # client process cap) strictly above this so the cap never cuts a slow-but-completing analysis.
+        [int]$DaemonBudgetMs = 18000
     )
     $full = $FilePath
     try { $full = [System.IO.Path]::GetFullPath($FilePath) } catch { $full = $FilePath }
@@ -516,13 +522,14 @@ function Invoke-ScanFileDiagnostics {
     $log = Join-Path $CaptureDir ('scan-' + [guid]::NewGuid().ToString('N').Substring(0, 12) + '.jsonl')
 
     $stdin = (@{ session_id = $SessionId; tool_input = @{ file_path = $full }; cwd = $Cwd } | ConvertTo-Json -Compress)
-    # scopeToEdit=false => whole-file (a scan carries no edit patch); timeoutMs raised so a first
-    # cold analysis on a slow leg still settles inside the client cap. The dogfood log is the SAME
-    # structured-finding channel the corpus reads, pointed at a throwaway file (never the repo log).
+    # scopeToEdit=false => whole-file (a scan carries no edit patch); timeoutMs is the daemon per-file
+    # analysis budget ($DaemonBudgetMs -- default 18000, the shipped value, so an omitted argument is
+    # byte-for-byte today's behavior; raised only by the leg-3 diagnostic override). The dogfood log is
+    # the SAME structured-finding channel the corpus reads, pointed at a throwaway file (never the repo log).
     $extraEnv = @{
         POWERSHELL_LSP_DOGFOOD_LOG       = $log
         CLAUDE_PLUGIN_OPTION_scopeToEdit = 'false'
-        CLAUDE_PLUGIN_OPTION_timeoutMs   = '18000'
+        CLAUDE_PLUGIN_OPTION_timeoutMs   = [string]$DaemonBudgetMs
     }
     $killed = $false
     $sw = [System.Diagnostics.Stopwatch]::StartNew()

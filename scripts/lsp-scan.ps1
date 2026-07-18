@@ -55,7 +55,19 @@ param(
     [string] $FailOn = 'none',
 
     # Per-file client hard cap (ms) for the analysis round-trip.
-    [int] $TimeoutMs = 25000
+    [int] $TimeoutMs = 25000,
+
+    # The daemon per-file analysis budget (ms) -- the BINDING per-file budget. Default 18000 is the
+    # shipped value, so an omitted argument reproduces today's behavior byte-for-byte. This is an
+    # additive DIAGNOSTIC lever (dispatch 000132 leg 3), NOT a userConfig knob: raised for a single
+    # measurement run to learn the true per-file cost on a runner. When it is >= the client cap
+    # ($TimeoutMs), the cap is auto-raised above it (below) so the cap cannot cut a slow analysis.
+    [int] $DaemonBudgetMs = 18000,
+
+    # DIAGNOSTIC (dispatch 000132 leg 3): emit a per-file 'lsp-scan diag:' line (name, analyzed, elapsed
+    # ms) to stderr for EVERY file, so a measurement run records the true cost of a file that COMPLETES
+    # when given room -- not only of the ones that time out. Off by default (no extra output).
+    [switch] $DiagnosticTiming
 )
 
 Set-StrictMode -Version Latest
@@ -63,6 +75,13 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
 . (Join-Path $PSScriptRoot 'lib/lsp-scan-common.ps1')
+
+# Keep the client process cap strictly above the daemon analysis budget so the cap is a backstop,
+# never the primary cut (dispatch 000132 leg 3): a diagnostic run that raises the daemon budget above
+# the default 25000 cap would otherwise have the cap kill a slow-but-completing analysis first. At the
+# shipped defaults (cap 25000 > budget 18000) this is inert -- behavior is byte-for-byte unchanged. The
+# 7000 ms headroom is the shipped cap-over-budget margin (25000 - 18000).
+if ($TimeoutMs -le $DaemonBudgetMs) { $TimeoutMs = $DaemonBudgetMs + 7000 }
 
 function Write-ScanOutput {
     param([string]$Text, [string]$OutFile)
@@ -130,11 +149,18 @@ $notAnalyzed = New-Object System.Collections.ArrayList
 try {
     foreach ($file in $files) {
         $r = Invoke-ScanFileDiagnostics -ScriptsDir $PSScriptRoot -DataRoot $dataRoot -SessionId $sessionId `
-            -HostExe $hostExe -FilePath $file -Cwd $root -CapMs $TimeoutMs
+            -HostExe $hostExe -FilePath $file -Cwd $root -CapMs $TimeoutMs -DaemonBudgetMs $DaemonBudgetMs
         foreach ($f in @($r.Findings)) { [void]$allFindings.Add($f) }
         # Carry each unanalyzed file's elapsed ms (dispatch 000132 leg 2) so the INCOMPLETE surfaces
         # can report how long it ran before the budget cut it, not merely that it ran out.
         if (-not $r.Analyzed) { [void]$notAnalyzed.Add([pscustomobject]@{ Path = [string]$r.File; ElapsedMs = [int]$r.ElapsedMs }) }
+        # DIAGNOSTIC timing (dispatch 000132 leg 3): with -DiagnosticTiming, record EVERY file's true
+        # elapsed -- including files that COMPLETE when given room -- so a measurement run learns the
+        # real per-file cost, not only of the timed-out files the INCOMPLETE surfaces already name.
+        if ($DiagnosticTiming) {
+            [Console]::Error.WriteLine('lsp-scan diag: ' + (Get-ScanRelativeUri -FilePath ([string]$r.File) -Root $root) +
+                ' analyzed=' + $r.Analyzed + ' elapsed=' + [int]$r.ElapsedMs + 'ms')
+        }
     }
 } finally {
     Stop-ScanDaemon -ScriptsDir $PSScriptRoot -DataRoot $dataRoot -SessionId $sessionId -HostExe $hostExe -DaemonInfo $daemon

@@ -31,6 +31,15 @@ on:
     # Weekly, Monday 06:00 UTC -- code scanning wants a periodic baseline even when main is quiet.
     - cron: '0 6 * * 1'
   workflow_dispatch:
+    inputs:
+      diagnostic_daemon_budget_ms:
+        description: >-
+          DIAGNOSTIC ONLY (dispatch 000132 leg 3). Raise the daemon per-file analysis budget (ms) for
+          THIS run to measure the true per-file cost on the runner, and emit a per-file elapsed line for
+          every file. Leave EMPTY for production behavior -- the shipped 18000 ms budget, byte-for-byte.
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -71,7 +80,17 @@ jobs:
           POWERSHELL_LSP_PSSA_CACHE: ${{ env.PSSA_CACHE_DIR }}
           CLAUDE_PLUGIN_DATA: ${{ github.workspace }}/psls-scan-data
         run: |
-          ./scripts/lsp-scan.ps1 ./scripts -Format sarif -OutputPath results.sarif
+          # DIAGNOSTIC override (dispatch 000132 leg 3): raise the daemon per-file budget ONLY when the
+          # workflow_dispatch input is supplied. Absent (push / schedule / a dispatch with an empty
+          # input) the arg list is exactly the production invocation, so behavior is byte-for-byte the
+          # shipped default -- the never-silent red still fires on a genuine INCOMPLETE.
+          $scanArgs = @('./scripts', '-Format', 'sarif', '-OutputPath', 'results.sarif')
+          $diagBudget = "${{ github.event.inputs.diagnostic_daemon_budget_ms }}"
+          if (-not [string]::IsNullOrWhiteSpace($diagBudget)) {
+            $scanArgs += @('-DaemonBudgetMs', $diagBudget, '-DiagnosticTiming')
+            Write-Host "::warning::DIAGNOSTIC RUN -- daemon per-file budget raised to $diagBudget ms for this run (NOT production behavior)."
+          }
+          ./scripts/lsp-scan.ps1 @scanArgs
           $code = $LASTEXITCODE
           # Exit-code contract (scripts/lsp-scan.ps1): 0 = completed (no -FailOn threshold met,
           # and none is set here), 2 = threshold met (unreachable at -FailOn none), 3 = usage

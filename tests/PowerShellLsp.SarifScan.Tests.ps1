@@ -548,6 +548,24 @@ Describe 'code-scanning workflow: inert until merged, SHA-pinned, CI legs untouc
         $script:ScanWfText | Should -Match 'toolExecutionNotifications'
     }
 
+    It 'exposes a DIAGNOSTIC daemon-budget override as an OPT-IN workflow_dispatch input (dispatch 000132 leg 3)' {
+        # The measurement lever: a workflow_dispatch input that raises the daemon per-file budget for a
+        # single run. It must be OPT-IN -- absent the input, the scan command is the production one, so a
+        # normal push/schedule run is byte-for-byte the shipped 18000 ms behavior. RED on the pre-change
+        # tree (no such input existed).
+        $script:ScanWfText | Should -Match 'diagnostic_daemon_budget_ms'
+        # The override is applied ONLY inside an IsNullOrWhiteSpace guard, so an absent/empty input adds
+        # no argument to the invocation.
+        $script:ScanWfText | Should -Match 'IsNullOrWhiteSpace\(\$diagBudget\)'
+        $script:ScanWfText | Should -Match '-DaemonBudgetMs'
+        # The base (no-override) invocation still scans scripts/ to results.sarif exactly as before.
+        $script:ScanWfText | Should -Match "OutputPath', 'results\.sarif'"
+    }
+
+    It 'defaults the diagnostic input to empty so a non-dispatch run is byte-for-byte unchanged (dispatch 000132 leg 3)' {
+        $script:ScanWfText | Should -Match "default: ''"
+    }
+
     It 'indents with spaces only (no tabs -- YAML indentation safety)' {
         $script:ScanWfText | Should -Not -Match "`t"
     }
@@ -639,6 +657,28 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
     It 'the entry-point SARIF validates against the vendored schema' -Skip:($PSVersionTable.PSVersion.Major -lt 6) {
         $schema = Get-Content -LiteralPath $script:SchemaPath -Raw
         (Test-Json -Json $script:SarifText -Schema $schema) | Should -BeTrue
+    }
+
+    It 'with -DiagnosticTiming, emits a per-file elapsed line for every scanned file (dispatch 000132 leg 3)' {
+        # LEG 3 measurement surface: -DiagnosticTiming records EVERY file's true elapsed, not only the
+        # timed-out ones -- the number a measurement run needs to learn what a file costs when it
+        # COMPLETES. Both input files analyze cleanly here (analyzed=True), so this proves the timing is
+        # emitted for completing files. The daemon budget is unchanged (no -DaemonBudgetMs), so exit is 0.
+        $diagErr = Join-Path $script:InputDir 'diag.err'
+        $diagSarif = Join-Path $script:InputDir 'diag.sarif'
+        $prevData = $env:CLAUDE_PLUGIN_DATA
+        $env:CLAUDE_PLUGIN_DATA = $script:DataDir
+        try {
+            & $script:HostExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:ScanScript $script:InputDir `
+                -Format sarif -OutputPath $diagSarif -DiagnosticTiming 2>$diagErr | Out-Null
+            $script:DiagExit = $LASTEXITCODE
+        } finally {
+            $env:CLAUDE_PLUGIN_DATA = $prevData
+        }
+        $errText = if (Test-Path -LiteralPath $diagErr) { Get-Content -LiteralPath $diagErr -Raw } else { '' }
+        $script:DiagExit | Should -Be 0 -Because 'the default daemon budget analyzes both files, so the scan completes'
+        $errText | Should -Match 'lsp-scan diag:.*analyzed=True.*elapsed=\d+ms'
+        @([regex]::Matches($errText, 'lsp-scan diag:')).Count | Should -BeGreaterOrEqual 2 -Because 'the input tree has 2 PowerShell files, each timed'
     }
 }
 
