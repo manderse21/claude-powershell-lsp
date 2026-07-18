@@ -337,6 +337,43 @@ Describe 'SARIF scan -- pure helpers (no daemon)' {
             $schema = Get-Content -LiteralPath $script:SchemaPath -Raw
             (Test-Json -Json $script:NaJson -Schema $schema) | Should -BeTrue -Because 'toolExecutionNotifications must keep the SARIF schema-valid so code scanning still ingests it'
         }
+
+        # LEG 2 (dispatch 000132): each named unanalyzed file carries how long it actually ran before
+        # the budget cut it, not merely that it ran out. The elapsed rides IN the notification message
+        # text, so the workflow annotation (which echoes message.text) surfaces it for free. RED on the
+        # pre-change tree: -NotAnalyzed took bare path strings and no surface carried an elapsed.
+        It 'names each unanalyzed file WITH its elapsed ms in the SARIF notification text (dispatch 000132 leg 2)' {
+            $withElapsed = @(
+                [pscustomobject]@{ Path = (Join-Path $TestDrive 'zeta.ps1'); ElapsedMs = 18042 },
+                [pscustomobject]@{ Path = (Join-Path $TestDrive 'sub/alpha.ps1'); ElapsedMs = 25001 }
+            )
+            $rep = New-SarifReport -Findings @() -Root $TestDrive -ToolVersion '9.9.9' -ExecutionSuccessful $false -NotAnalyzed $withElapsed
+            $notifs = @($rep.runs[0].invocations[0].toolExecutionNotifications)
+            $joined = (@($notifs | ForEach-Object { [string]$_.message.text }) -join "`n")
+            $joined | Should -Match 'zeta\.ps1 after 18042ms'
+            $joined | Should -Match 'sub/alpha\.ps1 after 25001ms'
+        }
+
+        It 'carries elapsed ms alongside each sorted name in the shared bounding helper (Get-ScanNotAnalyzedNames)' {
+            $withElapsed = @(
+                [pscustomobject]@{ Path = (Join-Path $TestDrive 'zeta.ps1'); ElapsedMs = 18042 },
+                [pscustomobject]@{ Path = (Join-Path $TestDrive 'mid.psm1'); ElapsedMs = 20500 }
+            )
+            $r = Get-ScanNotAnalyzedNames -NotAnalyzed $withElapsed -Root $TestDrive
+            @($r.Names) | Should -Be @('mid.psm1', 'zeta.ps1')
+            $byName = @{}
+            foreach ($it in @($r.Items)) { $byName[[string]$it.Name] = [int]$it.ElapsedMs }
+            [int]$byName['zeta.ps1'] | Should -Be 18042
+            [int]$byName['mid.psm1'] | Should -Be 20500
+        }
+
+        It 'still surfaces a plain name (no elapsed) when a bare path string is passed (backward compatible)' {
+            $r = Get-ScanNotAnalyzedNames -NotAnalyzed @((Join-Path $TestDrive 'only.ps1')) -Root $TestDrive
+            @($r.Names) | Should -Be @('only.ps1')
+            $rep = New-SarifReport -Findings @() -Root $TestDrive -ToolVersion '9.9.9' -ExecutionSuccessful $false -NotAnalyzed @((Join-Path $TestDrive 'only.ps1'))
+            $txt = [string]$rep.runs[0].invocations[0].toolExecutionNotifications[0].message.text
+            $txt | Should -Match 'could not analyze only\.ps1 \(scan INCOMPLETE'
+        }
     }
 }
 
@@ -511,6 +548,23 @@ Describe 'code-scanning workflow: inert until merged, SHA-pinned, CI legs untouc
         $script:ScanWfText | Should -Match 'toolExecutionNotifications'
     }
 
+    It 'exposes a DIAGNOSTIC per-file-timing flag as an OPT-IN workflow_dispatch input (dispatch 000132 leg 3)' {
+        # The measurement instrument: a workflow_dispatch input that emits per-file timing for a single
+        # run. It changes NO budget (000132 leg 3 found the binding budget is the daemon settle cap,
+        # unreachable from here) and must be OPT-IN -- absent the input, the scan command is the
+        # production one, so a normal push/schedule run is byte-for-byte the shipped behavior.
+        $script:ScanWfText | Should -Match 'diagnostic_timing'
+        # The timing flag is applied ONLY when the input is 'true'; otherwise the production command runs.
+        $script:ScanWfText | Should -Match "diagTiming -ne 'true'"
+        $script:ScanWfText | Should -Match '-DiagnosticTiming'
+        # The default branch runs the production invocation exactly as before.
+        $script:ScanWfText | Should -Match 'lsp-scan\.ps1 ./scripts -Format sarif -OutputPath results\.sarif'
+    }
+
+    It 'defaults the diagnostic input to false so a non-dispatch run is byte-for-byte unchanged (dispatch 000132 leg 3)' {
+        $script:ScanWfText | Should -Match 'default: false'
+    }
+
     It 'indents with spaces only (no tabs -- YAML indentation safety)' {
         $script:ScanWfText | Should -Not -Match "`t"
     }
@@ -602,5 +656,60 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
     It 'the entry-point SARIF validates against the vendored schema' -Skip:($PSVersionTable.PSVersion.Major -lt 6) {
         $schema = Get-Content -LiteralPath $script:SchemaPath -Raw
         (Test-Json -Json $script:SarifText -Schema $schema) | Should -BeTrue
+    }
+
+    It 'with -DiagnosticTiming, emits a per-file elapsed line for every scanned file (dispatch 000132 leg 3)' {
+        # LEG 3 measurement surface: -DiagnosticTiming records EVERY file's elapsed. This asserts the
+        # INSTRUMENT (a per-file 'lsp-scan diag:' line, with a real elapsed, for each of the 2 input
+        # files) -- NOT the settle OUTCOME. Whether a file settles within the daemon's MaxWaitMs cap is
+        # exactly the runner-variance this dispatch is about (a cold-start file on a slow leg can exit 4),
+        # so the test must not depend on analyzed=True or a specific exit code. $ErrorActionPreference is
+        # neutralized around the native call because Windows PowerShell 5.1 promotes a redirected native
+        # stderr line to a TERMINATING error under 'Stop' (pwsh 7 does not) -- and the diag lines ARE
+        # stderr; 2>$null (the BeforeAll pattern) is special-cased and would discard the content we need.
+        $diagErr = Join-Path $script:InputDir 'diag.err'
+        $diagSarif = Join-Path $script:InputDir 'diag.sarif'
+        $prevData = $env:CLAUDE_PLUGIN_DATA
+        $env:CLAUDE_PLUGIN_DATA = $script:DataDir
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & $script:HostExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:ScanScript $script:InputDir `
+                -Format sarif -OutputPath $diagSarif -DiagnosticTiming 2>$diagErr | Out-Null
+        } finally {
+            $env:CLAUDE_PLUGIN_DATA = $prevData
+            $ErrorActionPreference = $prevEap
+        }
+        $errText = if (Test-Path -LiteralPath $diagErr) { Get-Content -LiteralPath $diagErr -Raw } else { '' }
+        $diagLines = @([regex]::Matches($errText, 'lsp-scan diag: .+ analyzed=\w+ elapsed=\d+ms'))
+        $diagLines.Count | Should -BeGreaterOrEqual 2 -Because 'the input tree has 2 PowerShell files, each timed with a real elapsed'
+    }
+}
+
+Describe 'SARIF scan -- a client-cap kill is never a clean file (dispatch 000132 leg 1)' {
+    # LEG 1 (never-silent, 000024): the client per-file cap enforces itself by KILLING the analysis
+    # process (Invoke-ScanHook's WaitForExit), which returns '' (empty stdout). Pre-change,
+    # Invoke-ScanFileDiagnostics defaulted Analyzed=$true and only flipped it on a 'NOT checked'
+    # banner, so an empty (killed) stdout left the file marked analyzed -- a cap-killed file read as
+    # a CLEAN file, the latent gap 000131 named. This forces the kill deterministically (CapMs = 1 ms,
+    # so WaitForExit fires before lsp-client.ps1 can emit anything -- no daemon required, the process
+    # is terminated at start) and asserts the file is recorded NOT analyzed, so it flows into the same
+    # $notAnalyzed naming path (000131) and the scan takes the INCOMPLETE exit-4 branch.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        $script:ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:HostExe = Resolve-PsHost 'pwsh'
+        $script:KillDataRoot = Join-Path $TestDrive 'killdata'
+        New-Item -ItemType Directory -Force -Path $script:KillDataRoot | Out-Null
+        $script:KillTarget = Join-Path $TestDrive 'slow.ps1'
+        Set-Content -LiteralPath $script:KillTarget -Value 'function Get-Slow { Get-Process }' -Encoding ascii
+    }
+
+    It 'reports a cap-killed file as NOT analyzed (never-silent -- a killed analysis is not a clean one)' {
+        if ($null -eq $script:HostExe) { Set-ItResult -Skipped -Because 'no PowerShell host available to spawn'; return }
+        $r = Invoke-ScanFileDiagnostics -ScriptsDir $script:ScriptsDir -DataRoot $script:KillDataRoot `
+            -SessionId 'kill-test' -HostExe $script:HostExe -FilePath $script:KillTarget -CapMs 1
+        $r.Analyzed | Should -BeFalse -Because 'a cap-killed analysis produced no verdict and must not read as a clean file'
     }
 }

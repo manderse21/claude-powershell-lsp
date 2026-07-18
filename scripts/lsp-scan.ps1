@@ -55,7 +55,14 @@ param(
     [string] $FailOn = 'none',
 
     # Per-file client hard cap (ms) for the analysis round-trip.
-    [int] $TimeoutMs = 25000
+    [int] $TimeoutMs = 25000,
+
+    # DIAGNOSTIC (dispatch 000132 leg 3): emit a per-file 'lsp-scan diag:' line (name, analyzed, elapsed
+    # ms) to stderr for EVERY file, so a measurement run records how long each file's analysis actually
+    # ran -- including files that COMPLETE, not only the ones marked INCOMPLETE. This is the instrument
+    # that measured the true per-file cost on ubuntu-24.04 (see the 000132 outbox); it changes NO budget
+    # and is a diagnostic lever, NOT a userConfig knob. Off by default (no extra output).
+    [switch] $DiagnosticTiming
 )
 
 Set-StrictMode -Version Latest
@@ -132,7 +139,16 @@ try {
         $r = Invoke-ScanFileDiagnostics -ScriptsDir $PSScriptRoot -DataRoot $dataRoot -SessionId $sessionId `
             -HostExe $hostExe -FilePath $file -Cwd $root -CapMs $TimeoutMs
         foreach ($f in @($r.Findings)) { [void]$allFindings.Add($f) }
-        if (-not $r.Analyzed) { [void]$notAnalyzed.Add([string]$r.File) }
+        # Carry each unanalyzed file's elapsed ms (dispatch 000132 leg 2) so the INCOMPLETE surfaces
+        # can report how long it ran before the budget cut it, not merely that it ran out.
+        if (-not $r.Analyzed) { [void]$notAnalyzed.Add([pscustomobject]@{ Path = [string]$r.File; ElapsedMs = [int]$r.ElapsedMs }) }
+        # DIAGNOSTIC timing (dispatch 000132 leg 3): with -DiagnosticTiming, record EVERY file's true
+        # elapsed -- including files that COMPLETE when given room -- so a measurement run learns the
+        # real per-file cost, not only of the timed-out files the INCOMPLETE surfaces already name.
+        if ($DiagnosticTiming) {
+            [Console]::Error.WriteLine('lsp-scan diag: ' + (Get-ScanRelativeUri -FilePath ([string]$r.File) -Root $root) +
+                ' analyzed=' + $r.Analyzed + ' elapsed=' + [int]$r.ElapsedMs + 'ms')
+        }
     }
 } finally {
     Stop-ScanDaemon -ScriptsDir $PSScriptRoot -DataRoot $dataRoot -SessionId $sessionId -HostExe $hostExe -DaemonInfo $daemon
@@ -147,7 +163,7 @@ if ($Format -eq 'sarif') {
     Write-ScanOutput -Text ($report | ConvertTo-Json -Depth 16) -OutFile $OutputPath
 } else {
     Write-ScanOutput -Text (Format-ScanTextReport -Findings $findings -Root $root -Skipped $skipped `
-            -FilesScanned $files.Count -NotAnalyzed @($notAnalyzed)) -OutFile $OutputPath
+            -FilesScanned $files.Count -NotAnalyzed @(@($notAnalyzed) | ForEach-Object { [string]$_.Path })) -OutFile $OutputPath
 }
 
 # --- exit ------------------------------------------------------------------
@@ -158,7 +174,11 @@ if (@($notAnalyzed).Count -gt 0) {
     # anything grepping "file(s) could NOT be analyzed" keeps working).
     $na = Get-ScanNotAnalyzedNames -NotAnalyzed @($notAnalyzed) -Root $root
     [Console]::Error.WriteLine('lsp-scan: ' + $na.Total + ' file(s) could NOT be analyzed -- scan is INCOMPLETE (executionSuccessful=false):')
-    foreach ($rel in $na.Names) { [Console]::Error.WriteLine('  ' + $rel) }
+    foreach ($it in $na.Items) {
+        $line = '  ' + [string]$it.Name
+        if ($null -ne $it.ElapsedMs) { $line = $line + ' (' + [int]$it.ElapsedMs + 'ms)' }
+        [Console]::Error.WriteLine($line)
+    }
     if ($na.Overflow -gt 0) { [Console]::Error.WriteLine('  ... and ' + $na.Overflow + ' more (' + $na.Total + ' total).') }
     exit 4
 }

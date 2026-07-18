@@ -31,6 +31,15 @@ on:
     # Weekly, Monday 06:00 UTC -- code scanning wants a periodic baseline even when main is quiet.
     - cron: '0 6 * * 1'
   workflow_dispatch:
+    inputs:
+      diagnostic_timing:
+        description: >-
+          DIAGNOSTIC ONLY (dispatch 000132 leg 3). Emit a per-file 'lsp-scan diag:' timing line (name,
+          analyzed, elapsed ms) for EVERY file, to measure the true per-file analysis cost on the runner.
+          Changes NO budget -- leave unchecked for production behavior (byte-for-byte the shipped default).
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -71,7 +80,18 @@ jobs:
           POWERSHELL_LSP_PSSA_CACHE: ${{ env.PSSA_CACHE_DIR }}
           CLAUDE_PLUGIN_DATA: ${{ github.workspace }}/psls-scan-data
         run: |
-          ./scripts/lsp-scan.ps1 ./scripts -Format sarif -OutputPath results.sarif
+          # DIAGNOSTIC timing (dispatch 000132 leg 3): emit per-file timing ONLY when the
+          # workflow_dispatch input is 'true'. Absent (push / schedule / a dispatch left unchecked) the
+          # DEFAULT branch runs the production invocation VERBATIM, so behavior is byte-for-byte the
+          # shipped default -- no budget change of any kind, and the never-silent red still fires on a
+          # genuine INCOMPLETE.
+          $diagTiming = "${{ github.event.inputs.diagnostic_timing }}"
+          if ($diagTiming -ne 'true') {
+            ./scripts/lsp-scan.ps1 ./scripts -Format sarif -OutputPath results.sarif
+          } else {
+            Write-Host "::warning::DIAGNOSTIC RUN -- per-file timing enabled (no budget change; production behavior otherwise)."
+            ./scripts/lsp-scan.ps1 ./scripts -Format sarif -OutputPath results.sarif -DiagnosticTiming
+          }
           $code = $LASTEXITCODE
           # Exit-code contract (scripts/lsp-scan.ps1): 0 = completed (no -FailOn threshold met,
           # and none is set here), 2 = threshold met (unreachable at -FailOn none), 3 = usage
