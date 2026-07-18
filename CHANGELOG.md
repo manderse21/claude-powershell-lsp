@@ -30,6 +30,27 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **INCOMPLETE-scan correctness + the true per-file budget identified (dispatch 000132)**.
+Chartered by 000131. Two fixes and a measurement, and NO budget moved. (1) Never-silent (000024): a file whose
+analysis the client process cap KILLS (`Invoke-ScanHook`'s `WaitForExit`) is now recorded NOT analyzed instead of
+reading as clean -- previously the kill returned empty stdout and left the file marked analyzed, so a cap-killed file
+passed as a clean one. It now flows into the same not-analyzed naming path 000131 built and the scan takes the
+INCOMPLETE (exit 4) branch. No exit code changed. (2) Each named unanalyzed file now carries the ELAPSED ms it ran
+before the budget cut it, across all three 000131 surfaces (stderr line, SARIF `toolExecutionNotification`, workflow
+annotation -- the elapsed rides in the notification text, so the annotation surfaces it for free); a COMPLETE scan
+still grows no notifications. (3) An off-by-default `-DiagnosticTiming` instrument (an opt-in `workflow_dispatch`
+input on the code-scanning workflow) emits how long each file's analysis ran, for every file; it changes NO budget.
+
+The measurement corrected the budget-identification a THIRD time, and is why NO budget moved. 000129/000130/000131
+and this dispatch's own charter all named the CLIENT budget (`timeoutMs` 18000 ms / the 25000 ms cap); the actual
+binding per-file budget is the daemon's OWN settle cap `MaxWaitMs` (`scripts/pses-daemon.ps1`, default 5000 ms) --
+the hard cap on waiting for a settled publish, which no client-side budget reaches (nothing wires `timeoutMs` to it).
+On ubuntu-24.04 `ensure-pssa.ps1` (~5.9 s) and `lib/lsp-common.ps1` (~6.0 s, the largest script) settle right at that
+5000 ms boundary, so they intermittently fail to settle and are reported INCOMPLETE. Raising a client budget cannot
+fix this; the fix is to raise `MaxWaitMs` (a daemon-wide setting that also governs in-agent edit latency), chartered
+as dispatch 000133. The 000024 never-silent red stays honest until the real cause is fixed -- no retry, no backoff,
+no excluded file.
+
 PATCH: **INCOMPLETE-scan diagnosability -- name the file(s) a scan could not analyze (dispatch 000131)**.
 When `scripts/lsp-scan.ps1` reports an INCOMPLETE scan (exit 4: one or more files could not be analyzed),
 it now NAMES those files instead of emitting only a count. In SARIF mode each unanalyzed file becomes a
