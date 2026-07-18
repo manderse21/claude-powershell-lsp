@@ -30,6 +30,26 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **INCOMPLETE-scan diagnosability -- name the file(s) a scan could not analyze (dispatch 000131)**.
+When `scripts/lsp-scan.ps1` reports an INCOMPLETE scan (exit 4: one or more files could not be analyzed),
+it now NAMES those files instead of emitting only a count. In SARIF mode each unanalyzed file becomes a
+`runs[].invocations[].toolExecutionNotifications[]` entry -- a tool-status notification, NOT a result, so
+the finding set stays byte-identical and GitHub code scanning still ingests the SARIF (no spurious alert)
+-- carrying the file's `SRCROOT`-relative navigable location. The incomplete-scan stderr line and the
+`powershell-lsp-code-scanning.yml` workflow annotation also list the names, so a future INCOMPLETE is
+diagnosable from the Actions tab without a local repro. The enumeration is bounded (first 50 sorted
+names, then a stated total) so a pathological large-tree scan cannot flood the log; text mode continues
+to list every name. A COMPLETE scan grows no notifications, so its SARIF is unchanged.
+
+This closes the count-without-names gap that made the persistent ubuntu-24.04 code-scanning INCOMPLETE
+impossible to attribute to a file. The 000024 never-silent red is retained unchanged -- a genuine
+INCOMPLETE still fails the run AFTER the SARIF is uploaded and archived, with no retry and no backoff --
+and no exit code changed. The per-file analysis budgets are deliberately UNCHANGED (daemon `timeoutMs`
+18000 ms, client per-file cap `-TimeoutMs` 25000 ms, daemon warm-up 180000 ms): the slowest local corpus
+file measured 6237 ms (35 percent of the budget) and both in-hand evidence bases (the cap/budget ratio
+and the measured local worst case) show the budget generous, not tight, so the evidence does not support
+a specific new value. The newly-surfaced names are the prerequisite for an evidence-based budget change
+in a follow-up.
 
 ## [1.25.0] - 2026-07-17
 MINOR: **reference surfacing -- a knob-gated "who references this function" fact layer (`referenceSurfacing`
