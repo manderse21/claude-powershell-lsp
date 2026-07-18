@@ -659,25 +659,30 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
     }
 
     It 'with -DiagnosticTiming, emits a per-file elapsed line for every scanned file (dispatch 000132 leg 3)' {
-        # LEG 3 measurement surface: -DiagnosticTiming records EVERY file's true elapsed, not only the
-        # timed-out ones -- the number a measurement run needs to learn what a file costs when it
-        # COMPLETES. Both input files analyze cleanly here (analyzed=True), so this proves the timing is
-        # emitted for completing files. -DiagnosticTiming changes no budget, so the scan exits 0.
+        # LEG 3 measurement surface: -DiagnosticTiming records EVERY file's elapsed. This asserts the
+        # INSTRUMENT (a per-file 'lsp-scan diag:' line, with a real elapsed, for each of the 2 input
+        # files) -- NOT the settle OUTCOME. Whether a file settles within the daemon's MaxWaitMs cap is
+        # exactly the runner-variance this dispatch is about (a cold-start file on a slow leg can exit 4),
+        # so the test must not depend on analyzed=True or a specific exit code. $ErrorActionPreference is
+        # neutralized around the native call because Windows PowerShell 5.1 promotes a redirected native
+        # stderr line to a TERMINATING error under 'Stop' (pwsh 7 does not) -- and the diag lines ARE
+        # stderr; 2>$null (the BeforeAll pattern) is special-cased and would discard the content we need.
         $diagErr = Join-Path $script:InputDir 'diag.err'
         $diagSarif = Join-Path $script:InputDir 'diag.sarif'
         $prevData = $env:CLAUDE_PLUGIN_DATA
         $env:CLAUDE_PLUGIN_DATA = $script:DataDir
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
         try {
             & $script:HostExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:ScanScript $script:InputDir `
                 -Format sarif -OutputPath $diagSarif -DiagnosticTiming 2>$diagErr | Out-Null
-            $script:DiagExit = $LASTEXITCODE
         } finally {
             $env:CLAUDE_PLUGIN_DATA = $prevData
+            $ErrorActionPreference = $prevEap
         }
         $errText = if (Test-Path -LiteralPath $diagErr) { Get-Content -LiteralPath $diagErr -Raw } else { '' }
-        $script:DiagExit | Should -Be 0 -Because 'the default daemon budget analyzes both files, so the scan completes'
-        $errText | Should -Match 'lsp-scan diag:.*analyzed=True.*elapsed=\d+ms'
-        @([regex]::Matches($errText, 'lsp-scan diag:')).Count | Should -BeGreaterOrEqual 2 -Because 'the input tree has 2 PowerShell files, each timed'
+        $diagLines = @([regex]::Matches($errText, 'lsp-scan diag: .+ analyzed=\w+ elapsed=\d+ms'))
+        $diagLines.Count | Should -BeGreaterOrEqual 2 -Because 'the input tree has 2 PowerShell files, each timed with a real elapsed'
     }
 }
 
