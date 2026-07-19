@@ -30,6 +30,16 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **Trust-evidence surface -- docs/trust.md assembles the verifiable-trust chain (dispatch 000137)**.
+A new `docs/trust.md` gathers, in one evaluator-facing place, the release-integrity chain that was
+already true but scattered: the keyless gitsign-signed tag and SLSA build-provenance over both release
+assets (TRUST.md, docs/RELEASING.md, SECURITY.md), the CycloneDX SBOM generated from the real pins
+(`release/New-PluginSbom.ps1`), the pinned and SHA-256-verified PSScriptAnalyzer, the measured 0% corpus
+false-positive bar guarded on every CI run (`tests/PowerShellLsp.Corpus.Tests.ps1`; evidence bar
+000091 / 000092 / 000125), the measured latency in `docs/benchmarks.md`, the SHA-pinned code-scanning
+workflow, and the generated per-finding rule rationale (E2.5). README gains a short "Why trust this
+release" pointer to it. Docs-only: no code, no version cut; every claim links to a file in the tree or a
+released artifact.
 
 ## [1.25.1] - 2026-07-18
 PATCH: **Raise the SCAN daemon's settle cap so the largest scripts settle on ubuntu (dispatch 000133)**.
