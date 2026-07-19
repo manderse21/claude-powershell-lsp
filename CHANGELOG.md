@@ -30,6 +30,8 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+
+## [1.25.1] - 2026-07-18
 PATCH: **Raise the SCAN daemon's settle cap so the largest scripts settle on ubuntu (dispatch 000133)**.
 Chartered by 000132, which identified the true binding per-file budget as the daemon's own settle cap
 `MaxWaitMs` (`scripts/pses-daemon.ps1`, default 5000 ms) -- NOT the client `timeoutMs`. On a loaded ubuntu-24.04
