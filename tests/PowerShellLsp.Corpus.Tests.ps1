@@ -149,14 +149,17 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
         }
     }
 
-    It 'pre-pssa samples each surface a powershell-lsp-sourced NonAsciiChar diagnostic' {
+    It 'pre-pssa samples each surface their expected powershell-lsp-sourced owned diagnostic' {
+        # The pre-pssa category now holds more than one owned finder (NonAsciiChar and, dispatch
+        # 000139, CommandLinePlaceholder). Each fixture's expected rule is the FIRST dot-segment of
+        # its name ($s.RuleId), so assert that per-fixture rather than a single hard-coded ruleId.
         $prepssa = @(Get-CorpusSampleSpec | Where-Object { $_.Category -eq 'pre-pssa' })
         $prepssa.Count | Should -BeGreaterThan 0
         foreach ($s in $prepssa) {
             $d = @($script:Derived[$s.Label])
-            $d.Count | Should -BeGreaterThan 0 -Because "$($s.Label) must surface at least one non-ASCII finding"
+            $d.Count | Should -BeGreaterThan 0 -Because "$($s.Label) must surface at least one pre-PSSA finding"
             ($d | Select-Object -First 1).source | Should -BeExactly 'powershell-lsp'
-            ($d | Select-Object -First 1).ruleId | Should -BeExactly 'NonAsciiChar'
+            ($d | Select-Object -First 1).ruleId | Should -BeExactly $s.RuleId
         }
     }
 

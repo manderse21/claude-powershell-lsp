@@ -1553,6 +1553,68 @@ function Find-BashIsm {
     return @($findings)
 }
 
+function Find-CommandLinePlaceholder {
+    <#
+    .SYNOPSIS
+        Flag a literal angle-bracket placeholder -- '<Name>' -- left on a command line
+        (dispatch 000139, S3.4). A signature AI-era defect: schema-valid to a human eye,
+        a redirection-operator parse error at run time.
+    .DESCRIPTION
+        PURE over the token stream the parser pre-pass already produces (the same $ptoks
+        Parser::ParseFile emits at the 000060 seam). A bare '<Name>' tokenizes as the
+        RESERVED '<' input-redirection operator (a parse error, "the '<' operator is
+        reserved") IMMEDIATELY followed by a Generic bareword ending in '>'. This is a
+        0-FP shape (measured 0/281 over a widened oracle, dispatch 000139): legitimate
+        OUTPUT redirection ('>', '>>', '2>&1', '*>&1') is a DIFFERENT token kind
+        (Redirection), and any '<...>' inside a string, here-string, or comment stays
+        inside that token and never yields a RedirectInStd. Conservative by construction
+        (precision over recall): only a single adjacent bareword of placeholder-name shape
+        is matched, so a composite like '<owner>/<repo>' is deliberately not flagged.
+        Finding source = 'powershell-lsp', ruleId/code = 'CommandLinePlaceholder',
+        severity 'Warning' -- the same shape and channel as Find-Ps7OnlySyntax.
+
+        HOST / StrictMode SAFETY: TokenKind is compared as a STRING (.Kind.ToString()) and
+        every member read is guarded, so this dot-sources and runs silent under Windows
+        PowerShell 5.1 + StrictMode exactly like the rest of the pre-PSSA pack.
+    #>
+    param($Tokens)
+    if ($null -eq $Tokens) { return @() }
+    $toks = @($Tokens)
+    $findings = New-Object System.Collections.ArrayList
+    for ($i = 0; $i -lt $toks.Count - 1; $i++) {
+        $t = $toks[$i]
+        if ([string]$t.Kind.ToString() -ne 'RedirectInStd') { continue }
+        if ([string]$t.Text -ne '<') { continue }
+        $n = $toks[$i + 1]
+        if ([string]$n.Kind.ToString() -ne 'Generic') { continue }
+        $ntext = [string]$n.Text
+        if (-not $ntext.EndsWith('>')) { continue }
+        # Adjacency: the '<' must immediately abut the bareword ('<Name>', never '< target'),
+        # which distinguishes a placeholder from a genuine (reserved) input redirect '< file'.
+        $adj = $false
+        try { $adj = ([int]$n.Extent.StartOffset -eq [int]$t.Extent.EndOffset) } catch { $adj = $false }
+        if (-not $adj) { continue }
+        $inner = $ntext.Substring(0, $ntext.Length - 1)
+        if ($inner.Length -lt 1) { continue }
+        # Placeholder-name shape only (letters, digits, _, ., -, space); no slashes/quotes,
+        # keeping the match to the dominant AI placeholder form and the 0-FP measurement.
+        if ($inner -notmatch '^[A-Za-z0-9_.\- ]+$') { continue }
+        $line = 1; $col = 1
+        try { $line = [int]$t.Extent.StartLineNumber } catch { $line = 1 }
+        try { $col = [int]$t.Extent.StartColumnNumber } catch { $col = 1 }
+        [void]$findings.Add([pscustomobject]@{
+            ruleId = 'CommandLinePlaceholder'; code = 'CommandLinePlaceholder'
+            source = 'powershell-lsp'
+            severity = 'Warning'; line = $line; col = $col
+            message = "Unfilled placeholder '<$inner>' left on a command line. Angle " +
+                "brackets are the reserved redirection operators in PowerShell, so this " +
+                "is a parse error, not text -- replace the placeholder with a real value, " +
+                "or quote it if the literal text was intended."
+        })
+    }
+    return @($findings)
+}
+
 # --- module awareness: command from an uninstalled module (PL-6, dispatch 000101) -----------
 # A daemon-side, knob-gated (moduleAwareness=suggest), Information-severity hint that a
 # CommandAst NAME is exported by a KNOWN module (the shipped offline command->module index)
