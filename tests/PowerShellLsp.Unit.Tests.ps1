@@ -1219,23 +1219,23 @@ Describe 'Find-CommandLinePlaceholder -- angle-bracket placeholder detection (di
     }
     It 'fires on a placeholder in a parameter position and a hyphenated placeholder' {
         @(Get-PlaceholderHits 'Set-Item -Path <path> -Value 1').Count | Should -Be 1
-        (Get-PlaceholderHits 'Connect-Thing <your-api-key>').Count | Should -Be 1
+        @(Get-PlaceholderHits 'Connect-Thing <your-api-key>').Count | Should -Be 1
     }
     It 'is SILENT on legitimate output redirection' {
-        (Get-PlaceholderHits 'Get-Process > out.txt').Count | Should -Be 0
-        (Get-PlaceholderHits 'cmd.exe 2>&1').Count | Should -Be 0
-        (Get-PlaceholderHits 'Get-Date >> log.txt').Count | Should -Be 0
-        (Get-PlaceholderHits 'thing *>&1').Count | Should -Be 0
+        @(Get-PlaceholderHits 'Get-Process > out.txt').Count | Should -Be 0
+        @(Get-PlaceholderHits 'cmd.exe 2>&1').Count | Should -Be 0
+        @(Get-PlaceholderHits 'Get-Date >> log.txt').Count | Should -Be 0
+        @(Get-PlaceholderHits 'thing *>&1').Count | Should -Be 0
     }
     It 'is SILENT on angle brackets inside strings, here-strings, and block comments' {
-        (Get-PlaceholderHits '$x = "<b>bold</b>"').Count | Should -Be 0
-        (Get-PlaceholderHits '$t = "System.Collections.Generic.List<string>"').Count | Should -Be 0
+        @(Get-PlaceholderHits '$x = "<b>bold</b>"').Count | Should -Be 0
+        @(Get-PlaceholderHits '$t = "System.Collections.Generic.List<string>"').Count | Should -Be 0
         (Get-PlaceholderHits ('$x = @"' + "`n" + '<root><a/></root>' + "`n" + '"@')).Count | Should -Be 0
-        (Get-PlaceholderHits '<# a comment with <tag> #>').Count | Should -Be 0
+        @(Get-PlaceholderHits '<# a comment with <tag> #>').Count | Should -Be 0
     }
     It 'is SILENT on word comparison operators and a genuine input redirect' {
         (Get-PlaceholderHits 'if ($a -lt $b -and $c -gt $d) { 1 }').Count | Should -Be 0
-        (Get-PlaceholderHits 'Get-Content < in.txt').Count | Should -Be 0
+        @(Get-PlaceholderHits 'Get-Content < in.txt').Count | Should -Be 0
     }
     It 'returns @() for a null token stream (fail-open)' {
         @(Find-CommandLinePlaceholder -Tokens $null).Count | Should -Be 0
