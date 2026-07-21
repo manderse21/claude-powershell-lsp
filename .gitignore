@@ -13,3 +13,4 @@
 # workspace). It is a build artifact, never source -- never commit it.
 /.pssa-nupkg-cache/
 _ci-logs-5.1/
+worktrees/

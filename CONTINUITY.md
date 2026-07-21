@@ -9,6 +9,11 @@ continued or forked, and flags the specifics that still need a decision.
 This extends the governance posture in [TRUST.md](./TRUST.md#governance-and-sustainability-adoption-risk-stated-honestly);
 read that first for the short version.
 
+For the operational detail behind this posture -- for each surface, what breaks if the maintainer
+disappears and the concrete recovery path -- see [docs/CONTINUITY.md](./docs/CONTINUITY.md). For the
+second-maintainer on-ramp (access grants, running and verifying a release), see
+[MAINTAINERS.md](./MAINTAINERS.md).
+
 ## The risk, stated plainly
 
 The project is maintained by **one person** (Mike Andersen). That is a single point of

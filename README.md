@@ -953,6 +953,16 @@ tree it names. See
 **[docs/RELEASING.md](docs/RELEASING.md#provenance-what-it-covers-and-what-it-does-not)** for exactly
 what the provenance covers.
 
+## Why trust this release
+
+Evaluating whether to trust a release? **[docs/trust.md](docs/trust.md)** assembles the
+verifiable chain in one place: the keyless gitsign-signed tag and SLSA build-provenance
+over both release assets, the CycloneDX SBOM generated from the real pins, the pinned and
+SHA-256-verified analyzer, the measured 0% corpus false-positive bar guarded on every CI
+run, the measured latency in [docs/benchmarks.md](docs/benchmarks.md), the SHA-pinned
+code-scanning workflow, and the generated per-finding rationale. Every claim there links to
+a file in this repository or an artifact on the GitHub Release.
+
 ## Security and trust
 
 Evaluating this plugin for a managed or locked-down Windows estate? **[TRUST.md](./TRUST.md)**
