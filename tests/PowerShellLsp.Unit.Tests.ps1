@@ -1212,13 +1212,13 @@ Describe 'Find-CommandLinePlaceholder -- angle-bracket placeholder detection (di
     }
     It 'fires on a bare command-line placeholder <ModuleName>' {
         $h = Get-PlaceholderHits 'Install-Module <ModuleName>'
-        $h.Count | Should -Be 1
+        @($h).Count | Should -Be 1
         [string]$h[0].code | Should -BeExactly 'CommandLinePlaceholder'
         [string]$h[0].source | Should -BeExactly 'powershell-lsp'
         [string]$h[0].message | Should -Match '<ModuleName>'
     }
     It 'fires on a placeholder in a parameter position and a hyphenated placeholder' {
-        (Get-PlaceholderHits 'Set-Item -Path <path> -Value 1').Count | Should -Be 1
+        @(Get-PlaceholderHits 'Set-Item -Path <path> -Value 1').Count | Should -Be 1
         (Get-PlaceholderHits 'Connect-Thing <your-api-key>').Count | Should -Be 1
     }
     It 'is SILENT on legitimate output redirection' {
