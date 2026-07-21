@@ -30,6 +30,20 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **Flag an unfilled angle-bracket placeholder left on a command line (dispatch 000139, S3.4)**.
+A new plugin-owned pre-PSSA finder, `CommandLinePlaceholder`, flags a literal `<Name>` left on a
+command line -- a signature AI-era defect that is schema-valid to a human eye but a redirection-operator
+parse error at run time. Detection is token-level over the tokens the parser pre-pass already produces
+(`Find-CommandLinePlaceholder` in `scripts/lib/lsp-common.ps1`, wired at the `scripts/lsp-client.ps1`
+seam): the reserved `<` input-redirection operator immediately abutting a bareword ending in `>`. It is
+deliberately conservative (precision over recall): legitimate output redirection (`>`, `>>`, `2>&1`),
+angle brackets inside strings / here-strings / comments, C#-style generics in strings, and the word
+operators `-lt` / `-gt` never fire; a composite like `<owner>/<repo>` is not flagged. Re-entered under
+the S3.4 measure-first bar and shipped only at a **measured 0% false-positive rate on a 281-file oracle**
+(150 repo scripts + 131 installed-module scripts, zero hits). Adds an owned hand-authored rationale
+(owned finders 5 -> 6), positive + negative corpus fixtures, and always-on additive behavior -- **no new
+knob, no CONTRACT change, no `base.psd1` change**. The companion compatibility rules
+(`PSUseCompatibleCommands` / `PSUseCompatibleTypes`) remain unshipped pending a target-profile decision.
 PATCH: **Trust-evidence surface -- docs/trust.md assembles the verifiable-trust chain (dispatch 000137)**.
 A new `docs/trust.md` gathers, in one evaluator-facing place, the release-integrity chain that was
 already true but scattered: the keyless gitsign-signed tag and SLSA build-provenance over both release

@@ -1,0 +1,18 @@
+[
+  {
+    "ruleId": "CommandLinePlaceholder",
+    "source": "powershell-lsp",
+    "severity": "Warning",
+    "line": 1,
+    "col": 16,
+    "message": "Unfilled placeholder '<ModuleName>' left on a command line. Angle brackets are the reserved redirection operators in PowerShell, so this is a parse error, not text -- replace the placeholder with a real value, or quote it if the literal text was intended."
+  },
+  {
+    "ruleId": "RedirectionNotSupported",
+    "source": "parser",
+    "severity": "Error",
+    "line": 1,
+    "col": 16,
+    "message": "The '<' operator is reserved for future use."
+  }
+]

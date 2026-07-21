@@ -1198,6 +1198,50 @@ Describe 'rulesets/base.psd1 -- enumerated, deterministic base ruleset (dispatch
 # Rule rationales (dispatch 000121, I0.1 slice-1)
 # ===========================================================================
 
+Describe 'Find-CommandLinePlaceholder -- angle-bracket placeholder detection (dispatch 000139)' {
+    # Pure token-level finder. Tokenizes a snippet exactly as the client pre-pass does and
+    # asserts the 0-FP shape: a placeholder '<Name>' fires; legitimate angle-bracket content
+    # (output redirection, strings, here-strings, block comments, word operators, and a genuine
+    # input redirect '< file') stays silent. RED-provable: mutate the finder and a case flips.
+    BeforeAll {
+        function Get-PlaceholderHits([string]$code) {
+            $tk = $null; $er = $null
+            [void][System.Management.Automation.Language.Parser]::ParseInput($code, [ref]$tk, [ref]$er)
+            return @(Find-CommandLinePlaceholder -Tokens $tk)
+        }
+    }
+    It 'fires on a bare command-line placeholder <ModuleName>' {
+        $h = Get-PlaceholderHits 'Install-Module <ModuleName>'
+        @($h).Count | Should -Be 1
+        [string]$h[0].code | Should -BeExactly 'CommandLinePlaceholder'
+        [string]$h[0].source | Should -BeExactly 'powershell-lsp'
+        [string]$h[0].message | Should -Match '<ModuleName>'
+    }
+    It 'fires on a placeholder in a parameter position and a hyphenated placeholder' {
+        @(Get-PlaceholderHits 'Set-Item -Path <path> -Value 1').Count | Should -Be 1
+        @(Get-PlaceholderHits 'Connect-Thing <your-api-key>').Count | Should -Be 1
+    }
+    It 'is SILENT on legitimate output redirection' {
+        @(Get-PlaceholderHits 'Get-Process > out.txt').Count | Should -Be 0
+        @(Get-PlaceholderHits 'cmd.exe 2>&1').Count | Should -Be 0
+        @(Get-PlaceholderHits 'Get-Date >> log.txt').Count | Should -Be 0
+        @(Get-PlaceholderHits 'thing *>&1').Count | Should -Be 0
+    }
+    It 'is SILENT on angle brackets inside strings, here-strings, and block comments' {
+        @(Get-PlaceholderHits '$x = "<b>bold</b>"').Count | Should -Be 0
+        @(Get-PlaceholderHits '$t = "System.Collections.Generic.List<string>"').Count | Should -Be 0
+        (Get-PlaceholderHits ('$x = @"' + "`n" + '<root><a/></root>' + "`n" + '"@')).Count | Should -Be 0
+        @(Get-PlaceholderHits '<# a comment with <tag> #>').Count | Should -Be 0
+    }
+    It 'is SILENT on word comparison operators and a genuine input redirect' {
+        (Get-PlaceholderHits 'if ($a -lt $b -and $c -gt $d) { 1 }').Count | Should -Be 0
+        @(Get-PlaceholderHits 'Get-Content < in.txt').Count | Should -Be 0
+    }
+    It 'returns @() for a null token stream (fail-open)' {
+        @(Find-CommandLinePlaceholder -Tokens $null).Count | Should -Be 0
+    }
+}
+
 Describe 'rulesets/rule-rationales.psd1 -- shipped table invariants (dispatch 000121)' {
     # OFFLINE, parse-only: no PSScriptAnalyzer, no daemon, no network, so this runs on every leg.
     # It pins the table's SHAPE and its coupling to the two things it derives over -- the PSSA pin
@@ -1232,17 +1276,17 @@ Describe 'rulesets/rule-rationales.psd1 -- shipped table invariants (dispatch 00
         [int]$script:RatData['owned_count'] | Should -Be $script:RatOwned.Count
         $script:RatEntries.Count | Should -Be ($baseSorted.Count + $script:RatOwned.Count)
     }
-    It 'hand-authors an entry for each of the 5 plugin-owned finders, keyed by the EMITTED ruleId' {
+    It 'hand-authors an entry for each of the 6 plugin-owned finders, keyed by the EMITTED ruleId' {
         # NOT the finder FUNCTION names: Find-ModuleAwareness emits code 'ModuleNotInstalled', and
         # Test-ManifestConsistency emits 'ManifestConsistency'; the runtime lookup keys on the
         # diagnostic `code`. An entry keyed 'ModuleAwareness' would silently never match.
         # Adversarial control: rename any key here and this goes RED.
-        $owned = @('BashIsm', 'PS7OnlySyntax', 'NonAsciiChar', 'ModuleNotInstalled', 'ManifestConsistency')
+        $owned = @('BashIsm', 'PS7OnlySyntax', 'NonAsciiChar', 'ModuleNotInstalled', 'ManifestConsistency', 'CommandLinePlaceholder')
         foreach ($c in $owned) {
             $script:RatOwned | Should -Contain $c
             [string]$script:RatEntries[$c] | Should -Not -BeNullOrEmpty
         }
-        # The owned set is EXACTLY these five -- a sixth entry may not ride in silently (000124).
+        # The owned set is EXACTLY these six -- a seventh entry may not ride in silently (000124, 000139).
         $script:RatOwned.Count | Should -Be $owned.Count
     }
     It 'records the idiom-family OVERRIDE layer and asserts the set from disk (dispatch 000125)' {

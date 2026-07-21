@@ -281,6 +281,25 @@ try {
         $parseErrors = $null
         $parsedAst = $null
     }
+    # Track B2 -- pre-PSSA TOKEN pass (dispatch 000139): flag an unfilled angle-bracket
+    # placeholder '<Name>' left on a command line, over the SAME tokens the parser pre-pass
+    # just produced ($ptoks). A placeholder is the reserved '<' input-redirection operator (a
+    # parse error) abutting a bareword ending in '>', so it ALWAYS co-occurs with a parse error
+    # and rides the pre-PSSA early-exit alongside it -- like the non-ASCII pass, and unlike the
+    # compat/bash-ism passes (which parse cleanly and ride the daemon merge). Appended to
+    # $prePssaFindings so it is surfaced AND dogfood-captured on the early-exit path below,
+    # giving an actionable message where the raw parser error is only "'<' is reserved".
+    # Wrapped so any failure degrades gracefully and never blocks the edit.
+    try {
+        $placeholderFindings = @(Find-CommandLinePlaceholder -Tokens $ptoks)
+        if ($placeholderFindings.Count -gt 0) {
+            Write-CLog ('pre-PSSA (placeholder) found ' + $placeholderFindings.Count + ' finding(s)')
+            if ($null -eq $prePssaFindings) { $prePssaFindings = @() }
+            $prePssaFindings = @($prePssaFindings + $placeholderFindings)
+        }
+    } catch {
+        Write-CLog ('pre-PSSA placeholder scan threw (degrading gracefully): ' + $_.Exception.Message)
+    }
     # Track C -- pre-PSSA AST compat pass (dispatch 000096): flag PowerShell-7-only SYNTAX
     # (&& / ||, ternary, ?? / ??= / ?. / ?[]) over the SAME AST the parser pre-pass just
     # produced, suppressed when the file declares #Requires -Version 7+. Wrapped so any

@@ -128,6 +128,13 @@ $script:OwnedRationales = @{
     'ManifestConsistency' =
     "Manifest FunctionsToExport disagrees with the module: a listed function is never defined, or " +
     "an exported one is unlisted, so the module exports the wrong commands. Align them."
+
+    # Find-CommandLinePlaceholder. Emitted ruleId is 'CommandLinePlaceholder'. Fires on a literal
+    # '<Name>' left on a command line -- the reserved '<' redirection operator abutting a bareword
+    # ending in '>' -- so the rationale names the parse-error cause and the two fixes the finder implies.
+    'CommandLinePlaceholder' =
+    "Unfilled '<...>' placeholder on a command line: angle brackets are reserved redirection " +
+    "operators, so this is a parse error, not text. Insert a real value, or quote the literal."
 }
 
 # --- hand-authored rationale OVERRIDES for the idiom family (dispatch 000125, N1.1 slice 1) -------
