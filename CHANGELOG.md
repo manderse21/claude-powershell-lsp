@@ -40,6 +40,16 @@ false-positive bar guarded on every CI run (`tests/PowerShellLsp.Corpus.Tests.ps
 workflow, and the generated per-finding rule rationale (E2.5). README gains a short "Why trust this
 release" pointer to it. Docs-only: no code, no version cut; every claim links to a file in the tree or a
 released artifact.
+PATCH: **Continuity and governance docs -- operational per-surface failure/recovery and a
+second-maintainer on-ramp (dispatch 000136)**. Adds `docs/CONTINUITY.md` (the operational companion
+to the root `CONTINUITY.md`: for each surface, what breaks if the sole maintainer disappears and the
+concrete recovery path) and `MAINTAINERS.md` (a second-maintainer onboarding checklist: access
+grants, running and verifying a release, and the strategic-dispatch hub relationship stated honestly
+as external to this repo). Reconciles the docs so the release runbook lives in exactly one place
+(`docs/RELEASING.md`) and the continuity/maintainer docs link to it. Documents the keyless custody
+story explicitly: there is no long-lived signing key or stored release secret to hand off. Docs only;
+zero code, workflow, or contract change. Final classification (docs PATCH vs no-bump) is deferred to
+the classification pass; recorded here under [Unreleased] per the wave directive.
 
 ## [1.25.1] - 2026-07-18
 PATCH: **Raise the SCAN daemon's settle cap so the largest scripts settle on ubuntu (dispatch 000133)**.

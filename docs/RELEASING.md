@@ -7,6 +7,11 @@ anything that is not safe to release. At no point is a release cut automatically
 decision remains with the maintainer, and the pipeline simply enforces that the only
 commits and circumstances that can be released are ones that satisfy defined safety checks.
 
+> **This document is the single, canonical release runbook.** The continuity and maintainer docs
+> ([CONTINUITY.md](../CONTINUITY.md), [docs/CONTINUITY.md](./CONTINUITY.md),
+> [MAINTAINERS.md](../MAINTAINERS.md)) link here rather than restating the procedure, so the steps
+> and the gates live in one place only.
+
 Earlier, releases were tagged by hand as a sequence of manual commands. That manual process
 is error-prone; on one occasion a mistake placed a version tag on the wrong commit, and the
 tag had to be deleted and recreated. The pipeline removes that entire class of error by
