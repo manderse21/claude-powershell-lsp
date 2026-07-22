@@ -1,6 +1,12 @@
 # claude-powershell-lsp -- Roadmap
 
-Status as of 2026-07-22. Plugin on main: **v1.26.0**, GPL-3.0-or-later. The version is TAGGED,
+Status as of 2026-07-22. Plugin on main: **v1.26.0**, GPL-3.0-or-later. **A v1.27.0 cut is staged
+but UNMERGED and UNRELEASED** (dispatch 000142): both manifests read 1.27.0 on the
+`dispatch/000142-org-policy` branch behind an open PR, with a dated `## [1.27.0] - 2026-07-22`
+CHANGELOG heading over one MINOR entry (E2.2 org policy) and two PATCH entries (N1.1 slice 2, and
+000143's release-docs correction). Nothing about that cut is tagged, released, or merged -- merging
+the PR and triggering the release pipeline are Mike's gates. Everything below about v1.26.0 remains
+the state of `origin/main`. The v1.26.0 version is TAGGED,
 gitsign-signed, and RELEASED (verified-from-web this session): an annotated, gitsign-signed tag
 v1.26.0 sits at commit 22bec89 on origin (tag object c26e580, tagged by `github-actions[bot]` from
 the release runner), `git describe --tags origin/main` returns `v1.26.0` exactly -- the tip IS the
@@ -121,6 +127,7 @@ dispatch(es); where an authored draft disagreed with the CHANGELOG, the CHANGELO
 
 | Version | Dispatch | Delivered |
 |---|---|---|
+| v1.27.0 | 000142 legs 1-2 + 000143; cut by 000142 leg 5 | MINOR -- **STAGED, NOT RELEASED.** Both manifests read 1.27.0 on the `dispatch/000142-org-policy` branch behind an open PR; there is **no v1.27.0 tag and no GitHub Release**, and merging plus triggering the pipeline are Mike's gates (this row exists so the ledger does not silently omit a staged cut -- it is NOT a claim of release). Classification is highest-wins over the live `[Unreleased]` entries: 000142 leg 1's MINOR governs a cut whose other two entries are PATCH. **000142 leg 1 (MINOR)** ships E2.2 org policy as the `orgPolicy` knob -- an absolute path to a central `PSScriptAnalyzerSettings.psd1` whose `ExcludeRules` are ENFORCED as a final subtractive drop at both `scripts/lsp-client.ps1` surface points, before the hook emit and the dogfood capture, so one rule covers the live surface, the capture, and the SARIF scan. Org wins the exclude path (no local include can re-enable a dropped rule); repo-local wins the include path (the policy's own `IncludeRules` stay advisory). Fails open with exactly one logged warning on a missing / unreadable / unparseable / relative path, and the policy is read through `Import-PowerShellDataFile` (restricted, data-only) so it can never execute code. Knobs **18 -> 19** with one `CONTRACT.md` FROZEN-KNOBS row proven RED-then-GREEN against the set-equality guard; no `base.psd1` change (still 53), no new owned finder (still 6), no status token. Off is byte-identical, proven over the shipped corpus records. **000142 leg 2 (PATCH)** is N1.1 idiom-guidance slice 2: hand-authored rationale overrides on the five PSES-15 default-surface rules whose derived text was circular or pure mechanism, each proven to already fire by the derived corpus snapshots; `override_count` **4 -> 9**, `-Check` green at pin 1.25.0. **000143 (PATCH, docs)** documents release Gate 5 and corrects the tag-command convention. Cut lockstep to 1.27.0 in both manifests + a dated `## [1.27.0] - 2026-07-22` CHANGELOG heading |
 | v1.26.0 | 000139 / 000137 / 000136; cut by 000141 leg 1 | MINOR -- **the Wave-1 band**, RELEASED 2026-07-22. Classification is highest-wins over the live `[Unreleased]` entries, so 000139's MINOR governs a cut whose other two entries are PATCH. **000139 (MINOR)** adds the plugin-owned pre-PSSA finder `CommandLinePlaceholder` (`Find-CommandLinePlaceholder` in `scripts/lib/lsp-common.ps1`, wired at the `scripts/lsp-client.ps1` seam): a literal `<Name>` left on a command line is schema-valid to the eye but a redirection-operator parse error at run time. Detection is token-level -- the reserved `<` input-redirection operator immediately abutting a bareword ending in `>` -- and deliberately precision-first: legitimate output redirection (`>`, `>>`, `2>&1`), angle brackets inside strings / here-strings / comments, C#-style generics in strings, and the word operators `-lt` / `-gt` never fire. Re-entered under the S3.4 measure-first bar and shipped only at a measured **0% false-positive rate on a 281-file oracle** (150 repo scripts + 131 installed-module scripts, zero hits). Owned finders **5 -> 6** (verified-from-disk: `rule-rationales.psd1` `owned_count` = 6); no new knob (still 18), no `base.psd1` change (still 53), no CONTRACT change. **000137 (PATCH)** adds `docs/trust.md`, assembling in one evaluator-facing place the release-integrity chain that was already true but scattered (keyless gitsign-signed tag + SLSA provenance over both release assets, CycloneDX SBOM generated from the real pins, the pinned and SHA-256-verified PSScriptAnalyzer, the 0% corpus FP bar guarded on every CI run, measured latency, the SHA-pinned code-scanning workflow, the generated rule rationales), plus a README pointer. **000136 (PATCH)** adds `docs/CONTINUITY.md` (per-surface failure/recovery if the sole maintainer disappears) and `MAINTAINERS.md` (second-maintainer on-ramp), and reconciles the docs so the release runbook lives in exactly one place (`docs/RELEASING.md`). Cut lockstep to 1.26.0 in both manifests + a dated CHANGELOG heading. Tag v1.26.0 gitsign-signed and cut BY THE PIPELINE (tag object c26e580 -> commit 22bec89, tagger `github-actions[bot]`, build signer `powershell-lsp-release.yml@refs/heads/main`, run 29918156282); GitHub Release published as the current **Latest** (2026-07-22T12:06:42Z, verified-from-web), with both assets SLSA-attested and `gh attestation verify`-clean at exit 0 |
 | v1.25.1 | 000131 / 000132 / 000133; cut by 000134 leg 1 | PATCH -- the scan-robustness lineage. 000131 NAMES the file(s) an INCOMPLETE (exit 4) code-scanning scan could not analyze (SARIF `toolExecutionNotification` + stderr + workflow annotation; per-file budgets left unchanged). 000132 fixes an INCOMPLETE-scan correctness gap (a client-cap-KILLED file was passing as clean; now recorded NOT analyzed via the 000024 never-silent branch) and its measurement corrects the true per-file budget a THIRD time -- to the daemon's OWN settle cap `MaxWaitMs` (default 5000 ms), not the client `timeoutMs`. 000133 raises the SCAN daemon's `MaxWaitMs` 5000 -> 15000 (scan-only; the in-agent daemon keeps 5000; INTERNAL, no knob, no CONTRACT change), and main's own code-scanning flipped RED -> GREEN at the #91 merge. All three self-describe PATCH; no knob, detection, ruleset, rationale, or CONTRACT surface moved. Cut lockstep to 1.25.1 in both manifests + a dated CHANGELOG heading. Tag v1.25.1 gitsign-signed (tag object f92ff79 -> commit c9692ca, tagged by `github-actions[bot]` from the release runner); GitHub Release published 2026-07-19T00:41:38Z (verified-from-web), no longer the current release (superseded by v1.26.0). Full narrative in "Scan-robustness lineage" below |
 | v1.25.0 | 000128 (survey 000127 leg 1) | MINOR -- **reference surfacing**: a new off-by-default `userConfig` knob `referenceSurfacing`, the **18th** knob (verified-from-disk: `plugin.json` declares 18 `userConfig` keys), surfaces BARE per-function facts (referenced-by-N, exported, defined-in) from a session workspace index the daemon builds ONCE, as additive Information on the existing `additionalContext` channel -- no new diagnostic code, no status token, `rulesets/rule-rationales.psd1` byte-for-byte unchanged, and the diagnostics surface byte-identical when `off` (the default). It ships the design 000127 leg 1 surveyed-and-BLOCKED on a frozen-knob CONTRACT decision, so 000128 carried that amendment in lockstep (manifest + `CONTRACT.md` + `README.md`; the 000087/000101 knob precedent). The same release also lands the **`AliasesToExport` orphan check** on the always-on `ManifestConsistency` finder (PL-6 slice 2: a name in `AliasesToExport` with no matching alias definition) -- the symmetric completion of slice 1's export check. Tag v1.25.0 gitsign-signed; GitHub Release published 2026-07-17T18:06:13Z (verified-from-web), no longer the current release (superseded by v1.25.1) |
@@ -392,13 +399,16 @@ chat.
   Delivered as a MINOR and, as planned, with no new knob; the `CONTRACT.md` amendment anticipated here
   turned out to be unnecessary, because additive prose on an existing channel leaves the frozen Tier-1
   surface (knob names, status tokens, and the "a clean pass adds nothing" property) untouched. The ship
-  detail is in Section 2. Dispatch 000124 then hand-authored the one missing entry, so all **five**
-  plugin-owned codes -- `BashIsm`, `ManifestConsistency`, `ModuleNotInstalled`, `NonAsciiChar`,
-  `PS7OnlySyntax` -- now carry a rationale, and `rulesets/rule-rationales.psd1` covers the plugin's
-  whole surfaceable set (**53 PSSA + 5 owned = 58 entries**, of which 4 idiom-family PSSA entries
-  carry the 000125 hand-authored overrides) at the pin (verified-from-disk this session: `base.psd1`
-  declares 53 `IncludeRules`, and the table's own `pssa_count` = 53, `owned_count` = 5,
-  `override_count` = 4, entries = 58). The PSSA count dropped by one when v1.24.3 / 000126 excluded
+  detail is in Section 2. Dispatch 000124 then hand-authored the one missing entry, so every
+  plugin-owned code -- `BashIsm`, `CommandLinePlaceholder`, `ManifestConsistency`,
+  `ModuleNotInstalled`, `NonAsciiChar`, `PS7OnlySyntax` -- carries a rationale, and
+  `rulesets/rule-rationales.psd1` covers the plugin's whole surfaceable set (**53 PSSA + 6 owned =
+  59 entries**, of which 9 PSSA entries carry hand-authored overrides -- the 4 idiom-family ones
+  from 000125 slice 1 plus the 5 default-surface ones from 000142 slice 2) at the pin
+  (re-resolved live, verified-from-disk this refresh: `base.psd1` declares 53 `IncludeRules`, and
+  the table's own `pssa_count` = 53, `owned_count` = 6, `override_count` = 9, entries = 59; the
+  owned count reached 6 when v1.26.0 / 000139 added `CommandLinePlaceholder`, which this line had
+  not yet absorbed). The PSSA count dropped by one when v1.24.3 / 000126 excluded
   `PSUseOutputTypeCorrectly` from base; this line still carried the pre-000126 count until this
   refresh -- the residual 000126 recorded and this dispatch closes. (The superseded number is
   deliberately not restated here: quoting a stale count inside the correction is what makes a
@@ -435,6 +445,23 @@ chat.
   `throw`, so no advanced-function rule can be FP-measured until a corpus tier is added. The plugin
   flags; the agent transforms. Output: PATCH per slice (better guidance on findings that already
   render, not a new capability).
+  **Slice 2 SHIPPED (000142 leg 2; cut into v1.27.0, unreleased).** Where slice 1 was mostly
+  `base`-only opt-in rules, slice 2 covers what the median user actually reads: the **five PSES-15
+  live-default-surface** rules whose derived text explained nothing --
+  `PSAvoidDefaultValueSwitchParameter`, `PSAvoidUsingCmdletAliases`,
+  `PSPossibleIncorrectComparisonWithNull`, `PSUseApprovedVerbs`, and
+  `PSUseDeclaredVarsMoreThanAssignments`. The already-fires evidence is **measured, not asserted**
+  (verified-from-disk): every one of the five appears in the DERIVED corpus snapshots under
+  `tests/corpus/expected`, which `Update-CorpusSnapshots.ps1` produces from real analyzer runs. Each
+  derived text was circular (restating the rule's own CommonName), definitional-and-truncated, or
+  pure mechanism (restating the check's predicate); each replacement names a concrete consequence
+  and a fix. The two most falsifiable claims were **verified on-host rather than reasoned about**:
+  `curl`/`wget` resolve to `Invoke-WebRequest` aliases under Windows PowerShell 5.1 but not under
+  PowerShell 7, and `@(1, $null, 2) -eq $null` returns an `Object[]`, not a boolean. Override count
+  4 -> 9, `-Check` green at pin 1.25.0; the sixth default-surface rule,
+  `PSAvoidUsingPlainTextForPassword`, was deliberately LEFT ALONE because its derived text already
+  carries a real why. Three Integration assertions that pinned the derived `PSUseApprovedVerbs` text
+  now pin the override, which is the live-daemon proof the layer reaches the default surface.
 - **N1.2 Cross-file reference surfacing (#2 / #3) -- SHIPPED (v1.25.0 / 000128).** Shipped as the
   `referenceSurfacing` knob (default `off`): a deterministic "referenced by N files" signal via the
   diagnostic channel -- NOT the gated native-nav path. The 000127 survey settled the design, named
@@ -529,10 +556,26 @@ chat.
     false-positive** -- the evidence
     bar this project holds a new detection to (000091 / 000092 / 000125). It rides the same
     `ManifestConsistency` code (no new owned code, no rationale-table change) and no knob.
-  - Deferred behind it: nested-module consistency (medium value, more machinery); `RequiredModules`
-    vs project reality (FP-hostile -- a module legitimately required for types/formats/side effects is
-    referenced by no `CommandAst`, and the probe's 0% rests on a denominator of **1**, which settles
-    nothing). Output when built: MINOR.
+  - **Nested-module consistency -- MEASURED, NO-BUILD, now CLOSED (000142 leg 3).** Surveyed under
+    the same measure-first bar, and the measurement is decisive against building it
+    (verified-from-disk, this box): of **111** parseable installed manifests, **73** declare
+    `NestedModules`, but only **17** both name a script (`.psm1`/`.ps1`) nested module AND carry a
+    literal `FunctionsToExport` list -- the only shape an AST cross-reference could check. A probe
+    built from the SHIPPED helpers (`Resolve-ModuleRootModulePath` + `Get-ModuleDefinedFunctionNames`)
+    fired on **17 of 17 (100%)**, and hand-triage of the hits found **no confirmed true positive**:
+    `SmbShare` (59 exports; 17 `.cdxml` nested modules beside one 7-function `.psm1`),
+    `EventTracingManagement` (20 exports; 3 `.cdxml`), and `AppvClient` (2 exports; a BINARY nested
+    module) all export commands that are **CIM-generated or compiled**, which no source parse can
+    resolve. The root cause is structural, not fixable by more degrade rungs: `NestedModules` is
+    precisely the mechanism by which in-box modules compose CDXML and binary submodules. So this is
+    the **same FP-hostile class as `RequiredModules`**, and it fails the 0%-FP bar by the widest
+    margin yet measured on this project. The measurement also **positively confirms the existing
+    degrade is correct**: silencing the check when `NestedModules` is non-empty (shipped in 000128)
+    is exactly right, and lifting that silence would surface ~100% false positives. Recorded
+    no-build, in the 000127 shape -- N1.6 is now decided, not parked.
+  - Still deferred: `RequiredModules` vs project reality (FP-hostile -- a module legitimately
+    required for types/formats/side effects is referenced by no `CommandAst`, and the probe's 0%
+    rests on a denominator of **1**, which settles nothing).
 
 ### Horizon 2 -- Enterprise hardening (parallel track; adoption-gating)
 
@@ -555,10 +598,30 @@ chat.
   (run 29661464779 success at 85fb892; see the scan-robustness lineage in Section 2). Output: **not
   the MINOR this item assumed** -- see leg 8's NO-BUMP reasoning; the gate it named was already
   released, and a repo-CI workflow is not a user-visible capability.
-- **E2.2 Org policy config.** Centrally-managed ruleset / settings precedence, extending the `ruleset`
-  knob under the existing knob doctrine. Output: MINOR + a `CONTRACT.md` amendment.
+- **E2.2 Org policy config -- SHIPPED (000142 leg 1; cut into v1.27.0, unreleased).** The
+  centrally-managed settings voice now exists as the `orgPolicy` knob (verified-from-disk): an
+  absolute path to an organization's `PSScriptAnalyzerSettings.psd1` whose **`ExcludeRules` are
+  enforced** as a final subtractive drop over the surfaced findings, applied at BOTH client surface
+  points and before the hook emit and the dogfood capture, so a rule the org excludes cannot be
+  re-enabled by a repo-local settings file or by `ruleInclude`. The include path is deliberately
+  asymmetric -- the policy's own `IncludeRules` stay advisory and repo-local wins -- which is the
+  fork 000135 decided and recorded. Client-side by construction, so the daemon and the Integration
+  suite are structurally untouched; every branch is gated on the knob, and with it unset the surface
+  is byte-identical (proven over the shipped corpus records, not merely asserted). Fails open with
+  exactly one logged warning on a missing / unreadable / unparseable / relative path, and the policy
+  is read through `Import-PowerShellDataFile` (restricted, data-only), so it can never execute code.
+  One `CONTRACT.md` FROZEN-KNOBS row, proven RED then GREEN against the set-equality guard. Output
+  was as forecast: MINOR + a CONTRACT amendment. **Known limitation (verified-from-disk):** the
+  per-file-cap overflow count (`... and N more`) is computed daemon-side, before the org drop, so
+  with `orgPolicy` set that count can include findings the policy would have dropped; the drop
+  itself is exact. 22 unit tests across three families, four of them mutation-proven RED.
 - **E2.3 Catalog listing.** Get into `anthropics/claude-plugins-community` (and the official catalog if
-  it qualifies). Mike-gated. Output: no code.
+  it qualifies). Mike-gated. Output: no code. **Poll re-run 000142 leg 4 (read-only, one GET,
+  verified-from-web):** `claude-powershell-lsp` is still **NOT present** in that marketplace --
+  HTTP 200, **2262** plugin entries, **zero** entries whose name matches `powershell` at all, polled
+  **2026-07-22T20:50:16Z**. The catalog grew by 14 entries since the 000127 leg-6 poll (2248 on
+  2026-07-17), so the feed is live and the absence is a real negative, not a stale read. Nothing is
+  inferred about Console-side state in either direction; the submission itself stays Mike's gate.
 - **E2.4 Bus-factor mitigation -- DOCS SHIPPED (000136; released in v1.26.0).** The single-maintainer
   risk is the real enterprise blocker. The documented half is now in the tree (verified-from-disk):
   `docs/CONTINUITY.md` gives, per surface, what breaks if the sole maintainer disappears and the

@@ -140,10 +140,15 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
     # many times renders its rationale ONCE; an owned finder carries its hand-authored rationale;
     # and a clean file's surface is byte-identical to pre-change (it emits nothing at all).
 
-    It 'a PSSA finding carries its DERIVED rationale line on additionalContext (000121)' {
-        # PSUseApprovedVerbs -> the rationale auto-derived from the pinned PSScriptAnalyzer's
-        # CommonName ('Cmdlet Verbs') + capped Description. Adversarial control: delete the
-        # 'why:' append in lsp-client.ps1 and this goes RED.
+    It 'a PSSA finding carries its rationale line on additionalContext (000121; override 000142)' {
+        # PSUseApprovedVerbs -> a 'why:' line on the live default surface. Adversarial control:
+        # delete the 'why:' append in lsp-client.ps1 and this goes RED.
+        #
+        # Slice 2 (000142) replaced this rule's DERIVED text ('Cmdlet Verbs -- Checks that all
+        # defined cmdlets use approved verbs') with a hand-authored override, so the assertion pins
+        # the OVERRIDE and explicitly proves the derived text is GONE -- the same framing the
+        # slice-1 Write-Host override test uses. This is the live-daemon proof that the override
+        # layer actually reaches the default surface, not merely the table on disk.
         $fix = Join-Path $script:DataDir 'pester-rationale-pssa.ps1'
         "function Frobnicate-Rationale {`n    Get-Process`n}" | Set-Content -LiteralPath $fix -Encoding ascii
         $out = Invoke-PluginHook -ScriptPath (Join-Path $script:ScriptsDir 'lsp-client.ps1') `
@@ -151,7 +156,8 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
             -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
         $ctx = ($out | ConvertFrom-Json).hookSpecificOutput.additionalContext
         $ctx | Should -Match 'PSUseApprovedVerbs'
-        $ctx | Should -Match 'why: Cmdlet Verbs -- Checks that all defined cmdlets use approved verbs'
+        $ctx | Should -Match 'why: An unapproved verb makes the command undiscoverable'
+        $ctx | Should -Not -Match 'why: Cmdlet Verbs'
     }
 
     It 'a repeated rule renders its rationale exactly ONCE per file (per-rule dedup, 000121)' {
@@ -170,8 +176,8 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
         $ctx = ($out | ConvertFrom-Json).hookSpecificOutput.additionalContext
         # The rule fired at least 3 times (non-vacuous: if it fired once the dedup claim is empty)...
         ([regex]::Matches($ctx, 'PSUseApprovedVerbs')).Count | Should -BeGreaterOrEqual 3
-        # ...and its rationale rendered exactly once.
-        ([regex]::Matches($ctx, 'why: Cmdlet Verbs')).Count | Should -Be 1
+        # ...and its rationale rendered exactly once (the 000142 override text, per slice 2).
+        ([regex]::Matches($ctx, 'why: An unapproved verb makes the command undiscoverable')).Count | Should -Be 1
     }
 
     It 'an OWNED finder carries its hand-authored rationale (BashIsm; 000121)' {
@@ -261,8 +267,9 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
             -StdinJson (@{ session_id = $script:Sid; tool_input = @{ file_path = $fix }; cwd = $dir } | ConvertTo-Json -Compress) `
             -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
         $ctx = ($out | ConvertFrom-Json).hookSpecificOutput.additionalContext
-        # Non-vacuity: the rationale loop ran (a PSSA rule rendered its own 'why:' line)...
-        $ctx | Should -Match 'why: Cmdlet Verbs'
+        # Non-vacuity: the rationale loop ran (a PSSA rule rendered its own 'why:' line -- the
+        # 000142 override text for PSUseApprovedVerbs, per slice 2)...
+        $ctx | Should -Match 'why: An unapproved verb makes the command undiscoverable'
         # ...and the indeterminate shape was surfaced as prose...
         $ctx | Should -Match 'cannot be determined'
         # ...but the ManifestConsistency rationale was NOT fabricated onto it.

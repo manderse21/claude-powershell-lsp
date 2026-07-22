@@ -181,6 +181,54 @@ $script:OwnedRationaleOverrides = @{
     'PSAvoidShouldContinueWithoutForce' =
     "ShouldContinue always prompts and ignores -Confirm:`$false, so an unattended caller has no way " +
     "past it. Add a Force parameter and skip the prompt when it is set."
+
+    # --- slice 2 (dispatch 000142) -----------------------------------------
+    # SHARED EVIDENCE that all five below ALREADY FIRE -- the bar this layer is held to, measured
+    # rather than assumed. Each is (a) a rule the shipped corpus SNAPSHOTS actually contain
+    # (tests/corpus/expected/**/*.json, DERIVED by Update-CorpusSnapshots.ps1 from real analyzer
+    # runs, never hand-authored), and (b) a member of the PSES-15 LIVE DEFAULT surface -- the set a
+    # user sees with no opt-in at all. That makes slice 2 the complement of slice 1, which was
+    # mostly base-only opt-in rules: these five are what the median user actually reads. No new
+    # detection, no new rule, no new owned code -- guidance text only.
+
+    # PSAvoidDefaultValueSwitchParameter (default surface; fires in the corpus). Derived text is
+    # PURELY CIRCULAR -- "Switch parameter should not default to true" restates the rule's own
+    # CommonName and carries neither a why nor a fix.
+    'PSAvoidDefaultValueSwitchParameter' =
+    "A switch defaulting to true cannot be turned off by omitting it -- the caller must write " +
+    "-Name:`$false. Default it to false and invert the logic."
+
+    # PSAvoidUsingCmdletAliases (default surface; fires in the corpus). Derived text is DEFINITIONAL
+    # and truncates mid-sentence ("An alias is an alternate name or nickname for a cmdlet..."), so it
+    # explains what an alias IS and never why using one is a problem. The replacement's claim is
+    # VERIFIED on this machine, not asserted: Get-Command resolves curl/wget to Invoke-WebRequest
+    # aliases under Windows PowerShell 5.1, while under PowerShell 7 curl is curl.exe and wget does
+    # not resolve at all -- same script, same box, a different command.
+    'PSAvoidUsingCmdletAliases' =
+    "curl and wget mean Invoke-WebRequest in Windows PowerShell 5.1 but not in PowerShell 7, and " +
+    "any profile can redefine an alias. Spell the full cmdlet name."
+
+    # PSPossibleIncorrectComparisonWithNull (default surface; fires in the corpus). Derived text is
+    # PURE MECHANISM ("Checks that `$null is on the left side...") -- it states the rule's own
+    # predicate and never names the trap. VERIFIED: @(1, `$null, 2) -eq `$null returns an Object[],
+    # not a boolean, so the comparison silently becomes a filter.
+    'PSPossibleIncorrectComparisonWithNull' =
+    "With an array on the left, -eq filters the array instead of returning a boolean, so " +
+    "`$x -eq `$null is not a null test. Put `$null on the left: `$null -eq `$x."
+
+    # PSUseApprovedVerbs (default surface; fires in the corpus). Derived text is CIRCULAR plus an
+    # appeal to authority ("This is in line with PowerShell's best practices") -- a reader who did
+    # not already agree learns nothing. The replacement names the two concrete consequences.
+    'PSUseApprovedVerbs' =
+    "An unapproved verb makes the command undiscoverable by Get-Command -Verb and makes " +
+    "Import-Module warn on every load. Pick the closest verb from Get-Verb."
+
+    # PSUseDeclaredVarsMoreThanAssignments (default surface; fires in the corpus). Derived text is
+    # PURE MECHANISM ("Ensure declared variables are used elsewhere") -- it restates the check and
+    # omits the reason the finding is worth reading, which is that it is usually a TYPO.
+    'PSUseDeclaredVarsMoreThanAssignments' =
+    "A variable assigned and never read is usually a typo in the name meant to read it, or a " +
+    "leftover from a refactor. Remove it, or fix the misspelled reader."
 }
 
 function Resolve-PssaManifest {

@@ -59,6 +59,7 @@ change rules, not a second copy of the prose.
 | `moduleAwareness` | uninstalled-module command hint (off by default; `suggest` opt-in) |
 | `nativeServe` | native hover/definition/references serve via the handshake shim (off by default; `shim` opt-in) |
 | `referenceSurfacing` | workspace reference-count facts for the edited file (off by default; `counts` opt-in) |
+| `orgPolicy` | org settings psd1 path whose `ExcludeRules` win over local config (empty by default = off) |
 
 <!-- FROZEN-KNOBS:END -->
 
