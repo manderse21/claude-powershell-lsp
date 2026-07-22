@@ -30,6 +30,8 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+
+## [1.26.0] - 2026-07-21
 MINOR: **Flag an unfilled angle-bracket placeholder left on a command line (dispatch 000139, S3.4)**.
 A new plugin-owned pre-PSSA finder, `CommandLinePlaceholder`, flags a literal `<Name>` left on a
 command line -- a signature AI-era defect that is schema-valid to a human eye but a redirection-operator
@@ -62,8 +64,10 @@ grants, running and verifying a release, and the strategic-dispatch hub relation
 as external to this repo). Reconciles the docs so the release runbook lives in exactly one place
 (`docs/RELEASING.md`) and the continuity/maintainer docs link to it. Documents the keyless custody
 story explicitly: there is no long-lived signing key or stored release secret to hand off. Docs only;
-zero code, workflow, or contract change. Final classification (docs PATCH vs no-bump) is deferred to
-the classification pass; recorded here under [Unreleased] per the wave directive.
+zero code, workflow, or contract change. Classified PATCH by the 000141 classification pass: the docs
+are a user-visible addition with no contract change, which the versioning policy above places at PATCH
+rather than no-bump. It rides the v1.26.0 cut, whose MINOR classification is set by the 000139 entry
+above under highest-wins.
 
 ## [1.25.1] - 2026-07-18
 PATCH: **Raise the SCAN daemon's settle cap so the largest scripts settle on ubuntu (dispatch 000133)**.
