@@ -1294,7 +1294,15 @@ Describe 'rulesets/rule-rationales.psd1 -- shipped table invariants (dispatch 00
         # This invariant reads the set from disk, never a literal count, so a dropped/added override
         # goes RED. Adversarial controls: change override_count, drop an override key, or repoint one
         # at a non-base rule -- each fails here.
-        $expected = @('PSAvoidShouldContinueWithoutForce', 'PSAvoidUsingWriteHost', 'PSShouldProcess', 'PSUseSupportsShouldProcess')
+        # Slice 1 (000125): the 4-code idiom family. Slice 2 (000142): the 5 PSES-15 default-surface
+        # rules whose derived text is circular or pure mechanism -- each proven to ALREADY fire by its
+        # presence in the DERIVED corpus snapshots. Adding an override without recording it here is
+        # exactly what this list exists to catch, so it is updated deliberately, never regenerated.
+        $expected = @(
+            'PSAvoidShouldContinueWithoutForce', 'PSAvoidUsingWriteHost', 'PSShouldProcess', 'PSUseSupportsShouldProcess',
+            'PSAvoidDefaultValueSwitchParameter', 'PSAvoidUsingCmdletAliases', 'PSPossibleIncorrectComparisonWithNull',
+            'PSUseApprovedVerbs', 'PSUseDeclaredVarsMoreThanAssignments'
+        )
         $script:RatData.ContainsKey('overrides') | Should -BeTrue
         $ov = $script:RatData['overrides']
         $ovKeys = @($ov.Keys | Sort-Object)
@@ -3316,5 +3324,200 @@ Describe 'pre-push guard refuses a direct push to origin/main (dispatch 000080)'
             Get-PushAuditLogPath -GitCommonDir '/x/.git' -OverridePath '' |
                 Should -Match 'powershell-lsp-push-to-main-bypass\.log$'
         }
+    }
+}
+
+# --- E2.2 org policy layer (dispatch 000142) -------------------------------
+# Three families, exactly as the 000135 execution-ready plan specifies:
+#   (a) off-byte-identical  -- with the knob unset the layer is the identity function
+#   (b) precedence matrix   -- org-exclude WINS on the exclude path, repo-local WINS on
+#                              the include path (the asymmetry that IS the design)
+#   (c) unreadable-path degrade -- @() plus ONE warning, never a throw (fail open)
+
+Describe 'Org policy -- off is byte-identical (dispatch 000142)' {
+    BeforeAll {
+        # Every record shape the client's diagnostics stream actually mixes: a JSON-parsed
+        # daemon record, a pre-PSSA finding, the [ordered] shape ConvertTo-DiagRecord returns,
+        # and a record naming no rule at all.
+        $script:MixedRecords = @(
+            [pscustomobject]@{ severity = 'Warning'; line = 3; col = 5; source = 'PSScriptAnalyzer'; code = 'PSUseApprovedVerbs'; message = 'verb' }
+            [pscustomobject]@{ severity = 'Warning'; line = 1; col = 1; source = 'powershell-lsp'; ruleId = 'NonAsciiChar'; code = 'NonAsciiChar'; message = 'dash' }
+            (ConvertTo-DiagRecord ([pscustomobject]@{ range = [pscustomobject]@{ start = [pscustomobject]@{ line = 0; character = 0 }; end = [pscustomobject]@{ line = 0; character = 4 } }; severity = 2; source = 'PSScriptAnalyzer'; code = 'PSAvoidUsingCmdletAliases'; message = 'alias' }))
+            [pscustomobject]@{ severity = 'Error'; line = 9; col = 2; source = ''; message = 'unexpected token' }
+        )
+    }
+    It 'the knob unset yields NO org constraint (the client short-circuits before the filter)' {
+        # This is the gate that makes every other off-path claim true: with orgPolicy empty the
+        # loader returns @(), so lsp-client's $OrgExcludes.Count -gt 0 guard never even calls
+        # the filter. Adversarial control: return a non-empty list for '' and this goes RED.
+        @(Import-OrgPolicyExcludes -Path '').Count | Should -Be 0
+        @(Import-OrgPolicyExcludes -Path '   ').Count | Should -Be 0
+    }
+    It 'is the identity function over every record shape when no org rules are excluded' {
+        $before = ($script:MixedRecords | ConvertTo-Json -Depth 8 -Compress)
+        $after = (@(Select-OrgPolicyFiltered -Records $script:MixedRecords -OrgExclude @()) | ConvertTo-Json -Depth 8 -Compress)
+        $after | Should -BeExactly $before
+    }
+    It 'treats a list of blank/empty exclusions as no constraint (identity, not a wipe)' {
+        $before = ($script:MixedRecords | ConvertTo-Json -Depth 8 -Compress)
+        $after = (@(Select-OrgPolicyFiltered -Records $script:MixedRecords -OrgExclude @('', '   ')) | ConvertTo-Json -Depth 8 -Compress)
+        $after | Should -BeExactly $before
+    }
+    It 'is identity over the REAL corpus expected-records, and provably not vacuously so' {
+        # Real data, not a fixture: every expected corpus record the repo ships. The second
+        # assertion is the vacuous-pass guard -- if the filter silently matched nothing (e.g. a
+        # shape regression in Get-DiagnosticRuleCode), the identity claim above would still pass
+        # while enforcement was dead. Excluding a rule the corpus really contains MUST drop it.
+        $expectedDir = Join-Path $script:PluginRoot 'tests/corpus/expected'
+        $records = @()
+        foreach ($f in @(Get-ChildItem -LiteralPath $expectedDir -Recurse -Filter '*.json')) {
+            $parsed = (Get-Content -LiteralPath $f.FullName -Raw) | ConvertFrom-Json
+            foreach ($r in @($parsed)) { if ($null -ne $r) { $records += $r } }
+        }
+        $records.Count | Should -BeGreaterThan 0
+        $before = ($records | ConvertTo-Json -Depth 8 -Compress)
+        (@(Select-OrgPolicyFiltered -Records $records -OrgExclude @()) | ConvertTo-Json -Depth 8 -Compress) |
+            Should -BeExactly $before
+        # Non-vacuous: pick a rule the corpus actually carries and prove it drops.
+        $aRule = @($records | ForEach-Object { Get-DiagnosticRuleCode $_ } | Where-Object { $_ } | Select-Object -First 1)[0]
+        $aRule | Should -Not -BeNullOrEmpty
+        $dropped = @(Select-OrgPolicyFiltered -Records $records -OrgExclude @($aRule))
+        $dropped.Count | Should -BeLessThan $records.Count
+        @($dropped | Where-Object { (Get-DiagnosticRuleCode $_) -eq $aRule }).Count | Should -Be 0
+    }
+}
+
+Describe 'Org policy -- precedence matrix (dispatch 000142)' {
+    BeforeAll {
+        # The pipeline SHAPE the client really runs: the local filter (repo-local settings and
+        # the ruleInclude/ruleExclude knobs, applied by the daemon via Select-FilteredDiagnostics)
+        # and THEN the org drop. Composing the two shipped functions -- rather than asserting on
+        # a hand-rolled stand-in -- is what makes this a precedence proof and not a tautology.
+        function Invoke-OrgPipeline {
+            param([object[]]$Records, [string[]]$LocalInclude = @(), [string[]]$LocalExclude = @(), [string[]]$OrgExclude = @())
+            $local = @(Select-FilteredDiagnostics -Records $Records -Threshold 'Hint' -Include $LocalInclude -Exclude $LocalExclude)
+            return @(Select-OrgPolicyFiltered -Records $local -OrgExclude $OrgExclude)
+        }
+        $script:Rec = @(
+            [pscustomobject]@{ severity = 'Warning'; line = 1; col = 1; source = 'PSScriptAnalyzer'; code = 'PSUseApprovedVerbs'; message = 'a' }
+            [pscustomobject]@{ severity = 'Warning'; line = 2; col = 1; source = 'PSScriptAnalyzer'; code = 'PSAvoidUsingCmdletAliases'; message = 'b' }
+            [pscustomobject]@{ severity = 'Warning'; line = 3; col = 1; source = 'PSScriptAnalyzer'; code = 'PSAvoidUsingWriteHost'; message = 'c' }
+        )
+    }
+
+    # --- the EXCLUDE path: org wins, unconditionally -----------------------
+    It 'org exclude WINS over an explicit local ruleInclude of the same rule' {
+        # The load-bearing case. A repo says "report ONLY PSUseApprovedVerbs"; the org says
+        # "never report PSUseApprovedVerbs". The org wins and the surface is empty.
+        $out = Invoke-OrgPipeline -Records $script:Rec -LocalInclude @('PSUseApprovedVerbs') -OrgExclude @('PSUseApprovedVerbs')
+        $out.Count | Should -Be 0
+    }
+    It 'org exclude WINS over a repo-local surface that contains the rule' {
+        $out = Invoke-OrgPipeline -Records $script:Rec -OrgExclude @('PSAvoidUsingCmdletAliases')
+        @($out | ForEach-Object { Get-DiagnosticRuleCode $_ }) | Should -Not -Contain 'PSAvoidUsingCmdletAliases'
+        $out.Count | Should -Be 2
+    }
+    It 'org exclude composes with a local exclude rather than replacing it' {
+        $out = Invoke-OrgPipeline -Records $script:Rec -LocalExclude @('PSAvoidUsingWriteHost') -OrgExclude @('PSUseApprovedVerbs')
+        @($out | ForEach-Object { Get-DiagnosticRuleCode $_ }) | Should -Be @('PSAvoidUsingCmdletAliases')
+    }
+    It 'org exclude matches a rule code case-insensitively (as PSScriptAnalyzer does)' {
+        $out = Invoke-OrgPipeline -Records $script:Rec -OrgExclude @('psuseapprovedverbs')
+        @($out | ForEach-Object { Get-DiagnosticRuleCode $_ }) | Should -Not -Contain 'PSUseApprovedVerbs'
+    }
+    It 'org exclude drops a rule delivered as an ordered-hashtable record (no shape hole)' {
+        # ConvertTo-DiagRecord returns [ordered]@{...}; Get-Prop cannot see dictionary keys, so
+        # without the IDictionary branch in Get-DiagnosticRuleCode an org exclusion would
+        # SILENTLY stop enforcing on this shape. Non-enforcement must never be silent.
+        $ordered = @([ordered]@{ severity = 'Warning'; line = 1; col = 1; source = 'PSScriptAnalyzer'; code = 'PSUseApprovedVerbs'; message = 'a' })
+        @(Select-OrgPolicyFiltered -Records $ordered -OrgExclude @('PSUseApprovedVerbs')).Count | Should -Be 0
+    }
+    It 'org exclude matches on ruleId when that is the only rule field present' {
+        $byRuleId = @([pscustomobject]@{ severity = 'Warning'; line = 1; col = 1; source = 'powershell-lsp'; ruleId = 'NonAsciiChar'; message = 'dash' })
+        @(Select-OrgPolicyFiltered -Records $byRuleId -OrgExclude @('NonAsciiChar')).Count | Should -Be 0
+    }
+
+    # --- the INCLUDE path: repo-local wins, org IncludeRules stay advisory ---
+    It 'repo-local WINS the include path: a local ruleInclude survives an org policy with no exclusions' {
+        $out = Invoke-OrgPipeline -Records $script:Rec -LocalInclude @('PSUseApprovedVerbs') -OrgExclude @()
+        @($out | ForEach-Object { Get-DiagnosticRuleCode $_ }) | Should -Be @('PSUseApprovedVerbs')
+    }
+    It 'repo-local WINS the include path: an org policy cannot force a locally-excluded rule back on' {
+        # The asymmetry, stated as a test: the org can take a rule AWAY, it cannot put one BACK.
+        # A policy declaring IncludeRules for a rule the repo excluded leaves it excluded.
+        $policy = Join-Path $TestDrive ('orgpol-adv-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.psd1')
+        Set-Content -LiteralPath $policy -Encoding ascii -Value "@{ IncludeRules = @('PSAvoidUsingWriteHost'); ExcludeRules = @('PSUseApprovedVerbs') }"
+        $orgExcl = @(Import-OrgPolicyExcludes -Path $policy)
+        $orgExcl | Should -Be @('PSUseApprovedVerbs')            # ONLY ExcludeRules are lifted
+        $out = Invoke-OrgPipeline -Records $script:Rec -LocalExclude @('PSAvoidUsingWriteHost') -OrgExclude $orgExcl
+        @($out | ForEach-Object { Get-DiagnosticRuleCode $_ }) | Should -Be @('PSAvoidUsingCmdletAliases')
+    }
+    It 'never drops a record that carries no rule code (a parser error is not a rule)' {
+        $withParser = @([pscustomobject]@{ severity = 'Error'; line = 9; col = 2; source = ''; message = 'unexpected token' })
+        @(Select-OrgPolicyFiltered -Records $withParser -OrgExclude @('PSUseApprovedVerbs')).Count | Should -Be 1
+    }
+    It 'preserves the order of the surviving records' {
+        $out = Invoke-OrgPipeline -Records $script:Rec -OrgExclude @('PSAvoidUsingCmdletAliases')
+        @($out | ForEach-Object { Get-DiagnosticRuleCode $_ }) | Should -Be @('PSUseApprovedVerbs', 'PSAvoidUsingWriteHost')
+    }
+}
+
+Describe 'Org policy -- fail-open degrade (dispatch 000142)' {
+    It 'lifts ExcludeRules from a well-formed policy, trimmed and de-duplicated' {
+        $policy = Join-Path $TestDrive ('orgpol-ok-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.psd1')
+        Set-Content -LiteralPath $policy -Encoding ascii -Value "@{ ExcludeRules = @('  PSUseApprovedVerbs  ', 'PSAvoidUsingWriteHost', 'PSUseApprovedVerbs') }"
+        $w = ''
+        $out = @(Import-OrgPolicyExcludes -Path $policy -WarningOut ([ref]$w))
+        $out | Should -Be @('PSUseApprovedVerbs', 'PSAvoidUsingWriteHost')
+        $w | Should -BeExactly ''                                 # a good policy warns about nothing
+    }
+    It 'ignores blank and non-string entries in the rule list' {
+        $policy = Join-Path $TestDrive ('orgpol-junk-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.psd1')
+        Set-Content -LiteralPath $policy -Encoding ascii -Value "@{ ExcludeRules = @('PSUseApprovedVerbs', '', '   ', 42, @{ nested = 'x' }) }"
+        @(Import-OrgPolicyExcludes -Path $policy) | Should -Be @('PSUseApprovedVerbs')
+    }
+    It 'a readable policy declaring NO ExcludeRules is a valid no-op, not a degrade' {
+        $policy = Join-Path $TestDrive ('orgpol-empty-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.psd1')
+        Set-Content -LiteralPath $policy -Encoding ascii -Value "@{ IncludeRules = @('PSUseApprovedVerbs') }"
+        $w = ''
+        @(Import-OrgPolicyExcludes -Path $policy -WarningOut ([ref]$w)).Count | Should -Be 0
+        $w | Should -BeExactly ''
+    }
+    It 'a MISSING policy file degrades to @() with ONE warning and never throws' {
+        $missing = Join-Path $TestDrive ('orgpol-missing-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.psd1')
+        $w = ''
+        { @(Import-OrgPolicyExcludes -Path $missing -WarningOut ([ref]$w)) } | Should -Not -Throw
+        @(Import-OrgPolicyExcludes -Path $missing -WarningOut ([ref]$w)).Count | Should -Be 0
+        $w | Should -Match 'not found'
+        @($w -split "`n").Count | Should -Be 1                    # exactly ONE warning, not a stream
+    }
+    It 'an UNPARSEABLE policy file degrades to @() with ONE warning and never throws' {
+        # The arbitrary-code guard doubles as the malformed guard: Import-PowerShellDataFile
+        # parses in RESTRICTED language mode, so a policy containing a command invocation does
+        # not execute -- it fails to parse, and that failure lands here as a degrade.
+        $policy = Join-Path $TestDrive ('orgpol-bad-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.psd1')
+        Set-Content -LiteralPath $policy -Encoding ascii -Value "@{ ExcludeRules = @( this is not valid psd1 <<<"
+        $w = ''
+        { @(Import-OrgPolicyExcludes -Path $policy -WarningOut ([ref]$w)) } | Should -Not -Throw
+        @(Import-OrgPolicyExcludes -Path $policy -WarningOut ([ref]$w)).Count | Should -Be 0
+        $w | Should -Match 'could not be read'
+    }
+    It 'a policy that tries to RUN something is refused by the restricted parser, not executed' {
+        # Proves the safety claim in the function header rather than asserting it in prose: the
+        # sentinel file the policy would create must NOT exist afterwards.
+        $sentinel = Join-Path $TestDrive ('orgpol-sentinel-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.txt')
+        $policy = Join-Path $TestDrive ('orgpol-exec-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.psd1')
+        Set-Content -LiteralPath $policy -Encoding ascii -Value ("@{ ExcludeRules = @( (New-Item -ItemType File -Path '" + $sentinel + "') ) }")
+        $w = ''
+        { @(Import-OrgPolicyExcludes -Path $policy -WarningOut ([ref]$w)) } | Should -Not -Throw
+        Test-Path -LiteralPath $sentinel | Should -BeFalse
+    }
+    It 'a RELATIVE policy path is a WARNED degrade, never silent' {
+        $w = ''
+        @(Import-OrgPolicyExcludes -Path 'org/policy.psd1' -WarningOut ([ref]$w)).Count | Should -Be 0
+        $w | Should -Match 'not absolute'
+    }
+    It 'tolerates a caller that passes no warning sink at all' {
+        { @(Import-OrgPolicyExcludes -Path 'org/policy.psd1') } | Should -Not -Throw
     }
 }

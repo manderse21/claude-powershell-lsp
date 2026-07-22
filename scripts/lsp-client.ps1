@@ -69,6 +69,22 @@ function Write-CLog([string]$m) {
     try { ('[' + (Get-Date -Format 'o') + '] ' + $m) | Out-File -FilePath $clientLog -Append -Encoding ascii } catch { }
 }
 
+# Org policy (E2.2, dispatch 000142): the OUTERMOST, centrally-managed settings layer, above
+# the repo-local settings file. OFF by default (empty path) -- and when off $OrgExcludes is
+# @(), Select-OrgPolicyFiltered is the identity function, and every surface below is
+# byte-for-byte what it was before this layer existed. Resolved ONCE here (the policy file is
+# read once per hook process, never once per finding), and deliberately AFTER Write-CLog so a
+# degrade can be logged the moment it is detected. A degrade -- relative path, missing file,
+# unparseable data -- yields @() plus exactly ONE logged warning: the org's exclusions stop
+# applying (fail open, the edit is never blocked) but the reason is never silent.
+$OrgPolicyWarning = ''
+$OrgExcludes = @(Import-OrgPolicyExcludes -Path (Get-PluginOption 'orgPolicy' '') -WarningOut ([ref]$OrgPolicyWarning))
+if ($OrgPolicyWarning -ne '') {
+    Write-CLog $OrgPolicyWarning
+} elseif ($OrgExcludes.Count -gt 0) {
+    Write-CLog ('org policy: enforcing ' + $OrgExcludes.Count + ' excluded rule(s)')
+}
+
 function Write-HookContext([string]$Context) {
     # PostToolUse output contract (D3): non-blocking feedback via
     # hookSpecificOutput.additionalContext on exit 0. Used by both the parser
@@ -339,6 +355,22 @@ try {
         Write-CLog ('pre-PSSA bash-ism scan threw (degrading gracefully): ' + $_.Exception.Message)
         $bashismFindings = $null
     }
+    # Org policy drop, surface 1 of 2 (E2.2, dispatch 000142): apply the org ExcludeRules to the
+    # pre-PSSA findings BEFORE $hasPrePssa is computed. Doing it here rather than inside the
+    # early-exit block below is what makes the layer coherent on this path: an org policy that
+    # excludes every pre-PSSA finding on a cleanly-parsing file must not leave the early exit
+    # firing on an empty set -- the file should fall through to the daemon and get full analysis,
+    # exactly as if those findings had never been raised. It also means $prePssaFindings is
+    # already filtered where it is merged into $diags on the daemon path below, so the pre-PSSA
+    # shapes are covered on BOTH surfaces by this one statement. Parse errors are untouched: an
+    # org rule list names PSScriptAnalyzer rules, and a syntax error is not a rule.
+    if ($OrgExcludes.Count -gt 0 -and $null -ne $prePssaFindings -and $prePssaFindings.Count -gt 0) {
+        $beforeOrg = $prePssaFindings.Count
+        $prePssaFindings = @(Select-OrgPolicyFiltered -Records $prePssaFindings -OrgExclude $OrgExcludes)
+        if ($prePssaFindings.Count -ne $beforeOrg) {
+            Write-CLog ('org policy dropped ' + ($beforeOrg - $prePssaFindings.Count) + ' pre-PSSA finding(s)')
+        }
+    }
     $hasParseErrors = ($null -ne $parseErrors -and $parseErrors.Count -gt 0)
     $hasPrePssa = ($null -ne $prePssaFindings -and $prePssaFindings.Count -gt 0)
     if ($hasParseErrors -or $hasPrePssa) {
@@ -513,6 +545,22 @@ try {
         if ($determinate.Count -gt 0) { $diags = @($determinate) + @($diags) }
         if ($indeterminate.Count -gt 0) {
             $indeterminateMsg = @($indeterminate | ForEach-Object { [string](Get-Prop $_ 'message') })
+        }
+    }
+    # Org policy drop, surface 2 of 2 (E2.2, dispatch 000142): THE FINAL SUBTRACTIVE PASS over
+    # the settled diagnostics stream. Deliberately placed after EVERY merge above (daemon
+    # diagnostics, pre-PSSA, compat, bash-ism, project findings) and before the render loop,
+    # Write-HookContext, and Add-DiagnosticCaptureEntries below -- so one statement covers the
+    # live surface, the dogfood capture, and the SARIF scan (which runs this client per file),
+    # and no path can re-add a dropped record. This is where "org wins for excludes" is actually
+    # enforced: the daemon has already applied the repo-local settings and the ruleInclude knob,
+    # so anything a local include put on the surface is still subject to the org's drop.
+    # $OrgExcludes empty (the default) short-circuits, leaving $diags untouched.
+    if ($OrgExcludes.Count -gt 0 -and $diags.Count -gt 0) {
+        $beforeOrg = $diags.Count
+        $diags = @(Select-OrgPolicyFiltered -Records $diags -OrgExclude $OrgExcludes)
+        if ($diags.Count -ne $beforeOrg) {
+            Write-CLog ('org policy dropped ' + ($beforeOrg - $diags.Count) + ' diagnostic(s)')
         }
     }
     # Closed-loop agentic correction (dispatch 000061): the daemon's additive cleared[]/

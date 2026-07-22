@@ -30,6 +30,51 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+
+## [1.27.0] - 2026-07-22
+MINOR: **org policy layer -- a centrally-managed settings voice above the repo-local file
+(`orgPolicy`).** A new `userConfig` knob takes an **absolute** path to an organization's
+`PSScriptAnalyzerSettings.psd1` and **enforces its `ExcludeRules`**: they are applied client-side
+as a **final subtractive drop** over the surfaced findings, *after* every local filter, at BOTH
+client surface points (the pre-PSSA early exit and the daemon-response path) and before the hook
+emit and the dogfood capture -- so one rule covers the live surface, the capture, and the SARIF
+scan. A rule the organization excludes therefore **cannot be re-enabled** by a repo-local
+`PSScriptAnalyzerSettings.psd1` or by `ruleInclude`. The policy's own `IncludeRules` stay
+**advisory** and repo-local wins the include path: an org can take a rule away, it cannot force one
+on. **Fails open, never silently** -- a missing, unreadable, unparseable, or relative policy path
+applies no exclusions and logs exactly one warning rather than blocking the edit; the file is read
+through `Import-PowerShellDataFile` (PowerShell's **restricted**, data-only parser), so a policy
+can never execute code. Parse errors are never dropped (a syntax error is not a rule) and rule
+names match case-insensitively. The knob is **off by default (empty)**, every branch is gated on it
+being set, and the daemon is structurally untouched -- with `orgPolicy` unset the surfaced output
+is **byte-identical** to the previous build, proven over the shipped corpus records. Adds
+`Import-OrgPolicyExcludes`, `Select-OrgPolicyFiltered`, and `Get-DiagnosticRuleCode` to
+`scripts/lib/lsp-common.ps1`; `CONTRACT.md` gains one FROZEN-KNOBS row (proven RED then GREEN
+against the set-equality guard), with matching README and `docs/configuration.md#orgpolicy`
+entries. 22 new unit tests across three families (off-identity, a 10-case precedence matrix,
+fail-open degrade), four of them mutation-proven RED. See dispatch 000142 (design recorded in
+000135).
+
+PATCH: **idiom guidance slice 2 -- hand-authored rationale overrides on the five default-surface
+rules whose derived text explained nothing.** Guidance quality only: **no new detection, no new
+rule, no new owned code, no knob**, riding the existing v1.24.0 rationale channel. Slice 1 (000125)
+covered a 4-code idiom family that was mostly **opt-in** (`base`-only); slice 2 covers the rules the
+median user actually reads -- five members of the **PSES-15 live default surface**, each proven to
+already fire by its presence in the **derived** corpus snapshots (`tests/corpus/expected`, produced
+by `Update-CorpusSnapshots.ps1` from real analyzer runs, never hand-authored). Replaced because the
+auto-derived PSScriptAnalyzer text is circular or pure mechanism: `PSAvoidDefaultValueSwitchParameter`
+("Switch parameter should not default to true" restates the rule name), `PSAvoidUsingCmdletAliases`
+(defines what an alias *is*, and truncates mid-sentence), `PSPossibleIncorrectComparisonWithNull`
+(states the rule's own predicate, never the trap), `PSUseApprovedVerbs` (circular plus "in line with
+best practices"), and `PSUseDeclaredVarsMoreThanAssignments` (restates the check). Each replacement
+names a concrete consequence and a fix, and the two most falsifiable claims were **verified on-host
+rather than asserted**: `curl`/`wget` resolve to `Invoke-WebRequest` aliases under Windows PowerShell
+5.1 but not under PowerShell 7, and `@(1, $null, 2) -eq $null` returns an `Object[]`, not a boolean.
+Override count 4 -> 9; `regen-rule-rationales.ps1 -Check` green at pin 1.25.0 (59 entries = 53 PSSA +
+6 owned). Three Integration assertions that pinned the *derived* `PSUseApprovedVerbs` text now pin
+the override and assert the derived text is gone -- the live-daemon proof that the layer reaches the
+default surface. See dispatch 000142.
+
 PATCH (docs): **documented release Gate 5 and corrected the tag-command convention.** The release
 runbook described four pipeline gates while the shipped workflow runs five: `docs/RELEASING.md` now
 documents **Gate 5 -- tree-vs-published parity** (the dispatch 000076 divergence guard,

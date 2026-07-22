@@ -410,6 +410,152 @@ function Resolve-PssaSettingsPath {
     return (Get-RulesetFallbackPath $Ruleset)
 }
 
+# --- org policy layer (E2.2, dispatch 000142) ------------------------------
+# The OUTERMOST, centrally-managed voice -- the one layer ABOVE the repo-local settings
+# file the precedence chain above resolves. An organization points the `orgPolicy` knob at
+# a settings .psd1 on a share; its ExcludeRules are ENFORCED, applied client-side as a FINAL
+# subtractive drop over the surfaced findings, AFTER every local include. So a rule the org
+# excludes can never be re-enabled by a repo-local PSScriptAnalyzerSettings.psd1 or by the
+# `ruleInclude` knob. The org's own IncludeRules stay ADVISORY (repo-local wins the include
+# path): an org can take a rule away, it cannot force one on. That include/exclude asymmetry
+# IS the design (dispatch 000135, decision 1) -- not an omission.
+#
+# Client-side by construction (dispatch 000135, the same decision record): the daemon, its
+# launch, and its session-start threading are structurally untouched, and every branch is
+# gated on the knob being set -- so with `orgPolicy` unset the surfaced bytes are identical
+# to the pre-layer build.
+
+function Import-OrgPolicyExcludes {
+    # Read the ExcludeRules of the org settings .psd1 at $Path as a trimmed, de-duplicated
+    # string[] of rule codes. @() means "no org constraint" -- and @() is also the answer for
+    # EVERY failure: relative path, missing file, unreadable file, unparseable data, or a
+    # shape that carries no rule list.
+    #
+    # FAIL-OPEN is the load-bearing invariant: an org policy that cannot be read must never
+    # break the user's edit (the hook never fails). But a policy that silently stops enforcing
+    # is its own hazard, so every degrade sets $WarningOut ONCE to a human-readable reason and
+    # the caller logs it. Two cases are deliberately NOT degrades and set no warning: an empty
+    # $Path (the knob is off), and a readable policy that simply declares no ExcludeRules (a
+    # valid no-op policy).
+    #
+    # Parsed with Import-PowerShellDataFile, which evaluates the file in PowerShell's
+    # RESTRICTED language mode -- data only, no command invocation, no expressions. That is
+    # why the client may read THIS .psd1 itself where Resolve-PssaSettingsPath deliberately
+    # does not: that path hands its file to PSES to consume as full settings, whereas this one
+    # only lifts a string array out through the data-only parser. Same idiom as the shipped
+    # Import-RuleRationales. Verified present with -LiteralPath on BOTH hosts (Windows
+    # PowerShell 5.1 and PowerShell 7); the 7-only -SkipLimitCheck is deliberately not used.
+    #
+    # ABSOLUTE only, mirroring settingsPath (dispatch 000018): a relative org path would
+    # resolve against the hook process's current directory -- whatever folder Claude Code
+    # happened to launch in -- which is not a stable org-wide location. Unlike settingsPath
+    # (which is silently ignored) a relative org path IS a warned degrade: silence is exactly
+    # the failure mode an enforcement layer cannot afford.
+    #
+    # Adversarial control: drop the [string] type test and 'ignores non-string entries' goes
+    # RED; drop the try/catch and 'an unparseable policy degrades without throwing' goes RED;
+    # accept a relative path and 'a relative path is a warned degrade' goes RED.
+    param([string]$Path, [ref]$WarningOut)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return @() }
+    $reason = ''
+    $codes = @()
+    try {
+        if (-not [System.IO.Path]::IsPathRooted($Path)) {
+            $reason = 'orgPolicy path is not absolute; no org exclusions applied: ' + $Path
+        } else {
+            $full = [System.IO.Path]::GetFullPath($Path)
+            if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+                $reason = 'orgPolicy file not found; no org exclusions applied: ' + $full
+            } else {
+                $data = Import-PowerShellDataFile -LiteralPath $full
+                if ($null -ne $data -and $data.ContainsKey('ExcludeRules')) {
+                    $seen = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+                    foreach ($entry in @($data['ExcludeRules'])) {
+                        # A rule code is a STRING. A nested table or a number in the list is
+                        # malformed policy, not a rule -- skip it rather than stringify it into
+                        # a code that can never match (or, worse, one that matches nothing while
+                        # looking like enforcement).
+                        if ($entry -isnot [string]) { continue }
+                        $c = $entry.Trim()
+                        if ([string]::IsNullOrWhiteSpace($c)) { continue }
+                        if ($seen.Add($c)) { $codes += $c }
+                    }
+                }
+            }
+        }
+    } catch {
+        $reason = 'orgPolicy could not be read; no org exclusions applied: ' + $_.Exception.Message
+        $codes = @()
+    }
+    if ($reason -ne '' -and $null -ne $WarningOut) { $WarningOut.Value = $reason }
+    return @($codes)
+}
+
+function Get-DiagnosticRuleCode {
+    # The rule code of ONE diagnostic record, across every shape the client's stream carries.
+    # This exists because Get-Prop alone is NOT sufficient here: it resolves via
+    # $Object.PSObject.Properties, which sees the members of a [pscustomobject] (the JSON-parsed
+    # daemon records and the pre-PSSA findings) but NOT the keys of a [hashtable] or the
+    # [ordered] hashtable that ConvertTo-DiagRecord itself returns -- for those it returns $null.
+    # A $null code reads as "no code", and a record with no code is never dropped, so relying on
+    # Get-Prop alone would make an org exclusion SILENTLY stop enforcing the moment a record
+    # arrived as a dictionary. Silent non-enforcement is the one failure an enforcement layer
+    # cannot have, so dictionaries are resolved by key first and PSObjects second.
+    #
+    # Falls back to 'ruleId' -- the field name the pre-PSSA finders and the corpus derivation
+    # use -- so a record that carries only that name is still matchable. Returns '' when the
+    # record names no rule at all (a parser error).
+    #
+    # Adversarial control: delete the IDictionary branch and 'drops a rule delivered as an
+    # ordered hashtable' goes RED; delete the ruleId fallback and 'matches on ruleId' goes RED.
+    param($Record)
+    if ($null -eq $Record) { return '' }
+    foreach ($name in @('code', 'ruleId')) {
+        if ($Record -is [System.Collections.IDictionary]) {
+            if ($Record.Contains($name)) {
+                $v = [string]$Record[$name]
+                if (-not [string]::IsNullOrWhiteSpace($v)) { return $v }
+            }
+        } else {
+            $v = [string](Get-Prop $Record $name)
+            if (-not [string]::IsNullOrWhiteSpace($v)) { return $v }
+        }
+    }
+    return ''
+}
+
+function Select-OrgPolicyFiltered {
+    # THE FINAL SUBTRACTIVE DROP: remove every record whose rule code the org policy excludes.
+    # Pure, order-preserving, and deliberately NOT severity- or include-aware -- it runs AFTER
+    # every other filter, so anything a local include (a repo-local settings file or the
+    # `ruleInclude` knob) put on the surface is still subject to it, and no code path can
+    # re-add a dropped record. That ordering IS the "org wins for excludes" semantic.
+    #
+    # An empty $OrgExclude makes this the IDENTITY function -- that is what makes the knob-off
+    # surface byte-identical. Matching is on the record's rule code via Get-DiagnosticRuleCode,
+    # which handles every shape the client's stream mixes (PSCustomObject daemon records from
+    # JSON, the pre-PSSA finding shape, and dictionary records). A record with NO code (a parser
+    # error) is never dropped: an org rule list names PSScriptAnalyzer rules, and a syntax error
+    # is not a rule. Comparison is case-insensitive, as PSScriptAnalyzer's own matching is.
+    #
+    # Adversarial control: make the comparison ordinal-case-sensitive and 'matches a rule code
+    # case-insensitively' goes RED; drop the no-code passthrough and 'never drops a record that
+    # carries no code' goes RED; return $Records unconditionally and the precedence matrix goes RED.
+    param([object[]]$Records, [string[]]$OrgExclude = @())
+    if ($null -eq $Records) { return @() }
+    $exc = @($OrgExclude | Where-Object { $_ })
+    if ($exc.Count -eq 0) { return @($Records) }
+    $set = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($e in $exc) { [void]$set.Add(([string]$e).Trim()) }
+    $out = @()
+    foreach ($r in $Records) {
+        $code = Get-DiagnosticRuleCode $r
+        if (-not [string]::IsNullOrWhiteSpace($code) -and $set.Contains($code)) { continue }
+        $out += $r
+    }
+    return @($out)
+}
+
 # --- telemetry / stats (Track A) -------------------------------------------
 # Observe-only per-edit timing. The writer is best-effort and FAIL-SAFE by
 # contract: any failure (locked file, a directory squatting the path, disk full)

@@ -348,6 +348,64 @@ cross-file counts reflect the workspace as of session start.
 It **never rewrites your file** and adds **no** edit-path network. `off` (the default) builds no index,
 runs no check, and the diagnostics surface is byte-for-byte unchanged.
 
+## orgPolicy
+
+**What it does.** Points the plugin at a centrally-managed `PSScriptAnalyzerSettings.psd1` -- an
+organization's own settings layer -- and **enforces its `ExcludeRules`** over whatever the local
+project configures.
+
+**Type:** string (absolute path). **Default:** empty (off).
+
+This is the **outermost** layer in the settings precedence chain, the only one that sits *above*
+the repo-local file:
+
+| Layer | Source | Effect |
+|-------|--------|--------|
+| **org policy** | `orgPolicy` (this knob) | its `ExcludeRules` are **enforced** and cannot be re-enabled locally |
+| explicit override | `settingsPath` | wins over discovery for everything below |
+| repo-local | nearest `PSScriptAnalyzerSettings.psd1`, walked up from the edited file | wins over the ruleset and the default |
+| plugin base ruleset | shipped `rulesets/base.psd1` when `ruleset` = `base` | wins over the default only |
+| PSES default | -- | PSES's own no-settings rule set |
+
+**The exclude path: the org wins.** Rules listed in the policy's `ExcludeRules` are applied as a
+**final subtractive drop** over the surfaced findings, *after* every other filter has run. A rule
+your organization excludes therefore cannot be brought back by a repo-local
+`PSScriptAnalyzerSettings.psd1`, by `ruleInclude`, or by any other local setting -- there is no
+code path that re-adds a dropped finding.
+
+**The include path: repo-local wins.** The policy's own `IncludeRules` are **advisory** and are not
+read. An organization can take a rule **away**; it cannot force one **on**. That asymmetry is the
+design, not an omission: central config is useful for suppressing noise fleet-wide, whereas forcing
+extra rules onto a project that has deliberately excluded them produces findings nobody acts on.
+
+**It fails open, but never silently.** Every failure -- a missing file, an unreadable file, an
+unparseable one, or a **relative** path (only absolute paths are honored, for the same reason as
+`settingsPath`: a relative path would resolve against whatever directory Claude Code launched in)
+-- applies **no** exclusions and writes exactly **one** warning to `logs/lsp-client.log`. A policy
+that cannot be read never blocks your edit, and never quietly stops enforcing without saying so. A
+readable policy that simply declares no `ExcludeRules` is a valid no-op and warns about nothing.
+
+**It cannot execute code.** The policy file is read through `Import-PowerShellDataFile`, which
+parses in PowerShell's **restricted** language mode -- data only, no commands, no expressions. A
+policy file containing a command invocation fails to parse (and degrades as above) rather than
+running it.
+
+Parse errors are never dropped: an `ExcludeRules` list names PSScriptAnalyzer rules, and a syntax
+error is not a rule. Rule names match **case-insensitively**, as PSScriptAnalyzer's own do. Empty
+(the default) reads no file, applies no filter, and leaves the diagnostics surface byte-for-byte
+identical to a build without this layer.
+
+Example policy on a share:
+
+```powershell
+@{
+    ExcludeRules = @(
+        'PSAvoidUsingWriteHost',
+        'PSUseShouldProcessForStateChangingFunctions'
+    )
+}
+```
+
 ---
 
 ## The config panel and this reference
@@ -359,6 +417,6 @@ renderer ghost-row corruption (surveyed in dispatch 000109). To keep the panel h
 manifest descriptions are capped and the full semantics relocated here.
 
 This mitigates but does not fix the underlying Claude Code behavior: on a terminal shorter than
-about 28 rows the 18-knob panel can still overflow regardless of description length (the base rows
+about 28 rows the 19-knob panel can still overflow regardless of description length (the base rows
 alone exceed the viewport), and the renderer bug and the absence of an enum picker remain upstream
 defects. This reference is the durable home for the details; the panel summaries point here.
