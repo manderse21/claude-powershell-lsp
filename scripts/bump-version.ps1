@@ -12,8 +12,10 @@
 # (UTF-8 no BOM) and line endings are preserved byte-for-byte everywhere else, so the
 # only diff is the intended version change.
 #
-# Tagging is Mike's gate: the script PRINTS the post-merge git tag command but NEVER
-# runs git tag / git push.
+# Tagging is Mike's gate AND the pipeline's job: this script NEVER runs git tag / git push.
+# It prints the manual-fallback tag commands for reference only -- the release path is to
+# trigger the "powershell-lsp release" workflow with the target version, which cuts the tag
+# itself (gitsign-signed, SLSA-attested) after its five gates pass. See docs/RELEASING.md.
 #
 # Usage:  pwsh -File scripts/bump-version.ps1 1.4.0           # dry run (default)
 #         pwsh -File scripts/bump-version.ps1 1.4.0 -Apply    # write both manifests
@@ -115,9 +117,15 @@ if ($Apply) {
     }
 }
 
-# --- print the tag command (Mike's gate; never executed here) --------------
+# --- print the release path, then the manual fallback (neither executed here) ----
 Write-Host ''
-Write-Host 'Tagging is a manual gate -- run these AFTER the release merges to main:'
+Write-Host 'TO RELEASE, after this bump merges to main: trigger the pipeline. It cuts the tag'
+Write-Host 'itself (gitsign-signed, SLSA-attested) once its five gates pass:'
+Write-Host ('  gh workflow run "powershell-lsp release" -f version=' + $Version)
+Write-Host ''
+Write-Host 'MANUAL FALLBACK ONLY -- use if the pipeline is unavailable. A hand-cut tag is'
+Write-Host 'UNSIGNED and UNATTESTED, and Gate 2 will refuse the pipeline until it is deleted.'
+Write-Host 'Do not run these as part of a normal release (see docs/RELEASING.md):'
 Write-Host ('  git tag v' + $Version)
 Write-Host ('  git push origin v' + $Version)
 

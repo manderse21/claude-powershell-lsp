@@ -30,6 +30,22 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH (docs): **documented release Gate 5 and corrected the tag-command convention.** The release
+runbook described four pipeline gates while the shipped workflow runs five: `docs/RELEASING.md` now
+documents **Gate 5 -- tree-vs-published parity** (the dispatch 000076 divergence guard,
+`release/Test-PublishedParity.ps1`, which refuses a release that is behind the version the
+marketplace actually resolves from the `origin/main` tip) and every "four gates" count is corrected
+to five. Separately, printed `git tag` / `git push origin v<version>` commands are no longer
+presented anywhere as the release path: the pipeline cuts the tag (gitsign-signed, SLSA-attested),
+and the printed pair is labelled a MANUAL FALLBACK for an unavailable pipeline. Corrected in
+`docs/RELEASING.md` (a new standing callout plus step 3) and in `scripts/bump-version.ps1`, whose
+post-bump output now prints the workflow trigger first and the fallback second, with the warning
+that a hand-cut tag is unsigned, unattested, and blocks the pipeline via Gate 2 until deleted. The
+v1.26.0 release proved the hazard: a pre-existing `v1.26.0` tag had to be deleted before the
+pipeline could cut its own. `ROADMAP-powershell-lsp.md` is trued to v1.26.0-released ground truth in
+the same change. Docs and printed text only -- no product code, knob, ruleset, rationale,
+exit-code, `CONTRACT.md`, or version change; `bump-version.ps1`'s logic and exit codes are
+untouched. See dispatch 000143.
 
 ## [1.26.0] - 2026-07-21
 MINOR: **Flag an unfilled angle-bracket placeholder left on a command line (dispatch 000139, S3.4)**.
