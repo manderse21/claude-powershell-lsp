@@ -18,6 +18,17 @@ tag had to be deleted and recreated. The pipeline removes that entire class of e
 cutting the tag itself, on a commit it has already validated, so a tag can never land on an
 unvalidated or wrong commit.
 
+> **The pipeline cuts the tag. Printed `git tag` commands are a FALLBACK, not the release path.**
+> Several tools and documents print a `git tag` / `git push origin v<version>` pair for reference.
+> They exist for the [manual fallback](#manual-fallback-if-the-pipeline-misbehaves) -- the case
+> where the pipeline itself is unavailable -- and running one as part of a normal release is a
+> process error, not a shortcut. A hand-cut tag is **unsigned and unattested** (the keyless gitsign
+> signature and the SLSA provenance both require the workflow's server-issued OIDC identity), and
+> because Gate 2 refuses a tag that already exists, it also *blocks* the pipeline until someone
+> deletes it. This is not hypothetical: it happened on the v1.26.0 release, where a pre-existing
+> `v1.26.0` tag had to be deleted before the pipeline could cut its own. **To release, trigger the
+> workflow with the target version** (step 5 below) -- never a printed command.
+
 The pipeline is the GitHub Actions workflow [`powershell-lsp release`](../.github/workflows/powershell-lsp-release.yml)
 that the maintainer triggers manually; it never runs on push or merge. At a high level,
 cutting a release means opening a pull request that bumps the version and records the change,
@@ -42,8 +53,11 @@ release. The exact steps and the exact checks follow below.
    This entry becomes the release notes verbatim, so write it for the reader of the release.
 
 3. **Open a pull request and merge it.** The PR runs the four-leg CI. Merge to main once it is
-   green and reviewed. (Tagging is intentionally NOT done here -- the bump helper prints the
-   tag command for reference but never runs it; the pipeline cuts the tag.)
+   green and reviewed. **Do not tag here, and do not run the tag commands the bump helper
+   prints.** Those are a manual FALLBACK for a broken pipeline (see
+   [Manual fallback](#manual-fallback-if-the-pipeline-misbehaves)), never the release path --
+   the pipeline cuts the tag in step 5. A hand-cut tag is unsigned and unattested, and it will
+   make Gate 2 refuse the pipeline run until someone deletes it.
 
 4. **(Optional) Wait for the push CI on main to go green.** After the merge, the
    [`powershell-lsp CI`](../.github/workflows/powershell-lsp-ci.yml) workflow runs on the
@@ -73,7 +87,7 @@ release. The exact steps and the exact checks follow below.
 
 ## What the pipeline validates (the gates)
 
-The workflow runs four gates before it will tag anything. Each gate that fails stops the run
+The workflow runs five gates before it will tag anything. Each gate that fails stops the run
 with a clear error and **tags nothing** -- the safe direction is always to refuse.
 
 - **Gate 1 -- merged to main.** The target commit must be an ancestor of (or equal to)
@@ -95,10 +109,18 @@ with a clear error and **tags nothing** -- the safe direction is always to refus
   triggering the release before CI had finished refused a run that was about to pass. (The two
   values are set as `CI_WAIT_TIMEOUT_SECONDS` and `CI_WAIT_POLL_SECONDS` in the release
   workflow's Gate 4 step.)
+- **Gate 5 -- tree-vs-published parity.** The version being released must not be BEHIND the
+  version the marketplace actually resolves. The marketplace entry has source `"./"` with no ref
+  pin, so it serves whatever `.claude-plugin/plugin.json` says at the `origin/main` tip; this gate
+  compares the target commit's manifest against that published tip via
+  [`release/Test-PublishedParity.ps1`](../release/Test-PublishedParity.ps1) and refuses a release
+  that would leave the two diverged. It is the divergence guard added by dispatch 000076, after the
+  registry silently served a stale `1.3.0` while the tree was already at `1.18.x` -- that class of
+  drift is a structural refusal here rather than a surprise discovered weeks later.
 
-Because the tag is cut by the pipeline only after all four gates pass -- never by a
-hand-typed `git tag` -- a tag on an unmerged, red, wrong-version, or wrong commit is
-structurally impossible.
+Because the tag is cut by the pipeline only after all five gates pass -- never by a
+hand-typed `git tag` -- a tag on an unmerged, red, wrong-version, wrong-commit, or
+behind-the-published-tip release is structurally impossible.
 
 > **If the CI matrix changes legs,** update the `REQUIRED_LEGS` list in the release workflow
 > to match `powershell-lsp-ci.yml`'s `matrix.label` set. A leg that is required but missing
