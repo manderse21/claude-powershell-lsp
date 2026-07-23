@@ -1,42 +1,60 @@
 # claude-powershell-lsp -- Roadmap
 
-Status as of 2026-07-22. Plugin on main: **v1.26.0**, GPL-3.0-or-later. **A v1.27.0 cut is staged
-but UNMERGED and UNRELEASED** (dispatch 000142): both manifests read 1.27.0 on the
-`dispatch/000142-org-policy` branch behind an open PR, with a dated `## [1.27.0] - 2026-07-22`
-CHANGELOG heading over one MINOR entry (E2.2 org policy) and two PATCH entries (N1.1 slice 2, and
-000143's release-docs correction). Nothing about that cut is tagged, released, or merged -- merging
-the PR and triggering the release pipeline are Mike's gates. Everything below about v1.26.0 remains
-the state of `origin/main`. The v1.26.0 version is TAGGED,
-gitsign-signed, and RELEASED (verified-from-web this session): an annotated, gitsign-signed tag
-v1.26.0 sits at commit 22bec89 on origin (tag object c26e580, tagged by `github-actions[bot]` from
-the release runner), `git describe --tags origin/main` returns `v1.26.0` exactly -- the tip IS the
-tagged commit -- and the v1.26.0 GitHub Release is published as the current **Latest**
-(2026-07-22T12:06:42Z; `gh api repos/manderse21/claude-powershell-lsp/releases/latest` returns
-v1.26.0, draft=false, prerelease=false). The old publish gap (the registry once served a stale
-1.3.0) stays CLOSED.
+Status as of 2026-07-22. Plugin on main: **v1.27.0**, GPL-3.0-or-later. The v1.27.0 version is
+TAGGED, gitsign-signed, and RELEASED (verified-from-web this session): an annotated, gitsign-signed
+tag v1.27.0 sits at commit fddba38 on origin, tagged by `github-actions[bot]` from the release
+runner, `git describe --tags origin/main` returns `v1.27.0` exactly -- the tip IS the tagged commit
+-- and the v1.27.0 GitHub Release is published as the current **Latest**
+(2026-07-22T22:30:18Z; `gh api repos/manderse21/claude-powershell-lsp/releases/latest` returns
+v1.27.0, draft=false, prerelease=false, author `github-actions[bot]`), carrying both assets. Both
+manifests read 1.27.0 at that tip, over a dated `## [1.27.0] - 2026-07-22` CHANGELOG heading. The
+old publish gap (the registry once served a stale 1.3.0) stays CLOSED.
 
 **The cut was made by the PIPELINE, not by hand** (verified-from-web, and the distinction is the
-whole point of Section 3): the tag's Sigstore certificate names
+whole point of Section 3): the v1.27.0 tag's own Sigstore certificate names
 `.github/workflows/powershell-lsp-release.yml@refs/heads/main` as its build signer on a
-`workflow_dispatch` trigger (release run **29918156282**), and both published assets --
-`powershell-lsp-1.26.0.tar.gz` and `powershell-lsp-1.26.0.cdx.json` -- pass `gh attestation verify`
-(exit 0) against SLSA build provenance issued by that same workflow over source digest 22bec89.
-Both push workflows are GREEN on that exact tip, headSha-matched per rule 000081: CI run
-**29882589709** and code-scanning run **29882589757**.
+`workflow_dispatch` trigger, and its Run Invocation URI names the producing run outright --
+`.../actions/runs/29962928958/attempts/1`, i.e. release run **29962928958**. That id is READ OUT OF
+THE CERTIFICATE, not inferred from the run list, and the SLSA attestation agrees independently:
+`metadata.invocationId` is the same run, `builder.id` the same workflow ref, and the resolved source
+digest is `fddba380eb9820454f61eb730c4cda683278c6fa`. Both published assets --
+`powershell-lsp-1.27.0.tar.gz` and `powershell-lsp-1.27.0.cdx.json` -- pass `gh attestation verify`
+(exit 0), one attestation covering both subjects. That pass is not vacuous: a one-byte-tampered copy
+of the SBOM and a nonexistent filename each exit 1 (HTTP 404 on the tampered digest; "failed to open
+local artifact" on the missing one), both measured this session.
 
-**v1.25.1 is SUPERSEDED** (verified-from-web): it is still tagged (tag object f92ff79 over commit
-c9692ca) and its GitHub Release is still published (2026-07-19T00:41:38Z), but it no longer carries
-the current-release badge -- `gh release list` marks exactly one Latest, and that is now v1.26.0.
+Both push workflows are GREEN on that exact tip, headSha-matched per rule 000081 -- each reports
+headSha `fddba380eb9820454f61eb730c4cda683278c6fa`, so neither is a stale grab: CI run
+**29961874404** with all four legs green BY NAME (`ubuntu-pwsh`, `macos-pwsh`, `windows-pwsh`,
+`windows-powershell`), and code-scanning run **29961874412** (`sarif-upload` success).
+
+**Three release-workflow runs sit on that commit, and all three are correct behavior.** Run
+**29961881444** (22:09:45Z) is the DRY RUN: all five gates pass, every mutating step is skipped, and
+it ends in "Dry-run summary (no tag cut, no release created)". Run **29962928958** (22:27:43Z) is
+the producing run the certificate names: it builds the archive and SBOM, attests provenance,
+installs gitsign, cuts and pushes the signed tag, and creates the Release. Run **29963082061**
+(22:30:18Z) is a duplicate trigger that **Gate 2 refused**: run 29963082061 logged `tag v1.27.0
+already exists -- refusing to re-release (delete the tag deliberately if a re-cut is truly
+intended)`. That refusal is the gate working exactly as designed -- it is the second live Gate 2
+demonstration, after the v1.26.0 hand-tag collision 000143 documented, and the first in which the
+tag Gate 2 protected was the pipeline's own, cut minutes earlier by the run before it.
+
+**v1.26.0 is SUPERSEDED** (verified-from-web): it is still tagged (tag object c26e580 over commit
+22bec89) and its GitHub Release is still published (2026-07-22T12:06:42Z), but the current-release
+badge has moved -- `gh release list` marks exactly one Latest, and that is now v1.27.0. **v1.25.1 is
+likewise superseded**: still tagged (tag object f92ff79 over commit c9692ca), still published
+(2026-07-19T00:41:38Z), no longer badged.
 
 The whole **v1.24.x band is closed out**: v1.24.0 through v1.24.3 are each tagged on origin and
 published as GitHub Releases (verified-from-web: `git ls-remote --tags origin` lists v1.24.0-v1.24.3
-beside v1.25.0, v1.25.1 and v1.26.0). Neither v1.25.0 nor any of the v1.24.x band holds the
+beside v1.25.0, v1.25.1, v1.26.0 and v1.27.0). Neither v1.25.0 nor any of the v1.24.x band holds the
 current-release badge.
 
-**The Wave-1 + cut cycle is CLOSED.** 000136 / 000137 / 000139 merged (PRs #93 / #94 / #95), 000141
-cut v1.26.0 and trued this roadmap (PR #97, merge commit 22bec89), the pipeline tagged and published
-the release, and 000143 swept the post-release residuals -- including this true-up. Nothing about
-the v1.26.0 cycle is outstanding.
+**The Wave-2 + cut cycle is CLOSED.** 000142 ran all seven legs and cut v1.27.0 (PR #99, merge
+commit fddba38), the pipeline tagged and published the release, and 000146 -- this true-up -- swept
+the post-release residuals. The preceding **Wave-1 + cut cycle** is likewise closed: 000136 / 000137
+/ 000139 merged (PRs #93 / #94 / #95), 000141 cut v1.26.0 (PR #97, merge commit 22bec89), and 000143
+swept that cycle's residuals. Nothing about either cycle is outstanding.
 
 Provenance: every version, feature, and dispatch claim below is verified against live state THIS
 session -- `dispatch list --project powershell-lsp`, the dispatch log, `git log origin/main`, `git
@@ -45,13 +63,23 @@ and the plugin/marketplace manifests. **Each status claim here is labelled verif
 out of this tree), verified-from-web (resolved live against origin / GitHub at run time), or
 inferred (reasoned, not observed).** Tag and release state is NEVER copied from memory or from a
 prior roadmap revision: it is resolved live, because that is exactly the claim that goes stale
-fastest, and it has now gone stale THREE times in five days. The 000127 leg-7 revision recorded
+fastest, and it has now gone stale FOUR times in five days. The 000127 leg-7 revision recorded
 v1.24.3 as the then-current release, accurate at write time and stale the moment v1.25.0 published
 on 2026-07-17; the 000134 leg-2 revision then recorded v1.25.1 as "PENDING, not released ... no
 `v1.25.1` tag exists on origin", accurate at write time and stale the moment v1.25.1 was tagged and
-published on 2026-07-19; and the 000141 leg-2 revision recorded v1.26.0 as "PENDING, not released",
-accurate at write time and stale the moment the pipeline tagged and published it on 2026-07-22. All
-three were corrected by re-resolving against origin, not by editing around the old text.
+published on 2026-07-19; the 000141 leg-2 revision recorded v1.26.0 as "PENDING, not released",
+accurate at write time and stale the moment the pipeline tagged and published it on 2026-07-22; and
+the 000142 leg-6 revision recorded the v1.27.0 cut as "staged but UNMERGED and UNRELEASED", accurate
+at write time -- it sat behind open PR #99 -- and stale the SAME DAY, once #99 merged and the
+pipeline cut and published the tag. All four were corrected by re-resolving against origin, not by
+editing around the old text.
+
+The fourth instance is the shortest-lived of the four -- hours, not days -- and it is the one that
+justifies the epoch branch 000143 built rather than merely illustrating it. The 000142 leg-5 check
+is epoch-aware by construction, so at the moment of release it did not go quietly wrong: it switched
+arms and reported MISMATCH against this document (staleStaged=2, relLatest=0), which is precisely
+the signal that chartered this sweep. The check was correct and the document was stale; the fix, per
+the 000143 lesson, was to true the document and leave the check byte-identical.
 
 That third instance is what dispatch 000143 exists to close, and it carries a lesson the first two
 did not surface. The 000141 leg-2 verify check derived every pin from a live artifact -- which is
@@ -127,8 +155,8 @@ dispatch(es); where an authored draft disagreed with the CHANGELOG, the CHANGELO
 
 | Version | Dispatch | Delivered |
 |---|---|---|
-| v1.27.0 | 000142 legs 1-2 + 000143; cut by 000142 leg 5 | MINOR -- **STAGED, NOT RELEASED.** Both manifests read 1.27.0 on the `dispatch/000142-org-policy` branch behind an open PR; there is **no v1.27.0 tag and no GitHub Release**, and merging plus triggering the pipeline are Mike's gates (this row exists so the ledger does not silently omit a staged cut -- it is NOT a claim of release). Classification is highest-wins over the live `[Unreleased]` entries: 000142 leg 1's MINOR governs a cut whose other two entries are PATCH. **000142 leg 1 (MINOR)** ships E2.2 org policy as the `orgPolicy` knob -- an absolute path to a central `PSScriptAnalyzerSettings.psd1` whose `ExcludeRules` are ENFORCED as a final subtractive drop at both `scripts/lsp-client.ps1` surface points, before the hook emit and the dogfood capture, so one rule covers the live surface, the capture, and the SARIF scan. Org wins the exclude path (no local include can re-enable a dropped rule); repo-local wins the include path (the policy's own `IncludeRules` stay advisory). Fails open with exactly one logged warning on a missing / unreadable / unparseable / relative path, and the policy is read through `Import-PowerShellDataFile` (restricted, data-only) so it can never execute code. Knobs **18 -> 19** with one `CONTRACT.md` FROZEN-KNOBS row proven RED-then-GREEN against the set-equality guard; no `base.psd1` change (still 53), no new owned finder (still 6), no status token. Off is byte-identical, proven over the shipped corpus records. **000142 leg 2 (PATCH)** is N1.1 idiom-guidance slice 2: hand-authored rationale overrides on the five PSES-15 default-surface rules whose derived text was circular or pure mechanism, each proven to already fire by the derived corpus snapshots; `override_count` **4 -> 9**, `-Check` green at pin 1.25.0. **000143 (PATCH, docs)** documents release Gate 5 and corrects the tag-command convention. Cut lockstep to 1.27.0 in both manifests + a dated `## [1.27.0] - 2026-07-22` CHANGELOG heading |
-| v1.26.0 | 000139 / 000137 / 000136; cut by 000141 leg 1 | MINOR -- **the Wave-1 band**, RELEASED 2026-07-22. Classification is highest-wins over the live `[Unreleased]` entries, so 000139's MINOR governs a cut whose other two entries are PATCH. **000139 (MINOR)** adds the plugin-owned pre-PSSA finder `CommandLinePlaceholder` (`Find-CommandLinePlaceholder` in `scripts/lib/lsp-common.ps1`, wired at the `scripts/lsp-client.ps1` seam): a literal `<Name>` left on a command line is schema-valid to the eye but a redirection-operator parse error at run time. Detection is token-level -- the reserved `<` input-redirection operator immediately abutting a bareword ending in `>` -- and deliberately precision-first: legitimate output redirection (`>`, `>>`, `2>&1`), angle brackets inside strings / here-strings / comments, C#-style generics in strings, and the word operators `-lt` / `-gt` never fire. Re-entered under the S3.4 measure-first bar and shipped only at a measured **0% false-positive rate on a 281-file oracle** (150 repo scripts + 131 installed-module scripts, zero hits). Owned finders **5 -> 6** (verified-from-disk: `rule-rationales.psd1` `owned_count` = 6); no new knob (still 18), no `base.psd1` change (still 53), no CONTRACT change. **000137 (PATCH)** adds `docs/trust.md`, assembling in one evaluator-facing place the release-integrity chain that was already true but scattered (keyless gitsign-signed tag + SLSA provenance over both release assets, CycloneDX SBOM generated from the real pins, the pinned and SHA-256-verified PSScriptAnalyzer, the 0% corpus FP bar guarded on every CI run, measured latency, the SHA-pinned code-scanning workflow, the generated rule rationales), plus a README pointer. **000136 (PATCH)** adds `docs/CONTINUITY.md` (per-surface failure/recovery if the sole maintainer disappears) and `MAINTAINERS.md` (second-maintainer on-ramp), and reconciles the docs so the release runbook lives in exactly one place (`docs/RELEASING.md`). Cut lockstep to 1.26.0 in both manifests + a dated CHANGELOG heading. Tag v1.26.0 gitsign-signed and cut BY THE PIPELINE (tag object c26e580 -> commit 22bec89, tagger `github-actions[bot]`, build signer `powershell-lsp-release.yml@refs/heads/main`, run 29918156282); GitHub Release published as the current **Latest** (2026-07-22T12:06:42Z, verified-from-web), with both assets SLSA-attested and `gh attestation verify`-clean at exit 0 |
+| v1.27.0 | 000142 legs 1-2 + 000143; cut by 000142 leg 5 | MINOR -- **RELEASED 2026-07-22.** Both manifests read 1.27.0 at the origin/main tip fddba38, which PR #99 merged. Classification is highest-wins over the live `[Unreleased]` entries: 000142 leg 1's MINOR governs a cut whose other two entries are PATCH. **000142 leg 1 (MINOR)** ships E2.2 org policy as the `orgPolicy` knob -- an absolute path to a central `PSScriptAnalyzerSettings.psd1` whose `ExcludeRules` are ENFORCED as a final subtractive drop at both `scripts/lsp-client.ps1` surface points, before the hook emit and the dogfood capture, so one rule covers the live surface, the capture, and the SARIF scan. Org wins the exclude path (no local include can re-enable a dropped rule); repo-local wins the include path (the policy's own `IncludeRules` stay advisory). Fails open with exactly one logged warning on a missing / unreadable / unparseable / relative path, and the policy is read through `Import-PowerShellDataFile` (restricted, data-only) so it can never execute code. Knobs **18 -> 19** with one `CONTRACT.md` FROZEN-KNOBS row proven RED-then-GREEN against the set-equality guard; no `base.psd1` change (still 53), no new owned finder (still 6), no status token. Off is byte-identical, proven over the shipped corpus records. **000142 leg 2 (PATCH)** is N1.1 idiom-guidance slice 2: hand-authored rationale overrides on the five PSES-15 default-surface rules whose derived text was circular or pure mechanism, each proven to already fire by the derived corpus snapshots; `override_count` **4 -> 9**, `-Check` green at pin 1.25.0. **000143 (PATCH, docs)** documents release Gate 5 and corrects the tag-command convention. Cut lockstep to 1.27.0 in both manifests + a dated `## [1.27.0] - 2026-07-22` CHANGELOG heading. Tag v1.27.0 gitsign-signed and cut BY THE PIPELINE over commit fddba38 (tagger `github-actions[bot]`, build signer `powershell-lsp-release.yml@refs/heads/main`, producing run **29962928958** read from the tag's own Sigstore certificate and corroborated by the attestation's `metadata.invocationId`); GitHub Release published as the current **Latest** (2026-07-22T22:30:18Z, verified-from-web), with both assets SLSA-attested and `gh attestation verify`-clean at exit 0 |
+| v1.26.0 | 000139 / 000137 / 000136; cut by 000141 leg 1 | MINOR -- **the Wave-1 band**, RELEASED 2026-07-22. Classification is highest-wins over the live `[Unreleased]` entries, so 000139's MINOR governs a cut whose other two entries are PATCH. **000139 (MINOR)** adds the plugin-owned pre-PSSA finder `CommandLinePlaceholder` (`Find-CommandLinePlaceholder` in `scripts/lib/lsp-common.ps1`, wired at the `scripts/lsp-client.ps1` seam): a literal `<Name>` left on a command line is schema-valid to the eye but a redirection-operator parse error at run time. Detection is token-level -- the reserved `<` input-redirection operator immediately abutting a bareword ending in `>` -- and deliberately precision-first: legitimate output redirection (`>`, `>>`, `2>&1`), angle brackets inside strings / here-strings / comments, C#-style generics in strings, and the word operators `-lt` / `-gt` never fire. Re-entered under the S3.4 measure-first bar and shipped only at a measured **0% false-positive rate on a 281-file oracle** (150 repo scripts + 131 installed-module scripts, zero hits). Owned finders **5 -> 6** (verified-from-disk: `rule-rationales.psd1` `owned_count` = 6); no new knob (still 18), no `base.psd1` change (still 53), no CONTRACT change. **000137 (PATCH)** adds `docs/trust.md`, assembling in one evaluator-facing place the release-integrity chain that was already true but scattered (keyless gitsign-signed tag + SLSA provenance over both release assets, CycloneDX SBOM generated from the real pins, the pinned and SHA-256-verified PSScriptAnalyzer, the 0% corpus FP bar guarded on every CI run, measured latency, the SHA-pinned code-scanning workflow, the generated rule rationales), plus a README pointer. **000136 (PATCH)** adds `docs/CONTINUITY.md` (per-surface failure/recovery if the sole maintainer disappears) and `MAINTAINERS.md` (second-maintainer on-ramp), and reconciles the docs so the release runbook lives in exactly one place (`docs/RELEASING.md`). Cut lockstep to 1.26.0 in both manifests + a dated CHANGELOG heading. Tag v1.26.0 gitsign-signed and cut BY THE PIPELINE (tag object c26e580 -> commit 22bec89, tagger `github-actions[bot]`, build signer `powershell-lsp-release.yml@refs/heads/main`, run 29918156282); GitHub Release published 2026-07-22T12:06:42Z with both assets SLSA-attested and `gh attestation verify`-clean at exit 0, and superseded the same day (verified-from-web) -- tag and Release both retained, the current-release badge now on v1.27.0 |
 | v1.25.1 | 000131 / 000132 / 000133; cut by 000134 leg 1 | PATCH -- the scan-robustness lineage. 000131 NAMES the file(s) an INCOMPLETE (exit 4) code-scanning scan could not analyze (SARIF `toolExecutionNotification` + stderr + workflow annotation; per-file budgets left unchanged). 000132 fixes an INCOMPLETE-scan correctness gap (a client-cap-KILLED file was passing as clean; now recorded NOT analyzed via the 000024 never-silent branch) and its measurement corrects the true per-file budget a THIRD time -- to the daemon's OWN settle cap `MaxWaitMs` (default 5000 ms), not the client `timeoutMs`. 000133 raises the SCAN daemon's `MaxWaitMs` 5000 -> 15000 (scan-only; the in-agent daemon keeps 5000; INTERNAL, no knob, no CONTRACT change), and main's own code-scanning flipped RED -> GREEN at the #91 merge. All three self-describe PATCH; no knob, detection, ruleset, rationale, or CONTRACT surface moved. Cut lockstep to 1.25.1 in both manifests + a dated CHANGELOG heading. Tag v1.25.1 gitsign-signed (tag object f92ff79 -> commit c9692ca, tagged by `github-actions[bot]` from the release runner); GitHub Release published 2026-07-19T00:41:38Z (verified-from-web), no longer the current release (superseded by v1.26.0). Full narrative in "Scan-robustness lineage" below |
 | v1.25.0 | 000128 (survey 000127 leg 1) | MINOR -- **reference surfacing**: a new off-by-default `userConfig` knob `referenceSurfacing`, the **18th** knob (verified-from-disk: `plugin.json` declares 18 `userConfig` keys), surfaces BARE per-function facts (referenced-by-N, exported, defined-in) from a session workspace index the daemon builds ONCE, as additive Information on the existing `additionalContext` channel -- no new diagnostic code, no status token, `rulesets/rule-rationales.psd1` byte-for-byte unchanged, and the diagnostics surface byte-identical when `off` (the default). It ships the design 000127 leg 1 surveyed-and-BLOCKED on a frozen-knob CONTRACT decision, so 000128 carried that amendment in lockstep (manifest + `CONTRACT.md` + `README.md`; the 000087/000101 knob precedent). The same release also lands the **`AliasesToExport` orphan check** on the always-on `ManifestConsistency` finder (PL-6 slice 2: a name in `AliasesToExport` with no matching alias definition) -- the symmetric completion of slice 1's export check. Tag v1.25.0 gitsign-signed; GitHub Release published 2026-07-17T18:06:13Z (verified-from-web), no longer the current release (superseded by v1.25.1) |
 | v1.24.3 | 000126 (ranking 000125 leg 3) | PATCH -- **base-ruleset curation slice 2, and the slice that CLOSES curation**. `PSUseOutputTypeCorrectly` was the sole rule of the base-54 still firing on the 44-file known-good oracle (2 pedantic Information hits, 0 own-source hits, base-only -- not in the PSES-15 set), so excluding it via the existing named `$BaseRuleExclusions` list takes base **54 -> 53** and makes the ENTIRE opt-in `base` surface **0% measured false-positive** on that oracle. `pses-default` is byte-for-byte unchanged; `rulesets/base.psd1` REGENERATED through `scripts/regen-base-ruleset.ps1` (never hand-edited) and the rationale table regenerated to `pssa_count` 53 with all four 000125 overrides intact. With a 0% measured FP rate there is no evidence for a further exclude slice, so **base curation is COMPLETE** and 000126 deliberately recorded `next_suggested: null`. Tag v1.24.3 gitsign-signed; GitHub Release published 2026-07-17 (verified-from-web), no longer the current release (superseded by v1.25.0) |
@@ -354,10 +382,12 @@ tag):
   for admins, block force-push and deletion.
 
 Together the gated pipeline + the local guard + server-side protection make the gated flow the ONLY
-path to main. v1.19.0 was the first release cut under all three; **v1.26.0 is the latest**
-(verified-from-web, published as the current Latest 2026-07-22T12:06:42Z), and it went through this
-pipeline end-to-end -- five gates green on a dry run, then five gates green again on the real run
-that cut the tag and published the Release (Section 2).
+path to main. v1.19.0 was the first release cut under all three; **v1.27.0 is the latest**
+(verified-from-web, published as the current Latest 2026-07-22T22:30:18Z), and it went through this
+pipeline end-to-end -- five gates green on a dry run (run 29961881444), then five gates green again
+on the real run that cut the tag and published the Release (run 29962928958; Section 2). A third
+trigger arrived two and a half minutes later and Gate 2 refused it, because by then the tag it would
+have cut already existed -- the gate doing its job on the pipeline's own tag.
 
 **The pipeline cuts the tag. Always.** A printed `git tag` / `git push origin <tag>` pair is a
 MANUAL FALLBACK for the case where the pipeline itself is unavailable -- never the release path, and
@@ -445,7 +475,7 @@ chat.
   `throw`, so no advanced-function rule can be FP-measured until a corpus tier is added. The plugin
   flags; the agent transforms. Output: PATCH per slice (better guidance on findings that already
   render, not a new capability).
-  **Slice 2 SHIPPED (000142 leg 2; cut into v1.27.0, unreleased).** Where slice 1 was mostly
+  **Slice 2 SHIPPED (000142 leg 2; released in v1.27.0).** Where slice 1 was mostly
   `base`-only opt-in rules, slice 2 covers what the median user actually reads: the **five PSES-15
   live-default-surface** rules whose derived text explained nothing --
   `PSAvoidDefaultValueSwitchParameter`, `PSAvoidUsingCmdletAliases`,
@@ -598,7 +628,7 @@ chat.
   (run 29661464779 success at 85fb892; see the scan-robustness lineage in Section 2). Output: **not
   the MINOR this item assumed** -- see leg 8's NO-BUMP reasoning; the gate it named was already
   released, and a repo-CI workflow is not a user-visible capability.
-- **E2.2 Org policy config -- SHIPPED (000142 leg 1; cut into v1.27.0, unreleased).** The
+- **E2.2 Org policy config -- SHIPPED (000142 leg 1; released in v1.27.0).** The
   centrally-managed settings voice now exists as the `orgPolicy` knob (verified-from-disk): an
   absolute path to an organization's `PSScriptAnalyzerSettings.psd1` whose **`ExcludeRules` are
   enforced** as a final subtractive drop over the surfaced findings, applied at BOTH client surface
