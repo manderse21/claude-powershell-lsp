@@ -408,6 +408,38 @@ each gated on a future accept. The feedback-derived items come from a prior plan
 10-item external-feedback set -- not a file in this repo -- carried here so they stop living only in
 chat.
 
+### The ratified next-wave arc ladder (strategic layer above the horizons)
+
+Ratified by Mike Andersen 2026-07-23. The four horizons below stay the tactical detail -- the shipped
+record and every per-item gate are unchanged. This is the strategic layer above them: the next wave,
+named as five arcs, each drawing its slices from horizon items already inventoried below. Recording the
+arcs sequences the wave; it does not retire or renumber any horizon item.
+
+- **Arc A -- Diagnostic Efficacy Ledger.** Per-rule fired / fixed / ignored facts, mined from the
+  shipped dogfood capture and the closed-loop cleared signal (the I0.3 accrual channel over
+  `scripts/review-dogfood.ps1`). Facts, not scores (the S3.2 guardrail): reader-side aggregation of what
+  the plugin already records, with no capture-format change and no new knob.
+- **Arc B -- Corpus Commons.** Publish the correctness oracle -- the corpus already used to prove the
+  measured 0%-false-positive bar on every CI run (S3.4) -- as a community benchmark. CONTINGENT on the
+  findability goal being resolved AND a licensing audit of corpus provenance passing (the oracle mixes
+  repo scripts with installed-module scripts, so provenance is the gate, not an afterthought).
+- **Arc C -- Attested Diagnostics.** Extend the SLSA / Sigstore chain from release assets (Section 3) to
+  scan outputs -- attestable SARIF from the E2.1 code-scanning workflow. Third: it waits on real Arc A
+  data and on a real Arc D consumer existing, so the attestation covers evidence a consumer actually
+  reads.
+- **Arc D -- Enterprise Control Plane.** Continuation of the shipped `orgPolicy` knob (E2.2): policy
+  distribution and fleet SARIF / ledger rollup. DEMAND-PACED -- one slice per real adoption signal,
+  never built ahead of a consumer.
+- **Arc E -- Scale and Robustness.** A performance harness and characterized very-large-repo behavior.
+  ON-DEMAND, issue-driven -- it moves only when a real scale problem is reported.
+
+Sequencing, recorded verbatim: A first and unblocked now; D demand-paced; C third; B contingent; E on-demand.
+
+Arc A is the opener because it is unblocked today and needs only reader-side aggregation over data the
+plugin already captures; the other four are each held behind an explicit gate named above. E2.3 catalog
+submission via the Console form is the queued next external action, deferred by Mike until this roadmap
+update lands.
+
 ### The 10 feedback items -- disposition
 
 | # | Suggestion | Verdict | Where it lands |
