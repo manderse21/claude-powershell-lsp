@@ -784,6 +784,25 @@ real usage, not machinery.
   expired -- normal for keyless, where the short-lived cert is not the proof, the Rekor entry is.
   `gitsign verify` or `gh attestation verify` is the documented path (README, docs/RELEASING.md). No fix
   dispatch open; optional.
+- **Dispatch 000149 -- deliberately terminal at complete; a documented one-off.** 000149's work is
+  merged and correct: its ledger-append and `dispatch validate` claims both re-verified MATCH against
+  merged origin/main, and its entire delta is hub docs (DEV_NOTES.md) plus coordination files -- zero
+  plugin-code change. Its single `dispatch verify` MISMATCH was on the plugin Pester smoke_test claim,
+  whose recorded command used a repo-relative `-File tests/run-tests.ps1` that resolves only from the
+  plugin repo; verify re-ran it from the HUB ROOT, because 000149 is hub-internal, and it exited 64
+  "not recognized". The suite itself PASSED when 000149 ran it (1343 passed / 0 failed / 0 skipped,
+  1012s), so the MISMATCH is a recorded-command re-runnability defect on a suite that a docs-only
+  change cannot affect -- not a defect in the work. Chasing `verified` would mean re-running a
+  17-minute suite to satisfy a claim that cannot fail because of that work, or spending a fix-forward
+  cycle whose only product is making the ceremony re-runnable; both are motion, not correctness. This
+  is a deliberate ONE-OFF, not a new pattern: the every-dispatch-terminal-at-verified norm stands, and
+  this entry names the single exception and its cause so a future reader sees a documented exception
+  rather than a loophole. Hub Rule 8 held throughout -- no state was self-promoted, and the F2 human
+  gate is exactly what left 000149 at complete. The fix, if ever wanted, is to rewrite that command to
+  carry `-WorkingDirectory` or an absolute `-File` path -- recorded for the record, not scheduled. No
+  fix-forward dispatch open. The two lessons are banked as rule candidates by 000150 (DEV_NOTES
+  rule-candidate ledger, 2026-07-23: cwd-independent check commands; claim scope matches blast
+  radius).
 
 ## 7. Operating posture (unchanged)
 
