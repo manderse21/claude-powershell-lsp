@@ -31,6 +31,17 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+PATCH: **marketplace listing corrected -- native nav is SHIPPED, not roadmap.** The embedded plugin
+`description` in `.claude-plugin/marketplace.json` still told a prospective installer that
+"Hover/definition/references are on the roadmap". That has been false since **v1.23.0** shipped the
+opt-in `nativeServe` handshake shim, so the listing understated the plugin to exactly the audience
+deciding whether to install it. Corrected to the shipped reality already stated in
+`.claude-plugin/plugin.json`: hover, go-to-definition and find-references serve natively through an
+opt-in handshake shim (`userConfig nativeServe`, **off by default**). **One clause, one file** --
+no code, no knob, no capture-format change, no other manifest field touched, and **no version
+move**: both manifests stay lockstep at 1.27.0 and a future cut classifies this entry. See dispatch
+000153 leg 3.
+
 ## [1.27.0] - 2026-07-22
 MINOR: **org policy layer -- a centrally-managed settings voice above the repo-local file
 (`orgPolicy`).** A new `userConfig` knob takes an **absolute** path to an organization's
