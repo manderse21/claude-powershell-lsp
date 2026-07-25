@@ -1,7 +1,7 @@
 # claude-powershell-lsp -- Roadmap
 
-Status as of 2026-07-22. Plugin on main: **v1.27.0**, GPL-3.0-or-later. The v1.27.0 version is
-TAGGED, gitsign-signed, and RELEASED (verified-from-web this session): an annotated, gitsign-signed
+Status as of 2026-07-25. Plugin on main: **v1.27.0**, GPL-3.0-or-later. The v1.27.0 version is
+TAGGED, gitsign-signed, and RELEASED (verified-from-web 2026-07-22): an annotated, gitsign-signed
 tag v1.27.0 sits at commit fddba38 on origin, tagged by `github-actions[bot]` from the release
 runner, `git describe --tags origin/main` returns `v1.27.0` exactly -- the tip IS the tagged commit
 -- and the v1.27.0 GitHub Release is published as the current **Latest**
@@ -803,6 +803,25 @@ real usage, not machinery.
   fix-forward dispatch open. The two lessons are banked as rule candidates by 000150 (DEV_NOTES
   rule-candidate ledger, 2026-07-23: cwd-independent check commands; claim scope matches blast
   radius).
+- **Branch `dispatch-000095-refresh-reddit-launch` -- CLOSED, no restore, no fix-forward.** The
+  branch was deleted from the forge at 2026-07-24T19:41:54Z under the manderse21 account, one day
+  before dispatch 000152 (whose acceptance 1 asked that it still be PRESENT) was accepted -- so that
+  acceptance was already false on arrival, and 000152 recorded a named block rather than restoring
+  the ref or leaving a permanently-RED assertion. The disposition is CLOSED, and the work it carried
+  is not lost on either count. **Superseded:** dispatch 000112 rewrote the same launch draft to
+  v1.23.0 ground truth and merged it as plugin PR #77 (2026-07-04, merge commit b8af118), and the
+  merged `docs/launch/reddit-powershell.md` on main says so in its own header -- "supersedes the
+  abandoned v1.19.0-era 000095 draft"; dispatch 000095 is itself terminal at `abandoned`. So every
+  correction the deleted branch held already lives on main in a later and better form. **Retrievable
+  anyway:** its tip `7a6395676d93aeadb778eb03769784806d1668a5` -- exactly the SHA 000149 recorded --
+  is still served by the forge at `refs/pull/67/head`, which GitHub retains for the life of PR #67
+  independently of the branch ref, and PR #67 remains CLOSED with `mergedAt` and `mergeCommit` both
+  null (genuinely never merged, not quietly squashed in). Each of those four facts was re-verified
+  against the tree and the forge on 2026-07-25 rather than carried over from the dispatch that
+  reported them. No restore was performed and none is scheduled: the deletion was made under Mike
+  Andersen's own credential, so it is at least as likely deliberate as accidental, and re-creating
+  the ref would make a presence check pass while burying the finding. No fix-forward dispatch is
+  open. Recorded so a future reader finds the reasoning instead of an unexplained gap.
 
 ## 7. Operating posture (unchanged)
 
