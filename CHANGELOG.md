@@ -31,6 +31,7 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.27.1] - 2026-07-25
 PATCH: **marketplace listing corrected -- native nav is SHIPPED, not roadmap.** The embedded plugin
 `description` in `.claude-plugin/marketplace.json` still told a prospective installer that
 "Hover/definition/references are on the roadmap". That has been false since **v1.23.0** shipped the
