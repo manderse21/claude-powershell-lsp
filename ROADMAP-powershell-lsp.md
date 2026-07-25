@@ -1,60 +1,73 @@
 # claude-powershell-lsp -- Roadmap
 
-Status as of 2026-07-25. Plugin on main: **v1.27.0**, GPL-3.0-or-later. The v1.27.0 version is
-TAGGED, gitsign-signed, and RELEASED (verified-from-web 2026-07-22): an annotated, gitsign-signed
-tag v1.27.0 sits at commit fddba38 on origin, tagged by `github-actions[bot]` from the release
-runner, `git describe --tags origin/main` returns `v1.27.0` exactly -- the tip IS the tagged commit
--- and the v1.27.0 GitHub Release is published as the current **Latest**
-(2026-07-22T22:30:18Z; `gh api repos/manderse21/claude-powershell-lsp/releases/latest` returns
-v1.27.0, draft=false, prerelease=false, author `github-actions[bot]`), carrying both assets. Both
-manifests read 1.27.0 at that tip, over a dated `## [1.27.0] - 2026-07-22` CHANGELOG heading. The
-old publish gap (the registry once served a stale 1.3.0) stays CLOSED.
+Status as of 2026-07-25. Plugin on main: **v1.27.1**, GPL-3.0-or-later. The v1.27.1 version is
+TAGGED, gitsign-signed, and RELEASED (verified-from-web 2026-07-25): an annotated, gitsign-signed
+tag v1.27.1 (tag object d6d2376) sits at commit dff1cd4 on origin, tagged by `github-actions[bot]`
+from the release runner, `git describe --tags origin/main` returns `v1.27.1` exactly -- the tip IS
+the tagged commit -- and the v1.27.1 GitHub Release is published as the current **Latest**
+(2026-07-25T21:32:51Z; `gh api repos/manderse21/claude-powershell-lsp/releases/latest` returns
+v1.27.1, draft=false, prerelease=false, author `github-actions[bot]`), carrying both assets
+(`powershell-lsp-1.27.1.tar.gz` and `powershell-lsp-1.27.1.cdx.json`). Both manifests PARSE to
+1.27.1 at that tip, over a dated `## [1.27.1] - 2026-07-25` CHANGELOG heading. The old publish gap
+(the registry once served a stale 1.3.0) stays CLOSED.
+
+**What v1.27.1 contains is one PATCH, and it is a listing correction rather than code.** The
+marketplace listing was corrected -- native nav is SHIPPED, not roadmap -- a one-clause fix to the
+embedded `description` in `marketplace.json`, written by 000153 leg 3 and classified and cut by
+000154. No code, no knob, no contract, no capture-format change. That is the entire release, and it
+was cut precisely because a listing is what a prospective installer reads before becoming one.
 
 **The cut was made by the PIPELINE, not by hand** (verified-from-web, and the distinction is the
-whole point of Section 3): the v1.27.0 tag's own Sigstore certificate names
-`.github/workflows/powershell-lsp-release.yml@refs/heads/main` as its build signer on a
-`workflow_dispatch` trigger, and its Run Invocation URI names the producing run outright --
-`.../actions/runs/29962928958/attempts/1`, i.e. release run **29962928958**. That id is READ OUT OF
-THE CERTIFICATE, not inferred from the run list, and the SLSA attestation agrees independently:
-`metadata.invocationId` is the same run, `builder.id` the same workflow ref, and the resolved source
-digest is `fddba380eb9820454f61eb730c4cda683278c6fa`. Both published assets --
-`powershell-lsp-1.27.0.tar.gz` and `powershell-lsp-1.27.0.cdx.json` -- pass `gh attestation verify`
-(exit 0), one attestation covering both subjects. That pass is not vacuous: a one-byte-tampered copy
-of the SBOM and a nonexistent filename each exit 1 (HTTP 404 on the tampered digest; "failed to open
-local artifact" on the missing one), both measured this session.
+whole point of Section 3): **two** release-workflow runs sit on commit dff1cd4, and both are correct
+behavior. Run **30174870685** (21:03:49Z) is the DRY RUN -- its gate steps pass and it ends in
+"Dry-run summary (no tag cut, no release created)", every mutating step skipped. Run **30175779060**
+(21:30:49Z) is the PRODUCING run: it builds the release notes, source archive and SBOM, installs
+gitsign, cuts and pushes the gitsign-signed tag from the runner on the validated commit, and creates
+the GitHub Release. The tie between artifact and run is read from the tag object rather than from
+the run list -- the tag's own tagger timestamp resolves to 2026-07-25T21:32:47Z and the Release
+published at 21:32:51Z, both inside that second run's window -- and the tag object carries a
+`-----BEGIN SIGNED MESSAGE-----` block, so it is signed, not merely annotated.
 
-Both push workflows are GREEN on that exact tip, headSha-matched per rule 000081 -- each reports
-headSha `fddba380eb9820454f61eb730c4cda683278c6fa`, so neither is a stale grab: CI run
-**29961874404** with all four legs green BY NAME (`ubuntu-pwsh`, `macos-pwsh`, `windows-pwsh`,
-`windows-powershell`), and code-scanning run **29961874412** (`sarif-upload` success).
+The push CI run on that exact tip is GREEN, headSha-matched per rule 000081: CI run **30174864694**
+reports headSha `dff1cd47ddacdd5d64745e917a2d8c9218e6f04d` with conclusion success, so it is not a
+stale grab.
 
-**Three release-workflow runs sit on that commit, and all three are correct behavior.** Run
-**29961881444** (22:09:45Z) is the DRY RUN: all five gates pass, every mutating step is skipped, and
-it ends in "Dry-run summary (no tag cut, no release created)". Run **29962928958** (22:27:43Z) is
-the producing run the certificate names: it builds the archive and SBOM, attests provenance,
-installs gitsign, cuts and pushes the signed tag, and creates the Release. Run **29963082061**
-(22:30:18Z) is a duplicate trigger that **Gate 2 refused**: run 29963082061 logged `tag v1.27.0
-already exists -- refusing to re-release (delete the tag deliberately if a re-cut is truly
-intended)`. That refusal is the gate working exactly as designed -- it is the second live Gate 2
-demonstration, after the v1.26.0 hand-tag collision 000143 documented, and the first in which the
-tag Gate 2 protected was the pipeline's own, cut minutes earlier by the run before it.
+**The install side actually caught up, which was the whole reason for cutting a one-line release**
+(verified-from-disk, out of `~/.claude/plugins/`). The marketplace-resolved install had been sitting
+**four releases stale at 1.23.1**; it now reads **1.27.1** at `gitCommitSha
+dff1cd47ddacdd5d64745e917a2d8c9218e6f04d` in `installed_plugins.json`, `lastUpdated`
+2026-07-25T21:50:53.544Z. That SHA is byte-identical to the merge commit the pipeline tagged, and
+that identity is what makes the installed plugin provably the released artifact rather than merely a
+plausible copy of it: the same commit is the PR #104 merge, the `v1.27.1` tag target, and
+`origin/main`'s tip, all three. Both cached version trees still sit side by side on disk under
+`cache/claude-powershell-lsp/powershell-lsp/` (`1.23.1` and `1.27.1`), which is the on-disk evidence
+for the advanced-off-1.23.1 claim rather than an inference from the version number alone.
+**Auto-update is now enabled** for this marketplace (`known_marketplaces.json` ->
+`claude-powershell-lsp.autoUpdate: true`), so the clone cannot silently freeze four releases behind
+again.
 
-**v1.26.0 is SUPERSEDED** (verified-from-web): it is still tagged (tag object c26e580 over commit
-22bec89) and its GitHub Release is still published (2026-07-22T12:06:42Z), but the current-release
-badge has moved -- `gh release list` marks exactly one Latest, and that is now v1.27.0. **v1.25.1 is
-likewise superseded**: still tagged (tag object f92ff79 over commit c9692ca), still published
-(2026-07-19T00:41:38Z), no longer badged.
+**v1.27.0 is SUPERSEDED** (verified-from-web): it is still tagged over commit fddba38 and its GitHub
+Release is still published (2026-07-22T22:30:18Z), but the current-release badge has moved --
+`gh release list` marks exactly one Latest, and that is now v1.27.1. **v1.26.0 and v1.25.1 are
+likewise superseded**: v1.26.0 still tagged (tag object c26e580 over commit 22bec89) and published
+(2026-07-22T12:06:42Z), v1.25.1 still tagged (tag object f92ff79 over commit c9692ca) and published
+(2026-07-19T00:41:38Z). Neither is badged.
 
 The whole **v1.24.x band is closed out**: v1.24.0 through v1.24.3 are each tagged on origin and
 published as GitHub Releases (verified-from-web: `git ls-remote --tags origin` lists v1.24.0-v1.24.3
-beside v1.25.0, v1.25.1, v1.26.0 and v1.27.0). Neither v1.25.0 nor any of the v1.24.x band holds the
-current-release badge.
+beside v1.25.0, v1.25.1, v1.26.0, v1.27.0 and v1.27.1). Neither v1.25.0 nor any of the v1.24.x band
+holds the current-release badge.
 
-**The Wave-2 + cut cycle is CLOSED.** 000142 ran all seven legs and cut v1.27.0 (PR #99, merge
-commit fddba38), the pipeline tagged and published the release, and 000146 -- this true-up -- swept
-the post-release residuals. The preceding **Wave-1 + cut cycle** is likewise closed: 000136 / 000137
-/ 000139 merged (PRs #93 / #94 / #95), 000141 cut v1.26.0 (PR #97, merge commit 22bec89), and 000143
-swept that cycle's residuals. Nothing about either cycle is outstanding.
+**The v1.27.1 cut cycle is CLOSED.** 000153 shipped the Arc A slice-A1 reader and wrote the
+marketplace listing correction (PR #103, merge commit 42dedb2); 000154 classified that entry live
+from `origin/main`, cut v1.27.1 and HELD the PR (PR #104, merge commit dff1cd4); Mike Andersen
+merged it and triggered the pipeline, which cut and published the release; and 000155 -- this
+true-up -- swept the post-release residuals, removing the leftover plugin-side worktree and both
+merged dispatch branches and bringing this document to ground truth. The preceding **Wave-2 + cut
+cycle** is likewise closed: 000142 ran all seven legs and cut v1.27.0 (PR #99, merge commit
+fddba38), and 000146 swept its residuals. The **Wave-1 + cut cycle** before that: 000136 / 000137 /
+000139 merged (PRs #93 / #94 / #95), 000141 cut v1.26.0 (PR #97, merge commit 22bec89), and 000143
+swept that cycle's residuals. Nothing about any of the three is outstanding.
 
 Provenance: every version, feature, and dispatch claim below is verified against live state THIS
 session -- `dispatch list --project powershell-lsp`, the dispatch log, `git log origin/main`, `git
@@ -63,7 +76,7 @@ and the plugin/marketplace manifests. **Each status claim here is labelled verif
 out of this tree), verified-from-web (resolved live against origin / GitHub at run time), or
 inferred (reasoned, not observed).** Tag and release state is NEVER copied from memory or from a
 prior roadmap revision: it is resolved live, because that is exactly the claim that goes stale
-fastest, and it has now gone stale FOUR times in five days. The 000127 leg-7 revision recorded
+fastest, and it has now gone stale FIVE times in eight days. The 000127 leg-7 revision recorded
 v1.24.3 as the then-current release, accurate at write time and stale the moment v1.25.0 published
 on 2026-07-17; the 000134 leg-2 revision then recorded v1.25.1 as "PENDING, not released ... no
 `v1.25.1` tag exists on origin", accurate at write time and stale the moment v1.25.1 was tagged and
@@ -71,10 +84,16 @@ published on 2026-07-19; the 000141 leg-2 revision recorded v1.26.0 as "PENDING,
 accurate at write time and stale the moment the pipeline tagged and published it on 2026-07-22; and
 the 000142 leg-6 revision recorded the v1.27.0 cut as "staged but UNMERGED and UNRELEASED", accurate
 at write time -- it sat behind open PR #99 -- and stale the SAME DAY, once #99 merged and the
-pipeline cut and published the tag. All four were corrected by re-resolving against origin, not by
-editing around the old text.
+pipeline cut and published the tag. The fifth is the one this revision corrects, and its shape
+differs from the other four in a way worth naming: the document was never wrong about a staged cut.
+The 000153 leg-2 revision recorded v1.27.0 as the current release, accurate when written at 12:54
+EDT on 2026-07-25, and it aged out roughly eight and a half hours later when the pipeline published
+v1.27.1 at 21:32:51Z. 000154 deliberately made NO roadmap edit -- its scope_out forbade one -- so
+this staleness was SCHEDULED rather than accidental, and this dispatch is the planned true-up rather
+than a repair. All five were corrected by re-resolving against origin, not by editing around the old
+text.
 
-The fourth instance is the shortest-lived of the four -- hours, not days -- and it is the one that
+The fourth instance is the shortest-lived of the first four -- hours, not days -- and it is the one that
 justifies the epoch branch 000143 built rather than merely illustrating it. The 000142 leg-5 check
 is epoch-aware by construction, so at the moment of release it did not go quietly wrong: it switched
 arms and reported MISMATCH against this document (staleStaged=2, relLatest=0), which is precisely
