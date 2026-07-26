@@ -668,4 +668,15 @@ function Show-DogfoodListing {
 #                                     Test-DogfoodVerdict, Get-DogfoodVerdicts
 # Every OTHER function here is deliberately PRIVATE. Tests reach them via InModuleScope.
 # ===========================================================================
-Export-ModuleMember -Function @('Get-DefaultPluginCacheRoot', 'Get-DogfoodAnnotationsPath', 'Get-DogfoodCacheLogPath', 'Get-DogfoodSourceBucket', 'Get-DogfoodVerdicts', 'Invoke-DogfoodReview', 'Read-DogfoodAnnotations', 'Read-DogfoodLog', 'Resolve-DogfoodPaths', 'Set-DogfoodVerdict', 'Show-DogfoodListing', 'Test-DogfoodVerdict')
+Export-ModuleMember -Function 'Get-DefaultPluginCacheRoot',
+'Get-DogfoodAnnotationsPath',
+'Get-DogfoodCacheLogPath',
+'Get-DogfoodSourceBucket',
+'Get-DogfoodVerdicts',
+'Invoke-DogfoodReview',
+'Read-DogfoodAnnotations',
+'Read-DogfoodLog',
+'Resolve-DogfoodPaths',
+'Set-DogfoodVerdict',
+'Show-DogfoodListing',
+'Test-DogfoodVerdict'
