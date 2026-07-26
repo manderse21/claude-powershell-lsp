@@ -275,7 +275,7 @@ Describe 'rule-efficacy-ledger -- reuse of the shipped shape-hash and source-buc
         [int]@($led.Rows)[0].distinct_shapes | Should -Be 1
     }
 
-    It 'agrees with review-dogfood.ps1 Get-DogfoodSourceSplit on identical input' {
+    It 'agrees with the shipped Get-DogfoodSourceSplit on identical input' {
         # THE ANTI-DIVERGENCE ASSERTION. The ledger and the shipped reader must classify the same
         # records into the same buckets; if the ledger ever grows its own bucketing, this goes RED.
         $dir = Join-Path $TestDrive ('ledger-split-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -287,7 +287,16 @@ Describe 'rule-efficacy-ledger -- reuse of the shipped shape-hash and source-buc
             (New-CaptureLine -RuleId 'R2' -File $script:FileOther -Hash 'd')
         )
         $records = @(Read-DogfoodLog -LogPath $log)
-        $split = Get-DogfoodSourceSplit -Records $records
+
+        # Get-DogfoodSourceSplit is PRIVATE to lib/dogfood-reader.psm1: no shipped caller invokes
+        # it, so it is not exported (dispatch 000156 boundary B1 -- the export surface is never
+        # widened to keep a test green). Reach it through InModuleScope instead. The assertion
+        # below is unchanged: this still compares the ledger against the REAL shipped classifier,
+        # not a copy of it.
+        $split = InModuleScope 'dogfood-reader' -Parameters @{ Records = $records } {
+            param($Records)
+            Get-DogfoodSourceSplit -Records $Records
+        }
 
         $r = Read-RuleLedgerInput -LogPaths @($log)
         $led = Get-RuleEfficacyLedger -Occurrences @($r.Occurrences) -Annotations @{}
