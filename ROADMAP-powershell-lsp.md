@@ -201,6 +201,52 @@ carrying `-MaximumVersion 5.99.99`) and added a text-pin guard test, so the Pest
 post-rewrite `#66987` record (Section 6). Its third leg was the rule-rationale SURVEY that specified
 the v1.24.0 slice above -- it built nothing. Test-infra and docs only; no version moved.
 
+A second no-version-bump train landed after v1.27.1 and likewise has no row: **000156**, which closed
+the dot-source hazard as a class. `scripts/rule-efficacy-ledger.ps1` had been dot-sourcing
+`scripts/review-dogfood.ps1` to reuse its readers, and because dot-sourcing a `.ps1` runs its
+`param()` block in the CALLER's scope, that silently reset the ledger's own `-Path` / `-Source` /
+`-AnnotationsPath` to review-dogfood's defaults; the ledger shipped a defensive
+capture-the-arguments-first workaround to survive it. The 24 reader functions moved into
+`scripts/lib/dogfood-reader.psm1` and both entry points now import that module by a
+`$PSScriptRoot`-relative path, which removes the tree's only instance of the hazard.
+
+**The module conversion was chosen on three pre-stated boundaries, each measured** rather than argued.
+**B1 (encapsulation honesty) PASS:** exactly 1 shared-lib function is reached only by tests and never
+by a shipped caller (`Get-ProjectIntelligenceFindings`); 14 are invoked directly by tests but not by
+shipped callers. Keeping them green forces **zero** exports, because Pester 5.7.1 `InModuleScope`
+reaches module-private functions -- established live, not assumed. **B2 (latency) PASS:** the hook
+spawns a fresh `pwsh` per edit, and `Import-Module` costs **+20.9 ms** on pwsh 7 and **+9.6 ms** on
+Windows PowerShell 5.1 against dot-source (medians of 15 fresh-process runs). The recorded warm-path
+threshold is 9000 ms, so the added cost is **0.23%** of that budget; no shipped threshold is breached.
+**B3 (resolution) PASS:** a `$PSScriptRoot`-relative `Import-Module` resolves under BOTH hosts from a
+simulated marketplace-cache tree that is neither a checkout nor on `PSModulePath`, proven from a third
+directory with no absolute path and no environment variable.
+
+**The conversion is deliberately PARTIAL, and that is an evidence-based split, not an aesthetic one.**
+The four pre-existing `scripts/lib/*.ps1` shared libraries stay dot-sourced. None of them carries a
+`param()` block, so none violates the invariant; converting them would touch 76 dot-source sites
+(59 for `lsp-common.ps1` alone) plus 15 `Mock` sites needing `-ModuleName`, against a suite whose
+recorded wall-clock is 1012-2851 s per verification run. What the measurement did surface is a real
+limit: of the 7 top-level statements those files carry, five are constants that convert mechanically,
+but `$script:PluginVersionCache` and `$script:RuleRationaleCache` are MUTABLE lazy caches that a
+functions-only file cannot express at all -- initialize them inside a function and StrictMode throws
+on first read. That is the pure-lib contract meeting its own ceiling, and it is the concrete argument
+for converting `lsp-common.ps1` to a module in a scoped follow-up.
+
+**Two structural guards ship regardless of which option won** (`tests/PowerShellLsp.LibPurity.Tests.ps1`),
+because they are what closes the class rather than the instance. **G1** parses every file a shipped
+script dot-sources and refuses a top-level `param()` block or any top-level statement that is not a
+function definition -- a bare `Set-StrictMode` or an `$ErrorActionPreference` assignment leaks into
+the caller's scope exactly as a param block does. **G2** sets distinctly-named sentinels, dot-sources
+each library the way callers actually load it, and asserts every sentinel survives byte-identical.
+Both are RED-proven against `tests/fixtures/lib-purity/`, two files built for the purpose rather than
+by corrupting a shipped file, and both are proven to PASS a pure library so neither is merely
+always-red. The covered set is DERIVED from the tree, so a new shared library is covered automatically
+and one converted to a module leaves the set automatically. The 7 legacy statements are recorded as an
+exact, shrink-only baseline whose entries must keep matching on disk; a `param()` block is never
+baseline-able. No source, knob, `CONTRACT.md`, ruleset, daemon-protocol, hook-wiring or
+capture-format change; no version moved.
+
 ### Wave-1 merge outcomes (000136 / 000137 / 000139) plus the 000141 cut -- the whole cycle on main
 
 The three Wave-1 dispatches merged to main in dependency order on 2026-07-21, and the 000141 cut
@@ -792,6 +838,36 @@ real usage, not machinery.
   submitted as PR #2299 and is now CLOSED unmerged (2026-06-11, verified live) -- settled, no longer a
   pending post; the on-disk notes that still call it "not submitted" / "open"
   (docs/upstream/pses-2297-pr.md, sitting-closeout.md) are superseded.
+- **The daemon-initializing integration flake -- KNOWN-OPEN, surveyed 000156 leg 4, deliberately NOT
+  fixed.** `tests/PowerShellLsp.Integration.Tests.ps1` "(A) a request while PSES is still INITIALIZING
+  surfaces the TRANSIENT incomplete, never silence" failed on windows-pwsh in CI run **30177250246**
+  at 2026-07-25T22:24:23Z (line 1576, `$out | Should -Not -BeNullOrEmpty` -> "Expected a value, but
+  got $null or empty"), then passed GREEN on rerun with zero code change; the other three platforms
+  were green and the diff was one markdown file. Dispatches 000050 and 000051 were both written to
+  kill this exact race and only narrowed it.
+  **The test's wait is already a bounded wait, not a fixed sleep:** `Wait-DaemonRequestReady`
+  (000051) blocks until a real `diagnostics` round-trip completes, then `Invoke-PluginHook` runs with
+  `CapMs` 25000 and `timeoutMs` 18000.
+  **The survey falsified the banked explanation.** The code comments attribute the residual flake to
+  the 000030 relaunch+retry path accumulating past `CapMs` and the harness returning `''`. But the
+  recorded It duration was **3.3167 s** -- nothing was killed at a 25 s cap, so that mechanism cannot
+  be what happened here. Whatever produced the empty output did so roughly 7x faster than the
+  standing theory allows.
+  **What the CI artifact does and does not show.** The daemon-logs artifact was retrieved intact (not
+  expired). It shows the shared-root warm daemon logging `analyzer pre-warmed in 4611ms` at
+  22:24:24.56Z, against a 1147-1980 ms range across the 32 daemons started in that leg -- a ~3.8x
+  outlier, so machine contention in that window is OBSERVED, not inferred. It does NOT show the
+  failing daemon: sub-case A runs against its own temp data root, which `AfterAll` deletes and CI
+  never uploads, so the one log that would explain the failure does not survive the run.
+  **Recommended fix shape, in order.** (1) Close the instrumentation gap FIRST -- copy each per-test
+  isolated data root's `logs/` into the uploaded artifact before `AfterAll` removes it. This project's
+  own hardest lesson is that three dispatches of confident reasoning about timing produced nothing
+  while one instrumentation dispatch produced the fix immediately, and the survey above is a live
+  repeat of that: the standing explanation was wrong and nobody could see it. (2) Make
+  `Invoke-PluginHook` distinguish "process exited with empty stdout" from "killed at CapMs", because
+  today both render as the same assertion message. (3) Only then choose between a bounded retry and a
+  widened window, on evidence. **No `Start-Sleep`** -- that lowers the failure probability and hides
+  the race rather than closing it. No dispatch open.
 - **Pester 6 -- deferred, deliberately.** Pester 6.0.0 went GA on the PowerShell Gallery 2026-07-07.
   The test bootstrap is pinned to the 5.x major (000120 leg 1) rather than upgraded, because there is
   no forcing function and a breaking new major should be absorbed by a decision, not by runner-image
