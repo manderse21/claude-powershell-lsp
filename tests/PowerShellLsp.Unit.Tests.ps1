@@ -10,6 +10,15 @@ BeforeAll {
     . (Join-Path $script:ScriptsDir 'lib/security-classifier.ps1')
 }
 
+# The dogfood reader is a MODULE (dispatch 000156), and its Describes below run inside
+# InModuleScope so they can reach the functions no shipped caller invokes without those
+# functions being exported. InModuleScope is resolved during Pester's DISCOVERY pass, so the
+# module has to be imported HERE at file scope -- a module imported only in BeforeAll (run
+# phase) is not loaded yet when discovery evaluates InModuleScope, and discovery fails with
+# "No modules named 'dogfood-reader' are currently loaded".
+Import-Module (Join-Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts') 'lib/dogfood-reader.psd1') `
+    -Force -DisableNameChecking
+
 # Drive-letter casing is a Windows concept; on *nix 'c:\x' is not a drive path,
 # so these specific assertions are Windows-only (the rest of the suite is not).
 $script:OnWindows = if (Test-Path 'Variable:\IsWindows') { [bool]$IsWindows } else { $true }
@@ -397,13 +406,22 @@ Describe 'Dogfood diagnostic capture (dispatch 000039)' {
     }
 }
 
+# InModuleScope: these exercise reader functions that are deliberately NOT exported by
+# lib/dogfood-reader.psm1 (dispatch 000156 boundary B1 -- the export surface is exactly what
+# shipped callers invoke, never widened to keep a test green). The Describe body is
+# unchanged and unindented on purpose so the diff shows the wrap, not a reflow.
+InModuleScope 'dogfood-reader' {
 Describe 'Dogfood annotation/review tool (dispatch 000043)' {
-    # The reviewer FILLS the empty verdict the 000039 capture reserves. It is dot-source safe
-    # (the doctor.ps1 pattern), so these exercise the pure logic with no I/O beyond TestDrive
-    # temp files. Persistence keys on the capture record's shape-hash and lands in a SEPARATE
-    # annotations file -- the diagnostics log is never rewritten (the non-destructive fence).
+    # The reviewer FILLS the empty verdict the 000039 capture reserves. These exercise the pure
+    # logic with no I/O beyond TestDrive temp files. Persistence keys on the capture record's
+    # shape-hash and lands in a SEPARATE annotations file -- the diagnostics log is never
+    # rewritten (the non-destructive fence).
     BeforeAll {
-        . (Join-Path $script:ScriptsDir 'review-dogfood.ps1')
+        # Nothing to load: this Describe runs INSIDE the dogfood-reader module, so every reader
+        # function -- exported or private -- is already in scope. Paths are derived from the
+        # MODULE's own location because the file-level $script:ScriptsDir is not visible here
+        # ($script: inside InModuleScope resolves to module scope, where it was never set).
+        $script:DfScriptsDir = Split-Path -Parent ((Get-Module dogfood-reader).ModuleBase)
 
         # Build one capture entry in the EXACT 000039 on-disk shape (ts/file/line/col/ruleId/
         # source/severity/message/snippet/hash/verdict). Defined in BeforeAll so the It blocks
@@ -456,22 +474,39 @@ Describe 'Dogfood annotation/review tool (dispatch 000043)' {
             (Test-DogfoodVerdict 'Useful') | Should -BeFalse
         }
         It 'the -Verdict ValidateSet and $script:DogfoodVerdicts are the SAME frozen set (no drift)' {
-            # Both in-code sources of the enum are read FROM THE SCRIPT AST and must equal the
-            # frozen five. Adversarial control: add a value to the ValidateSet or the array (not
-            # both) and the set-equality goes RED -- the two cannot drift apart silently.
+            # Both in-code sources of the enum are read FROM THE AST and must equal the frozen
+            # five. Adversarial control: add a value to the ValidateSet or the array (not both)
+            # and the set-equality goes RED -- the two cannot drift apart silently.
+            #
+            # The two sources now live in DIFFERENT files (dispatch 000156): the ValidateSet stays
+            # on review-dogfood.ps1's param() block because that is the CLI surface, while the
+            # array moved into lib/dogfood-reader.psm1 with the functions that read it. Parsing
+            # both is what keeps this a cross-file drift check rather than a self-consistency one;
+            # each Find() is asserted non-null first, so a source going MISSING fails loudly
+            # instead of silently degrading into a vacuous pass.
             $frozen = @('bad-fix', 'false-positive', 'noisy', 'unsure', 'useful')   # sorted
-            $scriptPath = Join-Path $script:ScriptsDir 'review-dogfood.ps1'
+
+            $scriptPath = Join-Path $script:DfScriptsDir 'review-dogfood.ps1'
+            $modulePath = Join-Path (Join-Path $script:DfScriptsDir 'lib') 'dogfood-reader.psm1'
+            Test-Path -LiteralPath $scriptPath | Should -BeTrue -Because 'the CLI entry point must exist'
+            Test-Path -LiteralPath $modulePath | Should -BeTrue -Because 'the reader module must exist'
+
             $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$null)
             $vParam = $ast.Find({
                     param($n) $n -is [System.Management.Automation.Language.ParameterAst] -and
                     $n.Name.VariablePath.UserPath -eq 'Verdict' }, $true)
+            $vParam | Should -Not -BeNullOrEmpty -Because 'the -Verdict parameter must still be declared'
             $vsAttr = @($vParam.Attributes | Where-Object { $_.TypeName.FullName -match 'ValidateSet' })[0]
+            $vsAttr | Should -Not -BeNullOrEmpty -Because 'the -Verdict ValidateSet must still be present'
             $vsValues = @($vsAttr.PositionalArguments | ForEach-Object { [string]$_.Value }) | Sort-Object
             ($vsValues -join ',') | Should -BeExactly ($frozen -join ',')
-            $assign = $ast.Find({
+
+            $mAst = [System.Management.Automation.Language.Parser]::ParseFile($modulePath, [ref]$null, [ref]$null)
+            $assign = $mAst.Find({
                     param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
                     $n.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
                     $n.Left.VariablePath.UserPath -eq 'script:DogfoodVerdicts' }, $true)
+            $assign | Should -Not -BeNullOrEmpty -Because 'the frozen vocabulary array must still be defined in the module'
             $arrValues = @($assign.Right.FindAll({
                         param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) |
                     ForEach-Object { [string]$_.Value }) | Sort-Object
@@ -628,7 +663,13 @@ Describe 'Dogfood annotation/review tool (dispatch 000043)' {
         }
     }
 }
+}
 
+# InModuleScope: these exercise reader functions that are deliberately NOT exported by
+# lib/dogfood-reader.psm1 (dispatch 000156 boundary B1 -- the export surface is exactly what
+# shipped callers invoke, never widened to keep a test green). The Describe body is
+# unchanged and unindented on purpose so the diff shows the wrap, not a reflow.
+InModuleScope 'dogfood-reader' {
 Describe 'Dogfood reader: source resolution + source split (dispatch 000088)' {
     # READER-ONLY hardening. Two additive changes, both provable without touching the hook
     # write-side (Get-DogfoodLogPath is byte-for-byte unchanged -- these exercise only the NEW
@@ -638,7 +679,9 @@ Describe 'Dogfood reader: source resolution + source split (dispatch 000088)' {
     # Env is saved/cleared/restored per-It so cache discovery and the checkout resolver are
     # hermetic (no ambient CLAUDE_PLUGIN_ROOT / POWERSHELL_LSP_DOGFOOD_LOG bleeds in).
     BeforeAll {
-        . (Join-Path $script:ScriptsDir 'review-dogfood.ps1')
+        # Runs INSIDE the dogfood-reader module (see the InModuleScope wrap above), so the reader
+        # functions -- including the private ones this Describe leans on -- are already in scope.
+        $script:DfScriptsDir = Split-Path -Parent ((Get-Module dogfood-reader).ModuleBase)
 
         # Build a fake installed-cache log at
         # <root>/<marketplace>/powershell-lsp/<version>/dogfood/diagnostics.jsonl. Uses
@@ -801,7 +844,15 @@ Describe 'Dogfood reader: source resolution + source split (dispatch 000088)' {
         It 'the reader source carries no hardcoded 1.18.1 version literal (regression guard)' {
             # 000084 warned the cache path must not bake in the observed 1.18.1. Adversarial control:
             # hardcode 1.18.1 in the resolver and this goes RED.
-            $scriptPath = Join-Path $script:ScriptsDir 'review-dogfood.ps1'
+            #
+            # The resolver moved into lib/dogfood-reader.psm1 (dispatch 000156), so BOTH halves of
+            # the reader are checked -- the module that now holds the resolver and the entry point
+            # it was split out of. Checking only the .ps1 would have quietly stopped covering the
+            # code this guard is actually about.
+            $scriptPath = Join-Path $script:DfScriptsDir 'review-dogfood.ps1'
+            $modulePath = Join-Path (Join-Path $script:DfScriptsDir 'lib') 'dogfood-reader.psm1'
+            Test-Path -LiteralPath $modulePath | Should -BeTrue -Because 'the reader module must exist'
+            (Get-Content -LiteralPath $modulePath -Raw) | Should -Not -Match '1\.18\.1'
             (Get-Content -LiteralPath $scriptPath -Raw) | Should -Not -Match '1\.18\.1'
         }
     }
@@ -874,6 +925,7 @@ Describe 'Dogfood reader: source resolution + source split (dispatch 000088)' {
             (Resolve-DogfoodPaths -Path $log -AnnotationsPath $ann).AnnotationsPath | Should -BeExactly $ann
         }
     }
+}
 }
 
 Describe 'Diagnostics ordering and dedupe (Select-OrderedDiagnostics)' {
