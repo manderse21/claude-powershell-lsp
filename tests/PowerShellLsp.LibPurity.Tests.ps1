@@ -309,9 +309,9 @@ Describe 'G1 -- AST purity of every dot-sourced shared library (dispatch 000156)
             $found = @(Get-LpTopLevelImpurities -FilePath $f)
             # four deliberate rungs: preference variable, bare cmdlet, plain assignment, side effect
             $found.Count | Should -BeGreaterOrEqual 4 -Because 'the fixture encodes four distinct rungs'
-            ($found | Where-Object { $_.Text -match 'ErrorActionPreference' }).Count | Should -BeGreaterThan 0
-            ($found | Where-Object { $_.Text -match 'Set-StrictMode' }).Count | Should -BeGreaterThan 0
-            @($found | Where-Object { -not (Test-LpBaselined $_) }).Count | Should -Be $found.Count `
+            @($found | Where-Object { $_.Text -match 'ErrorActionPreference' }).Count | Should -BeGreaterThan 0
+            @($found | Where-Object { $_.Text -match 'Set-StrictMode' }).Count | Should -BeGreaterThan 0
+            @($found | Where-Object { -not (Test-LpBaselined $_) }).Count | Should -Be @($found).Count `
                 -Because 'none of the fixture rungs is registered, so all must be reported'
         }
 
