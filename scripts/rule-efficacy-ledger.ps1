@@ -50,7 +50,7 @@
 # is a SIBLING, not a host: its contract and output are byte-unchanged by this file's existence.
 #
 # REUSE, NEVER RE-IMPLEMENT. Shape-hashing (Get-DiagnosticShapeHash, lib/lsp-common.ps1) and source
-# bucketing (Get-DogfoodSourceBucket, review-dogfood.ps1) are dot-sourced from where they already
+# bucketing (Get-DogfoodSourceBucket, lib/dogfood-reader.psm1) are loaded from where they already
 # live. A second implementation of either would let this ledger disagree with review-dogfood.ps1 on
 # identical input, which is worse than having no ledger.
 #
@@ -62,7 +62,9 @@
 #   pwsh -File scripts/rule-efficacy-ledger.ps1 -Path X -AnnotationsPath Y   # explicit files
 #
 # Dot-source safe: dot-sourcing defines the functions without running anything, so the unit tests
-# exercise the pure logic in isolation.
+# exercise the pure logic in isolation. It is nonetheless not a library -- it carries a param()
+# block, so anything wanting its helpers should be split out the way lib/dogfood-reader.psm1 was
+# (dispatch 000156) rather than dot-sourcing this file.
 #
 # Author: Mike Andersen / powershell-lsp plugin.
 
@@ -89,24 +91,35 @@ param(
     [string] $CacheRoot = ''
 )
 
-# CAPTURE THE ARGUMENTS BEFORE THE DOT-SOURCE, and never read $Path / $Source / $AnnotationsPath
-# again below. review-dogfood.ps1 has a `param()` block of its own carrying $Path, $Source and
-# $AnnotationsPath, and dot-sourcing a script RUNS that param block in THIS scope -- silently
-# resetting all three to its own defaults ($Path '', $Source 'auto'). Read after the dot-source,
-# -Path is discarded and -Source reads 'auto', so the script quietly ignores its own arguments: the
-# exact silent-wrong failure this tool exists to refuse. Capturing first is the fix; the four
-# $Ledger* variables below are the only argument values the entry point trusts.
+# The four $Ledger* variables below are the only argument values the entry point trusts.
+#
+# THEY USED TO BE A WORKAROUND, AND ARE NOT ONE ANY MORE (dispatch 000156). This file previously
+# dot-sourced review-dogfood.ps1 to borrow its readers. That script carries a `param()` block of
+# its own with $Path, $Source and $AnnotationsPath, and dot-sourcing a .ps1 RUNS its param block in
+# THIS scope -- so all three were silently reset to review-dogfood's defaults ($Path '', $Source
+# 'auto') the moment the dot-source executed. Reading them afterwards discarded -Path and read
+# -Source as 'auto': the script quietly ignored its own arguments, which is the exact silent-wrong
+# failure this tool exists to refuse. Capturing first was the defensive fix.
+#
+# The hazard is now STRUCTURALLY GONE: the readers come from lib/dogfood-reader.psm1, a module with
+# no param block that cannot write this scope at all. The captures are retained deliberately --
+# they are read throughout the file, so keeping them holds this entry point's behavior byte-for-byte
+# unchanged, and capturing an argument once at the top is good practice independent of the bug that
+# first forced it.
 $script:LedgerArgPath = $Path
 $script:LedgerArgSource = $Source
 $script:LedgerArgAnnotationsPath = $AnnotationsPath
 $script:LedgerArgCacheRoot = $CacheRoot
 
-# Reuse the shipped readers and classifiers rather than re-implementing them. review-dogfood.ps1 is
-# dot-source safe (its entry point is guarded), and it in turn dot-sources lib/lsp-common.ps1 -- so
-# this one line brings in Read-DogfoodLog, Read-DogfoodAnnotations, Get-DogfoodSourceBucket,
-# Get-DogfoodAnnotationsPath, Get-DogfoodCacheLogPath, Get-DefaultPluginCacheRoot, and (from
-# lsp-common) Get-DiagnosticShapeHash, Get-DogfoodLogPath and Get-Prop.
-. (Join-Path $PSScriptRoot 'review-dogfood.ps1')
+# Reuse the shipped readers and classifiers rather than re-implementing them, and load each from
+# where it actually lives. Both imports resolve $PSScriptRoot-relative -- the plugin runs from the
+# marketplace cache, not a checkout and not PSModulePath.
+#   dogfood-reader.psm1 : Read-DogfoodLog, Read-DogfoodAnnotations, Get-DogfoodSourceBucket,
+#                         Get-DogfoodAnnotationsPath, Get-DogfoodCacheLogPath,
+#                         Get-DefaultPluginCacheRoot, Test-DogfoodVerdict
+#   lib/lsp-common.ps1  : Get-DiagnosticShapeHash, Get-DogfoodLogPath, Get-Prop
+Import-Module (Join-Path $PSScriptRoot 'lib/dogfood-reader.psd1') -Force -DisableNameChecking
+. (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
 
 # The three source buckets in a fixed display order, and the subset that is REAL signal. 'synthetic'
 # is real data about the test harness, not about the plugin's field behavior, so it is excluded from
@@ -367,9 +380,12 @@ function Get-RuleEfficacyLedger {
             if (-not $dist.Contains($v)) { $dist[$v] = 0 }
             $dist[$v]++
         }
-        # Render the frozen enum's own order, so two runs never disagree on column order.
+        # Render the frozen enum's own order, so two runs never disagree on column order. The
+        # vocabulary is ASKED FOR (Get-DogfoodVerdicts) rather than read as $script:DogfoodVerdicts:
+        # that variable only used to be in scope here because dot-sourcing review-dogfood.ps1 leaked
+        # it in, which is the same silent-dependency hazard as the leaked param() block (000156).
         $ordered = [ordered]@{}
-        foreach ($v in $script:DogfoodVerdicts) { if ($dist.Contains($v)) { $ordered[$v] = $dist[$v] } }
+        foreach ($v in (Get-DogfoodVerdicts)) { if ($dist.Contains($v)) { $ordered[$v] = $dist[$v] } }
         $row.verdict_distribution = $ordered
     }
 
