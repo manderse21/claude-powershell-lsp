@@ -31,6 +31,7 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.27.2] - 2026-07-27
 PATCH: **`ManifestConsistency` reads multi-name `Export-ModuleMember` lists.** The export-name
 collector accepted only individual string constants, so a multi-name export list -- in either
 idiomatic form, `-Function 'A', 'B'` (one `ArrayLiteralAst`) or `-Function @('A','B')` (one
