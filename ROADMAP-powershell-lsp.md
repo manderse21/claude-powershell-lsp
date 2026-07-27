@@ -1,14 +1,17 @@
 # claude-powershell-lsp -- Roadmap
 
-Status as of 2026-07-25. Plugin on main: **v1.27.1**, GPL-3.0-or-later. The v1.27.1 version is
+Status as of 2026-07-27. Plugin on main: **v1.27.1**, GPL-3.0-or-later. The v1.27.1 version is
 TAGGED, gitsign-signed, and RELEASED (verified-from-web 2026-07-25): an annotated, gitsign-signed
 tag v1.27.1 (tag object d6d2376) sits at commit dff1cd4 on origin, tagged by `github-actions[bot]`
-from the release runner, `git describe --tags origin/main` returns `v1.27.1` exactly -- the tip IS
-the tagged commit -- and the v1.27.1 GitHub Release is published as the current **Latest**
+from the release runner, and the v1.27.1 GitHub Release is published as the current **Latest**
 (2026-07-25T21:32:51Z; `gh api repos/manderse21/claude-powershell-lsp/releases/latest` returns
 v1.27.1, draft=false, prerelease=false, author `github-actions[bot]`), carrying both assets
-(`powershell-lsp-1.27.1.tar.gz` and `powershell-lsp-1.27.1.cdx.json`). Both manifests PARSE to
-1.27.1 at that tip, over a dated `## [1.27.1] - 2026-07-25` CHANGELOG heading. The old publish gap
+(`powershell-lsp-1.27.1.tar.gz` and `powershell-lsp-1.27.1.cdx.json`). **Main has since moved PAST
+the tagged commit without moving the version**, which is the expected shape for a no-bump train and
+not a drift: `git describe --tags origin/main` now reads `v1.27.1-9-gea3434d` (measured 2026-07-27),
+so the tip is **ea3434db** -- the PR #106 merge carrying the 000156 and 000157 trains recorded in
+Section 2 -- rather than the tagged commit dff1cd4. Both manifests still PARSE to 1.27.1 at that tip
+(measured 2026-07-27), over a dated `## [1.27.1] - 2026-07-25` CHANGELOG heading. The old publish gap
 (the registry once served a stale 1.3.0) stays CLOSED.
 
 **What v1.27.1 contains is one PATCH, and it is a listing correction rather than code.** The
@@ -246,6 +249,68 @@ and one converted to a module leaves the set automatically. The 7 legacy stateme
 exact, shrink-only baseline whose entries must keep matching on disk; a `param()` block is never
 baseline-able. No source, knob, `CONTRACT.md`, ruleset, daemon-protocol, hook-wiring or
 capture-format change; no version moved.
+
+**A third no-version-bump train, 000157, has no row either -- and it did not land in a PR of its own.**
+It was a fix-forward on 000156's *own branch*, by ADDING two commits (`8b65a0d8`, then `a2c84220`):
+no rebase, no force-push, no amend, no squash, so all four of 000156's commits stayed reachable and
+the push was a pure fast-forward `83685c6..a2c8422`, verified with `merge-base --is-ancestor` *before*
+pushing rather than hoped for afterwards.
+
+**What it fixed.** CI on the 000156 branch had failed on `windows-powershell` alone. Two assertions in
+the G1 RED-proof read `($found | Where-Object { ... }).Count`, and under Windows PowerShell 5.1 a
+pipeline yielding exactly one object **is** that object -- a scalar -- so `.Count` is `$null`; pwsh 7
+wraps it and returns 1. The assertion was correct on every host but the one it ran against. Three
+`.Count` sites were wrapped and proven RED-then-GREEN on the same host and the same Pester 5.7.1: base
+`83685c63` gave **13 passed / 1 failed, exit 1**, and the fixed tree **14 passed / 0 failed, exit 0**.
+
+**The third site's stated premise was FALSIFIED by measurement, and the site was wrapped anyway.** The
+charter called it a latent defect that "breaks the moment a fixture yields one". It does not: `$found`
+is assigned `@(Get-LpTopLevelImpurities ...)` on the line above, so it is already an array before
+`.Count` is ever read. Measured on 5.1.26100.8875, `$a = @( (1) ); $a.Count` returns **1**, while a bare
+parenthesised pipeline `.Count` throws `PropertyNotFoundStrict`; the sweep's independent dataflow pass
+reached the same verdict from the other direction, classifying that site `SAFE-VariableProvablyArray`.
+It was wrapped because the instruction was explicit and the change costs nothing, and it is recorded as
+a zero-cost **defensive edit, not a repair**. The same measurement clears the adjacent identical-shape
+line that was deliberately left untouched, so leaving it is not an instance-not-class lapse.
+
+**The census, and the number that changed the design.** All **498** `.Count` property reads across the
+tree's **146** PowerShell files (136 `.ps1` + 10 `.psm1`, enumerated and filtered by extension rather
+than by a convention-shaped glob) were classified by PowerShell's own AST. The full table is in the
+000157 outbox, and the finding is **not** the two sites that broke CI. It is that
+**`(<command>).Count` cannot be flagged soundly**: of the 13 instances in the tree, 12 are genuine
+traps -- a function's `return @(...)` is unrolled on the way out, so a one-element result arrives at the
+caller as a scalar -- but `(Read-DogfoodAnnotations ...).Count` returns a **hashtable**, whose `.Count`
+is a real property that reads 0 correctly. **One false positive in thirteen** (7.7%), against a repo
+that holds a 0% standard.
+
+**The scalar-`.Count` ratchet therefore shipped NARROWED on that measurement rather than on preference**
+(`tests/PowerShellLsp.ScalarCount.Tests.ps1`). The charter and its own pre-authorized option both named
+parenthesised pipelines **and** command invocations as the soundly-classifiable set; one counter-example
+in the tree refuted that, so the guard flags parenthesised **pipelines** only, allowlisting
+`(<pipeline> | Measure-Object).Count` because `Measure-Object` emits a single `GenericMeasureInfo` whose
+`.Count` is real. What the guard deliberately does not attempt -- command invocations, `$var.Count`,
+chained access -- is stated in its own header with the measured reason, so the next reader inherits the
+evidence rather than the conclusion. **The baseline ships EMPTY, and that is a measurement rather than a
+weakness:** after the wrap there are zero in-scope instances left, which is the strongest ratchet
+position, not a weak one -- the class is fully closed today and any new instance fails immediately.
+Widening the scope to manufacture baseline entries would have meant re-admitting the very shape whose
+false-positive rate had just been measured. All three required behaviours were proven against the
+**production repo-scan arm**, not merely the classifier, using purpose-built fixtures plus a
+self-restoring probe file, so no shipped file was ever edited to watch a guard fire. Green on both
+hosts, 10/10. No source, knob, `CONTRACT.md`, ruleset, daemon-protocol, hook-wiring or capture-format
+change; no version moved.
+
+**PR #106 is MERGED, and these facts were read live on 2026-07-27 rather than transcribed**
+(`gh pr view 106 --json state,mergedAt,headRefOid,mergeCommit`): state **MERGED**, merged
+**2026-07-26T03:49:08Z**, head **a2c84220** -- byte-identical to the SHA 000157 pushed, so nothing
+rewrote the branch between push and merge -- into merge commit **ea3434db**, which is `origin/main`'s
+current tip (`git rev-parse origin/main` matches it exactly, so nothing has landed behind the merge).
+CI is green **by name and on the matching head SHA**, per rule 000081: run **30186041265** on head
+`a2c84220` completed *success* with all four legs green -- `ubuntu-pwsh`, `macos-pwsh`, `windows-pwsh`,
+and `windows-powershell`, the leg that had been red. `sarif-upload` is **not** a fifth leg of that run:
+it is the sole job of a separate workflow (`.github/workflows/powershell-lsp-code-scanning.yml`) that
+does not fire on the pull-request event, and it ran green on the merge commit's own push, alongside a
+second green four-leg CI run (runs **30186769853** and **30186769851**, both on `ea3434db`).
 
 ### Wave-1 merge outcomes (000136 / 000137 / 000139) plus the 000141 cut -- the whole cycle on main
 
@@ -868,6 +933,20 @@ real usage, not machinery.
   today both render as the same assertion message. (3) Only then choose between a bounded retry and a
   widened window, on evidence. **No `Start-Sleep`** -- that lowers the failure probability and hides
   the race rather than closing it. No dispatch open.
+- **SARIF emitted under Windows PowerShell 5.1 is never schema-validated -- KNOWN-OPEN, surveyed
+  000157 leg 4, deliberately NOT fixed.** Three tests validate emitted SARIF against the vendored
+  2.1.0 JSON Schema, and all three are guarded by `-Skip:($PSVersionTable.PSVersion.Major -lt 6)`
+  because they call `Test-Json -Schema`, which is measured ABSENT on 5.1.26100.8875 and present on
+  pwsh 7. They were named from the run's own uploaded artifact rather than inferred.
+  **The skip is legitimate, not lazy** -- the test physically cannot run on that host, so skipping is
+  the honest outcome. **The gap it leaves is real, and it is the wrong host to be missing:** 5.1's
+  `ConvertTo-Json` is the serializer most likely to deviate (different escaping, different empty and
+  single-element array handling), so the one host whose output is most at risk is the one host never
+  checked against the schema. It is narrow rather than gaping -- 178 of 181 SARIF-scan cases still run
+  on the 5.1 leg, covering the shape structurally. **Cheapest fix shape, recorded and not
+  implemented:** have the 5.1 leg write its emitted SARIF to a file and validate that artifact in a
+  pwsh step -- the JSON is already produced, only the validator needs a modern host. Its own dispatch
+  when scheduled. No dispatch open.
 - **Pester 6 -- deferred, deliberately.** Pester 6.0.0 went GA on the PowerShell Gallery 2026-07-07.
   The test bootstrap is pinned to the 5.x major (000120 leg 1) rather than upgraded, because there is
   no forcing function and a breaking new major should be absorbed by a decision, not by runner-image

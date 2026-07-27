@@ -39,9 +39,9 @@ opt-in `nativeServe` handshake shim, so the listing understated the plugin to ex
 deciding whether to install it. Corrected to the shipped reality already stated in
 `.claude-plugin/plugin.json`: hover, go-to-definition and find-references serve natively through an
 opt-in handshake shim (`userConfig nativeServe`, **off by default**). **One clause, one file** --
-no code, no knob, no capture-format change, no other manifest field touched, and **no version
-move**: both manifests stay lockstep at 1.27.0 and a future cut classifies this entry. See dispatch
-000153 leg 3.
+no code, no knob, no capture-format change, no other manifest field touched, and **no version move
+made by the authoring change itself**: dispatch 000154 classified this entry PATCH and cut it,
+moving both manifests in lockstep to 1.27.1. See dispatch 000153 leg 3.
 
 ## [1.27.0] - 2026-07-22
 MINOR: **org policy layer -- a centrally-managed settings voice above the repo-local file
