@@ -2591,6 +2591,68 @@ function Resolve-ModuleRootModulePath {
     return ''   # binary module (dll/exe) or unknown -> cannot inspect
 }
 
+function Get-ExportNameLiteral {
+    # Resolve ONE Export-ModuleMember value node to the literal names it denotes
+    # (dispatch 000159 leg 2). Returns:
+    #   @{ Names = @(...); Literal = $true }   fully resolvable from literal string constants
+    #   @{ Names = @();    Literal = $false }  anything else -- the caller must DEGRADE
+    #
+    # WHY THIS EXISTS. The collector previously accepted only a bare
+    # StringConstantExpressionAst, so a MULTI-NAME export list -- in either idiomatic
+    # form -- was skipped entirely:
+    #     Export-ModuleMember -Function 'Get-A', 'Get-B'     one ArrayLiteralAst
+    #     Export-ModuleMember -Function @('Get-A','Get-B')   one ArrayExpressionAst
+    # Nothing was collected, the exported set stayed empty, and the caller read that as
+    # "no explicit Export-ModuleMember" and assumed export-all -- so every PRIVATE
+    # function was reported as an under-declared export. Measured on the plugin's own
+    # dogfood-reader.psm1: 13 false warnings, one per private function.
+    #
+    # CONSERVATIVE BY CONSTRUCTION. Literal is $false unless EVERY element resolves to a
+    # literal string. A mixed list ('Get-A', $name) must not half-resolve: a partial set
+    # read as complete would turn this fix into a NEW false-positive source, which is
+    # strictly worse than the silence it replaces. Silence, never a guess.
+    param($Node)
+    $empty = @{ Names = @(); Literal = $false }
+    if ($null -eq $Node) { return $empty }
+
+    if ($Node -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+        return @{ Names = @($Node.Value); Literal = $true }
+    }
+
+    # 'A', 'B' -- a comma-separated list is ONE ArrayLiteralAst argument.
+    if ($Node -is [System.Management.Automation.Language.ArrayLiteralAst]) {
+        $acc = New-Object System.Collections.Generic.List[string]
+        foreach ($el in @($Node.Elements)) {
+            $sub = Get-ExportNameLiteral $el
+            if (-not $sub.Literal) { return $empty }
+            foreach ($n in @($sub.Names)) { $acc.Add($n) }
+        }
+        return @{ Names = @($acc); Literal = $true }
+    }
+
+    # @('A','B') -- an ArrayExpressionAst wrapping a statement block. Walk it strictly:
+    # any shape other than plain command-expression statements is not statically known.
+    if ($Node -is [System.Management.Automation.Language.ArrayExpressionAst]) {
+        $acc = New-Object System.Collections.Generic.List[string]
+        $sb = $Node.SubExpression
+        if ($null -eq $sb) { return $empty }
+        foreach ($st in @($sb.Statements)) {
+            if (-not ($st -is [System.Management.Automation.Language.PipelineAst])) { return $empty }
+            $pe = @($st.PipelineElements)
+            if ($pe.Count -ne 1) { return $empty }
+            if (-not ($pe[0] -is [System.Management.Automation.Language.CommandExpressionAst])) { return $empty }
+            $sub = Get-ExportNameLiteral $pe[0].Expression
+            if (-not $sub.Literal) { return $empty }
+            foreach ($n in @($sub.Names)) { $acc.Add($n) }
+        }
+        # @() with no statements is a literal EMPTY list, not an unknown one.
+        return @{ Names = @($acc); Literal = $true }
+    }
+
+    # Variables, member/method invocations, binary expressions, sub-expressions: unknown.
+    return $empty
+}
+
 function Get-ModuleDefinedFunctionNames {
     # AST-enumerate a .psm1/.ps1 for FunctionDefinitionAst names and detect
     # Export-ModuleMember. Returns a hashtable:
@@ -2658,6 +2720,19 @@ function Get-ModuleDefinedFunctionNames {
                                         if ($collectFn) { $exported.Add($val.Value) }
                                     } elseif ($val -is [System.Management.Automation.Language.VariableExpressionAst]) {
                                         $hasDynamic = $true; break
+                                    } elseif ($val -is [System.Management.Automation.Language.ArrayLiteralAst] -or
+                                        $val -is [System.Management.Automation.Language.ArrayExpressionAst]) {
+                                        # Multi-name export list (dispatch 000159 leg 2), in either idiomatic
+                                        # form: 'A', 'B' parses as ONE ArrayLiteralAst and @('A','B') as ONE
+                                        # ArrayExpressionAst, so neither is a StringConstantExpressionAst and
+                                        # both were skipped whole -- leaving the exported set empty, which the
+                                        # caller then read as "no explicit Export-ModuleMember" and answered
+                                        # with export-all. Resolve the list only when EVERY element is a
+                                        # literal; a mixed list degrades to silence rather than half-resolving
+                                        # into a set that would read as complete.
+                                        $lit = Get-ExportNameLiteral $val
+                                        if (-not $lit.Literal) { $hasDynamic = $true; break }
+                                        if ($collectFn) { foreach ($n in @($lit.Names)) { $exported.Add($n) } }
                                     }
                                     $i++
                                 }
