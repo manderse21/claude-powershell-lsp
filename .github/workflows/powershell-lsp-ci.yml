@@ -79,7 +79,36 @@ jobs:
           # restores the pinned .nupkg from the cache above on a hit -- so on a warm cache the
           # Gallery is not contacted, yet the pin is still verified before use (dispatch 000049).
           POWERSHELL_LSP_PSSA_CACHE: ${{ env.PSSA_CACHE_DIR }}
+          # Emitted-SARIF dump (dispatch 000159 leg 1b). The suite writes the SARIF it emits
+          # here so the 5.1 leg's output can be schema-validated by a pwsh step below --
+          # Test-Json -Schema does not exist on Windows PowerShell 5.1, so the three in-suite
+          # conformance cases correctly SKIP there, leaving the serializer most likely to
+          # deviate as the one host never checked. The emission stays on 5.1; only the
+          # validator moves. The in-suite skips are unchanged and still correct.
+          POWERSHELL_LSP_SARIF_ARTIFACT_DIR: ${{ github.workspace }}/psls-sarif-emitted
         run: ${{ matrix.interpreter }} -NoProfile -ExecutionPolicy Bypass -File ./tests/run-tests.ps1 -CI
+
+      # Validate the SARIF the suite EMITTED against the vendored 2.1.0 schema, from pwsh.
+      # -RequireHost 5 is the vacuity guard: if the 5.1 leg wrote no artifact, this FAILS
+      # rather than passing over an empty set -- green must mean "5.1's SARIF was checked".
+      # Runs on the windows-powershell leg only; every other leg is pwsh and already
+      # validates in-process, where a failure names the offending It block directly.
+      - name: Validate 5.1-emitted SARIF against the vendored schema
+        if: always() && matrix.label == 'windows-powershell'
+        shell: pwsh
+        run: >-
+          ./tests/validate-sarif-artifacts.ps1
+          -Path "${{ github.workspace }}/psls-sarif-emitted"
+          -Schema ./tests/sarif/sarif-2.1.0.json
+          -RequireHost 5
+
+      - name: Upload emitted SARIF artifacts
+        if: always() && matrix.label == 'windows-powershell'
+        uses: actions/upload-artifact@v6
+        with:
+          name: sarif-emitted-${{ matrix.label }}
+          path: psls-sarif-emitted/**
+          if-no-files-found: ignore
 
       - name: Upload test results
         if: always()
