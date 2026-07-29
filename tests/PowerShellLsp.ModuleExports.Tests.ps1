@@ -205,6 +205,63 @@ Describe 'Export-ModuleMember collection -- non-literal elements degrade to SILE
     }
 }
 
+Describe 'ManifestConsistency rung 2 (under-declared-export) STAYS REMOVED (dispatch 000162 leg 1)' {
+
+    # THE REGRESSION DIRECTION IS INVERTED HERE, DELIBERATELY. Rung 2 was removed by ruling
+    # (Mike Andersen, 2026-07-29) after measuring 911 hits / 0 true positives on a 36-module
+    # live oracle: a determinate non-wildcard FunctionsToExport IS the export gate, so "defined
+    # by the module but absent from the manifest" is the normal state of every well-formed
+    # module with private functions. These tests therefore assert SILENCE, and they go RED if
+    # anyone reintroduces the rung -- which is the only way a removal can be regression-tested.
+    #
+    # The paired corpus fixture tests/corpus/expected/module/typo-export.json carries the same
+    # flip end-to-end through the real tool. This Describe pins the PURE function directly.
+
+    It 'the canonical under-declared shape now produces ZERO findings' {
+        # Get-Beta is defined and (implicitly, no Export-ModuleMember) exported by the module,
+        # and the manifest omits it. That is exactly what rung 2 used to report. It is also
+        # exactly what a correct module with one private function looks like.
+        $r = Test-ManifestConsistency -FunctionsToExport @('Get-Alpha') `
+            -DefinedNames @('Get-Alpha', 'Get-Beta') -ExportedNames $null
+        @($r.Findings).Count | Should -Be 0 -Because 'rung 2 was removed as wrong-by-design, not narrowed'
+        $r.Degrade | Should -BeExactly '' -Because 'silence must come from the REMOVAL, not from a degrade'
+    }
+
+    It 'stays silent on an EXPLICIT Export-ModuleMember surface too (the 96.15%-FP subclass)' {
+        # The one candidate narrowing 000161 measured -- fire only where the .psm1 carries an
+        # explicit Export-ModuleMember -- still measured 96.15% FP, so it was NOT kept as a
+        # subclass. This pins that the explicit-export shape is silent as well.
+        $r = Test-ManifestConsistency -FunctionsToExport @('Get-Alpha') `
+            -DefinedNames @('Get-Alpha', 'Get-Beta') -ExportedNames @('Get-Alpha', 'Get-Beta')
+        @($r.Findings).Count | Should -Be 0
+        $r.Degrade | Should -BeExactly ''
+    }
+
+    It 'THE VACUITY GUARD: rungs 1 and 3 still FIRE, so the silence above is scoped not blanket' {
+        # Without this, both assertions above would also pass if Test-ManifestConsistency were
+        # broken outright or always returned empty -- the failure mode that makes a "should be 0"
+        # test worthless. The surviving rungs must still produce their findings.
+        $rung1 = Test-ManifestConsistency -FunctionsToExport @('Get-Missing') -DefinedNames @('Get-Alpha') -ExportedNames $null
+        @($rung1.Findings).Count | Should -Be 1 -Because 'rung 1 (orphan-export) is untouched by 000162'
+        [string]@($rung1.Findings)[0].message | Should -BeLike '*is listed in FunctionsToExport but no matching function definition*'
+
+        $rung3 = Test-ManifestConsistency -FunctionsToExport @('Get-Alpha') -DefinedNames @('Get-Alpha') `
+            -ExportedNames $null -AliasesToExport @('gaMissing') -DefinedAliases @() -AliasesIndeterminate $false
+        @($rung3.Findings).Count | Should -Be 1 -Because 'rung 3 (alias-orphan) is untouched by 000162'
+        [string]@($rung3.Findings)[0].message | Should -BeLike '*is listed in AliasesToExport but no matching Set-Alias/New-Alias definition*'
+    }
+
+    It 'the removed message text appears NOWHERE in the shipped library' {
+        # A source-level guard: the rung is REMOVED, so its diagnostic string should not survive
+        # anywhere -- not in a commented-out block, not behind a disabled flag. The needle is
+        # built by concatenation so this assertion cannot match its own source line.
+        $lib = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1'
+        $needle = 'is defined and exported by the module' + ' but is missing from FunctionsToExport'
+        $hits = @(Select-String -LiteralPath $lib -SimpleMatch -Pattern $needle)
+        $hits.Count | Should -Be 0 -Because 'a removed check leaves no emitting string behind'
+    }
+}
+
 Describe 'The dogfood channel Arc A reads is no longer polluted (dispatch 000159 leg 2)' {
 
     BeforeAll {

@@ -1155,10 +1155,13 @@ real usage, not machinery.
   the windows flake now is, so a second sighting would arrive with no more evidence than this one. If
   it recurs, the first move is the 000159 leg 1a lesson applied to this suite: instrument before
   theorising.
-- **`ManifestConsistency` is 99.89% false-positive on real-world modules -- KNOWN-OPEN, MEASURED,
-  accepted as a recorded deviation, and NOT YET CHARTERED.** This is the single largest known
-  correctness gap in the shipped product, and it is stated here because nothing else in this document
-  carries it. Of the **910** `ManifestConsistency` hits on 000159's live oracle after the leg 2 fix,
+- **`ManifestConsistency` under-declared-export: RULED AND REMOVED (dispatch 000162 leg 1), prepared
+  as v1.27.3 and HELD.** This is no longer a correctness gap, an open question, or a deviation being
+  carried: the rung was **deleted from the source** on a ruling by Mike Andersen, 2026-07-29. What
+  follows is retained as the MEASUREMENT RECORD that produced the ruling, not as an open item -- a
+  removal is only defensible with the measurement that ruled it, so the history stays. The ruling
+  itself, the before/after re-measurement, and the one parked follow-up are at the END of this item.
+  Of the **910** `ManifestConsistency` hits on 000159's live oracle after the leg 2 fix,
   **909 are confirmed false positives and 0 are true positives**, each triaged by hand against the
   module's real surface via `Import-Module`. Denominator, re-measured that session: 155 `.psd1`
   manifests enumerated across 6 `PSModulePath` roots, of which 26 carry a resolvable `RootModule`
@@ -1202,22 +1205,53 @@ real usage, not machinery.
   `Get-ManifestExportedFunctionNames` -- returned the correct count on all four forms with zero
   defects. The manifest read path was never broken; the defect is entirely in what
   `Test-ManifestConsistency` DOES with a correctly-read list.
-  **The remaining fix is a BEHAVIOUR REMOVAL, which is why it was not taken unilaterally.** Since a
-  determinate non-wildcard `FunctionsToExport` IS the export gate, the under-declared rung is
+  **The remaining fix was a BEHAVIOUR REMOVAL, which is why 000161 did not take it unilaterally.**
+  Since a determinate non-wildcard `FunctionsToExport` IS the export gate, the under-declared rung is
   wrong-by-design in every shape that reaches it -- the same verdict the 000058 survey reached for
-  `unused-export`. Degrading it to silence would take 911 hits to 0, but it deletes a shipped check
-  and flips the repo's own `typo-export` fixture expectation, and no open question in the 000161
-  charter authorises removing shipped behaviour. **That is Mike Andersen's call, and it is the single
-  highest-value decision outstanding on this product.**
+  `unused-export`. Degrading it to silence takes 911 hits to 0, but it deletes a shipped check and
+  flips the repo's own `typo-export` fixture expectation, and no open question in the 000161 charter
+  authorised removing shipped behaviour, so it went to the human as a ruling.
+  **RULED SILENCE by Mike Andersen, 2026-07-29, and EXECUTED by dispatch 000162 leg 1.** The rung is
+  removed from `Test-ManifestConsistency` in source -- not suppressed by `orgPolicy`, not narrowed,
+  not down-severitied. The numbering keeps a deliberate gap (rungs 1 and 3 retain the identities this
+  document and the CHANGELOG already cite). Re-measured against the preserved 000161 harness on the
+  SAME machine-day, same 169/36 denominator: under-declared **911 -> 0**, with orphan and alias-orphan
+  **unchanged at 2 and 1** -- asserted row-for-row (rung + name + manifest), not by count alone, with
+  the pre-change count asserted nonzero first as the vacuity floor. The repo's `typo-export` corpus
+  expectation was deliberately INVERTED to pin that the rung stays silent, and RED-proven: against the
+  pre-change code the flipped expectation fails, and it is the ONLY one of the 119 corpus samples that
+  moves. The shipped `ManifestConsistency` rule rationale also lost its "or an exported one is
+  unlisted" clause, re-derived through `scripts/regen-rule-rationales.ps1` -- a removal has to reach
+  the user-facing text or the plugin documents a check it does not run.
+  **PARKED, NOT QUEUED -- the real authoring-error class.** The genuine defect this rung gestured at
+  is narrower than what it measured: *a new public function the author forgot to add to
+  `FunctionsToExport`*. Nothing in the static surface distinguishes that from a deliberate private
+  function, which is exactly why the rung measured 100% FP, so re-entry would need a genuinely sound
+  **opt-in** signal (an explicit author declaration, not an inference) rather than a narrowing of the
+  old predicate. **This is a future design question, not a queued item, and no dispatch is open on it.**
   **The measurement gap is now CLOSED; what remains open is a RULING, not an investigation.** 000159's
   `next_suggested` named id 000160 for this PATCH and 000160 was minted as the close-out train
   instead, so the class went uncharted until 000161 leg 3 measured it under the measure-first bar.
   That leg answered every empirical question -- the shape, the rate, the denominator, the candidate
   subclass and why it fails -- and stopped at the one question it could not answer for itself. Still
-  carried forward from the 000159 `next_suggested` block, and NOT addressed by 000161: the INERT
-  dot-source degrade in `Get-ModuleDefinedFunctionNames` (it matches `CommandElements[0] -eq '.'`, but
-  PowerShell carries the dot as the `CommandAst` `InvocationOperator`, so the degrade never fires; a
-  characterization test pins the current behaviour and will need flipping deliberately). 000161's own
+  carried forward from the 000159 `next_suggested` block, still NOT fixed, and now a RECORDED NO-BUILD
+  with a measured reason: the INERT dot-source degrade in `Get-ModuleDefinedFunctionNames` (it matches
+  `CommandElements[0] -eq '.'`, but PowerShell carries the dot as the `CommandAst`
+  `InvocationOperator`, so the degrade never fires; a characterization test pins the current
+  behaviour). **Dispatch 000162 leg 2 attempted it, measured the blast radius, and took its
+  pre-authorized no-build fork (OQ3) rather than expand the train.** The fix itself is small and works
+  -- reuse the already-correct `Get-DotSourceClass`, which reads `InvocationOperator` properly for
+  rung 3 -- but making the degrade fire converts the plugin's OWN `scripts/lib/dogfood-reader.psm1`
+  (which dot-sources `lsp-common.ps1` at line 34) from a determinate, ground-truth-verified 12-export
+  cross-reference into `dot-sourced definitions; shape is indeterminate`, and that breaks the 000159
+  test `models dogfood-reader's REAL 12-export surface` (measured: *Expected 12, but got 0*) -- a test
+  OUTSIDE the characterization test's pinned scope, which is exactly the OQ3 trigger. Both ways
+  forward are unchartered design decisions needing their own measurement: (a) accept the blanket
+  degrade and give up 000159's ground-truth coverage on a real module, or (b) fire the degrade only
+  where there is no explicit `Export-ModuleMember`, which re-opens a rung-1 false-positive path (a
+  dot-sourced definition making a manifest name look orphaned) -- trading one FP class for another
+  without measuring it. **Whoever charters this should scope that choice explicitly**, because the
+  naive "just make the degrade fire" reading silently picks (a). 000161's own
   oracle harness and the 914-row hit CSV are preserved OUTSIDE both repos at
   `C:/tmp/000161/` (`oracle-measure.ps1`, `premise-probe.ps1`, `baseline-hits.csv`), which makes the
   before/after re-measurement of any ruling cheap. They are deliberately not committed: they are

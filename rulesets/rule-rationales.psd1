@@ -77,7 +77,7 @@
     entries = @{
         'BashIsm' = 'Unix/bash command, not recognized as a PowerShell command here: it fails on a clean Windows host, or silently relies on Git Bash. Use a PowerShell equivalent, or call it with ''&''.'
         'CommandLinePlaceholder' = 'Unfilled ''<...>'' placeholder on a command line: angle brackets are reserved redirection operators, so this is a parse error, not text. Insert a real value, or quote the literal.'
-        'ManifestConsistency' = 'Manifest FunctionsToExport disagrees with the module: a listed function is never defined, or an exported one is unlisted, so the module exports the wrong commands. Align them.'
+        'ManifestConsistency' = 'Manifest FunctionsToExport disagrees with the module: a listed function is never defined, so the module exports a command that does not exist. Align them.'
         'ModuleNotInstalled' = 'Command comes from a module that is not installed here and is not imported, required, or defined in this file, so the call fails at run time. Install or import the module.'
         'NonAsciiChar' = 'Non-ASCII smart punctuation in a file with no UTF-8 BOM: Windows PowerShell 5.1 reads it as Windows-1252 and mojibakes the text. Use plain ASCII, or save the file with a BOM.'
         'PS7OnlySyntax' = 'PowerShell 7-only syntax: a PARSE error under Windows PowerShell 5.1, so the whole file fails to load there. Use a 5.1-compatible form, or declare ''#Requires -Version 7''.'

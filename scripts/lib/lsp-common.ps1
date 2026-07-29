@@ -2802,7 +2802,7 @@ function Get-ModuleAliasSurface {
 function Test-ManifestConsistency {
     # Core manifest-consistency check (PURE over injected data). Given the manifest
     # export lists and the module's defined/exported function names, return findings
-    # for orphan/typo exports and under-declared exports.
+    # for orphan/typo exports and alias-orphan exports.
     #
     # Returns @{ Findings = @(...); Degrade = '' } for determinate shapes.
     # Returns @{ Findings = @(); Degrade = '<reason>' } for indeterminate (wildcard,
@@ -2810,13 +2810,19 @@ function Test-ManifestConsistency {
     #
     # orphan-export: a name in FunctionsToExport/CmdletsToExport/AliasesToExport
     #   that does not match any defined function name in the module.
-    # under-declared-export: a function defined AND exported (stated or implicitly)
-    #   but absent from the manifest's export lists.
+    #
+    # There were once THREE rungs here. Rung 2, under-declared-export, was REMOVED by
+    # dispatch 000162 (ruled by Mike Andersen 2026-07-29) because it was wrong by design,
+    # not merely buggy -- see the gap marker at rung 2 below for the measurement.
     param(
         [string[]]$FunctionsToExport,
         [string[]]$CmdletsToExport,
         [string[]]$AliasesToExport,
         [string[]]$DefinedNames,
+        # RETAINED BUT NO LONGER READ (dispatch 000162): the removed under-declared rung was
+        # this parameter's only consumer. It stays in the signature deliberately -- callers and
+        # tests still pass it, the caller still computes it to decide whether the module surface
+        # DEGRADES, and dropping it would break those call sites for no behavioural gain.
         $ExportedNames,              # $null = implicitly all defined are exported
         [string]$ManifestPath,
         # Alias-orphan check (dispatch 000128, slice 2). DefinedAliases = the literal Set-Alias/New-Alias
@@ -2838,23 +2844,11 @@ function Test-ManifestConsistency {
     if ($functionsIndeterminate) {
         return @{ Findings = @(); Degrade = 'FunctionsToExport is empty/null (may mean export-all)' }
     }
-    # Build the set of exported names we expect to find in the module.
-    # Only FunctionsToExport is checked in slice 1 (CmdletsToExport and AliasesToExport
-    # are recorded but not cross-referenced -- the survey's deterministic subset
-    # focuses on function exports).
-    $namedSet = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($n in $FunctionsToExport) { [void]$namedSet.Add($n) }
-    # Determine what the module actually defines and exports.
+    # Determine what the module actually defines. Only FunctionsToExport is cross-referenced
+    # (CmdletsToExport and AliasesToExport are recorded but not matched against definitions --
+    # the survey's deterministic subset focuses on function exports).
     $moduleDefinedSet = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($n in $DefinedNames) { [void]$moduleDefinedSet.Add($n) }
-    # Which exported names does the module claim?
-    $moduleExportedSet = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
-    if ($null -eq $ExportedNames) {
-        # No explicit Export-ModuleMember: everything defined is implicitly exported.
-        foreach ($n in $DefinedNames) { [void]$moduleExportedSet.Add($n) }
-    } else {
-        foreach ($n in $ExportedNames) { [void]$moduleExportedSet.Add($n) }
-    }
     # 1. ORPHAN EXPORT: manifest names that do NOT match any defined function.
     foreach ($name in $FunctionsToExport) {
         $nn = [string]$name
@@ -2867,18 +2861,28 @@ function Test-ManifestConsistency {
             })
         }
     }
-    # 2. UNDER-DECLARED EXPORT: a function defined AND exported by the module but
-    #    absent from the manifest export list.
-    foreach ($name in @($moduleExportedSet)) {
-        if (-not $namedSet.Contains($name)) {
-            [void]$findings.Add([pscustomobject]@{
-                ruleId = 'ManifestConsistency'; code = 'ManifestConsistency'
-                source = 'powershell-lsp'
-                severity = 'Warning'; line = 1; col = 1
-                message = "Function '$name' is defined and exported by the module but is missing from FunctionsToExport in the manifest."
-            })
-        }
-    }
+    # 2. UNDER-DECLARED EXPORT -- REMOVED, not disabled and not narrowed (dispatch 000162,
+    #    ruled by Mike Andersen 2026-07-29). This rung reported every function the module
+    #    defined and exported that FunctionsToExport omitted. It was WRONG BY DESIGN: for a
+    #    determinate non-wildcard FunctionsToExport, the manifest IS the export gate -- it
+    #    DETERMINES the exported surface rather than describing it -- so "defined by the module
+    #    but absent from the manifest" is the normal, correct state of every well-formed module
+    #    that has private functions. The rung asserted correctness was a defect.
+    #
+    #    Measured before removal on a 36-module live oracle (dispatch 000161 leg 3, reproduced
+    #    by 000162 leg 1): 911 hits, of which ZERO named a function PowerShell actually exports
+    #    -- 100% false positive, 0 true positives. The one candidate narrowing (fire only where
+    #    the .psm1 carries an explicit Export-ModuleMember) still measured 96.15% FP, so no
+    #    subclass reached a defensible rate and there was nothing to narrow TO.
+    #
+    #    Deliberately NOT solved with an orgPolicy default: that papers a source defect with
+    #    config and makes the ruleset's honesty conditional on deployment. A known-100%-FP rung
+    #    left in a shipping ruleset teaches users to ignore the diagnostic surface, which costs
+    #    the SOUND rungs their signal -- that, not the noise volume, was the reason to remove it.
+    #
+    #    The numbering is left with a gap on purpose: rungs 1 and 3 keep the identities that the
+    #    CHANGELOG, ROADMAP and rule-rationale docs already cite, and "rung 2 of 3" stays
+    #    resolvable to what it always meant.
     # 3. ALIAS-ORPHAN EXPORT (dispatch 000128, slice 2): an alias in AliasesToExport with no matching literal
     #    Set-Alias/New-Alias definition in the module. Symmetric with the function orphan check (rung 1),
     #    same ManifestConsistency code -- NO new owned diagnostic code, NO rationale change. GATED on a
