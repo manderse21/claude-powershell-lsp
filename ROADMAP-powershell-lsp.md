@@ -1,52 +1,66 @@
 # claude-powershell-lsp -- Roadmap
 
-Status as of 2026-07-29. Plugin on main: **v1.27.1**, GPL-3.0-or-later. The v1.27.1 version is
-TAGGED, gitsign-signed, and RELEASED (verified-from-web 2026-07-25): an annotated, gitsign-signed
-tag v1.27.1 (tag object d6d2376) sits at commit dff1cd4 on origin, tagged by `github-actions[bot]`
-from the release runner, and the v1.27.1 GitHub Release is published as the current **Latest**
-(2026-07-25T21:32:51Z; `gh api repos/manderse21/claude-powershell-lsp/releases/latest` returns
-v1.27.1, draft=false, prerelease=false, author `github-actions[bot]`), carrying both assets
-(`powershell-lsp-1.27.1.tar.gz` and `powershell-lsp-1.27.1.cdx.json`). **Main has since moved PAST
-the tagged commit without moving the version**, which is the expected shape for a no-bump train and
-not a drift: `git describe --tags origin/main` reads `v1.27.1-10-g4690cdb` (measured 2026-07-29), so
-the tip is **4690cdbd0380072cdb7518637e1dc565979c152a** -- the PR #107 merge carrying the 000158
-docs/close-out train, which itself recorded the 000156 and 000157 trains in Section 2 -- rather than
-the tagged commit dff1cd4. Both manifests still PARSE to 1.27.1 at that tip (measured 2026-07-29:
-`plugin.json` `version` 1.27.1, `marketplace.json` `metadata.version` 1.27.1, lockstep true), over a
-dated `## [1.27.1] - 2026-07-25` CHANGELOG heading. The old publish gap (the registry once served a
-stale 1.3.0) stays CLOSED.
+Status as of 2026-07-29. Plugin on main: **v1.27.2**, GPL-3.0-or-later. The v1.27.2 version is
+TAGGED, gitsign-signed, and RELEASED (verified-from-web 2026-07-29 by dispatch 000161 leg 1): an
+annotated, gitsign-signed tag v1.27.2 (tag object de60bd2) sits at commit 49ce894 on origin, tagged
+by `github-actions[bot]` from the release runner, and the v1.27.2 GitHub Release is published as the
+current **Latest** (2026-07-29T16:03:29Z; `gh release view` returns v1.27.2, draft=false,
+prerelease=false), carrying both assets (`powershell-lsp-1.27.2.tar.gz` and
+`powershell-lsp-1.27.2.cdx.json`). **Main sits EXACTLY ON the tagged commit**, the tightest shape
+this header ever reports: `git describe --tags origin/main` reads plain **`v1.27.2`** with no commit
+distance (measured 2026-07-29), so the tip is
+**49ce894f73dca49489cbfe821ee71802d4422b54** -- the PR #108 merge carrying the 000159 build train --
+and it IS the tagged commit rather than a descendant of it. Both manifests PARSE to 1.27.2 at that
+tip (measured 2026-07-29: `plugin.json` `version` 1.27.2, `marketplace.json` `metadata.version`
+1.27.2, lockstep true), over a dated `## [1.27.2] - 2026-07-27` CHANGELOG heading -- the heading
+carries 000159's authoring date, not the 07-29 publish date, which is the expected shape for a
+prepared-then-held cut and not a drift. The old publish gap (the registry once served a stale 1.3.0)
+stays CLOSED.
 
-**v1.27.2 is PREPARED but NOT MERGED and NOT RELEASED** (verified-from-web 2026-07-29 -- and this is
-the claim in this document with the shortest shelf life, so re-resolve it rather than reading it).
-Dispatch 000159 cut the lockstep bump and its dated CHANGELOG heading on its own branch, and that
-branch is HELD on **open PR #108** (`dispatch/000159-legs-1-2`; `gh pr view 108` returns state OPEN
-with `mergedAt` null and `mergeCommit` null). None of it is on main, and three independent reads
-agree: `origin/main`'s CHANGELOG carries an EMPTY `[Unreleased]` section sitting directly above the
-`## [1.27.1] - 2026-07-25` heading with no 1.27.2 heading anywhere; both manifests at the tip parse
-to 1.27.1; and `gh release view` returns **v1.27.1** (published 2026-07-25T21:32:51Z) as Latest,
-carrying the 1.27.1 assets. The merge and the pipeline trigger are Mike Andersen's, in that order.
-Until both happen, every 000159 claim below is labelled **staged-on-held-PR**, never shipped.
+**The release is formally VERIFIED end to end, not merely observed** (dispatch 000161 leg 1, five
+independent reads, every value floored against empty). (a) `releases/latest` returns v1.27.2,
+draft=false, prerelease=false, with both assets, whose recorded digests match the bytes on disk
+(`sha256:6e2cfbef...` tarball, `sha256:9e6fd0ab...` SBOM). (b) `gh attestation verify` exits 0 on
+BOTH downloaded assets against `-R manderse21/claude-powershell-lsp` -- one SLSA
+`https://slsa.dev/provenance/v1` statement covering both subjects, builder id
+`powershell-lsp-release.yml@refs/heads/main`, `metadata.invocationId` naming release run
+**30468710698** and a signer `sourceRepositoryDigest` of 49ce894, equal to the tagged commit. The
+verify was RED-PROVEN to discriminate: a single appended byte makes the same command exit 1 with an
+HTTP 404 on the tampered digest. (c) The tag object is annotated, tagged by `github-actions[bot]`,
+carries a `-----BEGIN SIGNED MESSAGE-----` block, and dereferences to a commit that is an ancestor
+of `origin/main` (it is the tip). (d) Both manifests parse 1.27.2 in lockstep at that commit. (e)
+The push-CI run whose headSha EQUALS the tagged commit is **30465192375**, and all four named legs
+-- `windows-pwsh`, `windows-powershell`, `ubuntu-pwsh`, `macos-pwsh` -- are COMPLETED success on it,
+satisfying the 000081 stale-grab guard. That green is on **attempt 2**; attempt 1's `macos-pwsh` leg
+failed on a NEW flake species recorded in Section 6, and the charter counts a rerun attempt.
 
-**What v1.27.1 contains is one PATCH, and it is a listing correction rather than code.** The
-marketplace listing was corrected -- native nav is SHIPPED, not roadmap -- a one-clause fix to the
-embedded `description` in `marketplace.json`, written by 000153 leg 3 and classified and cut by
-000154. No code, no knob, no contract, no capture-format change. That is the entire release, and it
-was cut precisely because a listing is what a prospective installer reads before becoming one.
+**What v1.27.2 contains is one PATCH, and it is a real correctness fix rather than a listing
+change.** `ManifestConsistency` now reads multi-name `Export-ModuleMember` lists in both idiomatic
+forms (`-Function 'A', 'B'` and `-Function @('A','B')`), which the export-name collector previously
+skipped whole -- an empty collected set reads as "no explicit `Export-ModuleMember`" and answers
+export-all, so every private function was reported as an under-declared export. Measured on the
+plugin's own `scripts/lib/dogfood-reader.psm1`: 13 false warnings before, **0** after. `-Cmdlet`
+shares the collection path and is fixed with it; `-Alias` is deliberately not folded in. The release
+also carries 000159's two test-infra legs (flake instrumentation, 5.1 SARIF schema validation), both
+of which are CI-only and moved no product surface. No knob, no contract, no capture-format change.
 
 **The cut was made by the PIPELINE, not by hand** (verified-from-web, and the distinction is the
-whole point of Section 3): **two** release-workflow runs sit on commit dff1cd4, and both are correct
-behavior. Run **30174870685** (21:03:49Z) is the DRY RUN -- its gate steps pass and it ends in
-"Dry-run summary (no tag cut, no release created)", every mutating step skipped. Run **30175779060**
-(21:30:49Z) is the PRODUCING run: it builds the release notes, source archive and SBOM, installs
-gitsign, cuts and pushes the gitsign-signed tag from the runner on the validated commit, and creates
-the GitHub Release. The tie between artifact and run is read from the tag object rather than from
-the run list -- the tag's own tagger timestamp resolves to 2026-07-25T21:32:47Z and the Release
-published at 21:32:51Z, both inside that second run's window -- and the tag object carries a
-`-----BEGIN SIGNED MESSAGE-----` block, so it is signed, not merely annotated.
+whole point of Section 3): **three** release-workflow runs sit on commit 49ce894, and all three are
+correct behavior. Run **30465192187** (15:18:13Z) FAILED CLOSED at `Gate 4 -- push-CI is GREEN on
+every leg for the target commit`, because it was triggered four seconds after the PR #108 merge,
+while the push-CI run was still resolving its `macos-pwsh` flake -- the gate doing exactly its job.
+Run **30468549931** (15:59:15Z) is the DRY RUN -- its gate steps pass and it ends in "Dry-run summary
+(no tag cut, no release created)", every mutating step skipped. Run **30468710698** (16:01:06Z) is
+the PRODUCING run: it builds the release notes, source archive and SBOM, installs gitsign, cuts and
+pushes the gitsign-signed tag from the runner on the validated commit, and creates the GitHub
+Release. The tie between artifact and run is read from the tag object and the attestation rather
+than from the run list -- the tag's own Sigstore certificate and the provenance `invocationId` both
+name run 30468710698 -- and the tag object carries a `-----BEGIN SIGNED MESSAGE-----` block, so it
+is signed, not merely annotated.
 
-The push CI run on that exact tip is GREEN, headSha-matched per rule 000081: CI run **30174864694**
-reports headSha `dff1cd47ddacdd5d64745e917a2d8c9218e6f04d` with conclusion success, so it is not a
-stale grab.
+The push CI run on that exact tip is GREEN, headSha-matched per rule 000081: CI run **30465192375**
+reports headSha `49ce894f73dca49489cbfe821ee71802d4422b54` with conclusion success on attempt 2, so
+it is not a stale grab.
 
 **The install side actually caught up, which was the whole reason for cutting a one-line release**
 (verified-from-disk, out of `~/.claude/plugins/`). The marketplace-resolved install had been sitting
@@ -190,6 +204,8 @@ dispatch(es); where an authored draft disagreed with the CHANGELOG, the CHANGELO
 
 | Version | Dispatch | Delivered |
 |---|---|---|
+| v1.27.2 | 000159 legs 1a/1b/2; merged as PR #108; cut by the pipeline; verified by 000161 leg 1 | PATCH -- **RELEASED 2026-07-29**, and the first release in this arc whose verification was run as its own chartered leg rather than asserted at write time. **000159 leg 2 (PATCH)** teaches `ManifestConsistency` to read multi-name `Export-ModuleMember` lists in both idiomatic forms -- `-Function 'A', 'B'` (one `ArrayLiteralAst`) and `-Function @('A','B')` (one `ArrayExpressionAst`) -- which the export-name collector previously skipped whole; an empty collected set reads as "no explicit `Export-ModuleMember`" and answers export-all, so every private function was reported as an under-declared export. Measured on the plugin's own `scripts/lib/dogfood-reader.psm1`: **13 false warnings before, 0 after**, with the modelled surface matching `Import-Module` ground truth exactly. `-Cmdlet` was measured to share the collection path and is fixed with it; `-Alias` is deliberately NOT folded into the function set (the BurntToast shape, v1.24.x); a list carrying any non-literal element DEGRADES to silence rather than resolving the literal half. **000159 leg 1a (test-infra, no bump)** instruments the daemon-initializing flake: an outcome recorder wired into all 12 collapsing hooks, derived by AST with a vacuity floor, plus a rescue that copies each isolated data root's `logs/` inside the glob CI actually uploads. **000159 leg 1b (CI, no bump)** closes the 5.1 SARIF schema-validation gap at the artifact level. No knob (still 19), no `base.psd1` change (still 53), no new owned finder (still 6), no CONTRACT change. Cut lockstep to 1.27.2 in both manifests over a dated `## [1.27.2] - 2026-07-27` CHANGELOG heading (the heading carries 000159's authoring date, not the 07-29 publish date -- the expected shape for a prepared-then-held cut). Tag v1.27.2 gitsign-signed and cut BY THE PIPELINE over commit 49ce894 (tag object de60bd2, tagger `github-actions[bot]`, build signer `powershell-lsp-release.yml@refs/heads/main`, producing run **30468710698** read from the tag's own Sigstore certificate and corroborated by the attestation's `metadata.invocationId`); GitHub Release published as the current **Latest** (2026-07-29T16:03:29Z, verified-from-web), with both assets covered by ONE SLSA provenance statement naming both subjects and `gh attestation verify`-clean at exit 0, RED-proven to exit 1 on a single tampered byte. Push-CI **30465192375** headSha-matched to the tagged commit, all four legs green on attempt 2 |
+| v1.27.1 | 000153 leg 3 (authored); classified and cut by 000154 | PATCH -- **RELEASED 2026-07-25**, a listing correction rather than code. The marketplace listing was corrected -- native nav is SHIPPED, not roadmap -- a one-clause fix to the embedded `description` in `marketplace.json`. No code, no knob, no contract, no capture-format change. That is the entire release, and it was cut precisely because a listing is what a prospective installer reads before becoming one. Tag v1.27.1 gitsign-signed and cut BY THE PIPELINE (tag object d6d2376 -> commit dff1cd4, tagger `github-actions[bot]`; dry run **30174870685** then producing run **30175779060**); GitHub Release published 2026-07-25T21:32:51Z (verified-from-web), no longer the current release (superseded by v1.27.2). Push-CI **30174864694** headSha-matched to dff1cd4 per rule 000081. *This row consolidates the v1.27.1 facts that used to live in this document's header, relocated here by 000161 leg 2 when the header advanced to v1.27.2 -- the values are the ones already verified-from-web at v1.27.1's own close-out, not re-derived here.* |
 | v1.27.0 | 000142 legs 1-2 + 000143; cut by 000142 leg 5 | MINOR -- **RELEASED 2026-07-22.** Both manifests read 1.27.0 at the origin/main tip fddba38, which PR #99 merged. Classification is highest-wins over the live `[Unreleased]` entries: 000142 leg 1's MINOR governs a cut whose other two entries are PATCH. **000142 leg 1 (MINOR)** ships E2.2 org policy as the `orgPolicy` knob -- an absolute path to a central `PSScriptAnalyzerSettings.psd1` whose `ExcludeRules` are ENFORCED as a final subtractive drop at both `scripts/lsp-client.ps1` surface points, before the hook emit and the dogfood capture, so one rule covers the live surface, the capture, and the SARIF scan. Org wins the exclude path (no local include can re-enable a dropped rule); repo-local wins the include path (the policy's own `IncludeRules` stay advisory). Fails open with exactly one logged warning on a missing / unreadable / unparseable / relative path, and the policy is read through `Import-PowerShellDataFile` (restricted, data-only) so it can never execute code. Knobs **18 -> 19** with one `CONTRACT.md` FROZEN-KNOBS row proven RED-then-GREEN against the set-equality guard; no `base.psd1` change (still 53), no new owned finder (still 6), no status token. Off is byte-identical, proven over the shipped corpus records. **000142 leg 2 (PATCH)** is N1.1 idiom-guidance slice 2: hand-authored rationale overrides on the five PSES-15 default-surface rules whose derived text was circular or pure mechanism, each proven to already fire by the derived corpus snapshots; `override_count` **4 -> 9**, `-Check` green at pin 1.25.0. **000143 (PATCH, docs)** documents release Gate 5 and corrects the tag-command convention. Cut lockstep to 1.27.0 in both manifests + a dated `## [1.27.0] - 2026-07-22` CHANGELOG heading. Tag v1.27.0 gitsign-signed and cut BY THE PIPELINE over commit fddba38 (tagger `github-actions[bot]`, build signer `powershell-lsp-release.yml@refs/heads/main`, producing run **29962928958** read from the tag's own Sigstore certificate and corroborated by the attestation's `metadata.invocationId`); GitHub Release published as the current **Latest** (2026-07-22T22:30:18Z, verified-from-web), with both assets SLSA-attested and `gh attestation verify`-clean at exit 0 |
 | v1.26.0 | 000139 / 000137 / 000136; cut by 000141 leg 1 | MINOR -- **the Wave-1 band**, RELEASED 2026-07-22. Classification is highest-wins over the live `[Unreleased]` entries, so 000139's MINOR governs a cut whose other two entries are PATCH. **000139 (MINOR)** adds the plugin-owned pre-PSSA finder `CommandLinePlaceholder` (`Find-CommandLinePlaceholder` in `scripts/lib/lsp-common.ps1`, wired at the `scripts/lsp-client.ps1` seam): a literal `<Name>` left on a command line is schema-valid to the eye but a redirection-operator parse error at run time. Detection is token-level -- the reserved `<` input-redirection operator immediately abutting a bareword ending in `>` -- and deliberately precision-first: legitimate output redirection (`>`, `>>`, `2>&1`), angle brackets inside strings / here-strings / comments, C#-style generics in strings, and the word operators `-lt` / `-gt` never fire. Re-entered under the S3.4 measure-first bar and shipped only at a measured **0% false-positive rate on a 281-file oracle** (150 repo scripts + 131 installed-module scripts, zero hits). Owned finders **5 -> 6** (verified-from-disk: `rule-rationales.psd1` `owned_count` = 6); no new knob (still 18), no `base.psd1` change (still 53), no CONTRACT change. **000137 (PATCH)** adds `docs/trust.md`, assembling in one evaluator-facing place the release-integrity chain that was already true but scattered (keyless gitsign-signed tag + SLSA provenance over both release assets, CycloneDX SBOM generated from the real pins, the pinned and SHA-256-verified PSScriptAnalyzer, the 0% corpus FP bar guarded on every CI run, measured latency, the SHA-pinned code-scanning workflow, the generated rule rationales), plus a README pointer. **000136 (PATCH)** adds `docs/CONTINUITY.md` (per-surface failure/recovery if the sole maintainer disappears) and `MAINTAINERS.md` (second-maintainer on-ramp), and reconciles the docs so the release runbook lives in exactly one place (`docs/RELEASING.md`). Cut lockstep to 1.26.0 in both manifests + a dated CHANGELOG heading. Tag v1.26.0 gitsign-signed and cut BY THE PIPELINE (tag object c26e580 -> commit 22bec89, tagger `github-actions[bot]`, build signer `powershell-lsp-release.yml@refs/heads/main`, run 29918156282); GitHub Release published 2026-07-22T12:06:42Z with both assets SLSA-attested and `gh attestation verify`-clean at exit 0, and superseded the same day (verified-from-web) -- tag and Release both retained, the current-release badge now on v1.27.0 |
 | v1.25.1 | 000131 / 000132 / 000133; cut by 000134 leg 1 | PATCH -- the scan-robustness lineage. 000131 NAMES the file(s) an INCOMPLETE (exit 4) code-scanning scan could not analyze (SARIF `toolExecutionNotification` + stderr + workflow annotation; per-file budgets left unchanged). 000132 fixes an INCOMPLETE-scan correctness gap (a client-cap-KILLED file was passing as clean; now recorded NOT analyzed via the 000024 never-silent branch) and its measurement corrects the true per-file budget a THIRD time -- to the daemon's OWN settle cap `MaxWaitMs` (default 5000 ms), not the client `timeoutMs`. 000133 raises the SCAN daemon's `MaxWaitMs` 5000 -> 15000 (scan-only; the in-agent daemon keeps 5000; INTERNAL, no knob, no CONTRACT change), and main's own code-scanning flipped RED -> GREEN at the #91 merge. All three self-describe PATCH; no knob, detection, ruleset, rationale, or CONTRACT surface moved. Cut lockstep to 1.25.1 in both manifests + a dated CHANGELOG heading. Tag v1.25.1 gitsign-signed (tag object f92ff79 -> commit c9692ca, tagged by `github-actions[bot]` from the release runner); GitHub Release published 2026-07-19T00:41:38Z (verified-from-web), no longer the current release (superseded by v1.26.0). Full narrative in "Scan-robustness lineage" below |
@@ -326,18 +342,18 @@ it is the sole job of a separate workflow (`.github/workflows/powershell-lsp-cod
 does not fire on the pull-request event, and it ran green on the merge commit's own push, alongside a
 second green four-leg CI run (runs **30186769853** and **30186769851**, both on `ea3434db`).
 
-### 000159 -- legs 1a / 1b / 2 STAGED ON HELD PR #108; leg 3 a recorded NO-BUILD
+### 000159 -- legs 1a / 1b / 2 RELEASED in v1.27.2; leg 3 a recorded NO-BUILD
 
-**A fourth train has no row for a different reason than the three above.** It is not that no version
-moved -- 000159 prepares **v1.27.2** -- it is that **nothing has merged yet.** Its four commits sit
-on `dispatch/000159-legs-1-2` behind **open PR #108** (verified-from-web 2026-07-29; the header
-carries the full state evidence). Read every claim in this block as *staged*, never as shipped.
+**A fourth train now has its own row above.** 000159 prepared **v1.27.2**, PR #108 merged
+2026-07-29T15:18:09Z as merge commit **49ce894**, and the pipeline cut and published the release the
+same afternoon. Read every claim in this block as *shipped*, and see the header for the five-read
+verification.
 
 | Leg | Outcome | Bump |
 |---|---|---|
-| 1a flake instrumentation | staged on #108, steps 1-2 only | none (test-infra) |
-| 1b 5.1 SARIF validation gap | staged on #108, closed at the artifact level | none (CI) |
-| 2 multi-name export lists | staged on #108, **prep v1.27.2** | PATCH |
+| 1a flake instrumentation | RELEASED in v1.27.2, steps 1-2 only | none (test-infra) |
+| 1b 5.1 SARIF validation gap | RELEASED in v1.27.2, closed at the artifact level | none (CI) |
+| 2 multi-name export lists | RELEASED in v1.27.2 | PATCH |
 | 3 scalar-`.Count` finder | **NO-BUILD** at 7.14% measured FP | none |
 
 **Leg 3 is the load-bearing outcome, and it is a no-build proven by absence in the 000127 shape.**
@@ -602,12 +618,23 @@ tag):
   for admins, block force-push and deletion.
 
 Together the gated pipeline + the local guard + server-side protection make the gated flow the ONLY
-path to main. v1.19.0 was the first release cut under all three; **v1.27.0 is the latest**
-(verified-from-web, published as the current Latest 2026-07-22T22:30:18Z), and it went through this
-pipeline end-to-end -- five gates green on a dry run (run 29961881444), then five gates green again
-on the real run that cut the tag and published the Release (run 29962928958; Section 2). A third
-trigger arrived two and a half minutes later and Gate 2 refused it, because by then the tag it would
-have cut already existed -- the gate doing its job on the pipeline's own tag.
+path to main. v1.19.0 was the first release cut under all three; **v1.27.2 is the latest**
+(verified-from-web, published as the current Latest 2026-07-29T16:03:29Z), and it went through this
+pipeline end-to-end -- five gates green on a dry run (run 30468549931), then five gates green again
+on the real run that cut the tag and published the Release (run 30468710698; Section 2).
+
+**The v1.27.2 cycle is the cleanest live demonstration yet that the gates are load-bearing rather
+than ceremonial, and it is worth recording as a shape convention.** THREE release triggers landed on
+commit `49ce894`, and the FIRST one FAILED CLOSED. Run **30465192187** was triggered at 15:18:13Z --
+four seconds after the PR #108 merge -- and `Gate 4 -- push-CI is GREEN on every leg for the target
+commit` refused it, because the push-CI run on that commit had not yet concluded green (its
+`macos-pwsh` leg was failing the flake now recorded in Section 6). Nothing downstream ran: no
+checkout, no build, no attestation, no tag, no Release. Only after the failed leg was rerun green did
+the dry run (30468549931, 15:59:15Z) and then the producing run (30468710698, 16:01:06Z) pass all
+five gates. The convention this establishes: **a merge is not a release trigger, and the gate --
+not the operator -- is what enforces the wait.** The earlier v1.27.0 cycle demonstrated the same
+property from the other direction, when a third trigger arrived two and a half minutes late and Gate
+2 refused it because the tag it would have cut already existed.
 
 **The pipeline cuts the tag. Always.** A printed `git tag` / `git push origin <tag>` pair is a
 MANUAL FALLBACK for the case where the pipeline itself is unavailable -- never the release path, and
@@ -967,9 +994,20 @@ update lands.
   disappeared. A finder for this class is not scheduled; if one is ever chartered, the 000159 outbox
   records the two candidate designs and names option (a) -- an explicit degrade whenever ANY pipeline
   element is a dynamic invocation -- as a hypothesis from the data rather than a measurement.
+  **The bar has now produced a SECOND refusal, and this one refused a FIX rather than a new finder
+  (000161 leg 3).** The `ManifestConsistency` `FunctionsToExport` class was chartered to ship a fix
+  only at a measured 0% false-positive rate. Re-measured on a 36-module live oracle it stands at
+  **100% FP (911 of 911 under-declared hits, zero true positives)**, and the one candidate narrowing
+  -- restrict to modules carrying an explicit `Export-ModuleMember` -- measures **96.15% FP (25 of
+  26)**, so no subclass measured clean and the pre-authorized no-build fork applied: no code, no
+  CHANGELOG entry, no PR. The distinction worth keeping is that the two refusals differ in kind. The
+  000159 refusal declined to ADD a check that would have been wrong. This one declined to CHANGE a
+  check whose correct fix turned out to be a **behaviour removal** nobody had authorised -- a bigger
+  action than the charter contemplated, and therefore a ruling to surface rather than a change to
+  make. Section 6 carries the full measurement and the ruling that is now outstanding.
   **Separately, and not a deferred-rules item at all:** `ManifestConsistency` already ships and is
-  measured 99.89% false-positive on real-world modules, with the `FunctionsToExport` class accepted
-  as a recorded deviation and chartered onward. That is a correctness gap in a shipped check rather
+  measured false-positive-dominated on real-world modules, with the `FunctionsToExport` class accepted
+  as a recorded deviation. That is a correctness gap in a shipped check rather
   than a deferral of a new one, so it lives in Section 6, not here.
 - **S3.5 Runtime intelligence, full (#7).** Runtime execution capture is a different architecture with
   real privacy / scope questions; the static slice (`moduleAwareness`) is the committed extent, and the
@@ -1011,7 +1049,7 @@ real usage, not machinery.
   pending post; the on-disk notes that still call it "not submitted" / "open"
   (docs/upstream/pses-2297-pr.md, sitting-closeout.md) are superseded.
 - **The daemon-initializing integration flake -- STILL KNOWN-OPEN; surveyed 000156 leg 4, and now
-  INSTRUMENTED but not explained (000159 leg 1a, staged on held PR #108).** The flake itself has not
+  INSTRUMENTED but not explained (000159 leg 1a, RELEASED in v1.27.2).** The flake itself has not
   recurred and no root cause is known; what changed is that the next occurrence should arrive with
   the evidence attached. `tests/PowerShellLsp.Integration.Tests.ps1` "(A) a request while PSES is still INITIALIZING
   surfaces the TRANSIENT incomplete, never silence" failed on windows-pwsh in CI run **30177250246**
@@ -1042,7 +1080,7 @@ real usage, not machinery.
   today both render as the same assertion message. (3) Only then choose between a bounded retry and a
   widened window, on evidence. **No `Start-Sleep`** -- that lowers the failure probability and hides
   the race rather than closing it.
-  **Steps (1) and (2) are BUILT and staged on held PR #108 (000159 leg 1a); step (3) is untouched and
+  **Steps (1) and (2) are BUILT and RELEASED in v1.27.2 (000159 leg 1a); step (3) is untouched and
   remains the named next move.** The recorder is wired into all 12 hooks that collapse distinct
   failures into one empty string -- the set derived by AST rather than hand-listed, with a vacuity
   floor asserting it is non-empty -- and the two spawners left out, `Invoke-CaptureC` and
@@ -1061,12 +1099,21 @@ real usage, not machinery.
   root, and that is the first thing to check.** Note also that the rescue covers the daemon-bearing
   isolated roots only: the 000049 poisoned-cache block and the 000025 absent-root block are excluded
   because both were MEASURED to start no daemon and never to call ensure-pses, so there is nothing to
-  rescue -- if either later grows a daemon, the rescue must be extended. Nothing here lands until
-  PR #108 merges. No dispatch open for step (3); it is evidence-gated, not scheduled.
-- **SARIF emitted under Windows PowerShell 5.1 is never schema-validated -- FIXED AND HELD, not yet
-  closed (surveyed 000157 leg 4; built by 000159 leg 1b, staged on open PR #108).** The gap below is
-  the survey's own record of the problem; the fix it recommended has since been built, and closes
-  the moment #108 merges. Three tests validate emitted SARIF against the vendored
+  rescue -- if either later grows a daemon, the rescue must be extended. All of it is now on main and
+  released. No dispatch open for step (3); it is evidence-gated, not scheduled.
+  **THE INSTRUMENTATION HAS NOW RUN TWICE WITHOUT THE FLAKE FIRING -- an OBSERVATION, not a
+  resolution (000161 leg 2).** Two four-leg CI runs on `49ce894` carried the new recorder --
+  **30465192375** attempt 1 and attempt 2 -- and `windows-pwsh` was COMPLETED success on BOTH. So the
+  flake did not reproduce under instrumentation, and nothing was learned about its cause. Two
+  non-firings are weak evidence: this flake was already intermittent enough that 000156 leg 4 could
+  not reproduce it either, so a quiet pair of runs is consistent with the flake still being there.
+  **Do not read this as fixed, and do not close this item on it.** The payoff remains the next
+  observed failure, which is still pending by construction.
+- **SARIF emitted under Windows PowerShell 5.1 is never schema-validated -- CLOSED AND RELEASED
+  (surveyed 000157 leg 4; built by 000159 leg 1b; LIVE ON CI in v1.27.2).** The gap below is
+  the survey's own record of the problem; the fix it recommended is built, merged, released, and
+  measured green on the `windows-powershell` leg of the release-gating push-CI run **30465192375**.
+  Three tests validate emitted SARIF against the vendored
   2.1.0 JSON Schema, and all three are guarded by `-Skip:($PSVersionTable.PSVersion.Major -lt 6)`
   because they call `Test-Json -Schema`, which is measured ABSENT on 5.1.26100.8875 and present on
   pwsh 7. They were named from the run's own uploaded artifact rather than inferred.
@@ -1078,7 +1125,7 @@ real usage, not machinery.
   on the 5.1 leg, covering the shape structurally. **Cheapest fix shape, recorded and not
   implemented:** have the 5.1 leg write its emitted SARIF to a file and validate that artifact in a
   pwsh step -- the JSON is already produced, only the validator needs a modern host.
-  **That is exactly what shipped, and it is staged on held PR #108 (000159 leg 1b).** Windows
+  **That is exactly what shipped, and it is RELEASED in v1.27.2 (000159 leg 1b).** Windows
   PowerShell 5.1 ran the SARIF suite (40 passed, 0 failed, 2 correctly SKIPPED -- the in-suite
   `Test-Json` cases, which stay skipped for the measured reason above) and emitted its SARIF to
   `POWERSHELL_LSP_SARIF_ARTIFACT_DIR`; pwsh 7.6.3 then validated those artifacts against the same
@@ -1087,8 +1134,27 @@ real usage, not machinery.
   that silently emitted nothing would otherwise validate zero files and report success, so green has
   to mean "5.1's own SARIF was checked". RED-proven four ways, each exit 1 -- empty directory,
   missing directory, artifacts present but none from host 5, and a non-conformant payload rejected
-  naming `/runs` as the offending pointer. **Held, not closed:** none of it is on main until #108
-  merges, and this item flips to CLOSED only then. No further dispatch needed.
+  naming `/runs` as the offending pointer. **CLOSED:** all of it is on main, released in v1.27.2, and
+  green on the `windows-powershell` leg of the release-gating run. No further dispatch needed.
+- **A NEW integration flake species -- `macos-pwsh` / ServeShim, FIRST SIGHTING 2026-07-29, distinct
+  from the windows-pwsh daemon-initializing flake above and deliberately NOT folded into it.**
+  `tests/PowerShellLsp.ServeShim.Tests.ps1` around **line 307** failed on the **`macos-pwsh`** leg of
+  CI run **30465192375** (the push run on merge commit `49ce894`), attempt 1: the assertion
+  `ShimExitedAfterCrash` returned **false at 13ms**, against the expectation that "killing PSES
+  mid-session makes the shim EXIT promptly". **One clean rerun of the failed leg** turned the run
+  green on attempt 2 with zero code change, which is what makes it a flake sighting rather than a
+  break. The daemon-log artifact is preserved by Mike Andersen at
+  **`Downloads/ci-30465192375-macos`**.
+  **Why it is a separate item.** Different platform (`macos-pwsh`, not `windows-pwsh`), different
+  test file (`ServeShim`, not `Integration`), different failure shape (a shim that did NOT exit when
+  it should have, at 13ms -- the opposite polarity from an empty-stdout hook that produced nothing),
+  and no shared mechanism has been established between them. Folding two unexplained intermittents
+  into one item would manufacture a pattern the evidence does not support, and would make either
+  one's eventual root cause look like it explained the other.
+  **Status: OBSERVED ONCE, uninvestigated.** No dispatch open. Nothing here is instrumented the way
+  the windows flake now is, so a second sighting would arrive with no more evidence than this one. If
+  it recurs, the first move is the 000159 leg 1a lesson applied to this suite: instrument before
+  theorising.
 - **`ManifestConsistency` is 99.89% false-positive on real-world modules -- KNOWN-OPEN, MEASURED,
   accepted as a recorded deviation, and NOT YET CHARTERED.** This is the single largest known
   correctness gap in the shipped product, and it is stated here because nothing else in this document
@@ -1105,17 +1171,57 @@ real usage, not machinery.
   non-wildcard `FunctionsToExport`, the manifest rather than the module's implicit export-all is the
   exported set, so the check should compare against the intersection or degrade to silence.
   **Two things are worth separating.** The class 000159 leg 2 was chartered to fix -- multi-name
-  `Export-ModuleMember` lists -- IS fixed and measures clean (0 of the 910 attributable to it), and
-  it is staged on held PR #108. This second class was ruled by Mike Andersen to be out of that
-  train's scope and recorded as an accepted deviation, not a shortfall.
-  **No dispatch is open, and that is a gap rather than a decision.** 000159's `next_suggested` named
-  id 000160 for this PATCH, but 000160 was minted as the post-merge close-out train instead, so the
-  charter this item is waiting on does not yet exist. The 000159 outbox's `next_suggested` block
-  holds the full specification -- including the instruction to fold in the INERT dot-source degrade
-  in `Get-ModuleDefinedFunctionNames` while the same file is open (it matches `CommandElements[0]
-  -eq '.'`, but PowerShell carries the dot as the `CommandAst` `InvocationOperator`, so the degrade
-  never fires; a characterization test pins the current behaviour and will need flipping
-  deliberately). The oracle harness and CSVs from 000159 make the before/after re-measurement cheap.
+  `Export-ModuleMember` lists -- IS fixed, measures clean (0 of the 910 attributable to it), and is
+  now **CLOSED AND RELEASED in v1.27.2**. This second class was ruled by Mike Andersen to be out of
+  that train's scope and recorded as an accepted deviation, not a shortfall.
+  **RE-MEASURED 2026-07-29 by dispatch 000161 leg 3, and the class is now measured at 100% FP, worse
+  than the 99.89% recorded above.** Live oracle on that machine-day: **169** `.psd1` manifests across
+  6 `PSModulePath` roots plus the repo, of which **36** carry a resolvable `RootModule` `.psm1` -- the
+  real denominator. (000159 measured 155 / 26. As with the 281-vs-325 oracle, these are two
+  machine-days, not a number and its correction, so the rows above stand as written.) Total hits
+  **914** = **911** under-declared + 2 orphan + 1 alias-orphan. Of the 911 under-declared hits,
+  **ZERO name a function PowerShell actually exports** -- so the under-declared class measures
+  **911/911 = 100% false positive**, with no true positive anywhere in the oracle.
+  **000161 leg 3 is a RECORDED NO-BUILD, and the reason is that no narrower subclass measures clean
+  either.** The one candidate subclass -- fire only where the `.psm1` carries an EXPLICIT
+  `Export-ModuleMember`, so the author demonstrably meant to export the name -- returns **26** hits
+  and measures **96.15% FP (25 of 26)**. Twenty-five are PowerShellGet (both installed versions):
+  `PSModule.psm1` defines 132/121 functions and explicitly exports 38, while the manifest lists
+  26/25, and the difference is the **OneGet provider-interface surface** (`Find-Package`,
+  `Install-Package`, `Get-DynamicOptions`, `Initialize-Provider`, ...) which is deliberately exported
+  to PackageManagement and deliberately kept out of the manifest's public surface. Verified rather
+  than asserted: `Get-Module -ListAvailable PowerShellGet` reports 26 exported functions and does NOT
+  contain `Find-Package`. The 26th hit is the plugin's OWN `tests/corpus/samples/module/typo-export`
+  fixture, true by construction. So the sound-subclass fork pre-authorized in the 000161 charter
+  found nothing to ship, and the no-build fork applied: **no code, no CHANGELOG entry, no PR.**
+  **The charter's stated defect shape was FALSIFIED before any of this, and that matters for the next
+  charter.** 000161's anchor described this class as "the same single-element-only defect the 000159
+  leg 2 fix closed for `Export-ModuleMember`" -- i.e. a multi-name `FunctionsToExport` list being read
+  as a single element. It is not. A four-form probe (multi-name `@()`, multi-name bare list, single
+  scalar, single-element `@()`) against BOTH read paths -- `Get-ModuleManifestExports` and
+  `Get-ManifestExportedFunctionNames` -- returned the correct count on all four forms with zero
+  defects. The manifest read path was never broken; the defect is entirely in what
+  `Test-ManifestConsistency` DOES with a correctly-read list.
+  **The remaining fix is a BEHAVIOUR REMOVAL, which is why it was not taken unilaterally.** Since a
+  determinate non-wildcard `FunctionsToExport` IS the export gate, the under-declared rung is
+  wrong-by-design in every shape that reaches it -- the same verdict the 000058 survey reached for
+  `unused-export`. Degrading it to silence would take 911 hits to 0, but it deletes a shipped check
+  and flips the repo's own `typo-export` fixture expectation, and no open question in the 000161
+  charter authorises removing shipped behaviour. **That is Mike Andersen's call, and it is the single
+  highest-value decision outstanding on this product.**
+  **The measurement gap is now CLOSED; what remains open is a RULING, not an investigation.** 000159's
+  `next_suggested` named id 000160 for this PATCH and 000160 was minted as the close-out train
+  instead, so the class went uncharted until 000161 leg 3 measured it under the measure-first bar.
+  That leg answered every empirical question -- the shape, the rate, the denominator, the candidate
+  subclass and why it fails -- and stopped at the one question it could not answer for itself. Still
+  carried forward from the 000159 `next_suggested` block, and NOT addressed by 000161: the INERT
+  dot-source degrade in `Get-ModuleDefinedFunctionNames` (it matches `CommandElements[0] -eq '.'`, but
+  PowerShell carries the dot as the `CommandAst` `InvocationOperator`, so the degrade never fires; a
+  characterization test pins the current behaviour and will need flipping deliberately). 000161's own
+  oracle harness and the 914-row hit CSV are preserved OUTSIDE both repos at
+  `C:/tmp/000161/` (`oracle-measure.ps1`, `premise-probe.ps1`, `baseline-hits.csv`), which makes the
+  before/after re-measurement of any ruling cheap. They are deliberately not committed: they are
+  machine-state measurement scaffolding, not product.
 - **Pester 6 -- deferred, deliberately.** Pester 6.0.0 went GA on the PowerShell Gallery 2026-07-07.
   The test bootstrap is pinned to the 5.x major (000120 leg 1) rather than upgraded, because there is
   no forcing function and a breaking new major should be absorbed by a decision, not by runner-image
