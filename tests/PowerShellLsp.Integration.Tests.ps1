@@ -61,10 +61,24 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
             }
             $p.StandardInput.Close()
             $script:LastHookExit = $null   # Track A fail-safe test reads the hook's exit code
-            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
+            # empty return can be told apart from a cap overrun. Return values are unchanged.
+            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
+            if (-not $p.WaitForExit($CapMs)) {
+                try { $p.Kill($true) } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
             $script:LastHookExit = $p.ExitCode
             [void]$stdoutTask.Wait(1500)
-            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+            if (-not $stdoutTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
+            $hookReason = 'ok'
+            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+            return $stdoutTask.Result
         }
 
         $script:ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
@@ -473,9 +487,23 @@ Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -S
                 $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
             }
             $p.StandardInput.Close()
-            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
+            # empty return can be told apart from a cap overrun. Return values are unchanged.
+            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
+            if (-not $p.WaitForExit($CapMs)) {
+                try { $p.Kill($true) } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
             [void]$stdoutTask.Wait(1500)
-            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+            if (-not $stdoutTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
+            $hookReason = 'ok'
+            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+            return $stdoutTask.Result
         }
 
         $script:H_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
@@ -680,9 +708,23 @@ Describe 'Integration: opt-in ruleset=base broadens the live surface (dispatch 0
                 $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
             }
             $p.StandardInput.Close()
-            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
+            # empty return can be told apart from a cap overrun. Return values are unchanged.
+            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
+            if (-not $p.WaitForExit($CapMs)) {
+                try { $p.Kill($true) } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
             [void]$stdoutTask.Wait(1500)
-            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+            if (-not $stdoutTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
+            $hookReason = 'ok'
+            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+            return $stdoutTask.Result
         }
 
         $script:B87ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
@@ -853,9 +895,23 @@ Describe 'Integration: edit-range diagnostic scoping (dispatch 000019)' -Skip:$s
                 $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
             }
             $p.StandardInput.Close()
-            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
+            # empty return can be told apart from a cap overrun. Return values are unchanged.
+            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
+            if (-not $p.WaitForExit($CapMs)) {
+                try { $p.Kill($true) } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
             [void]$stdoutTask.Wait(1500)
-            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+            if (-not $stdoutTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
+            $hookReason = 'ok'
+            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+            return $stdoutTask.Result
         }
 
         $script:S_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
@@ -1012,9 +1068,23 @@ Describe 'Integration: supervised restart + incomplete/degraded status (dispatch
                 $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
             }
             $p.StandardInput.Close()
-            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
+            # empty return can be told apart from a cap overrun. Return values are unchanged.
+            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
+            if (-not $p.WaitForExit($CapMs)) {
+                try { $p.Kill($true) } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
             [void]$stdoutTask.Wait(1500)
-            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+            if (-not $stdoutTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
+            $hookReason = 'ok'
+            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+            return $stdoutTask.Result
         }
 
         # Launch pses-daemon.ps1 DIRECTLY (long-lived) with arbitrary args + env. Returns
@@ -1097,6 +1167,12 @@ Describe 'Integration: supervised restart + incomplete/degraded status (dispatch
     }
 
     AfterAll {
+        # Rescue this block's ISOLATED root into the uploaded artifact tree FIRST (dispatch 000159
+        # leg 1a). It goes first, ahead of the reap and ahead of the session-file cleanup below,
+        # because that cleanup discards session/<sid>.json from THIS root too -- and the session
+        # file (recorded pid + state) is half the diagnostic value. The root lives under the OS
+        # temp dir, outside psls-test-data/**, so CI would never see it in any case.
+        [void](Save-IsolatedDataRootLog -DataRoot $script:R_DataD -Tag '000022-degraded')
         # Reap every daemon + its PSES child. Daemon (a) is launched DETACHED via session-start
         # (no Process handle), so reap it info-independently by recorded session id, reading the
         # session file fresh -- the dispatch 000078 leak vector the null-gated $infos loop missed
@@ -1222,6 +1298,7 @@ Describe 'Integration: first-start install-incomplete is VISIBLE (dispatch 00002
     # non-destructively, and session-start surfaces the failure instead of swallowing it.
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # New-PluginHookOutcome + Save-IsolatedDataRootLog (000159 leg 1a)
 
         # Run a plugin script under pwsh with an explicit data root + extra env; capture stdout,
         # stderr, and the exit code SEPARATELY (the fail-loud test asserts on all three).
@@ -1257,9 +1334,23 @@ Describe 'Integration: first-start install-incomplete is VISIBLE (dispatch 00002
                 $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
             }
             $p.StandardInput.Close()
-            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
+            # empty return can be told apart from a cap overrun. Return values are unchanged.
+            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
+            if (-not $p.WaitForExit($CapMs)) {
+                try { $p.Kill($true) } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
             [void]$stdoutTask.Wait(1500)
-            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+            if (-not $stdoutTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
+            $hookReason = 'ok'
+            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+            return $stdoutTask.Result
         }
 
         # Launch pses-daemon.ps1 DIRECTLY with arbitrary args + env; return the Process. The
@@ -1329,6 +1420,12 @@ Describe 'Integration: first-start install-incomplete is VISIBLE (dispatch 00002
     }
 
     AfterAll {
+        # Rescue this block's ISOLATED roots into the uploaded artifact tree FIRST (dispatch 000159
+        # leg 1a) -- they are under the OS temp dir, not psls-test-data/**, so CI never sees them.
+        foreach ($pair in @(@($script:U_RootMarquee, 'marquee'), @($script:U_RootLoud, 'loud'),
+                @($script:U_RootNonDestr, 'nondestr'), @($script:U_RootSurface, 'surface'))) {
+            [void](Save-IsolatedDataRootLog -DataRoot $pair[0] -Tag ('000024-' + $pair[1]))
+        }
         if ($null -ne $script:U_Info) {
             foreach ($pidVal in @($script:U_Info.pid, $script:U_Info.psesPid)) {
                 if ($pidVal) { Stop-Process -Id ([int]$pidVal) -Force -ErrorAction SilentlyContinue }
@@ -1461,9 +1558,23 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
                 $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
             }
             $p.StandardInput.Close()
-            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
+            # empty return can be told apart from a cap overrun. Return values are unchanged.
+            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
+            if (-not $p.WaitForExit($CapMs)) {
+                try { $p.Kill($true) } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
             [void]$stdoutTask.Wait(1500)
-            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+            if (-not $stdoutTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
+            $hookReason = 'ok'
+            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+            return $stdoutTask.Result
         }
 
         function Start-RawDaemon {
@@ -1544,6 +1655,10 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
     }
 
     AfterAll {
+        # Rescue the ISOLATED roots into the uploaded artifact tree FIRST (dispatch 000159 leg 1a):
+        # sub-cases A and B are exactly the shape whose failure 000156 leg 4 could not diagnose.
+        [void](Save-IsolatedDataRootLog -DataRoot $script:P_DataA -Tag '000028-A')
+        [void](Save-IsolatedDataRootLog -DataRoot $script:P_DataB -Tag '000028-B')
         foreach ($info in @($script:P_InfoA, $script:P_InfoB, $script:P_InfoW)) {
             if ($null -ne $info) { foreach ($pidVal in @($info.pid, $info.psesPid)) { if ($pidVal) { Stop-Process -Id ([int]$pidVal) -Force -ErrorAction SilentlyContinue } } }
         }
@@ -1680,9 +1795,23 @@ Describe 'Integration: auto-relaunch the idle-stopped daemon (dispatch 000030)' 
                 $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
             }
             $p.StandardInput.Close()
-            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
+            # empty return can be told apart from a cap overrun. Return values are unchanged.
+            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
+            if (-not $p.WaitForExit($CapMs)) {
+                try { $p.Kill($true) } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
             [void]$stdoutTask.Wait(1500)
-            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+            if (-not $stdoutTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
+            $hookReason = 'ok'
+            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+            return $stdoutTask.Result
         }
 
         function Start-RawDaemon {
@@ -1767,6 +1896,12 @@ Describe 'Integration: auto-relaunch the idle-stopped daemon (dispatch 000030)' 
     }
 
     AfterAll {
+        # Rescue the ISOLATED roots into the uploaded artifact tree FIRST (dispatch 000159 leg 1a).
+        # It goes ahead of the session-file cleanup below, which discards session/<sid>.json from
+        # these roots. The relaunch path these cover is the one the FALSIFIED standing explanation
+        # of the flake blamed, so their logs are of direct diagnostic interest.
+        [void](Save-IsolatedDataRootLog -DataRoot $script:RL_NoBundle -Tag '000030-nobundle')
+        [void](Save-IsolatedDataRootLog -DataRoot $script:RL_DummyRoot -Tag '000030-dummy')
         foreach ($entry in $script:RL_Sids.GetEnumerator()) {
             Stop-DaemonBySession -DataRoot $entry.Value -Sid $entry.Key
             foreach ($suffix in @('.json', '.relaunch')) {
@@ -2010,6 +2145,7 @@ Describe 'Integration: dogfood diagnostic capture (dispatch 000039)' -Skip:$scri
     # POWERSHELL_LSP_DOGFOOD_LOG override so the real (gitignored) dogfood/ tree is never touched.
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # New-PluginHookOutcome + Save-IsolatedDataRootLog (000159 leg 1a)
         $script:DfScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         $script:DfData = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-df-itg-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Force -Path $script:DfData | Out-Null
@@ -2028,10 +2164,26 @@ Describe 'Integration: dogfood diagnostic capture (dispatch 000039)' -Skip:$scri
             $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
             $p.StandardInput.Close()
             $script:DfHookExit = $null
-            if (-not $p.WaitForExit(9000)) { try { $p.Kill($true) } catch { }; return '' }
+            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
+            # empty return can be told apart from a cap overrun. Return values are unchanged.
+            # This block's cap is a literal 9000 rather than a $CapMs parameter, so it is passed
+            # through explicitly -- the collapse is the same class as Invoke-PluginHook's.
+            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
+            if (-not $p.WaitForExit(9000)) {
+                try { $p.Kill($true) } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs 9000 -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath 'lsp-client.ps1' -DataRoot $script:DfData
+                return ''
+            }
             $script:DfHookExit = $p.ExitCode
             [void]$stdoutTask.Wait(1500)
-            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+            if (-not $stdoutTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs 9000 -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath 'lsp-client.ps1' -DataRoot $script:DfData
+                return ''
+            }
+            $hookReason = 'ok'
+            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs 9000 -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath 'lsp-client.ps1' -DataRoot $script:DfData
+            return $stdoutTask.Result
         }
 
         # A deliberately broken .ps1 (unclosed brace) under the scratch root (NOT the repo tree --
@@ -2043,6 +2195,9 @@ Describe 'Integration: dogfood diagnostic capture (dispatch 000039)' -Skip:$scri
     }
 
     AfterAll {
+        # Rescue this block's ISOLATED root logs into the uploaded artifact tree before the root
+        # goes away (dispatch 000159 leg 1a) -- it is under the OS temp dir, not psls-test-data/**.
+        [void](Save-IsolatedDataRootLog -DataRoot $script:DfData -Tag '000039-dogfood')
         Remove-Item -LiteralPath $script:DfData -Recurse -Force -ErrorAction SilentlyContinue
     }
 
@@ -2199,10 +2354,24 @@ Describe 'Integration: closed-loop agentic correction (dispatch 000061)' -Skip:$
             }
             $p.StandardInput.Close()
             $script:LastHookExit = $null
-            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
+            # empty return can be told apart from a cap overrun. Return values are unchanged.
+            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
+            if (-not $p.WaitForExit($CapMs)) {
+                try { $p.Kill($true) } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
             $script:LastHookExit = $p.ExitCode
             [void]$stdoutTask.Wait(1500)
-            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+            if (-not $stdoutTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
+            $hookReason = 'ok'
+            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+            return $stdoutTask.Result
         }
 
         # Talk to the daemon pipe DIRECTLY (never via lsp-client) for the wire-level no-token
@@ -2398,10 +2567,24 @@ Describe 'Integration: format-on-edit suggestion (dispatch 000059)' -Skip:$scrip
             }
             $p.StandardInput.Close()
             $script:F_LastExit = $null
-            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
+            # empty return can be told apart from a cap overrun. Return values are unchanged.
+            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
+            if (-not $p.WaitForExit($CapMs)) {
+                try { $p.Kill($true) } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
             $script:F_LastExit = $p.ExitCode
             [void]$stdoutTask.Wait(1500)
-            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+            if (-not $stdoutTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
+            $hookReason = 'ok'
+            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+            return $stdoutTask.Result
         }
 
         $script:F_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
@@ -2566,10 +2749,24 @@ Describe 'Integration: format-on-edit APPLY -- the guarded write-back (dispatch 
             }
             $p.StandardInput.Close()
             $script:AP_LastExit = $null
-            if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; return '' }
+            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
+            # empty return can be told apart from a cap overrun. Return values are unchanged.
+            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
+            if (-not $p.WaitForExit($CapMs)) {
+                try { $p.Kill($true) } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
             $script:AP_LastExit = $p.ExitCode
             [void]$stdoutTask.Wait(1500)
-            if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+            if (-not $stdoutTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+                return ''
+            }
+            $hookReason = 'ok'
+            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+            return $stdoutTask.Result
         }
         function Get-AddlContext { param([string]$Out) if ([string]::IsNullOrWhiteSpace($Out)) { return '' } try { return [string]((($Out | ConvertFrom-Json).hookSpecificOutput).additionalContext) } catch { return '' } }
         function Set-RawFile { param([string]$Path, [byte[]]$Bytes) [System.IO.File]::WriteAllBytes($Path, $Bytes) }

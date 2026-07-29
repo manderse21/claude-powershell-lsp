@@ -40,6 +40,7 @@ Describe 'SARIF scan -- pure helpers (no daemon)' {
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path $PSScriptRoot 'Sarif.Common.ps1')   # Save-EmittedSarif (dispatch 000159 leg 1b)
         $script:SchemaPath = Join-Path $PSScriptRoot 'sarif/sarif-2.1.0.json'
 
         # A synthetic finding set spanning every severity the mapping must handle.
@@ -52,6 +53,7 @@ Describe 'SARIF scan -- pure helpers (no daemon)' {
         $script:Report = New-SarifReport -Findings $script:Synth -Root $TestDrive -ToolVersion '9.9.9' -ExecutionSuccessful $true
         $script:ReportJson = $script:Report | ConvertTo-Json -Depth 16
         $script:Parsed = $script:ReportJson | ConvertFrom-Json
+        [void](Save-EmittedSarif -Json $script:ReportJson -Name 'helpers-report')   # 000159 leg 1b
     }
 
     Context 'the -FailOn exit-code policy matrix (dispatch 000127; policy shipped 000057)' {
@@ -277,6 +279,7 @@ Describe 'SARIF scan -- pure helpers (no daemon)' {
             $script:NaReport = New-SarifReport -Findings $script:Synth -Root $TestDrive -ToolVersion '9.9.9' -ExecutionSuccessful $false -NotAnalyzed $script:NaPaths
             $script:NaJson = $script:NaReport | ConvertTo-Json -Depth 16
             $script:NaParsed = $script:NaJson | ConvertFrom-Json
+            [void](Save-EmittedSarif -Json $script:NaJson -Name 'not-analyzed')   # 000159 leg 1b
         }
 
         It 'relativizes, sorts, and reports total + overflow for a small set (Get-ScanNotAnalyzedNames)' {
@@ -575,6 +578,7 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path $PSScriptRoot 'Sarif.Common.ps1')   # Save-EmittedSarif (dispatch 000159 leg 1b)
         $script:ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         $script:ScanScript = Join-Path $script:ScriptsDir 'lsp-scan.ps1'
         $script:SchemaPath = Join-Path $PSScriptRoot 'sarif/sarif-2.1.0.json'
@@ -612,6 +616,9 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
         }
         $script:SarifText = if (Test-Path -LiteralPath $script:SarifOut) { Get-Content -LiteralPath $script:SarifOut -Raw } else { '' }
         $script:Sarif = if (-not [string]::IsNullOrWhiteSpace($script:SarifText)) { $script:SarifText | ConvertFrom-Json } else { $null }
+        # 000159 leg 1b. This is the MOST load-bearing of the three: it is the real entry point's
+        # own emission (scripts/lsp-scan.ps1), not a synthetic report assembled in-test.
+        [void](Save-EmittedSarif -Json $script:SarifText -Name 'entry-point')
     }
 
     AfterAll {

@@ -287,3 +287,127 @@ function Get-IntegrationDaemonLeak {
     } catch { }
     return $leaks.ToArray()
 }
+
+# ===========================================================================
+# Flake instrumentation (dispatch 000159 leg 1a -- steps 1 and 2 of the 000156 shape)
+# ===========================================================================
+# WHY: dispatch 000156 leg 4 FALSIFIED the standing explanation of the honor-block
+# flake (the recorded It duration was 3.3167s against a 25000ms cap -- nothing was
+# killed at a cap), and then could go no further, because the two things it needed to
+# see are both unobservable today:
+#
+#   (1) THE LOGS. Several Describe blocks mint an ISOLATED data root under the OS temp
+#       dir (psls-degraded-*, psls-000024-*, psls-000028-A/B-*, psls-000030-*,
+#       psls-df-itg-*, psls-000049-*). CI uploads ONLY psls-test-data/logs/** and
+#       psls-test-data/session/** -- the SHARED root pinned by PSLS_TEST_DATA_DIR -- so
+#       an isolated root sits outside the uploaded tree to begin with, and several
+#       AfterAll blocks then discard it. Two barriers, not one; copying into the
+#       uploaded tree at teardown clears both.
+#
+#   (2) THE OUTCOME. Invoke-PluginHook collapses THREE distinct failures into the same
+#       empty string: killed at CapMs, exited normally with empty stdout, and the
+#       stdout drain not completing within its 1500ms window. An assertion that trips
+#       on '' cannot say which happened -- which is exactly why three dispatches of
+#       confident timing reasoning produced nothing.
+#
+# Both helpers are DIAGNOSABILITY ONLY: no return value, no timing, and no control-flow
+# change to anything they instrument. Step 3 of the recorded fix shape (bounded retry /
+# widened window) is deliberately NOT implemented -- the evidence needed to choose
+# between those two does not exist yet, and producing it is the point of this leg.
+# No Start-Sleep is added anywhere.
+
+function Save-IsolatedDataRootLog {
+    # Copy an ISOLATED data root's logs/ and session/ into the artifact tree CI uploads,
+    # so a failure inside a block that owns its own temp root stays diagnosable after the
+    # run. Call from AfterAll BEFORE the root is torn down. No-op (returns 0) when
+    # PSLS_TEST_DATA_DIR is unset -- a local run still has the root on disk, so there is
+    # nothing to rescue. Never throws: instrumentation must not be able to fail a teardown.
+    param(
+        [Parameter(Mandatory = $true)][string]$DataRoot,
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [string]$ArtifactRoot = $env:PSLS_TEST_DATA_DIR
+    )
+    $copied = 0
+    try {
+        if ([string]::IsNullOrWhiteSpace($ArtifactRoot)) { return 0 }
+        if ([string]::IsNullOrWhiteSpace($DataRoot)) { return 0 }
+        if (-not (Test-Path -LiteralPath $DataRoot)) { return 0 }
+        $dest = Join-Path $ArtifactRoot ('logs/isolated/' + $Tag)
+        foreach ($sub in @('logs', 'session')) {
+            $src = Join-Path $DataRoot $sub
+            if (-not (Test-Path -LiteralPath $src)) { continue }
+            $files = @(Get-ChildItem -LiteralPath $src -File -Recurse -ErrorAction SilentlyContinue)
+            if ($files.Count -eq 0) { continue }
+            $subDest = Join-Path $dest $sub
+            New-Item -ItemType Directory -Force -Path $subDest -ErrorAction SilentlyContinue | Out-Null
+            foreach ($f in $files) {
+                try {
+                    Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $subDest $f.Name) -Force -ErrorAction Stop
+                    $copied = $copied + 1
+                } catch { }
+            }
+        }
+    } catch { }
+    return $copied
+}
+
+function Format-PluginHookOutcome {
+    # One-line human rendering for an assertion message. Deliberately DISTINCT per
+    # reason -- the RED-proof asserts the killed-at-cap and exited-empty-stdout texts
+    # differ, which is the whole deliverable of step 2.
+    param($Outcome)
+    if ($null -eq $Outcome) { return 'hook outcome: (not recorded)' }
+    $exitText = 'n/a'
+    if ($null -ne $Outcome.ExitCode) { $exitText = [string]$Outcome.ExitCode }
+    $detail = 'completed with output'
+    switch ($Outcome.Reason) {
+        'killed-at-cap' { $detail = 'KILLED at CapMs -- the process did not exit within the client hard cap' }
+        'exited-empty-stdout' { $detail = 'EXITED normally but wrote NOTHING to stdout (NOT a cap overrun)' }
+        'stdout-read-timeout' { $detail = 'exited, but the 1500ms stdout drain did not complete' }
+    }
+    return ('hook outcome: ' + $Outcome.Reason + ' -- ' + $detail +
+        ' [elapsedMs=' + $Outcome.ElapsedMs + ' capMs=' + $Outcome.CapMs + ' exit=' + $exitText +
+        ' script=' + (Split-Path -Leaf ([string]$Outcome.ScriptPath)) + ']')
+}
+
+function New-PluginHookOutcome {
+    # Record WHY Invoke-PluginHook returned what it returned. The caller assigns the
+    # result to its own $script:PslsHookOutcome; the hook's own return value is
+    # untouched. The four reasons are mutually exclusive:
+    #   ok                  -- exited within the cap, stdout drained, non-empty
+    #   exited-empty-stdout -- exited within the cap, stdout drained, EMPTY
+    #   killed-at-cap       -- WaitForExit($CapMs) expired; the process tree was killed
+    #   stdout-read-timeout -- exited, but the 1500ms stdout drain did not complete
+    # The middle two are the pair that rendered identically before this dispatch.
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('ok', 'exited-empty-stdout', 'killed-at-cap', 'stdout-read-timeout')]
+        [string]$Reason,
+        [int]$CapMs = 0,
+        [int]$ElapsedMs = 0,
+        $ExitCode = $null,
+        [string]$ScriptPath = '',
+        [string]$DataRoot = ''
+    )
+    $o = [pscustomobject]@{
+        Reason     = $Reason
+        CapMs      = $CapMs
+        ElapsedMs  = $ElapsedMs
+        ExitCode   = $ExitCode
+        ScriptPath = $ScriptPath
+        DataRoot   = $DataRoot
+    }
+    # Best-effort trace into the uploaded tree, so a CI failure carries the outcome even
+    # when nothing in the test happens to print it. Never throws.
+    try {
+        if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $logDir = Join-Path $env:PSLS_TEST_DATA_DIR 'logs'
+            if (-not (Test-Path -LiteralPath $logDir)) {
+                New-Item -ItemType Directory -Force -Path $logDir -ErrorAction SilentlyContinue | Out-Null
+            }
+            $line = (Get-Date).ToString('o') + ' ' + (Format-PluginHookOutcome $o)
+            Add-Content -LiteralPath (Join-Path $logDir 'plugin-hook-outcomes.log') -Value $line -Encoding ascii -ErrorAction SilentlyContinue
+        }
+    } catch { }
+    return $o
+}

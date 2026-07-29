@@ -31,6 +31,30 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.27.2] - 2026-07-27
+PATCH: **`ManifestConsistency` reads multi-name `Export-ModuleMember` lists.** The export-name
+collector accepted only individual string constants, so a multi-name export list -- in either
+idiomatic form, `-Function 'A', 'B'` (one `ArrayLiteralAst`) or `-Function @('A','B')` (one
+`ArrayExpressionAst`) -- was skipped whole. The collected set stayed empty, which the caller reads
+as "no explicit `Export-ModuleMember`" and answers with export-all, so every **private** function
+was reported as an under-declared export. Measured on the plugin's own
+`scripts/lib/dogfood-reader.psm1`: **13 false warnings, one per private function**, against a real
+surface of 12 exports; now **0**, with the modelled surface matching `Import-Module` ground truth
+exactly. `-Cmdlet` was measured to share the same collection path and is fixed with it; `-Alias`
+names are still deliberately not folded into the function set (the BurntToast shape, v1.24.x).
+A list carrying any non-literal element degrades to silence rather than resolving the literal half
+-- a partial set read as complete would be a worse defect than the silence it replaced.
+
+> **Known limitation, measured this cycle and deliberately NOT fixed here.** On a live 26-module
+> oracle the `ManifestConsistency` under-declared-export check remains dominated by a *second,
+> unrelated* false-positive class: a manifest's `FunctionsToExport` is the final export gate, so a
+> function the module defines but the manifest omits is simply **not exported** -- yet it is still
+> reported as under-declared. After the fix above, **909 of 910** remaining hits are confirmed false
+> positives (**0** true positives), each verified against the module's real surface via
+> `Import-Module`. This fix removes 178 of the original 1088 hits; it does not on its own make the
+> check trustworthy on real-world modules. Full per-module triage is recorded in the dispatch
+> 000159 outbox.
+
 ## [1.27.1] - 2026-07-25
 PATCH: **marketplace listing corrected -- native nav is SHIPPED, not roadmap.** The embedded plugin
 `description` in `.claude-plugin/marketplace.json` still told a prospective installer that
