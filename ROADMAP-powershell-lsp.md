@@ -1,6 +1,6 @@
 # claude-powershell-lsp -- Roadmap
 
-Status as of 2026-07-27. Plugin on main: **v1.27.1**, GPL-3.0-or-later. The v1.27.1 version is
+Status as of 2026-07-29. Plugin on main: **v1.27.1**, GPL-3.0-or-later. The v1.27.1 version is
 TAGGED, gitsign-signed, and RELEASED (verified-from-web 2026-07-25): an annotated, gitsign-signed
 tag v1.27.1 (tag object d6d2376) sits at commit dff1cd4 on origin, tagged by `github-actions[bot]`
 from the release runner, and the v1.27.1 GitHub Release is published as the current **Latest**
@@ -8,11 +8,24 @@ from the release runner, and the v1.27.1 GitHub Release is published as the curr
 v1.27.1, draft=false, prerelease=false, author `github-actions[bot]`), carrying both assets
 (`powershell-lsp-1.27.1.tar.gz` and `powershell-lsp-1.27.1.cdx.json`). **Main has since moved PAST
 the tagged commit without moving the version**, which is the expected shape for a no-bump train and
-not a drift: `git describe --tags origin/main` now reads `v1.27.1-9-gea3434d` (measured 2026-07-27),
-so the tip is **ea3434db** -- the PR #106 merge carrying the 000156 and 000157 trains recorded in
-Section 2 -- rather than the tagged commit dff1cd4. Both manifests still PARSE to 1.27.1 at that tip
-(measured 2026-07-27), over a dated `## [1.27.1] - 2026-07-25` CHANGELOG heading. The old publish gap
-(the registry once served a stale 1.3.0) stays CLOSED.
+not a drift: `git describe --tags origin/main` reads `v1.27.1-10-g4690cdb` (measured 2026-07-29), so
+the tip is **4690cdbd0380072cdb7518637e1dc565979c152a** -- the PR #107 merge carrying the 000158
+docs/close-out train, which itself recorded the 000156 and 000157 trains in Section 2 -- rather than
+the tagged commit dff1cd4. Both manifests still PARSE to 1.27.1 at that tip (measured 2026-07-29:
+`plugin.json` `version` 1.27.1, `marketplace.json` `metadata.version` 1.27.1, lockstep true), over a
+dated `## [1.27.1] - 2026-07-25` CHANGELOG heading. The old publish gap (the registry once served a
+stale 1.3.0) stays CLOSED.
+
+**v1.27.2 is PREPARED but NOT MERGED and NOT RELEASED** (verified-from-web 2026-07-29 -- and this is
+the claim in this document with the shortest shelf life, so re-resolve it rather than reading it).
+Dispatch 000159 cut the lockstep bump and its dated CHANGELOG heading on its own branch, and that
+branch is HELD on **open PR #108** (`dispatch/000159-legs-1-2`; `gh pr view 108` returns state OPEN
+with `mergedAt` null and `mergeCommit` null). None of it is on main, and three independent reads
+agree: `origin/main`'s CHANGELOG carries an EMPTY `[Unreleased]` section sitting directly above the
+`## [1.27.1] - 2026-07-25` heading with no 1.27.2 heading anywhere; both manifests at the tip parse
+to 1.27.1; and `gh release view` returns **v1.27.1** (published 2026-07-25T21:32:51Z) as Latest,
+carrying the 1.27.1 assets. The merge and the pipeline trigger are Mike Andersen's, in that order.
+Until both happen, every 000159 claim below is labelled **staged-on-held-PR**, never shipped.
 
 **What v1.27.1 contains is one PATCH, and it is a listing correction rather than code.** The
 marketplace listing was corrected -- native nav is SHIPPED, not roadmap -- a one-clause fix to the
@@ -304,13 +317,90 @@ change; no version moved.
 (`gh pr view 106 --json state,mergedAt,headRefOid,mergeCommit`): state **MERGED**, merged
 **2026-07-26T03:49:08Z**, head **a2c84220** -- byte-identical to the SHA 000157 pushed, so nothing
 rewrote the branch between push and merge -- into merge commit **ea3434db**, which is `origin/main`'s
-current tip (`git rev-parse origin/main` matches it exactly, so nothing has landed behind the merge).
+second-newest commit (re-measured 2026-07-29: the PR #107 merge `4690cdb` has since landed on top of
+it, and the header states the current tip).
 CI is green **by name and on the matching head SHA**, per rule 000081: run **30186041265** on head
 `a2c84220` completed *success* with all four legs green -- `ubuntu-pwsh`, `macos-pwsh`, `windows-pwsh`,
 and `windows-powershell`, the leg that had been red. `sarif-upload` is **not** a fifth leg of that run:
 it is the sole job of a separate workflow (`.github/workflows/powershell-lsp-code-scanning.yml`) that
 does not fire on the pull-request event, and it ran green on the merge commit's own push, alongside a
 second green four-leg CI run (runs **30186769853** and **30186769851**, both on `ea3434db`).
+
+### 000159 -- legs 1a / 1b / 2 STAGED ON HELD PR #108; leg 3 a recorded NO-BUILD
+
+**A fourth train has no row for a different reason than the three above.** It is not that no version
+moved -- 000159 prepares **v1.27.2** -- it is that **nothing has merged yet.** Its four commits sit
+on `dispatch/000159-legs-1-2` behind **open PR #108** (verified-from-web 2026-07-29; the header
+carries the full state evidence). Read every claim in this block as *staged*, never as shipped.
+
+| Leg | Outcome | Bump |
+|---|---|---|
+| 1a flake instrumentation | staged on #108, steps 1-2 only | none (test-infra) |
+| 1b 5.1 SARIF validation gap | staged on #108, closed at the artifact level | none (CI) |
+| 2 multi-name export lists | staged on #108, **prep v1.27.2** | PATCH |
+| 3 scalar-`.Count` finder | **NO-BUILD** at 7.14% measured FP | none |
+
+**Leg 3 is the load-bearing outcome, and it is a no-build proven by absence in the 000127 shape.**
+The charter demanded the oracle measurement BEFORE any finder was built, and demanded the live count
+rather than the remembered one. **The live oracle is 325 files** -- 153 repo `.ps1`/`.psm1` plus 172
+installed-module scripts across 6 `PSModulePath` roots -- **not the 281** (150 + 131) the charter
+carried forward. No attempt was made to reconcile the two and none should be: the installed-module
+set is machine state, so 281 and 325 are two different machine-days rather than a number and its
+correction, which is why the rows above that cite a 281-file oracle (000139, and S3.4) stand as
+written. Impact on the fork: none -- a wider oracle can only surface more counter-examples, and it
+surfaced one. The classifier -- the 000157 guard's logic verbatim -- returned **28 hits**, and
+hand-triage put the measured false-positive rate at **7.14% MINIMUM (2 of 28)** against a **0%**
+bar, so the pre-adjudicated fork resolved to NO-BUILD: no finder, no CHANGELOG entry, no second PR,
+and owned finders stay at **6**.
+
+The two failing hits are Pester's `($help | & $SafeCommands['Measure-Object']).Count`, and the
+failure is structural rather than a tuning miss. The allowlist keys on
+`CommandAst.GetCommandName()`, which returns **`$null`** for a dynamic invocation `& $expr`, so it
+cannot see a `Measure-Object` that is genuinely there; the identical DIRECT call resolves
+`GetCommandName()` to `Measure-Object` and is correctly silent. Measured under Windows PowerShell
+5.1.26100.8875 with StrictMode Latest, the expression returns **3** for a three-element input and
+**1** for a single-element input and **never throws** -- a real `GenericMeasureInfo` count -- so
+flagging it is simply wrong. The number was NOT rescued: allowlisting the dynamic form, or dropping
+the 22 `Get-Member` membership probes whose exclusion would move the rate to 85.71%, would each have
+produced a passing measurement and a finder nobody agreed to. The lower and less flattering rate is
+the one reported, because the fork is decided by the 2 unambiguous hits alone.
+
+**This is the third static check in this repo the same idiom has defeated** -- it beat the alias
+check in 000127 leg 4, it is named in 000159 leg 2's own degrade language, and it has now killed
+this finder's allowlist. That recurrence, rather than the no-build, is the finding worth carrying
+forward, and the full 28-hit evidence table lives in the 000159 outbox so the next charter starts
+from data instead of from this dispatch's conclusion.
+
+**What the three built legs staged.** Leg 1a instruments the daemon-initializing flake: an outcome
+recorder wired into all 12 hooks that collapse distinct failures into one empty string, derived by
+AST rather than hand-listed and carrying a vacuity floor that asserts the derived set is non-empty,
+plus a rescue that copies each isolated data root's `logs/` inside the glob CI actually uploads --
+proven by running the real thing with the env var CI sets, not by reading the YAML. Leg 1b closes
+the 5.1 SARIF gap at the artifact level: Windows PowerShell 5.1 emits its SARIF, pwsh 7.6.3
+validates those artifacts against the vendored 2.1.0 schema, and `-RequireHost 5` is the point
+rather than a nicety, since a leg that silently emitted nothing would otherwise validate zero files
+and report success. RED-proven four ways, each exit 1. Leg 2 teaches `ManifestConsistency` to read
+multi-name `Export-ModuleMember` lists: `-Cmdlet` was measured to share the collection path and is
+fixed with it, `-Alias` was measured NOT to, and mixed literal/variable lists now DEGRADE rather
+than half-resolving -- pre-fix they silently assumed export-all, and a partial set reading as
+complete is the worse defect.
+
+**Three of the four commits were ADOPTED from a session that died, and every recorded proof was
+RE-RUN rather than trusted** (Hub Rule 7): `c5ee43dc` (leg 1a), `2068b2b2` (leg 1b) and `4dd979ae`
+(leg 2), with `8aa812e4` the release prep authored in-session. All proofs reproduced exactly. The
+re-run also resolved the handover's one unknown -- an unexplained detached worktree turned out to be
+the pinned pre-fix baseline the leg 2 RED proof required, after which it was removed rather than
+left as stray state.
+
+**The accepted deviation rides with the cut, and it is large.** Mike Andersen ruled mid-session that
+the 0%-FP bar is scoped to the CHARTERED class, and that ruling's premise was checked rather than
+assumed: **0 of the 910** `ManifestConsistency` hits remaining on the live oracle after the fix are
+attributable to a multi-name export list. But of those same 910, **909 are confirmed false positives
+with 0 true positives**, all belonging to a SECOND class -- `FunctionsToExport` -- that this train
+did not fix and that Section 6 now carries as a standing item. That limitation is stated in the
+1.27.2 CHANGELOG entry itself rather than only here, because `docs/RELEASING.md` says the entry
+becomes the release notes verbatim and a reader deserves to know the check is not yet trustworthy on
+their own tree.
 
 ### Wave-1 merge outcomes (000136 / 000137 / 000139) plus the 000141 cut -- the whole cycle on main
 
@@ -864,6 +954,23 @@ update lands.
   `PSUseCompatibleCommands` / `PSUseCompatibleTypes` remain **unshipped and deferred** -- they are
   blocked on a target-profile decision (which PowerShell editions/versions to compat-check against),
   not on a corpus measurement, so the 0% bar does not by itself clear them.
+  **The bar has now also produced its first REFUSAL, which is the same mechanism working in the
+  other direction (000159 leg 3).** The scalar-`.Count` finder was chartered to ship only at 0%
+  measured false positives on the widened oracle; the re-enumerated 325-file oracle returned 28 hits
+  at a **7.14% minimum** false-positive rate, so it is a **recorded NO-BUILD** -- no finder, no
+  CHANGELOG entry, no second PR, owned finders unchanged at 6. The failing shape is structural: the
+  `Measure-Object` allowlist keys on `CommandAst.GetCommandName()`, which is `$null` for a dynamic
+  invocation `& $expr`, so it cannot see Pester's `& $SafeCommands['Measure-Object']`. Section 2
+  carries the full record. **The measure-first bar is only credible if it can say no, and this is
+  the instance where it did** -- the same bar that RE-ADMITTED the placeholder check above refused
+  this one, and the number was not rescued by narrowing the classifier until the counter-example
+  disappeared. A finder for this class is not scheduled; if one is ever chartered, the 000159 outbox
+  records the two candidate designs and names option (a) -- an explicit degrade whenever ANY pipeline
+  element is a dynamic invocation -- as a hypothesis from the data rather than a measurement.
+  **Separately, and not a deferred-rules item at all:** `ManifestConsistency` already ships and is
+  measured 99.89% false-positive on real-world modules, with the `FunctionsToExport` class accepted
+  as a recorded deviation and chartered onward. That is a correctness gap in a shipped check rather
+  than a deferral of a new one, so it lives in Section 6, not here.
 - **S3.5 Runtime intelligence, full (#7).** Runtime execution capture is a different architecture with
   real privacy / scope questions; the static slice (`moduleAwareness`) is the committed extent, and the
   runtime version is a deliberate leave.
@@ -903,8 +1010,10 @@ real usage, not machinery.
   submitted as PR #2299 and is now CLOSED unmerged (2026-06-11, verified live) -- settled, no longer a
   pending post; the on-disk notes that still call it "not submitted" / "open"
   (docs/upstream/pses-2297-pr.md, sitting-closeout.md) are superseded.
-- **The daemon-initializing integration flake -- KNOWN-OPEN, surveyed 000156 leg 4, deliberately NOT
-  fixed.** `tests/PowerShellLsp.Integration.Tests.ps1` "(A) a request while PSES is still INITIALIZING
+- **The daemon-initializing integration flake -- STILL KNOWN-OPEN; surveyed 000156 leg 4, and now
+  INSTRUMENTED but not explained (000159 leg 1a, staged on held PR #108).** The flake itself has not
+  recurred and no root cause is known; what changed is that the next occurrence should arrive with
+  the evidence attached. `tests/PowerShellLsp.Integration.Tests.ps1` "(A) a request while PSES is still INITIALIZING
   surfaces the TRANSIENT incomplete, never silence" failed on windows-pwsh in CI run **30177250246**
   at 2026-07-25T22:24:23Z (line 1576, `$out | Should -Not -BeNullOrEmpty` -> "Expected a value, but
   got $null or empty"), then passed GREEN on rerun with zero code change; the other three platforms
@@ -932,9 +1041,32 @@ real usage, not machinery.
   `Invoke-PluginHook` distinguish "process exited with empty stdout" from "killed at CapMs", because
   today both render as the same assertion message. (3) Only then choose between a bounded retry and a
   widened window, on evidence. **No `Start-Sleep`** -- that lowers the failure probability and hides
-  the race rather than closing it. No dispatch open.
-- **SARIF emitted under Windows PowerShell 5.1 is never schema-validated -- KNOWN-OPEN, surveyed
-  000157 leg 4, deliberately NOT fixed.** Three tests validate emitted SARIF against the vendored
+  the race rather than closing it.
+  **Steps (1) and (2) are BUILT and staged on held PR #108 (000159 leg 1a); step (3) is untouched and
+  remains the named next move.** The recorder is wired into all 12 hooks that collapse distinct
+  failures into one empty string -- the set derived by AST rather than hand-listed, with a vacuity
+  floor asserting it is non-empty -- and the two spawners left out, `Invoke-CaptureC` and
+  `Invoke-CaptureU`, are named and each PROVEN to discriminate already, so the exclusion is measured
+  rather than declared. Runner fidelity was proven with the env var CI sets: the rescued logs land at
+  `logs/isolated/<tag>/` inside the `daemon-logs` glob, where before this change they lived under the
+  OS temp dir, outside the uploaded tree, and were discarded at teardown.
+  **Its real proof is still pending BY CONSTRUCTION, and that is the honest status.** Everything is
+  proven mechanically, but the flake has not recurred since 000156 leg 4 falsified the standing
+  explanation, so nothing has yet exercised the instrumentation in anger. The next observed failure
+  is the payoff: it should arrive with the failing sub-case's own data-root logs under
+  `daemon-logs-<leg>/logs/isolated/<tag>/` and a `plugin-hook-outcomes.log` line saying whether the
+  hook was KILLED at `CapMs` or EXITED with empty stdout -- and only then is there evidence to choose
+  between the bounded retry and the widened window, which is exactly why step (3) stays unbuilt.
+  **If a failure arrives and the isolated logs are still absent, the rescue is wired to the wrong
+  root, and that is the first thing to check.** Note also that the rescue covers the daemon-bearing
+  isolated roots only: the 000049 poisoned-cache block and the 000025 absent-root block are excluded
+  because both were MEASURED to start no daemon and never to call ensure-pses, so there is nothing to
+  rescue -- if either later grows a daemon, the rescue must be extended. Nothing here lands until
+  PR #108 merges. No dispatch open for step (3); it is evidence-gated, not scheduled.
+- **SARIF emitted under Windows PowerShell 5.1 is never schema-validated -- FIXED AND HELD, not yet
+  closed (surveyed 000157 leg 4; built by 000159 leg 1b, staged on open PR #108).** The gap below is
+  the survey's own record of the problem; the fix it recommended has since been built, and closes
+  the moment #108 merges. Three tests validate emitted SARIF against the vendored
   2.1.0 JSON Schema, and all three are guarded by `-Skip:($PSVersionTable.PSVersion.Major -lt 6)`
   because they call `Test-Json -Schema`, which is measured ABSENT on 5.1.26100.8875 and present on
   pwsh 7. They were named from the run's own uploaded artifact rather than inferred.
@@ -945,8 +1077,45 @@ real usage, not machinery.
   checked against the schema. It is narrow rather than gaping -- 178 of 181 SARIF-scan cases still run
   on the 5.1 leg, covering the shape structurally. **Cheapest fix shape, recorded and not
   implemented:** have the 5.1 leg write its emitted SARIF to a file and validate that artifact in a
-  pwsh step -- the JSON is already produced, only the validator needs a modern host. Its own dispatch
-  when scheduled. No dispatch open.
+  pwsh step -- the JSON is already produced, only the validator needs a modern host.
+  **That is exactly what shipped, and it is staged on held PR #108 (000159 leg 1b).** Windows
+  PowerShell 5.1 ran the SARIF suite (40 passed, 0 failed, 2 correctly SKIPPED -- the in-suite
+  `Test-Json` cases, which stay skipped for the measured reason above) and emitted its SARIF to
+  `POWERSHELL_LSP_SARIF_ARTIFACT_DIR`; pwsh 7.6.3 then validated those artifacts against the same
+  vendored 2.1.0 schema and exited 0. **That is the first time 5.1's own serializer output has been
+  schema-checked anywhere.** The `-RequireHost 5` flag is load-bearing rather than decorative: a leg
+  that silently emitted nothing would otherwise validate zero files and report success, so green has
+  to mean "5.1's own SARIF was checked". RED-proven four ways, each exit 1 -- empty directory,
+  missing directory, artifacts present but none from host 5, and a non-conformant payload rejected
+  naming `/runs` as the offending pointer. **Held, not closed:** none of it is on main until #108
+  merges, and this item flips to CLOSED only then. No further dispatch needed.
+- **`ManifestConsistency` is 99.89% false-positive on real-world modules -- KNOWN-OPEN, MEASURED,
+  accepted as a recorded deviation, and NOT YET CHARTERED.** This is the single largest known
+  correctness gap in the shipped product, and it is stated here because nothing else in this document
+  carries it. Of the **910** `ManifestConsistency` hits on 000159's live oracle after the leg 2 fix,
+  **909 are confirmed false positives and 0 are true positives**, each triaged by hand against the
+  module's real surface via `Import-Module`. Denominator, re-measured that session: 155 `.psd1`
+  manifests enumerated across 6 `PSModulePath` roots, of which 26 carry a resolvable `RootModule`
+  `.psm1` -- the real denominator -- and hits fell 1088 -> 910 across the fix.
+  **The cause is structural and precisely known.** A manifest's `FunctionsToExport` is the FINAL
+  export gate, so a function the module defines but the manifest omits is simply NOT exported -- yet
+  the under-declared-export check reports it anyway. Pester is the clean case: 419 functions defined,
+  the manifest lists 26, PowerShell exports exactly 26, and all 393 hits name functions it does not
+  export. **The fix shape is already indicated by the data:** when a manifest is present with a
+  non-wildcard `FunctionsToExport`, the manifest rather than the module's implicit export-all is the
+  exported set, so the check should compare against the intersection or degrade to silence.
+  **Two things are worth separating.** The class 000159 leg 2 was chartered to fix -- multi-name
+  `Export-ModuleMember` lists -- IS fixed and measures clean (0 of the 910 attributable to it), and
+  it is staged on held PR #108. This second class was ruled by Mike Andersen to be out of that
+  train's scope and recorded as an accepted deviation, not a shortfall.
+  **No dispatch is open, and that is a gap rather than a decision.** 000159's `next_suggested` named
+  id 000160 for this PATCH, but 000160 was minted as the post-merge close-out train instead, so the
+  charter this item is waiting on does not yet exist. The 000159 outbox's `next_suggested` block
+  holds the full specification -- including the instruction to fold in the INERT dot-source degrade
+  in `Get-ModuleDefinedFunctionNames` while the same file is open (it matches `CommandElements[0]
+  -eq '.'`, but PowerShell carries the dot as the `CommandAst` `InvocationOperator`, so the degrade
+  never fires; a characterization test pins the current behaviour and will need flipping
+  deliberately). The oracle harness and CSVs from 000159 make the before/after re-measurement cheap.
 - **Pester 6 -- deferred, deliberately.** Pester 6.0.0 went GA on the PowerShell Gallery 2026-07-07.
   The test bootstrap is pinned to the 5.x major (000120 leg 1) rather than upgraded, because there is
   no forcing function and a breaking new major should be absorbed by a decision, not by runner-image
