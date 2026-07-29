@@ -118,16 +118,23 @@ $script:OwnedRationales = @{
     "Command comes from a module that is not installed here and is not imported, required, or " +
     "defined in this file, so the call fails at run time. Install or import the module."
 
-    # Test-ManifestConsistency. Emitted ruleId is 'ManifestConsistency' for BOTH of its finding
-    # kinds -- orphan-export (a name in FunctionsToExport that no function definition matches) and
-    # under-declared-export (a function the module defines AND exports that FunctionsToExport omits)
-    # -- so the rationale names both halves. It never claims the module is broken: an indeterminate
-    # shape (a '*' wildcard export, an empty/null FunctionsToExport, a dot-source or dynamic export,
-    # an unparseable module) DEGRADES to prose before any finding is emitted, so a finding only ever
-    # means the two determinate lists genuinely disagree.
+    # Test-ManifestConsistency. Emitted ruleId is 'ManifestConsistency'. The rationale names the
+    # orphan-export kind -- a name in FunctionsToExport that no function definition matches.
+    #
+    # The former "or an exported one is unlisted" clause was DROPPED by dispatch 000162 leg 1,
+    # which REMOVED the under-declared-export rung that clause described (911 hits / 0 true
+    # positives on a 36-module live oracle; a determinate non-wildcard FunctionsToExport IS the
+    # export gate, so the rung reported correctness as a defect). Leaving the clause would have
+    # shipped user-facing text promising a check the plugin no longer runs -- a removal has to
+    # reach the rationale, not just the emitter.
+    #
+    # It never claims the module is broken: an indeterminate shape (a '*' wildcard export, an
+    # empty/null FunctionsToExport, a dot-source or dynamic export, an unparseable module)
+    # DEGRADES to prose before any finding is emitted, so a finding only ever means the two
+    # determinate lists genuinely disagree.
     'ManifestConsistency' =
-    "Manifest FunctionsToExport disagrees with the module: a listed function is never defined, or " +
-    "an exported one is unlisted, so the module exports the wrong commands. Align them."
+    "Manifest FunctionsToExport disagrees with the module: a listed function is never defined, " +
+    "so the module exports a command that does not exist. Align them."
 
     # Find-CommandLinePlaceholder. Emitted ruleId is 'CommandLinePlaceholder'. Fires on a literal
     # '<Name>' left on a command line -- the reserved '<' redirection operator abutting a bareword
