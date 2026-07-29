@@ -31,6 +31,49 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.27.3] - 2026-07-29
+PATCH: **the `ManifestConsistency` under-declared-export check was REMOVED.** Rung 2 of
+`Test-ManifestConsistency` -- which reported every function a module defines and exports that its
+manifest's `FunctionsToExport` omits -- no longer exists. This is a **removal**: not a narrowing,
+not a severity change, and not an `orgPolicy` default. No configuration brings it back.
+
+**Why: it was wrong by design, not buggy.** For a determinate non-wildcard `FunctionsToExport`, the
+manifest **is** the export gate -- it *determines* the exported surface rather than describing it --
+so "defined by the module but absent from the manifest" is the normal, correct state of every
+well-formed module that keeps private functions. The rung reported correctness as a defect.
+
+**Measured before removal, on a 36-module live oracle** (169 `.psd1` manifests across six
+`PSModulePath` roots plus this repo; the denominator is the 36 with a resolvable `RootModule`):
+**911 hits, of which ZERO named a function PowerShell actually exports -- 100% false positive, 0
+true positives.** The one candidate narrowing -- fire only where the `.psm1` carries an explicit
+`Export-ModuleMember` -- still measured **96.15% FP** (25 of its 26 hits being PowerShellGet's
+deliberately-non-manifest OneGet provider surface), so there was no sound subclass to narrow *to*.
+The removal was re-measured against the same oracle before and after: **911 -> 0**, with the
+orphan-export and alias-orphan rungs unchanged at **2** and **1** hits, asserted identical
+row-for-row rather than by count alone.
+
+A known-100%-false-positive rung retained in a shipping ruleset teaches users to ignore the
+diagnostic surface entirely, which costs the *sound* rungs their signal. That, not the 911 lines of
+noise, is why it is gone.
+
+Removal was a **ruled decision by Mike Andersen, 2026-07-29**, taken on the dispatch 000161
+measurement; that dispatch deliberately refused to delete shipped behaviour on its own authority and
+surfaced the decision instead.
+
+Two consequences ship with it. The user-facing `ManifestConsistency` rule rationale drops its "or an
+exported one is unlisted" clause, which described the removed rung -- a removal has to reach the
+rationale, not just the emitter, or the plugin documents a check it does not run. And this repo's own
+`tests/corpus/samples/module/typo-export` fixture expectation is deliberately **inverted**: it was
+the only true positive in the entire oracle, true by construction, and it now pins that the rung
+**stays** silent.
+
+**Unchanged:** the orphan-export and alias-orphan rungs; the manifest read paths (proven sound on
+four `FunctionsToExport` forms by 000161 -- they were never broken); all **19** `userConfig` knobs;
+the **53**-rule PSSA base surface; the **6** plugin-owned finders (`ManifestConsistency` still exists
+and still fires on its other two rungs); and the hook/registration contract. No `orgPolicy` entry was
+added or changed -- papering a source defect with config would make the ruleset's honesty conditional
+on deployment.
+
 ## [1.27.2] - 2026-07-27
 PATCH: **`ManifestConsistency` reads multi-name `Export-ModuleMember` lists.** The export-name
 collector accepted only individual string constants, so a multi-name export list -- in either
