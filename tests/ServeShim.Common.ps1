@@ -118,6 +118,19 @@ function Start-ServeShimClient {
     # session (the 000125 flake). Read once here, from the live handle, so the scope is exact.
     $shimStart = [datetime]::MinValue
     try { $shimStart = $p.StartTime } catch { $shimStart = (Get-Date).AddSeconds(-5) }
+    # Shim STDERR to a per-run FILE, not a never-read Task (dispatch 000163 leg 2). The old
+    # ErrTask = ReadToEndAsync() was assigned here and read NOWHERE in the repo, so an unhandled
+    # shim exception -- the exact evidence the 000161 record predicted a second sighting would
+    # lack -- was drained and discarded. Two reasons a file beats the Task: (1) ReadToEndAsync
+    # completes only when the stderr pipe CLOSES, so a shim that HANGS (the failing shape) never
+    # completes it and .Result would block forever; CopyToAsync lands the bytes as they arrive.
+    # (2) A file under $DataRoot/logs is inside the tree CI uploads. FileShare::ReadWrite so the
+    # recorder can read it while the handle is open -- mirrors the shim's own PSES-stderr drain.
+    # Inert: stderr is still drained exactly as before (an undrained pipe can block a chatty
+    # child), and no existing caller read ErrTask, so no consumer changes.
+    $sink = New-ServeShimStderrSink -Process $p -DataRoot $DataRoot -Mode $Mode
+    $errPath = [string]$sink.Path
+    $errFs = $sink.Fs
     $st = @{
         Proc = $p
         ShimStart = $shimStart
@@ -128,7 +141,10 @@ function Start-ServeShimClient {
         Pending = $null
         Leaks = New-Object System.Collections.Generic.List[string]
         Eof  = $false
-        ErrTask = $p.StandardError.ReadToEndAsync()
+        ErrPath = $errPath
+        ErrFs = $errFs
+        DataRoot = $DataRoot
+        Mode = $Mode
     }
     return $st
 }
@@ -143,6 +159,182 @@ function Stop-ServeShimClient {
             if (-not $St.Proc.WaitForExit(3000)) { try { $St.Proc.Kill($true) } catch { try { $St.Proc.Kill() } catch { } } }
         }
     } catch { }
+    # Close the stderr sink AFTER the shim is down (dispatch 000163 leg 2), so the CopyToAsync has
+    # seen EOF and every byte the shim wrote -- including an unhandled exception's error record --
+    # is on disk before any reader opens the file. Swallow-all: teardown must never throw.
+    try { if ($null -ne $St.ErrFs) { $St.ErrFs.Flush(); $St.ErrFs.Dispose(); $St.ErrFs = $null } } catch { }
+}
+
+# --- ServeShim lifecycle instrumentation (dispatch 000163 leg 2) --------------
+# ============================================================================
+# WHY: the ShimExitedAfterCrash assertion has now failed TWICE (run 30375... and run
+# 30472816851, macos-pwsh, on the d05ec7a DOCS-ONLY merge -- a docs-only tree cannot
+# regress a test, which is what made the second sighting read as a flake). The 000161
+# record predicted the second sighting would "arrive with no more evidence, because
+# nothing here is instrumented". That prediction was HALF right, and the half that was
+# wrong is the interesting half:
+#
+#   The shim DOES already log its exit path with timestamps (Write-ShimLog), and CI DOES
+#   already upload it ($DataRoot/logs/pses-serve-shim.log is in the daemon-logs artifact).
+#   What was missing is not the log -- it is (1) any record of the EXCEPTION, because
+#   pses-serve-shim.ps1's outer try has a `finally` and NO `catch`, so the error record
+#   goes to the shim's stderr, which Start-ServeShimClient drained into a Task that
+#   nothing ever read; (2) per-run ISOLATION, because every shim in the leg appends to
+#   ONE shared log file, interleaved by pid; and (3) any discriminator distinguishing the
+#   two `break` exits from the exception path, since the `finally` line is identical on all
+#   three.
+#
+# The run-30472816851 slice for the crash shim (pid 18428) shows the signature this
+# instrumentation makes machine-readable: NEITHER break marker, yet the finally marker
+# present -- i.e. the pump left via an unhandled exception, which also SKIPS the
+# [System.Environment]::Exit($shimExit) on the last line of the shim (the line whose own
+# comment explains it exists to avoid a graceful runspace shutdown waiting on the
+# background client-reader thread blocked in a synchronous Read on an unclosed client
+# stdin). That is the mechanism a third sighting needs to CONFIRM, with the exception
+# text naming the throwing line.
+#
+# DIAGNOSABILITY ONLY, on the 000159 leg-1a contract: no return value anything asserts on,
+# no timing change to the PASSING path, no control-flow change to the shim (which this leg
+# does not touch at all -- it is tests-only, so leg 5 is a recorded no-cut), and never
+# throws. Choosing the FIX is explicitly out of scope (OQ1): that is a future dispatch,
+# after instrumented evidence exists.
+
+# The exit-path markers, quoted from pses-serve-shim.ps1's ACTIVE Write-ShimLog calls. ONE
+# source for both the discriminator and its coupling guard -- the guard asserts each string
+# is still present in a Write-ShimLog call in the shipped script, so a reword turns into a
+# RED test rather than a silently-degraded matcher that reports 'no-teardown' forever.
+$script:ServeShimMarkerPsesEof = 'PSES exited / stdout EOF; propagating EOF to the client'
+$script:ServeShimMarkerClientEof = 'client stdin EOF; tearing down PSES'
+$script:ServeShimMarkerFinally = 'shim exiting; PSES reaped'
+
+function New-ServeShimStderrSink {
+    # Drain a child's stderr into a per-run FILE under $DataRoot/logs and return @{ Path; Fs }.
+    # Factored out of Start-ServeShimClient so the RED proof can exercise THIS code against a
+    # simulated shim rather than a copy of it. Returns Path='' / Fs=$null when the filesystem
+    # refuses, after falling back to a plain async drain -- an UNDRAINED stderr pipe can block a
+    # chatty child, so draining must happen either way. Never throws.
+    param([System.Diagnostics.Process]$Process, [string]$DataRoot, [string]$Mode)
+    $errPath = ''
+    $errFs = $null
+    try {
+        $logDir = Join-Path $DataRoot 'logs'
+        New-Item -ItemType Directory -Force -Path $logDir -ErrorAction SilentlyContinue | Out-Null
+        $errPath = Join-Path $logDir ('serve-shim-stderr-' + $Mode + '-' + ([datetime]::Now.ToString('yyyyMMdd-HHmmss-fff')) + '-' + ([guid]::NewGuid().ToString('N').Substring(0, 8)) + '.log')
+        # bufferSize 1 + WriteThrough, NOT [System.IO.File]::Open (which buffers 4096 by default).
+        # MEASURED: with the default buffer, CopyToAsync moves the child's stderr into the
+        # FileStream's MANAGED buffer and the file stays 0 bytes on disk until the buffer fills or
+        # the stream is closed -- so a shim that HANGS (the failing shape, which never closes)
+        # yields an empty file exactly when the evidence is wanted. Unbuffered makes "the bytes
+        # land as they arrive" true rather than aspirational; stderr volume is trivial, so the
+        # per-write cost does not matter.
+        $errFs = New-Object System.IO.FileStream($errPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite, 1, [System.IO.FileOptions]::WriteThrough)
+        $null = $Process.StandardError.BaseStream.CopyToAsync($errFs)
+    } catch {
+        if ($null -ne $errFs) { try { $errFs.Dispose() } catch { } }
+        $errPath = ''
+        $errFs = $null
+        try { $null = $Process.StandardError.ReadToEndAsync() } catch { }
+    }
+    return @{ Path = $errPath; Fs = $errFs }
+}
+
+function Read-ServeShimTextFile {
+    # Read a file that another process may still hold open for append (the shared shim log) or
+    # that a CopyToAsync still has a write handle on (the per-run stderr sink). FileShare
+    # ReadWrite is the point. Returns '' on any failure -- instrumentation never throws.
+    param([string]$Path, [int]$MaxBytes = 262144)
+    try {
+        if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+        if (-not (Test-Path -LiteralPath $Path)) { return '' }
+        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            if ($fs.Length -gt $MaxBytes) { [void]$fs.Seek(($fs.Length - $MaxBytes), [System.IO.SeekOrigin]::Begin) }
+            $sr = New-Object System.IO.StreamReader($fs)
+            try { return $sr.ReadToEnd() } finally { $sr.Dispose() }
+        } finally { $fs.Dispose() }
+    } catch { return '' }
+}
+
+function Get-ServeShimLogSlice {
+    # PER-RUN ISOLATION of a SHARED log: return only the lines the given shim pid wrote to
+    # $DataRoot/logs/pses-serve-shim.log. The shim stamps every line '[<iso>] [<pid>] <msg>', so
+    # the pid token is exact -- matching '] [<pid>] ' cannot collide with the timestamp field.
+    # Returns an EMPTY array when the log or the pid's lines are absent (never $null, so callers
+    # and .Count are safe on 5.1 where a scalar's .Count is $null).
+    param([string]$DataRoot, [int]$ShimPid)
+    $out = New-Object System.Collections.Generic.List[string]
+    try {
+        if ($ShimPid -le 0) { return @() }
+        $text = Read-ServeShimTextFile -Path (Join-Path $DataRoot 'logs/pses-serve-shim.log')
+        if ([string]::IsNullOrEmpty($text)) { return @() }
+        $token = '] [' + $ShimPid + '] '
+        foreach ($line in ($text -split "`r?`n")) {
+            if ($line.Contains($token)) { [void]$out.Add($line) }
+        }
+    } catch { }
+    # PLAIN return, no comma-wrap. `return , $arr` guards a single-element array against unrolling
+    # when the caller assigns bare, but every caller here wraps in @(...) -- and the two combined
+    # DOUBLE-wrap, so @(Get-ServeShimLogSlice ...) came back as one String[] element instead of N
+    # lines. Emitting the elements and letting @(...) re-collect is correct for 0, 1, and N.
+    return $out.ToArray()
+}
+
+function Get-ServeShimExitPath {
+    # THE DISCRIMINATOR. Classify how the shim's pump left, from that shim's own log slice.
+    # Pure (no process, no filesystem) so it is unit-testable in both directions against the
+    # REAL recorded slices from run 30472816851. The four outcomes are deliberately distinct
+    # strings -- the 000159 step-2 lesson was that collapsing distinct failures into one value
+    # is exactly what made three dispatches of confident reasoning produce nothing.
+    #
+    #   no-shim-log             -- nothing recorded for this pid (the shim never started, or the
+    #                              log was unwritable); the scenario proves nothing.
+    #   pses-eof-propagated     -- branch (c) PSES-death break: the CONTRACTUAL crash path.
+    #   client-eof              -- branch (c) client-EOF break: normal teardown.
+    #   unlogged-exception-path -- the finally ran but NEITHER break logged: the pump left via an
+    #                              unhandled exception, so [System.Environment]::Exit was skipped.
+    #                              This is the run-30472816851 crash-shim signature.
+    #   no-teardown             -- not even the finally marker: the shim died mid-pump (hard kill).
+    param([string[]]$LogSlice)
+    $lines = @($LogSlice)
+    if ($lines.Count -eq 0) { return 'no-shim-log' }
+    $joined = ($lines -join "`n")
+    if ($joined.Contains($script:ServeShimMarkerPsesEof)) { return 'pses-eof-propagated' }
+    if ($joined.Contains($script:ServeShimMarkerClientEof)) { return 'client-eof' }
+    if ($joined.Contains($script:ServeShimMarkerFinally)) { return 'unlogged-exception-path' }
+    return 'no-teardown'
+}
+
+function Save-ServeShimLifecycleRecord {
+    # Write ONE per-run isolated JSON record under $DataRoot/logs (the tree CI uploads), holding
+    # the shim's own log slice, its stderr (the exception record), and the phase observations the
+    # harness alone can see. Returns the path written, or '' -- never throws, and nothing asserts
+    # on the return value beyond its existence (that existence IS the leg's RED proof).
+    param([hashtable]$St, [string]$DataRoot, [string]$Tag, [hashtable]$Phase)
+    try {
+        if ([string]::IsNullOrWhiteSpace($DataRoot)) { return '' }
+        $shimPid = 0
+        try { if ($null -ne $St -and $null -ne $St.Proc) { $shimPid = [int]$St.Proc.Id } } catch { $shimPid = 0 }
+        $slice = @(Get-ServeShimLogSlice -DataRoot $DataRoot -ShimPid $shimPid)
+        $errText = ''
+        if ($null -ne $St) { $errText = Read-ServeShimTextFile -Path ([string]$St.ErrPath) }
+        $rec = @{
+            Dispatch      = '000163'
+            Tag           = [string]$Tag
+            ShimPid       = $shimPid
+            ExitPath      = (Get-ServeShimExitPath -LogSlice $slice)
+            ShimLogSlice  = $slice
+            ShimLogLines  = $slice.Count
+            ShimStderr    = $errText
+            ShimStderrLen = $errText.Length
+            ShimStderrPath = if ($null -ne $St) { [string]$St.ErrPath } else { '' }
+        }
+        if ($null -ne $Phase) { foreach ($k in $Phase.Keys) { $rec[[string]$k] = $Phase[$k] } }
+        $logDir = Join-Path $DataRoot 'logs'
+        New-Item -ItemType Directory -Force -Path $logDir -ErrorAction SilentlyContinue | Out-Null
+        $path = Join-Path $logDir ('serveshim-lifecycle-' + $Tag + '-' + ([datetime]::Now.ToString('yyyyMMdd-HHmmss-fff')) + '-' + ([guid]::NewGuid().ToString('N').Substring(0, 8)) + '.json')
+        [System.IO.File]::WriteAllText($path, ($rec | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
+        return $path
+    } catch { return '' }
 }
 
 function Get-ServeShimProcessParentId {
@@ -374,8 +566,16 @@ function Invoke-ServeShimCrash {
     # EXITS promptly (it must NOT re-spawn PSES -- the manifest maxRestarts owns restart). Returns
     # @{ Launched; PsesPid; ShimExitedAfterCrash; PsesReaped }.
     param([string]$ScriptsDir, [string]$Interpreter, [string]$DataRoot, [int]$CapMs = 60000)
-    $result = @{ Launched = $false; PsesPid = 0; ShimExitedAfterCrash = $false; PsesReaped = $false; Error = '' }
+    $result = @{ Launched = $false; PsesPid = 0; ShimExitedAfterCrash = $false; PsesReaped = $false; Error = ''; LifecycleRecordPath = ''; ShimPid = 0; ExitPath = 'no-shim-log' }
     $st = $null
+    # Phase observations for the lifecycle record (dispatch 000163 leg 2). Declared BEFORE the try
+    # so the finally can still write a record on the early-return and exception paths.
+    $phase = @{
+        PsesKillRequested = $false; PsesKillError = ''
+        PsesKilledAtUtc = ''; FirstWaitReturnedAtUtc = ''
+        SecondChanceWaited = $false; SecondChanceExited = $false
+        ShimHasExited = $false; ShimExitCode = $null
+    }
     try {
         $st = Start-ServeShimClient -ScriptsDir $ScriptsDir -Interpreter $Interpreter -Mode 'shim' -DataRoot $DataRoot
         $result.Launched = $true
@@ -396,14 +596,42 @@ function Invoke-ServeShimCrash {
             $result.Error = 'could not identify this shim (pid ' + $st.Proc.Id + ') PSES child within 15000ms; the crash scenario was not exercised'
             return $result
         }
-        try { Stop-Process -Id $result.PsesPid -Force -ErrorAction Stop } catch { }
+        # Record WHETHER the kill was even accepted (dispatch 000163 leg 2). The empty catch here
+        # used to swallow a Stop-Process failure outright, so a scenario that never actually killed
+        # PSES was indistinguishable from one that did -- and the assertion below would then be
+        # measuring nothing. Observability only: the catch stays swallow-all, as before.
+        $phase.PsesKilledAtUtc = ([datetime]::UtcNow.ToString('o'))
+        try { Stop-Process -Id $result.PsesPid -Force -ErrorAction Stop; $phase.PsesKillRequested = $true } catch { $phase.PsesKillError = [string]$_.Exception.Message }
         # The shim must notice PSES's stdout EOF and exit promptly (bounded).
         $result.ShimExitedAfterCrash = $st.Proc.WaitForExit(15000)
+        $phase.FirstWaitReturnedAtUtc = ([datetime]::UtcNow.ToString('o'))
+        if (-not $result.ShimExitedAfterCrash) {
+            # FAILING PATH ONLY -- so the passing path keeps its exact timing (the 000159 contract).
+            # Distinguishes a shim that exits LATE from one that never exits at all; both prior
+            # sightings reported the same bare $false and could not tell them apart.
+            $phase.SecondChanceWaited = $true
+            $phase.SecondChanceExited = $st.Proc.WaitForExit(15000)
+        }
+        try { $phase.ShimHasExited = [bool]$st.Proc.HasExited } catch { $phase.ShimHasExited = $false }
+        # Read the exit code only when it EXISTS -- touching ExitCode on a live process throws, and
+        # reading it after Stop-ServeShimClient's kill would report the kill, not the shim's own exit.
+        if ($phase.ShimHasExited) { try { $phase.ShimExitCode = [int]$st.Proc.ExitCode } catch { $phase.ShimExitCode = $null } }
         $result.PsesReaped = Wait-ServeShimProcessGone -ProcessIdValue $result.PsesPid -TimeoutMs 10000
     } catch {
         $result.Error = [string]$_.Exception.Message
     } finally {
         Stop-ServeShimClient -St $st
+        # Diagnosability only (dispatch 000163 leg 2): AFTER the shim is down, so its stderr sink is
+        # flushed and closed and the exception record -- if any -- is on disk. Runs on every path,
+        # including the PsesPid<=0 early return, because a scenario that proved nothing should say so
+        # in the artifact too. Cannot fail the scenario: Save-* swallows all and returns ''.
+        try { $result.LifecycleRecordPath = Save-ServeShimLifecycleRecord -St $st -DataRoot $DataRoot -Tag 'crash' -Phase $phase } catch { }
+        # Classify here, where $st (and so the shim pid) is in scope, and carry it out on the result
+        # so the failure text can NAME the mechanism instead of reporting a bare $false.
+        try {
+            if ($null -ne $st -and $null -ne $st.Proc) { $result.ShimPid = [int]$st.Proc.Id }
+            $result.ExitPath = Get-ServeShimExitPath -LogSlice (Get-ServeShimLogSlice -DataRoot $DataRoot -ShimPid ([int]$result.ShimPid))
+        } catch { }
     }
     return $result
 }

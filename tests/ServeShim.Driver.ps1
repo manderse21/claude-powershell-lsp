@@ -38,6 +38,12 @@ try {
             ShimExitedAfterCrash = [bool]$c.ShimExitedAfterCrash
             PsesReaped           = [bool]$c.PsesReaped
             Error                = [string]$c.Error
+            # Lifecycle instrumentation (dispatch 000163 leg 2): carry the per-run record's path so
+            # the Describe can assert it landed, and the CLASSIFIED exit path so a third sighting
+            # names its own mechanism in the failure text instead of reporting a bare $false.
+            LifecycleRecordPath  = [string]$c.LifecycleRecordPath
+            ShimPid              = [int]$c.ShimPid
+            ExitPath             = [string]$c.ExitPath
         }
     } else {
         $r = Invoke-ServeShimSession -ScriptsDir $scriptsDir -Interpreter 'pwsh' -Mode $Mode -DataRoot $DataRoot -RunNav:$RunNav

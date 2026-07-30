@@ -304,7 +304,24 @@ Describe 'ServeShim e2e: lifecycle -- crash propagation, no orphans, no in-shim 
         $script:C.PsesPid | Should -BeGreaterThan 0 -Because ('the scoped lookup must find THIS shim child; driver said: ' + [string](Get-Prop $script:C 'Error'))
     }
     It 'killing PSES mid-session makes the shim EXIT promptly (EOF propagated to the client; no in-shim re-spawn)' {
-        $script:C.ShimExitedAfterCrash | Should -BeTrue -Because 'on PSES death the shim closes the client stdout and exits -- the manifest maxRestarts owns restart, so the shim must not re-spawn'
+        # The -Because now NAMES the classified exit path and points at the uploaded per-run record
+        # (dispatch 000163 leg 2). Message-only: the assertion is unchanged. Two prior sightings
+        # reported a bare $false; a third reports its own mechanism.
+        $script:C.ShimExitedAfterCrash | Should -BeTrue -Because (
+            'on PSES death the shim closes the client stdout and exits -- the manifest maxRestarts owns restart, so the shim must not re-spawn.' +
+            ' exit path classified as: ' + [string](Get-Prop $script:C 'ExitPath') +
+            '; lifecycle record: ' + [string](Get-Prop $script:C 'LifecycleRecordPath'))
     }
     It 'the killed PSES stays reaped (zero orphan)' { $script:C.PsesReaped | Should -BeTrue }
+    It 'recorded a per-run lifecycle artifact for this crash run (the 000163 leg-2 recorder fired)' {
+        # Non-vacuity gate for the instrumentation itself: if the recorder silently returned '' the
+        # two assertions above would still read the same, and a third sighting would again arrive
+        # with nothing. Asserting the artifact EXISTS is what makes the evidence channel load-bearing.
+        $recPath = [string](Get-Prop $script:C 'LifecycleRecordPath')
+        $recPath | Should -Not -BeNullOrEmpty -Because 'Save-ServeShimLifecycleRecord must write a per-run record under the CI-uploaded logs tree'
+        Test-Path -LiteralPath $recPath | Should -BeTrue -Because ('the recorder reported ' + $recPath)
+        $rec = Get-Content -LiteralPath $recPath -Raw | ConvertFrom-Json
+        [string]$rec.ExitPath | Should -BeIn @('pses-eof-propagated', 'client-eof', 'unlogged-exception-path', 'no-teardown', 'no-shim-log')
+        [int]$rec.ShimPid | Should -Be ([int](Get-Prop $script:C 'ShimPid'))
+    }
 }
