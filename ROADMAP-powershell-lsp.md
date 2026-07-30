@@ -676,6 +676,18 @@ arcs sequences the wave; it does not retire or renumber any horizon item.
   shipped dogfood capture and the closed-loop cleared signal (the I0.3 accrual channel over
   `scripts/review-dogfood.ps1`). Facts, not scores (the S3.2 guardrail): reader-side aggregation of what
   the plugin already records, with no capture-format change and no new knob.
+  - **Re-scoped by the external review, 2026-07-30 -- `arc-a-demand-signal-2026-07-30`.** The review's
+    Priority 4 asks for product-level effectiveness metrics, and its headline -- the percentage of
+    findings Claude fixes on the next turn -- is exactly the `fixed_next_turn` metric the 000148 leg 2
+    survey proved NOT derivable from what the plugin captures today: deriving it requires the
+    closed-loop `cleared[]` signal to be persisted PER-RULE, which nothing currently does. That
+    persistence question was parked as an open question for want of a demand signal; this review IS
+    the demand signal, so it is re-scoped from deferred to `cleared-persistence: resolve-in-build`
+    for the Arc A build dispatch. Recorded here as a scoping decision ONLY: no Arc A build work is
+    authorized by this entry, and the persistence design itself remains the build dispatch's to make
+    (including whether the signal is persisted at all, if that dispatch's survey finds a cheaper
+    derivation). Arc A's "no capture-format change and no new knob" framing above is what this
+    re-scope puts back in question, and the build dispatch must adjudicate it rather than assume it.
 - **Arc B -- Corpus Commons.** Publish the correctness oracle -- the corpus already used to prove the
   measured 0%-false-positive bar on every CI run (S3.4) -- as a community benchmark. CONTINGENT on the
   findability goal being resolved AND a licensing audit of corpus provenance passing (the oracle mixes
@@ -1362,6 +1374,33 @@ real usage, not machinery.
   Andersen's own credential, so it is at least as likely deliberate as accidental, and re-creating
   the ref would make a presence check pass while burying the finding. No fix-forward dispatch is
   open. Recorded so a future reader finds the reasoning instead of an unexplained gap.
+- **External technical review (2026-07-30) -- adjudicated; a two-dispatch response launched.** An
+  external technical review of the plugin was analyzed by Strategic-Claude and adjudicated by Mike
+  Andersen. This entry is the ratified register: what the response adopts, and what it declines and
+  why. The adopted direction is `review-adopted-2026-07-30` -- a two-dispatch launch, a
+  survey-and-record train (000165) followed by a build train whose inbox is drafted FROM that
+  survey's outbox, covering a README restructure to the three-capability story, a profile meta-knob
+  layered over the existing userConfig surface, first-class command surfacing for the doctor and the
+  scan path, the CONTRACT posture question, and the Arc A re-scope recorded in Section 4. The build
+  is deliberately not chartered until the survey lands -- the 000135 -> 000142 precedent, that a
+  survey worth running can change the build it was meant to launch.
+  **Declined, each with its ratified one-line reason:**
+  `review-declined: plugin-rename` -- a rename breaks marketplace identity, the launch posts, the
+  installed base, and the contract.
+  `review-declined: file-watcher` -- fails cost/safety and the headless-first posture.
+  `review-declined: semver-loosening` -- trades a trust asset for speculative flexibility.
+  `review-declined: new-custom-rules (freeze standing)` -- new custom rules stay frozen pending the
+  efficacy ledger; that freeze predates this review.
+  `review-declined: default-on-broader-ruleset` -- loses to the missing-finding-beats-wrong-finding
+  principle for an agent consumer.
+  `review-declined: doc-volume-reduction (restructure instead)` -- documentation is restructured into
+  a hierarchy, not reduced in volume.
+  **The decline premises were re-derived from disk, not carried from the review** (000165 leg 1):
+  no file-watcher implementation exists anywhere in the tree (the sole `Register-ObjectEvent` hit is
+  a data string in the command-module index catalog, not a watcher); the `ruleset` knob still ships
+  `pses-default`, which `CONTRACT.md` records as a deliberate non-flip; and N1.1 in Section 4 already
+  records that the idiom slices are guidance overrides on rules that ALREADY fire, explicitly not new
+  rules. No decline premise was falsified by the survey, so none was reworded.
 
 ## 7. Operating posture (unchanged)
 
