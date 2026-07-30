@@ -6,10 +6,11 @@ the Claude Code `/plugin` config panel) is a **summary of the section here** -- 
 descriptions are deliberately capped so the config panel stays height-stable (see dispatch
 000109), and the full semantics live below with one anchored section per knob.
 
-Set these via the `/plugin` config UI for `powershell-lsp`, or leave the defaults. Every knob
-is typed as a string in the manifest (Claude Code exports each as a `CLAUDE_PLUGIN_OPTION_<key>`
-environment variable, so numbers and booleans arrive as text such as `"20"` or `"true"`).
-Nothing here changes behavior; this build only relocated prose out of the manifest.
+Set these via the `/plugin` config UI for `powershell-lsp`, or leave the defaults.
+
+**Do not want to set nineteen knobs?** Set one: [`profile`](#profile). `safe` (the default) is
+exactly today's shipped behavior; `recommended` and `strict` are curated presets over everything
+below. Any knob you set explicitly always wins over the profile.
 
 The knobs, in manifest order:
 
@@ -30,6 +31,35 @@ The knobs, in manifest order:
 - [`ruleset`](#ruleset) -- live diagnostics ruleset tier
 - [`moduleAwareness`](#moduleawareness) -- uninstalled-module command hint
 - [`nativeServe`](#nativeserve) -- native hover / definition / references serve
+- [`referenceSurfacing`](#referencesurfacing) -- workspace reference-count facts
+- [`orgPolicy`](#orgpolicy) -- org-wide ExcludeRules policy path
+- [`profile`](#profile) -- preset over every knob above
+
+### A note on knob types
+
+Every knob is declared `"type": "string"` in the manifest, and Claude Code exports each as a
+`CLAUDE_PLUGIN_OPTION_<key>` environment variable -- so numbers and booleans arrive as text such
+as `"20"` or `"true"`, and the plugin parses them (`Get-PluginOptionInt`, `Get-PluginOptionBool`),
+falling back to the documented default on anything unparseable.
+
+**This is a deliberate choice, not a platform limit.** The plugin-manifest schema this repo
+validates against (`https://json.schemastore.org/claude-code-plugin-manifest.json`) permits
+`"type"` to be any of `string`, `number`, `boolean`, `directory`, or `file`, and a `number` knob
+may additionally declare `min` / `max`. Typing `timeoutMs` as `number` or `enableStats` as
+`boolean` is therefore available, and would move range validation into the config panel instead of
+into the plugin's fallback logic.
+
+It is recorded here as a **future backward-compatible migration**, deliberately not performed in
+this build. Two things make it a considered change rather than a tidy-up: the knob values still
+arrive as environment text either way, so the parsing layer stays regardless; and CONTRACT.md's
+capstone rule -- when in doubt whether a change is observable to an existing 1.x user, treat it as
+observable -- means the migration needs its own dispatch to establish that a saved 1.x config
+survives the retype unchanged. Until then, string-typed with parse-and-fall-back is the contract.
+
+One genuine platform gap is worth naming precisely, because it is the reason the values below are
+documented in prose rather than picked from a list: the `userConfig` schema has **no `enum`
+property**. A knob like `formatOnEdit` cannot advertise `off | suggest | apply` to the config
+panel, so the panel renders a free-text field and the plugin validates the value itself.
 
 ---
 
@@ -406,6 +436,79 @@ Example policy on a share:
 }
 ```
 
+## profile
+
+**What it does.** Applies a curated **preset** across the other knobs, so a useful configuration
+is one setting rather than nineteen.
+
+**Type:** string. **Values:** `safe` (default), `recommended`, `strict`.
+
+**Precedence -- highest wins:**
+
+```text
+an explicitly-set knob   >   the profile's value   >   the shipped default
+```
+
+An explicitly-set knob **always** wins. That is not a convenience, it is what keeps the 1.x
+contract intact: if a profile could override a value you had set, every existing configuration
+would silently change meaning on upgrade, which CONTRACT.md classes as a MAJOR.
+
+**`safe` (default) maps nothing.** It is not a table that restates the defaults -- it is the
+absence of a mapping, so with `profile` unset or set to `safe` every knob resolves exactly as it
+did before this knob existed and the diagnostics surface is byte-for-byte unchanged. An
+unrecognized value (a typo, or a profile a future version adds) degrades to `safe` rather than to
+a partial or guessed preset.
+
+| Knob | shipped default | `safe` | `recommended` | `strict` |
+|---|---|---|---|---|
+| [`editContextLines`](#editcontextlines) | `0` | `0` | `2` | `2` (inert) |
+| [`formatOnEdit`](#formatonedit) | `off` | `off` | `suggest` | `suggest` |
+| [`ruleset`](#ruleset) | `pses-default` | `pses-default` | `base` | `base` |
+| [`moduleAwareness`](#moduleawareness) | `off` | `off` | `suggest` | `suggest` |
+| [`referenceSurfacing`](#referencesurfacing) | `off` | `off` | `counts` | `counts` |
+| [`keepLastN`](#keeplastn) | `10` | `10` | `10` | `30` |
+| [`perFileCap`](#perfilecap) | `20` | `20` | `20` | `0` |
+| [`scopeToEdit`](#scopetoedit) | `true` | `true` | `true` | `false` |
+
+Every knob not listed above is identical in all three profiles -- the profiles change only these
+eight. `strict` is `recommended` plus the last three rows; `editContextLines` rides along from
+`recommended` into `strict` and is **inert** there, because `scopeToEdit = false` already reports
+whole-file.
+
+**Why each departure.** `recommended` broadens what you see: `base` surfaces
+`PSAvoidUsingWriteHost` and the three Error-severity security rules PSES's built-in set omits;
+`suggest` modes surface a diff or a hint and never write; `counts` adds facts, not diagnostics;
+two context lines keep the surrounding construct visible when a fix spans the boundary. `strict`
+adds an enforcement posture: no per-file cap (a cap **hides** violations from an audit),
+whole-file scope (a violation elsewhere is not invisible because the edit missed it), and a longer
+log retention where an audit trail matters.
+
+**Four values are deliberately in NO profile.** Each is a decision, not an omission:
+
+- **`nativeServe` stays `off` everywhere.** The shim works around an upstream client bug. A preset
+  must not put a workaround in front of more users.
+- **`enableStats` stays `false` everywhere.** `logs/stats.jsonl` records absolute file paths
+  today; path redaction ships **before** any profile turns telemetry on.
+- **`formatOnEdit = apply` appears in no profile.** `apply` is the one mode that rewrites your
+  file, and it is deliberately doubly opt-in. A preset goes as far as `suggest`.
+- **`orgPolicy` is left empty.** `strict` is its use case, but a profile cannot hardcode a
+  site-specific path -- the profile names the slot and your administrator supplies the value.
+
+`timeoutMs` is unchanged in every profile for a **measured** reason rather than a ruling: the warm
+edit-to-diagnostic round-trip under `ruleset = base` measured a p95 of 3292 ms over 20 samples on
+the build host (median 2678 ms), leaving about 34% headroom under the shipped 5000 ms cap. The
+broader rule set did not need a bigger budget, so it did not get one. If your host is
+substantially slower, raise `timeoutMs` explicitly -- an explicit value always wins.
+
+**Custom is the fourth option, and it is not a profile value.** Set knobs yourself, with or
+without a profile also set; the explicit value wins either way. There is no `profile = custom`.
+
+**Evolution policy.** These mappings are **curated, and MAY change in a MINOR release** -- for
+example when stats-path redaction ships and `enableStats` becomes eligible. **An explicitly-set
+knob is never affected by such a change.** That is what makes a future re-mapping a documented
+curation update rather than a semver argument: the only configurations that move are the ones
+that asked for "whatever the current recommendation is".
+
 ---
 
 ## The config panel and this reference
@@ -417,6 +520,6 @@ renderer ghost-row corruption (surveyed in dispatch 000109). To keep the panel h
 manifest descriptions are capped and the full semantics relocated here.
 
 This mitigates but does not fix the underlying Claude Code behavior: on a terminal shorter than
-about 28 rows the 19-knob panel can still overflow regardless of description length (the base rows
+about 28 rows the knob panel can still overflow regardless of description length (the base rows
 alone exceed the viewport), and the renderer bug and the absence of an enum picker remain upstream
 defects. This reference is the durable home for the details; the panel summaries point here.
