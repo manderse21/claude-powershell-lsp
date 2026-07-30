@@ -96,7 +96,7 @@ metadata rather than asserted, regenerable under `-Check` from
 [`scripts/regen-rule-rationales.ps1`](../scripts/regen-rule-rationales.ps1) into
 [`rulesets/rule-rationales.psd1`](../rulesets/rule-rationales.psd1). The roadmap frames
 this as a rule-rationale audit surface
-([ROADMAP-powershell-lsp.md, E2.5](../ROADMAP-powershell-lsp.md)).
+([decision ledger, E2.5](decision-ledger.md)).
 
 ## What this page does not claim
 
