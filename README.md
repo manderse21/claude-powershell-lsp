@@ -357,11 +357,22 @@ pwsh -File scripts/doctor.ps1
 
 It verifies, in order: PowerShell 7 (`pwsh`) is present and new enough; the plugin is enabled; the
 PSES bundle and PSScriptAnalyzer finished bootstrapping; the first-run download hosts are
-reachable; and the **warm per-session daemon** is alive and answering on its named pipe -- the
-*runtime* check the others cannot make. Each check reports `PASS`, a specific failure with the
-fix, or an honest `UNKNOWN` when it genuinely cannot determine (run outside a Claude Code session
-it cannot see the plugin data directory, so several checks report `UNKNOWN`; run it from inside an
-enabled session for a definitive result).
+reachable; the **warm per-session daemon** is alive and answering on its named pipe; **which rule
+set is actually active** here and which config layer won it; whether a **real diagnostic is
+observed end-to-end**; and whether **native navigation** is on. Each check reports `PASS`, a
+specific failure with the fix, or an honest `UNKNOWN` when it genuinely cannot determine (run
+outside a Claude Code session it cannot see the plugin data directory, so several checks report
+`UNKNOWN`; run it from inside an enabled session for a definitive result).
+
+The last three answer questions the others structurally cannot. The daemon check's liveness ping is
+answered *without* touching the language server, so a daemon can be alive, answering, and analyzing
+nothing -- the **end-to-end check** closes that by sending a synthetic file with a deliberate defect
+through the same warm daemon your edits use and requiring the expected finding back. It is the one
+check that can report a `FAIL` for a *settled* analysis that produced nothing, because "analyzed,
+clean" when nothing was analyzed is the failure this plugin exists to prevent. The probe writes only
+to a temp directory, never starts a daemon, and leaves nothing behind. The **active ruleset** check
+explains the most common confusion -- you set `ruleset = base`, see nothing new, and a repo-local
+`PSScriptAnalyzerSettings.psd1` was legitimately winning all along.
 
 The daemon check **observes only** -- it never starts, restarts, or kills the daemon -- and it is
 honest about the auto-relaunch design: **no daemon running** reports `PASS` (one auto-relaunches

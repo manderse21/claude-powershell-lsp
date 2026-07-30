@@ -327,6 +327,185 @@ function Test-DoctorNativeServe {
             -Detail ('native serve is still GATED -- under a Claude-Code-shaped client the direct launcher deferred the nav providers to the client/registerCapability handshake (the init result carried no static hover/definition/references; result in ' + $ElapsedMs + ' ms), exactly the request the upstream #1359 client bug mishandles. The nativeServe shim remains needed; this is the expected state today. A purely client-side #1359 fix would not show here -- the manual real claude -p re-probe stays authoritative.'))
 }
 
+function Test-DoctorRuleset {
+    # Check: which rule surface is ACTIVE right now (dispatch 000166 B9, checklist item 6).
+    #
+    # The gap this closes: checks 3/4 confirm the analyzer is INSTALLED, and check 6 confirms the
+    # daemon is ANSWERING, but nothing told you WHICH RULES it would apply. A user who set
+    # ruleset=base and still never sees PSAvoidUsingWriteHost had no way to learn that a repo-local
+    # PSScriptAnalyzerSettings.psd1 was quietly winning -- which is the documented precedence, not
+    # a bug, but silently.
+    #
+    # REPORT-ONLY and NEVER 'fail'. This is a "what is active" report, not a health gate; a
+    # deliberate configuration must not move the doctor's exit code.
+    #
+    #   not determinable (the shipped resolver could not be consulted)      -> UNKNOWN
+    #   ruleset=base requested but the shipped base ruleset is UNRESOLVABLE -> UNKNOWN (honest:
+    #     the request degrades to PSES defaults at analysis time, and a PASS reading "PSES
+    #     built-in set" would be indistinguishable from a user who chose pses-default)
+    #   otherwise                                                           -> PASS, naming the
+    #     effective knob value, the resolved settings file (or the PSES built-in set), and WHICH
+    #     layer won.
+    #
+    #   $Determinable  : the shipped resolver ran.
+    #   $Reason        : when not determinable, the honest why.
+    #   $RulesetKnob   : the effective `ruleset` value (profile-resolved, so a profile shows here).
+    #   $ResolvedPath  : what Resolve-PssaSettingsPath returned ('' = PSES's own no-settings set).
+    #   $Source        : which layer won -- 'override' | 'repo-local' | 'plugin-base' | 'pses-default'.
+    #   $ProbeDir      : the directory the repo-local walk-up was rooted at (named in the detail,
+    #                    because "which rules apply" is a per-location answer).
+    param(
+        [bool] $Determinable,
+        [string] $Reason = '',
+        [string] $RulesetKnob = '',
+        [string] $ResolvedPath = '',
+        [string] $Source = '',
+        [string] $ProbeDir = ''
+    )
+    $component = 'Active ruleset surface'
+    if (-not $Determinable) {
+        $why = if ([string]::IsNullOrWhiteSpace($Reason)) { 'the shipped settings resolver could not be consulted in this context.' } else { $Reason }
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('not determined -- ' + $why) `
+                -Remediation 'Run the doctor from inside an enabled Claude Code session so the plugin root and knob values resolve.')
+    }
+    $where = if ([string]::IsNullOrWhiteSpace($ProbeDir)) { 'this directory' } else { $ProbeDir }
+    if ($Source -eq 'unresolved-base') {
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('ruleset = "base" is requested, but the shipped base ruleset (rulesets/base.psd1) could not be located, so live analysis will fall back to PSES built-in rules -- a NARROWER surface than you configured.') `
+                -Remediation 'Confirm the plugin tree is intact (rulesets/base.psd1 ships with the plugin) and that CLAUDE_PLUGIN_ROOT points at it; see docs/configuration.md#ruleset.')
+    }
+    if ($Source -eq 'override') {
+        return (New-DoctorResult -Status pass -Component $component `
+                -Detail ('an explicit settingsPath override is active: ' + $ResolvedPath + ' -- it wins over both the repo-local file and the ruleset knob (ruleset = "' + $RulesetKnob + '" is inert while it is set).'))
+    }
+    if ($Source -eq 'repo-local') {
+        return (New-DoctorResult -Status pass -Component $component `
+                -Detail ('a repo-local PSScriptAnalyzerSettings.psd1 is active for ' + $where + ': ' + $ResolvedPath + ' -- it wins over the ruleset knob (ruleset = "' + $RulesetKnob + '" is inert here). This is the documented precedence, not a fault.'))
+    }
+    if ($Source -eq 'plugin-base') {
+        return (New-DoctorResult -Status pass -Component $component `
+                -Detail ('ruleset = "' + $RulesetKnob + '" -- the shipped base ruleset is active for ' + $where + ': ' + $ResolvedPath + ' (PSScriptAnalyzer default-on rules minus the compatibility profiles; broader than the PSES built-in set). No repo-local settings file or override was found above ' + $where + '.'))
+    }
+    return (New-DoctorResult -Status pass -Component $component `
+            -Detail ('ruleset = "' + $RulesetKnob + '" -- PowerShell Editor Services'' own built-in no-settings rule set is active for ' + $where + ' (about 15 rules; narrower than the PSScriptAnalyzer CLI default -- PSAvoidUsingWriteHost is NOT among them). Set ruleset = "base", or add a repo-local PSScriptAnalyzerSettings.psd1, to broaden it; see docs/configuration.md#ruleset.'))
+}
+
+function Test-DoctorTestDiagnostic {
+    # Check: is a REAL diagnostic observed end-to-end (dispatch 000166 B9, checklist item 8)?
+    #
+    # The gap this closes: every other check is a proxy. The daemon check's 'ping' handler answers
+    # WITHOUT touching its PSES child (no didOpen, no analysis), so a daemon can be alive, pinging,
+    # and still analyzing nothing. This is the only check that asserts the actual product works: a
+    # synthetic file with a known defect goes in, and the expected rule id comes back.
+    #
+    # OQ5 CONSTRAINTS, honored: the probe analyzes a file in the TEMP directory (never the repo, and
+    # never a file the user owns), it asks the ALREADY-RUNNING warm daemon over the same one-line
+    # JSON pipe protocol lsp-client.ps1 uses -- it NEVER starts, restarts, or leaves behind a daemon
+    # -- and it can only report, never repair. With no daemon reachable the answer is UNKNOWN.
+    #
+    # NEVER 'fail'... with ONE exception, which is the point of the check: the daemon ANSWERED and
+    # the analysis SETTLED, yet the planted defect did not come back. That is the silent-failure
+    # mode the whole plugin exists to avoid -- a user believing "no findings" means "clean" when it
+    # means "not actually analyzed" -- so it is the one condition worth failing on. Every
+    # could-not-determine path stays UNKNOWN, preserving unknown-is-never-fail.
+    #
+    #   $Determinable  : the probe ran (temp file written + a reachable daemon to ask).
+    #   $Reason        : when not determinable, the honest why.
+    #   $Responded     : the daemon returned a well-formed diagnostics response.
+    #   $Status        : the response's analysis status ('' / ok / incomplete / degraded / unavailable).
+    #   $ExpectedRule  : the rule id the planted defect must produce.
+    #   $RuleIds       : the rule ids actually returned.
+    #   $ElapsedMs     : the round-trip.
+    param(
+        [bool] $Determinable,
+        [string] $Reason = '',
+        [bool] $Responded = $false,
+        [string] $Status = '',
+        [string] $ExpectedRule = '',
+        [string[]] $RuleIds = @(),
+        [int] $ElapsedMs = 0
+    )
+    $component = 'Test diagnostic observed end-to-end'
+    if (-not $Determinable) {
+        $why = if ([string]::IsNullOrWhiteSpace($Reason)) { 'the end-to-end probe could not run in this context.' } else { $Reason }
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('not observed -- ' + $why) `
+                -Remediation 'Run the doctor from inside an enabled Claude Code session with a warm daemon running (edit any PowerShell file first), for a definitive end-to-end result.')
+    }
+    if (-not $Responded) {
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail 'the warm daemon did not return a well-formed diagnostics response for the synthetic probe file, so end-to-end analysis is indeterminate.' `
+                -Remediation 'Check the daemon health check above and logs/pses-daemon.log, then re-run.')
+    }
+    # A non-ok status is the daemon telling us it did not finish analyzing -- exactly the honest
+    # banner a real edit would get. That is a working plugin reporting a transient condition, not
+    # a broken one, so it is UNKNOWN and the status is quoted rather than paraphrased.
+    if (-not [string]::IsNullOrWhiteSpace($Status) -and $Status -ne 'ok') {
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('the analysis did not settle for the probe file -- the daemon reported status "' + $Status + '", which is the same honest banner a real edit would receive. End-to-end correctness is indeterminate until it settles.') `
+                -Remediation 'This is usually transient (PSES still starting). Re-run the doctor in a few seconds; if it persists, see the Diagnostics status section of the README.')
+    }
+    if (@($RuleIds) -contains $ExpectedRule) {
+        return (New-DoctorResult -Status pass -Component $component `
+                -Detail ('a real diagnostic was observed end-to-end in ' + $ElapsedMs + ' ms: a synthetic temp file with a deliberate defect returned ' + $ExpectedRule + ', through the same warm daemon and pipe your edits use. Diagnostics are genuinely working, not merely installed.'))
+    }
+    $got = if (@($RuleIds).Count -eq 0) { 'no findings at all' } else { 'only: ' + ((@($RuleIds) | Sort-Object -Unique) -join ', ') }
+    return (New-DoctorResult -Status fail -Component $component `
+            -Detail ('the daemon answered and reported a SETTLED analysis, but the synthetic probe file''s deliberate defect did not come back -- expected ' + $ExpectedRule + ', got ' + $got + '. A settled-but-empty result is the dangerous case: an edit would read as "analyzed, clean" when the analyzer is not actually producing findings.') `
+            -Remediation 'Check that PSScriptAnalyzer is vendored and importable (the check above), inspect logs/pses-daemon.log for analyzer errors, then start a fresh session so the bootstrap re-vendors.')
+}
+
+function Test-DoctorNativeServeStatus {
+    # Check: what is the native-serve tier's configured state (dispatch 000166 B9, item-7 promotion)?
+    #
+    # Split out of the opt-in removability PROBE (check 'Native-serve removability') so the routine
+    # doctor answers the question a user actually has -- "is native navigation on for me, and if not
+    # why" -- without paying a PSES cold-start. This check spawns NOTHING: it reads the effective
+    # knob value and the shipped gate state. The heavier removability probe stays opt-in behind
+    # -ProbeNativeServe and is unchanged.
+    #
+    # REPORT-ONLY and NEVER 'fail' -- nativeServe is off by default and that is a correct,
+    # supported configuration, not a fault.
+    #
+    #   $Determinable : the effective knob value could be read.
+    #   $Reason       : when not determinable, the honest why.
+    #   $Value        : the effective nativeServe value ('off' | 'shim' | something else).
+    #   $ShimPresent  : the shim script ships in this tree (the mechanism exists).
+    #   $Probed       : whether the opt-in removability probe also ran this invocation.
+    param(
+        [bool] $Determinable,
+        [string] $Reason = '',
+        [string] $Value = '',
+        [bool] $ShimPresent = $false,
+        [bool] $Probed = $false
+    )
+    $component = 'Native-serve status (hover / definition / references)'
+    if (-not $Determinable) {
+        $why = if ([string]::IsNullOrWhiteSpace($Reason)) { 'the nativeServe value could not be read in this context.' } else { $Reason }
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('not determined -- ' + $why) `
+                -Remediation 'Run the doctor from inside an enabled Claude Code session so the configured knob values resolve.')
+    }
+    $probeHint = if ($Probed) { '' } else { ' Run with -ProbeNativeServe to also test whether the upstream handshake gate has lifted.' }
+    if ($Value -eq 'shim') {
+        if (-not $ShimPresent) {
+            return (New-DoctorResult -Status unknown -Component $component `
+                    -Detail 'nativeServe = "shim" is configured, but the shim script (scripts/pses-serve-shim.ps1) was not found in the plugin tree, so the navigation tier''s state is indeterminate.' `
+                    -Remediation 'Confirm the plugin tree is intact and CLAUDE_PLUGIN_ROOT points at it.')
+        }
+        return (New-DoctorResult -Status pass -Component $component `
+                -Detail ('nativeServe = "shim" -- hover, go-to-definition, find-references, and documentSymbol are ENABLED through the handshake shim. Diagnostics are unaffected by this knob either way.' + $probeHint))
+    }
+    if ($Value -eq 'off' -or [string]::IsNullOrWhiteSpace($Value)) {
+        return (New-DoctorResult -Status pass -Component $component `
+                -Detail ('nativeServe = "off" (the default) -- native hover / go-to-definition / find-references do NOT serve; the proxy is a byte-exact pass-through and the navigation tier stays gated on the upstream client init-handshake bug. This is the shipped default, not a fault: the PostToolUse diagnostics hook is independent of this knob and works regardless. Set nativeServe = "shim" to enable navigation (docs/configuration.md#nativeserve).' + $probeHint))
+    }
+    return (New-DoctorResult -Status unknown -Component $component `
+            -Detail ('nativeServe is set to "' + $Value + '", which is not a recognized value -- the plugin treats anything other than "shim" as "off", so navigation is not serving.') `
+            -Remediation 'Set nativeServe to "off" (default) or "shim"; see docs/configuration.md#nativeserve.')
+}
+
 # ===========================================================================
 # Live probes -- the environment-dependent half. Kept OUT of the pure functions so
 # the decision logic stays unit-testable; these are exercised by the end-to-end run.
@@ -484,7 +663,7 @@ function Get-DoctorDaemonObservation {
     param([string] $SessionId = '')
 
     if (-not (Get-DoctorDataRootKnown)) {
-        return @{ DataRootKnown = $false; Determinable = $false; DaemonPresent = $false; State = ''; Reachable = $null; LiveCount = 0 }
+        return @{ DataRootKnown = $false; Determinable = $false; DaemonPresent = $false; State = ''; Reachable = $null; LiveCount = 0; Pipe = '' }
     }
     $sessionDir = Get-SessionDir
     $sid = $SessionId
@@ -522,15 +701,195 @@ function Get-DoctorDaemonObservation {
 
     if ($live.Count -eq 0) {
         # No live daemon in scope -> the benign 000030 absent-but-relaunchable case.
-        return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $false; State = ''; Reachable = $null; LiveCount = 0 }
+        return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $false; State = ''; Reachable = $null; LiveCount = 0; Pipe = '' }
     }
     if (-not $scoped -and $live.Count -gt 1) {
         # Several live daemons and no session id to pick THIS session's -> honest UNKNOWN.
-        return @{ DataRootKnown = $true; Determinable = $false; DaemonPresent = $true; State = ''; Reachable = $null; LiveCount = $live.Count }
+        return @{ DataRootKnown = $true; Determinable = $false; DaemonPresent = $true; State = ''; Reachable = $null; LiveCount = $live.Count; Pipe = '' }
     }
     $d = $live[0]
     $reachable = Test-DoctorDaemonPingProbe -PipeName $d.Pipe
-    return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; State = $d.State; Reachable = $reachable; LiveCount = 1 }
+    # Pipe rides along (dispatch 000166) so the end-to-end check can ask the SAME daemon this
+    # check just identified, instead of re-discovering and possibly disagreeing with it.
+    return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; State = $d.State; Reachable = $reachable; LiveCount = 1; Pipe = $d.Pipe }
+}
+
+function Get-DoctorRulesetObservation {
+    # Resolve the active-ruleset observation the pure Test-DoctorRuleset decides on (item 6).
+    #
+    # It consults the SHIPPED resolver -- Resolve-PssaSettingsPath, the same function the daemon
+    # calls at analysis time (pses-daemon.ps1) -- rather than re-deriving precedence here. A second
+    # implementation could disagree with the real one and would report confidently while being
+    # wrong, which is worse than not reporting.
+    #
+    # Read-only: the resolver is a path walk-up (a chain of stats) plus a Test-Path. It never reads
+    # or executes a settings file -- PSES is the trusted consumer of those.
+    #
+    # $ProbeDir defaults to the current directory, because "which rules apply" has no answer
+    # independent of location: the repo-local walk-up starts from the edited file. The detail text
+    # names the directory so the answer is never mistaken for a global one.
+    param([string] $ProbeDir = '')
+    $dir = $ProbeDir
+    if ([string]::IsNullOrWhiteSpace($dir)) {
+        try { $dir = (Get-Location).Path } catch { $dir = '' }
+    }
+    if ([string]::IsNullOrWhiteSpace($dir)) {
+        return @{ Determinable = $false; Reason = 'the current directory could not be resolved.'; RulesetKnob = ''; ResolvedPath = ''; Source = ''; ProbeDir = '' }
+    }
+    try {
+        # Effective values, so a `profile` shows through exactly as the daemon would see it.
+        $knob = Get-PluginOption 'ruleset' 'pses-default'
+        $override = Get-PluginOption 'settingsPath' ''
+        # A probe PATH, never a probe FILE: the resolver only needs a location to walk up from,
+        # and nothing is created on disk.
+        $probeFile = Join-Path $dir '__doctor_ruleset_probe__.ps1'
+        $resolved = [string](Resolve-PssaSettingsPath -EditedFilePath $probeFile -ProjectRoot $dir -Override $override -Ruleset $knob)
+        $basePath = [string](Get-RulesetFallbackPath 'base')
+
+        # Which layer won. The resolver returns the OVERRIDE verbatim when it is honored (absolute
+        # and non-blank), so equality with it is the discriminator -- and a RELATIVE override,
+        # which the resolver deliberately ignores, correctly falls through to the layer that
+        # actually applied rather than being reported as active.
+        $source = 'pses-default'
+        if (-not [string]::IsNullOrWhiteSpace($resolved)) {
+            if (-not [string]::IsNullOrWhiteSpace($override) -and $resolved -eq $override) {
+                $source = 'override'
+            } elseif (-not [string]::IsNullOrWhiteSpace($basePath) -and $resolved -eq $basePath) {
+                $source = 'plugin-base'
+            } else {
+                $source = 'repo-local'
+            }
+        } elseif ($knob -eq 'base') {
+            # base was asked for and the resolver still returned nothing -> the shipped ruleset is
+            # missing. The knob's own documented degrade, surfaced instead of silently swallowed.
+            $source = 'unresolved-base'
+        }
+        return @{ Determinable = $true; Reason = ''; RulesetKnob = $knob; ResolvedPath = $resolved; Source = $source; ProbeDir = $dir }
+    } catch {
+        return @{ Determinable = $false; Reason = ('the shipped settings resolver threw: ' + $_.Exception.Message); RulesetKnob = ''; ResolvedPath = ''; Source = ''; ProbeDir = $dir }
+    }
+}
+
+# The synthetic probe used by the end-to-end check (item 8). An unapproved verb trips
+# PSUseApprovedVerbs, which is in PSES's BUILT-IN no-settings set -- so the probe works on the
+# shipped default configuration, not only under ruleset=base. It is the README's own example.
+$script:DoctorProbeRuleId = 'PSUseApprovedVerbs'
+$script:DoctorProbeSource = @(
+    '# powershell-lsp doctor -- synthetic probe file. Safe to delete.',
+    '# The unapproved verb below is DELIBERATE: it is the defect the doctor expects back.',
+    'function Frobnicate-DoctorProbe {',
+    '    Get-Process',
+    '}'
+) -join "`n"
+
+function Get-DoctorTestDiagnosticObservation {
+    # Resolve the end-to-end observation the pure Test-DoctorTestDiagnostic decides on (item 8).
+    #
+    # WHAT IT DOES NOT DO, per OQ5: it does not start a daemon, does not restart one, does not
+    # write anywhere in the repository, and does not leave a process or a file behind. It writes
+    # ONE file under the OS temp directory, asks a daemon that is ALREADY running, and deletes the
+    # file in a finally block.
+    #
+    # It reuses the daemon-discovery result rather than re-discovering, so this check can never
+    # disagree with the daemon-health check directly above it about which daemon is live.
+    param($DaemonObservation, [int] $ConnectTimeoutMs = 2000, [int] $ReadTimeoutMs = 15000)
+
+    $none = @{ Determinable = $false; Reason = ''; Responded = $false; Status = ''; RuleIds = @(); ElapsedMs = 0 }
+    if ($null -eq $DaemonObservation -or -not $DaemonObservation.DataRootKnown) {
+        $none.Reason = 'the plugin data directory is not visible (run from inside an enabled Claude Code session).'
+        return $none
+    }
+    if (-not $DaemonObservation.Determinable -or -not $DaemonObservation.DaemonPresent) {
+        $none.Reason = 'no single live warm daemon was identified to ask -- the doctor never starts one (it is report-only).'
+        return $none
+    }
+    if ($DaemonObservation.Reachable -ne $true) {
+        $none.Reason = 'the live daemon did not answer its pipe, so there is nothing to analyze through.'
+        return $none
+    }
+    $pipeName = [string]$DaemonObservation.Pipe
+    if ([string]::IsNullOrWhiteSpace($pipeName)) {
+        $none.Reason = 'the live daemon handle carried no pipe name.'
+        return $none
+    }
+
+    $probeDir = $null
+    $probeFile = $null
+    $client = $null
+    try {
+        # A private temp subdirectory, so the repo-local settings walk-up starts somewhere neutral
+        # and no existing temp file can be clobbered.
+        $probeDir = Join-Path ([System.IO.Path]::GetTempPath()) ('powershell-lsp-doctor-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
+        New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
+        $probeFile = Join-Path $probeDir 'doctor-probe.ps1'
+        [System.IO.File]::WriteAllText($probeFile, ($script:DoctorProbeSource + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $client = New-Object System.IO.Pipes.NamedPipeClientStream('.', $pipeName,
+            [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::Asynchronous)
+        $client.Connect($ConnectTimeoutMs)
+        $writer = New-Object System.IO.StreamWriter($client, (New-Object System.Text.UTF8Encoding($false)), 4096, $true)
+        $writer.NewLine = "`n"; $writer.AutoFlush = $true
+        $reader = New-Object System.IO.StreamReader($client, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+        # The SAME one-line JSON request lsp-client.ps1 sends. No touchedRanges -> whole-file, which
+        # is what the client also does when the edit range is indeterminate.
+        $req = [ordered]@{ action = 'diagnostics'; file = $probeFile; cwd = $probeDir }
+        $writer.WriteLine(($req | ConvertTo-Json -Compress))
+        $writer.Flush()
+        $readTask = $reader.ReadLineAsync()
+        if (-not $readTask.Wait($ReadTimeoutMs)) {
+            $sw.Stop()
+            return @{ Determinable = $true; Reason = ''; Responded = $false; Status = ''; RuleIds = @(); ElapsedMs = [int]$sw.ElapsedMilliseconds }
+        }
+        $line = $readTask.Result
+        $sw.Stop()
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            return @{ Determinable = $true; Reason = ''; Responded = $false; Status = ''; RuleIds = @(); ElapsedMs = [int]$sw.ElapsedMilliseconds }
+        }
+        $resp = $line | ConvertFrom-Json
+        if (-not [bool](Get-Prop $resp 'ok')) {
+            return @{ Determinable = $true; Reason = ''; Responded = $false; Status = ''; RuleIds = @(); ElapsedMs = [int]$sw.ElapsedMilliseconds }
+        }
+        # The pipe payload names the rule 'code' (pses-daemon.ps1's diagnostics payload); 'ruleId'
+        # is the DOGFOOD CAPTURE's name for the same field. Reading the wrong one yields an empty
+        # id list, which this check would then report as "settled but no findings" -- a loud,
+        # wrong FAIL. Both names are accepted so the check cannot be broken by that confusion again.
+        $ids = @()
+        foreach ($d in @(Get-Prop $resp 'diagnostics')) {
+            $rid = [string](Get-Prop $d 'code')
+            if ([string]::IsNullOrWhiteSpace($rid)) { $rid = [string](Get-Prop $d 'ruleId') }
+            if (-not [string]::IsNullOrWhiteSpace($rid)) { $ids += $rid }
+        }
+        return @{ Determinable = $true; Reason = ''; Responded = $true
+            Status = [string](Get-Prop $resp 'status'); RuleIds = @($ids); ElapsedMs = [int]$sw.ElapsedMilliseconds }
+    } catch {
+        $none.Determinable = $true
+        $none.Reason = ''
+        $none.Responded = $false
+        return $none
+    } finally {
+        if ($null -ne $client) { try { $client.Dispose() } catch { } }
+        # Leave nothing behind -- the file AND its private directory.
+        if ($null -ne $probeFile) { try { Remove-Item -LiteralPath $probeFile -Force -ErrorAction SilentlyContinue } catch { } }
+        if ($null -ne $probeDir) { try { Remove-Item -LiteralPath $probeDir -Recurse -Force -ErrorAction SilentlyContinue } catch { } }
+    }
+}
+
+function Get-DoctorNativeServeStatusObservation {
+    # Resolve the native-serve STATUS observation (item-7 promotion). Deliberately cheap: it reads
+    # the effective knob value and checks that the shim script is present. It spawns NOTHING --
+    # that is the whole point of promoting this out of the opt-in probe.
+    param([string] $ScriptsDir = '')
+    try {
+        $value = Get-PluginOption 'nativeServe' 'off'
+        $shim = $false
+        if (-not [string]::IsNullOrWhiteSpace($ScriptsDir)) {
+            $shim = Test-Path -LiteralPath (Join-Path $ScriptsDir 'pses-serve-shim.ps1') -PathType Leaf
+        }
+        return @{ Determinable = $true; Reason = ''; Value = $value; ShimPresent = $shim }
+    } catch {
+        return @{ Determinable = $false; Reason = ('the nativeServe value could not be read: ' + $_.Exception.Message); Value = ''; ShimPresent = $false }
+    }
 }
 
 function Get-DoctorNativeServeObservation {
@@ -675,10 +1034,36 @@ function Invoke-Doctor {
     $results += (Test-DoctorDaemon -DataRootKnown $daemonObs.DataRootKnown -Determinable $daemonObs.Determinable `
             -DaemonPresent $daemonObs.DaemonPresent -State $daemonObs.State -Reachable $daemonObs.Reachable -LiveCount $daemonObs.LiveCount)
 
-    # 7) native-serve removability (dispatch 000104, the 000103 OQ4). OPT-IN via -ProbeNativeServe:
-    # it launches PSES via the DIRECT launcher and inspects the init handshake, which costs a PSES
-    # cold-start plus a bounded init wait -- too heavy for every doctor run, so the default doctor
-    # stays byte-for-byte as before (6 checks) and this 7th check appears ONLY when requested.
+    # 7) active ruleset surface (dispatch 000166 B9, checklist item 6). WHICH rules are actually
+    # applied here, resolved through the SHIPPED resolver rather than a second implementation of
+    # the precedence -- a re-derivation could disagree with the real one and report confidently
+    # while being wrong. Read-only (a path walk-up); report-only; never fails.
+    $rsObs = Get-DoctorRulesetObservation
+    $results += (Test-DoctorRuleset -Determinable $rsObs.Determinable -Reason $rsObs.Reason `
+            -RulesetKnob $rsObs.RulesetKnob -ResolvedPath $rsObs.ResolvedPath -Source $rsObs.Source -ProbeDir $rsObs.ProbeDir)
+
+    # 8) test diagnostic observed end-to-end (dispatch 000166 B9, checklist item 8). The only check
+    # that asserts the PRODUCT works rather than that its parts are installed: the daemon's 'ping'
+    # answers without touching PSES, so a daemon can be alive, pinging, and analyzing nothing. Per
+    # OQ5 this starts no daemon, writes nothing in the repository, and leaves no file behind. It
+    # reuses $daemonObs so it can never disagree with check 6 about which daemon is live.
+    $tdObs = Get-DoctorTestDiagnosticObservation -DaemonObservation $daemonObs
+    $results += (Test-DoctorTestDiagnostic -Determinable $tdObs.Determinable -Reason $tdObs.Reason `
+            -Responded $tdObs.Responded -Status $tdObs.Status -ExpectedRule $script:DoctorProbeRuleId `
+            -RuleIds @($tdObs.RuleIds) -ElapsedMs $tdObs.ElapsedMs)
+
+    # 9) native-serve STATUS (dispatch 000166 B9, the item-7 promotion). Answers "is navigation on
+    # for me, and if not why" as a DEFAULT check by reading the effective knob value -- it spawns
+    # nothing, so it costs nothing. The heavier removability PROBE below stays opt-in, unchanged.
+    $nsStatus = Get-DoctorNativeServeStatusObservation -ScriptsDir $scriptsDir
+    $results += (Test-DoctorNativeServeStatus -Determinable $nsStatus.Determinable -Reason $nsStatus.Reason `
+            -Value $nsStatus.Value -ShimPresent $nsStatus.ShimPresent -Probed ([bool]$ProbeNativeServe))
+
+    # 10) native-serve removability (dispatch 000104, the 000103 OQ4). Still OPT-IN via
+    # -ProbeNativeServe: it launches PSES via the DIRECT launcher and inspects the init handshake,
+    # which costs a PSES cold-start plus a bounded init wait -- too heavy for every doctor run, so
+    # this check appears ONLY when requested. The item-7 promotion above deliberately did NOT make
+    # this probe default; it split the cheap STATUS question out of it.
     # Report-only, and never 'fail' (a removability diagnostic must not move the exit code).
     if ($ProbeNativeServe) {
         $nsObs = Get-DoctorNativeServeObservation -ScriptsDir $scriptsDir -InitTimeoutMs $script:NativeServeInitTimeoutMs

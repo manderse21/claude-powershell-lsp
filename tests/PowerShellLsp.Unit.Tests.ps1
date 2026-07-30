@@ -3020,6 +3020,177 @@ Describe 'Preflight doctor -- native-serve removability (check 7, dispatch 00010
 }
 
 # ===========================================================================
+# Preflight doctor -- the 000166 B9 reshape: items 6, 8, and the item-7 promotion
+# ===========================================================================
+# Three checks closing the gaps the 000165 S3 survey measured against the reviewer's
+# eight-point checklist. Same discipline as the blocks above: the decision half is a PURE
+# function over injected observations, asserted here; the live probes
+# (Get-DoctorRulesetObservation, Get-DoctorTestDiagnosticObservation) are exercised by the
+# end-to-end run recorded in the dispatch outbox, which proved BOTH directions -- honest
+# UNKNOWN with no data dir, and a real PSUseApprovedVerbs observed through a live daemon.
+#
+# THE EXIT-CODE CONTRACT IS THE THING TO PROTECT. `unknown` is never `fail`, so a doctor run
+# that could not determine something must not change a caller's exit code. Every
+# could-not-determine path below is asserted `unknown` explicitly, and the ONE deliberate
+# `fail` (a settled analysis that produced nothing) is asserted to be the ONLY one.
+
+Describe 'Preflight doctor -- active ruleset surface (item 6, dispatch 000166)' {
+    BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
+
+    It 'is UNKNOWN, never fail, when the resolver could not be consulted' {
+        $r = Test-DoctorRuleset -Determinable $false -Reason 'no plugin root.'
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match 'no plugin root'
+    }
+    It 'is UNKNOWN when ruleset=base is requested but the shipped ruleset is unresolvable' {
+        # The honest half of both-directions: base was ASKED for and silently degraded to the
+        # NARROWER PSES set. Reporting that as a pass reading "PSES built-in" would be
+        # indistinguishable from a user who chose pses-default -- the misreport this guards.
+        $r = Test-DoctorRuleset -Determinable $true -RulesetKnob 'base' -ResolvedPath '' -Source 'unresolved-base' -ProbeDir 'C:\proj'
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match 'NARROWER'
+        $r.Remediation | Should -Not -BeNullOrEmpty
+    }
+    It 'PASSES and names the shipped base ruleset when base resolved' {
+        $r = Test-DoctorRuleset -Determinable $true -RulesetKnob 'base' -ResolvedPath 'C:\plugin\rulesets\base.psd1' -Source 'plugin-base' -ProbeDir 'C:\proj'
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'shipped base ruleset is active'
+        $r.Detail | Should -Match ([regex]::Escape('C:\plugin\rulesets\base.psd1'))
+    }
+    It 'PASSES and says the repo-local file WINS, naming the knob as inert' {
+        # The silent-precedence case the check exists for: a user sets ruleset=base, still sees
+        # nothing new, and had no way to learn a repo-local file was legitimately winning.
+        $r = Test-DoctorRuleset -Determinable $true -RulesetKnob 'base' -ResolvedPath 'C:\proj\PSScriptAnalyzerSettings.psd1' -Source 'repo-local' -ProbeDir 'C:\proj'
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'repo-local'
+        $r.Detail | Should -Match 'inert'
+        $r.Detail | Should -Match 'not a fault'
+    }
+    It 'PASSES and says an explicit settingsPath override wins over both' {
+        $r = Test-DoctorRuleset -Determinable $true -RulesetKnob 'base' -ResolvedPath 'C:\org\settings.psd1' -Source 'override' -ProbeDir 'C:\proj'
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'settingsPath override'
+    }
+    It 'PASSES and names the PSES built-in set (with the WriteHost caveat) on the default' {
+        $r = Test-DoctorRuleset -Determinable $true -RulesetKnob 'pses-default' -ResolvedPath '' -Source 'pses-default' -ProbeDir 'C:\proj'
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'built-in no-settings rule set'
+        $r.Detail | Should -Match 'PSAvoidUsingWriteHost is NOT among them'
+    }
+    It 'NEVER returns fail on any input shape (a configuration report is not a health gate)' {
+        foreach ($src in @('override', 'repo-local', 'plugin-base', 'pses-default', 'unresolved-base', '')) {
+            (Test-DoctorRuleset -Determinable $true -RulesetKnob 'base' -ResolvedPath 'x' -Source $src).Status | Should -Not -Be 'fail'
+        }
+        (Test-DoctorRuleset -Determinable $false).Status | Should -Not -Be 'fail'
+    }
+}
+
+Describe 'Preflight doctor -- test diagnostic observed end-to-end (item 8, dispatch 000166)' {
+    BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
+
+    It 'is UNKNOWN when there is no daemon to ask (the doctor never starts one)' {
+        $r = Test-DoctorTestDiagnostic -Determinable $false -Reason 'no live warm daemon was identified.'
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match 'no live warm daemon'
+    }
+    It 'is UNKNOWN when the daemon did not return a well-formed response' {
+        $r = Test-DoctorTestDiagnostic -Determinable $true -Responded $false
+        $r.Status | Should -Be 'unknown'
+    }
+    It 'is UNKNOWN (quoting the status) when the analysis did not settle: <_>' -ForEach @('incomplete', 'degraded', 'unavailable') {
+        # A non-ok status is the plugin's own honest banner working, not a failure to report.
+        $r = Test-DoctorTestDiagnostic -Determinable $true -Responded $true -Status $_ -ExpectedRule 'PSUseApprovedVerbs' -RuleIds @()
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match ([regex]::Escape($_))
+    }
+    It 'PASSES when the planted defect comes back' {
+        $r = Test-DoctorTestDiagnostic -Determinable $true -Responded $true -Status 'ok' -ExpectedRule 'PSUseApprovedVerbs' -RuleIds @('PSUseApprovedVerbs') -ElapsedMs 1234
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'observed end-to-end'
+        $r.Detail | Should -Match '1234 ms'
+    }
+    It 'PASSES when the expected rule is present ALONGSIDE other findings' {
+        $r = Test-DoctorTestDiagnostic -Determinable $true -Responded $true -Status 'ok' -ExpectedRule 'PSUseApprovedVerbs' -RuleIds @('PSAvoidUsingWriteHost', 'PSUseApprovedVerbs')
+        $r.Status | Should -Be 'pass'
+    }
+    It 'FAILS -- the one deliberate fail -- when a SETTLED analysis produced nothing' {
+        # This is the silent-failure mode the whole plugin exists to prevent: an edit reading
+        # as "analyzed, clean" when the analyzer is not producing findings at all.
+        $r = Test-DoctorTestDiagnostic -Determinable $true -Responded $true -Status 'ok' -ExpectedRule 'PSUseApprovedVerbs' -RuleIds @()
+        $r.Status | Should -Be 'fail'
+        $r.Detail | Should -Match 'no findings at all'
+        $r.Detail | Should -Match 'settled-but-empty'
+        $r.Remediation | Should -Not -BeNullOrEmpty
+    }
+    It 'FAILS and NAMES what did come back, when the wrong findings returned' {
+        $r = Test-DoctorTestDiagnostic -Determinable $true -Responded $true -Status '' -ExpectedRule 'PSUseApprovedVerbs' -RuleIds @('PSAvoidUsingWriteHost')
+        $r.Status | Should -Be 'fail'
+        $r.Detail | Should -Match 'PSAvoidUsingWriteHost'
+    }
+    It 'the SETTLED-but-empty case is the ONLY fail across every input shape' {
+        # Guards the exit-code contract from the other side: enumerate the shapes and assert
+        # exactly one of them fails. A future edit that turned an indeterminate path into a
+        # fail would start moving callers' exit codes, and this goes red.
+        $shapes = @(
+            @{ D = $false; R = $false; S = ''; Ids = @() }
+            @{ D = $true;  R = $false; S = ''; Ids = @() }
+            @{ D = $true;  R = $true;  S = 'incomplete';  Ids = @() }
+            @{ D = $true;  R = $true;  S = 'degraded';    Ids = @() }
+            @{ D = $true;  R = $true;  S = 'unavailable'; Ids = @() }
+            @{ D = $true;  R = $true;  S = 'ok'; Ids = @('PSUseApprovedVerbs') }
+            @{ D = $true;  R = $true;  S = 'ok'; Ids = @() }          # <- the only fail
+        )
+        $statuses = @($shapes | ForEach-Object {
+            (Test-DoctorTestDiagnostic -Determinable $_.D -Responded $_.R -Status $_.S -ExpectedRule 'PSUseApprovedVerbs' -RuleIds $_.Ids).Status
+        })
+        $statuses.Count | Should -Be 7                                   # vacuity floor
+        @($statuses | Where-Object { $_ -eq 'fail' }).Count | Should -Be 1
+        $statuses[-1] | Should -Be 'fail'
+    }
+}
+
+Describe 'Preflight doctor -- native-serve STATUS, promoted out of opt-in (item 7, dispatch 000166)' {
+    BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
+
+    It 'PASSES on the shipped default and says plainly that it is not a fault' {
+        $r = Test-DoctorNativeServeStatus -Determinable $true -Value 'off' -ShimPresent $true
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'not a fault'
+        $r.Detail | Should -Match 'do NOT serve'
+    }
+    It 'treats a BLANK value as the default rather than as an error' {
+        (Test-DoctorNativeServeStatus -Determinable $true -Value '' -ShimPresent $true).Status | Should -Be 'pass'
+    }
+    It 'PASSES and reports navigation ENABLED under shim' {
+        $r = Test-DoctorNativeServeStatus -Determinable $true -Value 'shim' -ShimPresent $true
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'ENABLED'
+    }
+    It 'is UNKNOWN when shim is configured but the shim script is missing' {
+        $r = Test-DoctorNativeServeStatus -Determinable $true -Value 'shim' -ShimPresent $false
+        $r.Status | Should -Be 'unknown'
+    }
+    It 'is UNKNOWN on an unrecognized value, and says what the plugin will actually do' {
+        $r = Test-DoctorNativeServeStatus -Determinable $true -Value 'native' -ShimPresent $true
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match 'not a recognized value'
+        $r.Detail | Should -Match 'treats anything other than "shim" as "off"'
+    }
+    It 'points at the opt-in probe ONLY when the probe did not already run' {
+        (Test-DoctorNativeServeStatus -Determinable $true -Value 'off' -ShimPresent $true -Probed $false).Detail | Should -Match 'ProbeNativeServe'
+        (Test-DoctorNativeServeStatus -Determinable $true -Value 'off' -ShimPresent $true -Probed $true).Detail | Should -Not -Match 'Run with -ProbeNativeServe'
+    }
+    It 'NEVER returns fail (off by default is a supported configuration)' {
+        foreach ($v in @('off', 'shim', '', 'native', 'true')) {
+            foreach ($p in @($true, $false)) {
+                (Test-DoctorNativeServeStatus -Determinable $true -Value $v -ShimPresent $p).Status | Should -Not -Be 'fail'
+            }
+        }
+        (Test-DoctorNativeServeStatus -Determinable $false).Status | Should -Not -Be 'fail'
+    }
+}
+
+# ===========================================================================
 # Security-block classifier (dispatch 000038, building 000032 L3)
 # ===========================================================================
 # Honest degradation on a security-control block: attribute a bootstrap failure to the
