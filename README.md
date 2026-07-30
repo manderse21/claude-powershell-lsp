@@ -189,6 +189,13 @@ panel and the table below are summaries of it.
 | `nativeServe`      | `off`    | `shim` serves hover / go-to-definition / find-references / documentSymbol to Claude Code's native LSP client through a handshake proxy. `off` is a byte-exact pass-through. See [Native code navigation](#2-native-code-navigation-opt-in) |
 | `referenceSurfacing`| `off`   | `counts` surfaces bare per-function facts (cross-file reference counts, where a call is defined) as additive **Information**, never a diagnostic. Silent on ambiguity, never writes. See [referenceSurfacing](docs/configuration.md#referencesurfacing) |
 | `orgPolicy`        | _(empty)_| **Absolute** path to a centrally-managed `PSScriptAnalyzerSettings.psd1` whose `ExcludeRules` are enforced above repo-local config -- an org can take a rule **away**, never force one **on**. Fails open. See [orgPolicy](docs/configuration.md#orgpolicy) |
+| `profile`          | `safe`   | Preset for every knob above. `safe` (default) is **exactly** today's shipped defaults; `recommended` broadens the surface; `strict` adds a repository-enforcement posture. **A knob you set explicitly always wins over the profile.** See [profile](docs/configuration.md#profile) |
+
+**Four ways to configure, in one sentence each.** Leave everything alone and you get `safe`, which
+is byte-for-byte today's behavior. Set `profile` to `recommended` or `strict` for a curated preset.
+Or go **custom**: set knobs yourself: an explicitly-set knob always wins, whether or not a profile
+is also set. There is no fourth mechanism -- "custom" is not a profile value, it is what you get by
+setting a knob.
 
 Diagnostics are returned in a stable order (severity, then line, then column), deduped,
 threshold- and rule-filtered, then capped per file.

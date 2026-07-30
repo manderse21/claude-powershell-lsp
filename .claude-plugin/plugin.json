@@ -122,6 +122,12 @@
       "title": "Org policy settings path (central ExcludeRules)",
       "description": "Absolute path to an org-wide PSScriptAnalyzerSettings.psd1 whose ExcludeRules win over local config and cannot be re-enabled locally. Empty (default) = off. See docs/configuration.md#orgpolicy.",
       "default": ""
+    },
+    "profile": {
+      "type": "string",
+      "title": "Configuration profile (preset for the knobs above)",
+      "description": "Preset for the other knobs. 'safe' (default) is exactly today's shipped defaults; 'recommended' broadens the surface; 'strict' adds a repository-enforcement posture. A knob you set explicitly always wins over the profile. Values: 'safe' (default), 'recommended', 'strict'. See docs/configuration.md#profile.",
+      "default": "safe"
     }
   },
   "lspServers": {

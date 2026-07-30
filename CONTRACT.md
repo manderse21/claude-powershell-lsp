@@ -60,6 +60,7 @@ change rules, not a second copy of the prose.
 | `nativeServe` | native hover/definition/references serve via the handshake shim (off by default; `shim` opt-in) |
 | `referenceSurfacing` | workspace reference-count facts for the edited file (off by default; `counts` opt-in) |
 | `orgPolicy` | org settings psd1 path whose `ExcludeRules` win over local config (empty by default = off) |
+| `profile` | preset for the other knobs (`safe` by default = today's shipped defaults; `recommended` / `strict` opt-in). An explicitly-set knob always wins over the profile |
 
 <!-- FROZEN-KNOBS:END -->
 

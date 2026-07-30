@@ -201,6 +201,165 @@ Describe 'Get-PluginOptionBool -- boolean userConfig (Track A enableStats)' {
     }
 }
 
+Describe 'profile meta-knob -- precedence and the ruled constants (dispatch 000166 B8)' {
+    # `profile` is a PRESET over the other knobs, resolved BETWEEN an explicitly-set knob and
+    # the shipped default: explicit > profile > default. These guards pin the three things the
+    # 1.x contract actually rests on.
+    #
+    # (1) THE BYTE-IDENTITY OBLIGATION. With `profile` unset OR set to `safe`, every knob must
+    #     resolve to the value it resolved to before this knob existed. The ground truth is
+    #     NOT a literal table copied into this file -- it is the DEFAULT the caller passes,
+    #     read back out. So the assertion is "the resolver returned the caller's default,
+    #     unchanged", which is the actual property, and a mapping bug under `safe` fails it
+    #     regardless of what any table says the defaults are.
+    #
+    # (2) EXPLICIT BEATS PROFILE. If a profile could override a value a user set, every
+    #     existing 1.x config silently changes meaning on upgrade -- CONTRACT.md:178-184 makes
+    #     that a MAJOR. Asserted on a knob the profile DOES map, with the explicit value set to
+    #     something the profile would otherwise have changed, so the test can only pass by
+    #     precedence and never by coincidence.
+    #
+    # (3) THE RULED CONSTANTS. nativeServe stays `off` (ruling R2), enableStats stays `false`
+    #     (R3b), and formatOnEdit `apply` appears in NO profile. These are asserted over EVERY
+    #     profile value -- including the unknown-value degrade path -- rather than over a
+    #     sampled one, because the failure they guard against is a future re-mapping quietly
+    #     adding one of them to a single profile.
+    #
+    # VACUITY: a positive control asserts that `recommended` DOES change something. Without it
+    # a resolver that returned $Default unconditionally -- i.e. a profile knob that does
+    # nothing at all -- would satisfy every "safe is unchanged" and "constant stays off"
+    # assertion in this Describe.
+    BeforeAll {
+        # The shipped defaults, as the CALLERS pass them (session-start.ps1 / lsp-client.ps1).
+        $script:ShippedDefaults = [ordered]@{
+            'ps_host'            = 'pwsh'
+            'severityThreshold'  = 'Hint'
+            'ruleInclude'        = ''
+            'ruleExclude'        = ''
+            'timeoutMs'          = '5000'
+            'debounceMs'         = '150'
+            'keepLastN'          = '10'
+            'idleTtlMin'         = '30'
+            'perFileCap'         = '20'
+            'enableStats'        = 'false'
+            'settingsPath'       = ''
+            'scopeToEdit'        = 'true'
+            'editContextLines'   = '0'
+            'formatOnEdit'       = 'off'
+            'ruleset'            = 'pses-default'
+            'moduleAwareness'    = 'off'
+            'nativeServe'        = 'off'
+            'referenceSurfacing' = 'off'
+            'orgPolicy'          = ''
+        }
+        $script:AllProfileValues = @('safe', 'recommended', 'strict')
+    }
+    BeforeEach {
+        Get-ChildItem Env: | Where-Object { $_.Name -like 'CLAUDE_PLUGIN_OPTION_*' } |
+            ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) -ErrorAction SilentlyContinue }
+    }
+    AfterEach {
+        Get-ChildItem Env: | Where-Object { $_.Name -like 'CLAUDE_PLUGIN_OPTION_*' } |
+            ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) -ErrorAction SilentlyContinue }
+    }
+
+    It 'with profile UNSET, every knob resolves to its shipped default (byte-identical surface)' {
+        $script:ShippedDefaults.Keys.Count | Should -BeGreaterThan 15   # vacuity floor
+        foreach ($k in $script:ShippedDefaults.Keys) {
+            (Get-PluginOption $k $script:ShippedDefaults[$k]) | Should -BeExactly $script:ShippedDefaults[$k] -Because "knob '$k' must be untouched when no profile is set"
+        }
+    }
+    It 'with profile=safe, every knob resolves to its shipped default (byte-identical surface)' {
+        $env:CLAUDE_PLUGIN_OPTION_profile = 'safe'
+        foreach ($k in $script:ShippedDefaults.Keys) {
+            (Get-PluginOption $k $script:ShippedDefaults[$k]) | Should -BeExactly $script:ShippedDefaults[$k] -Because "knob '$k' must be untouched under the safe profile"
+        }
+    }
+    It 'an UNRECOGNIZED profile value degrades to safe rather than to a partial preset' {
+        $env:CLAUDE_PLUGIN_OPTION_profile = 'aggressive'
+        foreach ($k in $script:ShippedDefaults.Keys) {
+            (Get-PluginOption $k $script:ShippedDefaults[$k]) | Should -BeExactly $script:ShippedDefaults[$k]
+        }
+    }
+    It 'POSITIVE CONTROL: recommended actually changes the surface (so the guards above are not vacuous)' {
+        $env:CLAUDE_PLUGIN_OPTION_profile = 'recommended'
+        $changed = @($script:ShippedDefaults.Keys | Where-Object {
+            (Get-PluginOption $_ $script:ShippedDefaults[$_]) -cne $script:ShippedDefaults[$_]
+        })
+        $changed.Count | Should -BeGreaterThan 0
+        # Named, so a mapping that drifted to changing something ELSE is a red, not a pass.
+        $changed | Should -Contain 'ruleset'
+        (Get-PluginOption 'ruleset' 'pses-default') | Should -BeExactly 'base'
+    }
+    It 'an explicitly-set knob BEATS the profile value (<_>)' -ForEach @('recommended', 'strict') {
+        $env:CLAUDE_PLUGIN_OPTION_profile = $_
+        # `ruleset` is mapped to 'base' by both profiles; setting it back explicitly must win.
+        (Get-PluginOption 'ruleset' 'pses-default') | Should -BeExactly 'base'   # profile applies first
+        $env:CLAUDE_PLUGIN_OPTION_ruleset = 'pses-default'
+        (Get-PluginOption 'ruleset' 'pses-default') | Should -BeExactly 'pses-default'
+        # ...and an explicit value the profile never mentions is honored too.
+        $env:CLAUDE_PLUGIN_OPTION_perFileCap = '7'
+        (Get-PluginOptionInt 'perFileCap' 20) | Should -Be 7
+    }
+    It 'nativeServe reads off under EVERY profile value (ruling R2)' {
+        foreach ($p in $script:AllProfileValues) {
+            $env:CLAUDE_PLUGIN_OPTION_profile = $p
+            (Get-PluginOption 'nativeServe' 'off') | Should -BeExactly 'off' -Because "profile '$p' must not put the shim in front of users"
+        }
+    }
+    It 'enableStats reads false under EVERY profile value (ruling R3b)' {
+        foreach ($p in $script:AllProfileValues) {
+            $env:CLAUDE_PLUGIN_OPTION_profile = $p
+            (Get-PluginOption 'enableStats' 'false') | Should -BeExactly 'false' -Because "profile '$p' must not enable stats before path redaction ships"
+            (Get-PluginOptionBool 'enableStats' $false) | Should -BeFalse
+        }
+    }
+    It 'formatOnEdit never resolves to apply under any profile value' {
+        foreach ($p in $script:AllProfileValues) {
+            $env:CLAUDE_PLUGIN_OPTION_profile = $p
+            (Get-PluginOption 'formatOnEdit' 'off') | Should -Not -BeExactly 'apply' -Because "a preset must never silently rewrite a user's file"
+        }
+    }
+    It 'the mapping tables themselves contain no ruled-out value (guards a FUTURE re-mapping)' {
+        # Reads the shipped mapping directly rather than only its resolved output: a re-mapping
+        # that added nativeServe='shim' to a profile would be caught here even if some future
+        # resolver change stopped surfacing it.
+        foreach ($p in $script:AllProfileValues) {
+            foreach ($k in @('nativeServe', 'enableStats')) {
+                (Get-ProfileKnobValue -ProfileName $p -Key $k) | Should -BeExactly '' -Because "profile '$p' must not map '$k' at all"
+            }
+            (Get-ProfileKnobValue -ProfileName $p -Key 'formatOnEdit') | Should -Not -BeExactly 'apply'
+            # orgPolicy is the intended STRICT slot but a profile cannot hardcode a site path.
+            (Get-ProfileKnobValue -ProfileName $p -Key 'orgPolicy') | Should -BeExactly ''
+        }
+    }
+    It 'timeoutMs is not a departure in any profile (OQ2: measured p95 leaves headroom under 5000)' {
+        foreach ($p in $script:AllProfileValues) {
+            $env:CLAUDE_PLUGIN_OPTION_profile = $p
+            (Get-PluginOptionInt 'timeoutMs' 5000) | Should -Be 5000
+        }
+    }
+    It 'strict is a SUPERSET of recommended (the charter shape), plus exactly three departures' {
+        $rec = @{}; foreach ($k in $script:ShippedDefaults.Keys) { $rec[$k] = (Get-ProfileKnobValue -ProfileName 'recommended' -Key $k) }
+        $str = @{}; foreach ($k in $script:ShippedDefaults.Keys) { $str[$k] = (Get-ProfileKnobValue -ProfileName 'strict' -Key $k) }
+        foreach ($k in $script:ShippedDefaults.Keys) {
+            if (-not [string]::IsNullOrWhiteSpace($rec[$k])) {
+                $str[$k] | Should -BeExactly $rec[$k] -Because "strict carries all of recommended; '$k' drifted"
+            }
+        }
+        $extra = @($script:ShippedDefaults.Keys | Where-Object {
+            [string]::IsNullOrWhiteSpace($rec[$_]) -and -not [string]::IsNullOrWhiteSpace($str[$_])
+        } | Sort-Object)
+        ($extra -join ',') | Should -BeExactly 'keepLastN,perFileCap,scopeToEdit'
+    }
+    It 'the profile knob is never itself profile-resolved (no recursion, no self-selection)' {
+        $env:CLAUDE_PLUGIN_OPTION_profile = 'strict'
+        (Get-PluginOption 'profile' 'safe') | Should -BeExactly 'strict'
+        Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_OPTION_profile' -ErrorAction SilentlyContinue
+        (Get-PluginOption 'profile' 'safe') | Should -BeExactly 'safe'
+    }
+}
+
 Describe 'Write-StatsLine -- telemetry writer (Track A: JSONL, append, rotation, fail-safe)' {
     # Stats land under Get-LogDir, which keys off CLAUDE_PLUGIN_DATA -- so each test
     # points it at a throwaway temp root and cleans up after.
