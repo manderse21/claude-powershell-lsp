@@ -3149,6 +3149,50 @@ Describe 'Preflight doctor -- test diagnostic observed end-to-end (item 8, dispa
     }
 }
 
+Describe 'Format-DoctorSummary -- the /status rendering over the Invoke-Doctor seam (000166 B10)' {
+    # /powershell-lsp:status is a RENDERING, not a second health check. The property that makes
+    # that claim true is that it is a pure function of the SAME result objects Format-DoctorReport
+    # consumes -- so it cannot re-decide anything, and it cannot disagree with the full report.
+    # These guards pin exactly that, plus the one thing a compact view could get wrong: silently
+    # swallowing the remediation for a failing check with no way to reach it.
+    BeforeAll {
+        . (Join-Path $script:ScriptsDir 'doctor.ps1')
+        $script:SummaryFixture = @(
+            (New-DoctorResult -Status pass -Component 'Alpha check' -Detail 'alpha detail prose')
+            (New-DoctorResult -Status unknown -Component 'Beta check' -Detail 'beta detail prose' -Remediation 'beta fix text')
+            (New-DoctorResult -Status fail -Component 'Gamma check' -Detail 'gamma detail prose' -Remediation 'gamma fix text')
+        )
+    }
+    It 'renders one line per check, naming every component' {
+        $s = Format-DoctorSummary -Results $script:SummaryFixture
+        foreach ($c in @('Alpha check', 'Beta check', 'Gamma check')) { $s | Should -Match ([regex]::Escape($c)) }
+    }
+    It 'reports the SAME counts the full report does (it cannot disagree)' {
+        $summary = Format-DoctorSummary -Results $script:SummaryFixture
+        $full = Format-DoctorReport -Results $script:SummaryFixture
+        $line = 'summary: 1 pass, 1 fail, 1 unknown (of 3 checks)'
+        $summary | Should -Match ([regex]::Escape($line))
+        $full | Should -Match ([regex]::Escape($line))
+    }
+    It 'OMITS the per-check detail prose (that is the whole point of the compact view)' {
+        $s = Format-DoctorSummary -Results $script:SummaryFixture
+        $s | Should -Not -Match 'alpha detail prose'
+        $s | Should -Not -Match 'gamma detail prose'
+        # ...and the full report DOES carry it -- otherwise this assertion would pass against a
+        # renderer that dropped everything, including the parts it must keep.
+        (Format-DoctorReport -Results $script:SummaryFixture) | Should -Match 'gamma detail prose'
+    }
+    It 'points at the full report when anything is not PASS (never a dead end)' {
+        (Format-DoctorSummary -Results $script:SummaryFixture) | Should -Match 'doctor\.ps1'
+    }
+    It 'stays quiet when everything passes' {
+        $allPass = @((New-DoctorResult -Status pass -Component 'Only check' -Detail 'd'))
+        $s = Format-DoctorSummary -Results $allPass
+        $s | Should -Match 'summary: 1 pass, 0 fail, 0 unknown'
+        $s | Should -Not -Match 'For the per-check detail'
+    }
+}
+
 Describe 'Preflight doctor -- native-serve STATUS, promoted out of opt-in (item 7, dispatch 000166)' {
     BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
 

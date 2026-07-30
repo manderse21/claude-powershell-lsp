@@ -49,7 +49,15 @@ param(
     # (today) or now serves statically (the nativeServe shim can be removed). It costs a PSES
     # cold-start plus a bounded init wait, so it is OFF by default -- the routine doctor stays fast
     # and this check appears ONLY when requested. Report-only, like every other check.
-    [switch] $ProbeNativeServe
+    [switch] $ProbeNativeServe,
+
+    # Compact rendering (dispatch 000166 B10): one line per check plus the summary, with the
+    # per-check detail and remediation prose omitted. It is a RENDERING over the SAME
+    # Invoke-Doctor seam -- the checks that run, their statuses, and the exit code are
+    # byte-for-byte identical to a normal run; only the presentation differs. This is what the
+    # /powershell-lsp:status command surfaces, so a health glance costs one screen instead of
+    # scrolling a full fix-list.
+    [switch] $Summary
 )
 
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
@@ -1104,6 +1112,34 @@ function Format-DoctorReport {
     return ($lines -join [Environment]::NewLine)
 }
 
+function Format-DoctorSummary {
+    # Compact rendering over the SAME results Format-DoctorReport renders (dispatch 000166 B10).
+    # One line per check plus the summary line; no detail prose, no remediation. It is a pure
+    # function of the results -- it re-runs nothing, re-decides nothing, and cannot disagree with
+    # the full report about any check's status, because both consume the identical objects.
+    #
+    # When something is not PASS the compact view would be a dead end, so it appends ONE pointer
+    # at the full report rather than silently dropping the fix text.
+    param([object[]] $Results)
+    $lines = @()
+    $lines += 'powershell-lsp status -- ' + @($Results).Count + ' checks (report-only)'
+    $lines += ''
+    foreach ($r in $Results) {
+        $lines += ('  ' + ('{0,-7}' -f $r.Status.ToUpperInvariant()) + '  ' + $r.Component)
+    }
+    $passN = @($Results | Where-Object { $_.Status -eq 'pass' }).Count
+    $failN = @($Results | Where-Object { $_.Status -eq 'fail' }).Count
+    $unkN = @($Results | Where-Object { $_.Status -eq 'unknown' }).Count
+    $lines += ''
+    $lines += ('  summary: ' + $passN + ' pass, ' + $failN + ' fail, ' + $unkN + ' unknown (of ' + @($Results).Count + ' checks)')
+    if (($failN + $unkN) -gt 0) {
+        $lines += ''
+        $lines += '  For the per-check detail and the fix for each, run the full report:'
+        $lines += '    pwsh -File "$env:CLAUDE_PLUGIN_ROOT/scripts/doctor.ps1"'
+    }
+    return ($lines -join [Environment]::NewLine)
+}
+
 # ===========================================================================
 # Entry point -- runs ONLY on direct invocation (pwsh -File ...), not when the script
 # is dot-sourced (so the unit tests load the functions without running live probes).
@@ -1112,7 +1148,13 @@ if ($MyInvocation.InvocationName -ne '.') {
     Set-StrictMode -Version Latest
     $ErrorActionPreference = 'Stop'
     $doctorResults = Invoke-Doctor -SessionId $SessionId -ProbeNativeServe:([bool]$ProbeNativeServe)
-    Write-Host (Format-DoctorReport -Results $doctorResults)
+    if ($Summary) {
+        Write-Host (Format-DoctorSummary -Results $doctorResults)
+    } else {
+        Write-Host (Format-DoctorReport -Results $doctorResults)
+    }
+    # The exit code is computed from the SAME results either way -- the rendering never
+    # changes the verdict, and 'unknown' is never a failure.
     $doctorFailures = @($doctorResults | Where-Object { $_.Status -eq 'fail' }).Count
     if ($doctorFailures -gt 0) { exit 1 } else { exit 0 }
 }

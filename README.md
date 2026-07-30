@@ -121,6 +121,20 @@ two details are deliberate: it scans `scripts/` rather than the repo root (becau
 `tests/corpus/samples/` is deliberately-bad code), and it pins `upload-sarif` by **commit SHA**,
 not by tag.
 
+### Commands
+
+Three slash commands, available once the plugin is enabled. Each **wraps a script that already
+ships** -- they add no analysis of their own:
+
+| Command | What it does |
+|---|---|
+| `/powershell-lsp:doctor` | The full preflight health check with a named fix for anything wrong (`scripts/doctor.ps1`). Report-only. |
+| `/powershell-lsp:status` | The same checks rendered as one line each -- a health glance rather than a fix-list (`scripts/doctor.ps1 -Summary`). |
+| `/powershell-lsp:scan <path>` | Scans a file or directory with the same engine the edit hook uses (`scripts/lsp-scan.ps1`). This is the explicit whole-repository path. |
+
+`status` runs the identical checks as `doctor` and produces the identical statuses and exit code;
+only the presentation differs.
+
 ## Prerequisites
 
 Checked in order by the [Quick start](#quick-start) below.

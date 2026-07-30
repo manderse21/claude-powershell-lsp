@@ -8,6 +8,7 @@
   "license": "GPL-3.0-or-later",
   "keywords": ["powershell", "lsp", "editor-services", "diagnostics", "psscriptanalyzer", "claude-code", "linter"],
   "defaultEnabled": false,
+  "commands": "./commands",
   "userConfig": {
     "ps_host": {
       "type": "string",
