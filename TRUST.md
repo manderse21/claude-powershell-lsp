@@ -59,10 +59,10 @@ Code launches -- all four of them, and there are no others:
 
 | Entry point | Declared at | What it launches |
 |-------------|-------------|------------------|
-| `lspServers` (the LSP server command) | `.claude-plugin/plugin.json:133` | `scripts/pses-serve-shim.ps1` |
-| `SessionStart` hook | `.claude-plugin/plugin.json:155` | `scripts/session-start.ps1` |
-| `PostToolUse` hook | `.claude-plugin/plugin.json:166` | `scripts/lsp-client.ps1` |
-| `SessionEnd` hook | `.claude-plugin/plugin.json:176` | `scripts/session-end.ps1` |
+| `lspServers` (the LSP server command) | `.claude-plugin/plugin.json:140` | `scripts/pses-serve-shim.ps1` |
+| `SessionStart` hook | `.claude-plugin/plugin.json:162` | `scripts/session-start.ps1` |
+| `PostToolUse` hook | `.claude-plugin/plugin.json:173` | `scripts/lsp-client.ps1` |
+| `SessionEnd` hook | `.claude-plugin/plugin.json:183` | `scripts/session-end.ps1` |
 
 (The `lspServers` entry splits the flag across two JSON array elements -- `"-ExecutionPolicy",
 "Bypass",` -- so a `-ExecutionPolicy\s+Bypass` search undercounts the manifest at 3. The true
