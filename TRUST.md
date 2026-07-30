@@ -49,8 +49,56 @@ for how it works.
 
 > A local data-capture log (`dogfood/diagnostics.jsonl`) records the diagnostics the tool
 > surfaces, for offline quality work. It is **local-only, gitignored, and never
-> transmitted** (see README "Dogfood diagnostic capture"). Optional `enableStats`
+> transmitted** (see [docs/dogfood.md](docs/dogfood.md)). Optional `enableStats`
 > (default **off**) appends local timing lines. Neither leaves the machine.
+
+## Why ExecutionPolicy Bypass appears in every hook entry point
+
+Reviewing the manifest, you will find `-ExecutionPolicy Bypass` on **every** entry point Claude
+Code launches -- all four of them, and there are no others:
+
+| Entry point | Declared at | What it launches |
+|-------------|-------------|------------------|
+| `lspServers` (the LSP server command) | `.claude-plugin/plugin.json:133` | `scripts/pses-serve-shim.ps1` |
+| `SessionStart` hook | `.claude-plugin/plugin.json:155` | `scripts/session-start.ps1` |
+| `PostToolUse` hook | `.claude-plugin/plugin.json:166` | `scripts/lsp-client.ps1` |
+| `SessionEnd` hook | `.claude-plugin/plugin.json:176` | `scripts/session-end.ps1` |
+
+(The `lspServers` entry splits the flag across two JSON array elements -- `"-ExecutionPolicy",
+"Bypass",` -- so a `-ExecutionPolicy\s+Bypass` search undercounts the manifest at 3. The true
+figure is 4.)
+
+**Why it is there.** The flag is a **launcher argument for the plugin's own scripts**, not a
+change to your machine. `-ExecutionPolicy Bypass` applies to that one `pwsh` process only: it sets
+no policy, writes no registry key, and survives nothing past the process. Without it, the
+plugin's own tracked, reviewable scripts -- which arrive unsigned over `git clone`, exactly as
+this repository ships them -- would refuse to start on any host whose *user* or *process*
+ExecutionPolicy is `Restricted` / `AllSigned` / `RemoteSigned`, which is the common default. The
+result would not be "more secure"; it would be a plugin that silently never runs.
+
+**What it is NOT, and cannot be.** Three properties bound it, each independently checkable:
+
+- **It cannot override a machine-level or Group Policy control.** When ExecutionPolicy is set by
+  `MachinePolicy` or `UserPolicy` (GPO), a command-line `-Bypass` is **ignored** by PowerShell
+  itself. Same for Constrained Language Mode, WDAC / App Control, Defender ASR, and Smart App
+  Control: none of them look at this flag. On a genuinely locked-down estate the plugin does not
+  quietly win -- it fails, and says so.
+- **It is scoped to the plugin's own files.** Every invocation is
+  `-File "${CLAUDE_PLUGIN_ROOT}/scripts/<name>.ps1"`. Nothing in this repository runs *your*
+  scripts under Bypass, and no `Set-ExecutionPolicy` call exists anywhere in the tree.
+- **The one policy-aware component in the plugin exists to explain blocks, never to defeat them.**
+  `scripts/lib/security-classifier.ps1` reads control state (execution policy, language mode,
+  CodeIntegrity / Defender event logs, the SAC registry value) purely to **name** what blocked a
+  bootstrap and print the legitimate admin remediation. Its contract is stated in
+  [ARCHITECTURE.md](./ARCHITECTURE.md) as, verbatim, "**Never bypasses a control.**" It is the
+  strongest evidence available on this point: the only code that *understands* these controls is
+  code written to diagnose them.
+
+This is the same posture as the "No security-control circumvention" bullet above, stated where the
+flag itself is what alarms a reviewer. If your estate requires signed scripts, the allow-listing
+path -- paste-ready WDAC / AppLocker rules -- is in
+[Allow-listing on managed Windows](#allow-listing-on-managed-windows) below; that is a deliberate
+administrator action, which is the only way this plugin ever runs under such a control.
 
 ## What it downloads (pinned versions AND pinned hashes)
 
