@@ -37,7 +37,18 @@ Describe 'ServeShim instrumentation: the exit-path discriminator, on the REAL ru
     BeforeAll {
         . (Join-Path $PSScriptRoot 'ServeShim.Common.ps1')
         $script:FixturePath = Join-Path $PSScriptRoot 'fixtures/serveshim-run-30472816851-pses-serve-shim.log'
-        $script:FixtureSha = (Get-FileHash -LiteralPath $script:FixturePath -Algorithm SHA256).Hash
+        # Hash the LF-NORMALIZED bytes, never the bytes as checked out. Get-FileHash on the worktree
+        # file asserts a CHECKOUT PROPERTY: git converts LF -> CRLF on a Windows checkout, so the raw
+        # digest differs per platform. MEASURED -- the first version of this used Get-FileHash directly
+        # and went RED on BOTH Windows CI legs while passing on macos-pwsh and ubuntu-pwsh, which is the
+        # signature of an EOL-dependent assertion rather than a content problem. Stripping CR keeps the
+        # tamper-evidence (any real content drift still fails) while making the claim about the FILE's
+        # content instead of about how git happened to materialise it.
+        $script:FixtureSha = [System.BitConverter]::ToString(
+            [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+                [byte[]]@([System.IO.File]::ReadAllBytes($script:FixturePath) | Where-Object { $_ -ne 13 })
+            )
+        ).Replace('-', '')
         $script:DiscRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000163-disc-' + ([guid]::NewGuid().ToString('N').Substring(0, 8)))
         New-Item -ItemType Directory -Force -Path (Join-Path $script:DiscRoot 'logs') | Out-Null
         Copy-Item -LiteralPath $script:FixturePath -Destination (Join-Path $script:DiscRoot 'logs/pses-serve-shim.log') -Force
@@ -50,8 +61,22 @@ Describe 'ServeShim instrumentation: the exit-path discriminator, on the REAL ru
     }
 
     # --- provenance + selected-count floors: the corpus really is the recorded one ----
-    It 'the corpus is the hash-pinned artifact from run 30472816851' {
-        $script:FixtureSha | Should -BeExactly '09E906891043A37F2EAADC956749A9B3C019082CD147998F914A0DB0229AD20C' -Because 'the fixture is a byte-for-byte copy of the downloaded daemon-logs artifact; a mismatch means the corpus drifted'
+    It 'the corpus is the hash-pinned artifact from run 30472816851 (LF-normalized, EOL-agnostic)' {
+        $script:FixtureSha | Should -BeExactly '09E906891043A37F2EAADC956749A9B3C019082CD147998F914A0DB0229AD20C' -Because 'the fixture is a byte-for-byte copy of the downloaded daemon-logs artifact, hashed with CR stripped so the digest is a property of its CONTENT and not of how git materialised it on this platform; a mismatch means the corpus drifted'
+    }
+    It 'the corpus hash is genuinely EOL-agnostic (proven on a CRLF copy, both directions)' {
+        # Without this, the fix above is only asserted on whatever this platform happens to check out --
+        # which is exactly the blind spot that let the CRLF failure reach CI in the first place. Build
+        # BOTH materialisations here and require one digest, plus a NEGATIVE arm proving the raw
+        # (un-normalized) digests genuinely differ, so this cannot pass by the two copies being identical.
+        $lf = [byte[]]@([System.IO.File]::ReadAllBytes($script:FixturePath) | Where-Object { $_ -ne 13 })
+        $crlf = [System.Text.Encoding]::ASCII.GetBytes(([System.Text.Encoding]::ASCII.GetString($lf) -replace "`n", "`r`n"))
+        $crlf.Count | Should -BeGreaterThan $lf.Count -Because 'the CRLF copy must really carry extra CR bytes, or the comparison is vacuous'
+        $sha = { param($b) [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($b)).Replace('-', '') }
+        (& $sha $lf) | Should -Not -BeExactly (& $sha $crlf) -Because 'the RAW digests must differ -- that difference is the CI failure this guards'
+        $norm = { param($b) & $sha ([byte[]]@($b | Where-Object { $_ -ne 13 })) }
+        (& $norm $crlf) | Should -BeExactly (& $norm $lf) -Because 'after CR-stripping, both materialisations must yield ONE digest'
+        (& $norm $crlf) | Should -BeExactly '09E906891043A37F2EAADC956749A9B3C019082CD147998F914A0DB0229AD20C'
     }
     It 'the corpus is non-vacuous: three shims, at the recorded per-pid line counts' {
         $script:SliceNav.Count | Should -Be 8 -Because 'pid 18197 wrote 8 lines in run 30472816851'
