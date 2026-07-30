@@ -1,0 +1,18 @@
+[2026-07-29T17:07:58.6081960+00:00] [18197] nativeServe=shim: native-serve handshake proxy (init patch + local intercepts)
+[2026-07-29T17:07:58.6592180+00:00] [18197] launching PSES via pwsh
+[2026-07-29T17:07:58.7176210+00:00] [18197] pump started (client stdin: background blocking reader; PSES stdout: async)
+[2026-07-29T17:07:58.9639840+00:00] [18197] initialize patched (dynamicRegistration=false; workspaceFolders dropped; rename ensured) and forwarded
+[2026-07-29T17:07:59.4963310+00:00] [18197] intercepted server->client workspace/configuration (answered locally)
+[2026-07-29T17:07:59.5087900+00:00] [18197] intercepted server->client workspace/configuration (answered locally)
+[2026-07-29T17:08:00.3528010+00:00] [18197] client stdin EOF; tearing down PSES
+[2026-07-29T17:08:00.7191530+00:00] [18197] shim exiting; PSES reaped
+[2026-07-29T17:08:02.4215640+00:00] [18217] nativeServe=off: transparent relay (no init patch, no interception; today behavior)
+[2026-07-29T17:08:02.4801760+00:00] [18217] launching PSES via pwsh
+[2026-07-29T17:08:02.5539950+00:00] [18217] pump started (client stdin: background blocking reader; PSES stdout: async)
+[2026-07-29T17:08:06.8925460+00:00] [18217] client stdin EOF; tearing down PSES
+[2026-07-29T17:08:07.3162860+00:00] [18217] shim exiting; PSES reaped
+[2026-07-29T17:08:09.0027640+00:00] [18428] nativeServe=shim: native-serve handshake proxy (init patch + local intercepts)
+[2026-07-29T17:08:09.0510950+00:00] [18428] launching PSES via pwsh
+[2026-07-29T17:08:09.1117700+00:00] [18428] pump started (client stdin: background blocking reader; PSES stdout: async)
+[2026-07-29T17:08:09.2397540+00:00] [18428] initialize patched (dynamicRegistration=false; workspaceFolders dropped; rename ensured) and forwarded
+[2026-07-29T17:08:09.9420080+00:00] [18428] shim exiting; PSES reaped
