@@ -1414,3 +1414,104 @@ Fast on a gated path; the gate is fast, not removed. Human gates: accept, merge,
 and the product / positioning / sequencing calls. Within an accepted dispatch's scope, CC decides
 implementation, design, and ripeness. Ground truth (live `dispatch list`, the log, file inspection)
 wins over any doc, including this one -- the log is authoritative.
+
+## 8. External technical review, round 2 (2026-07-31) -- adjudicated
+
+A second external technical review, assessing v1.28.0 and scoring it 8.4 -> 8.8 after the round-1
+response, was analyzed by Strategic-Claude and adjudicated by Mike Andersen on 2026-07-31. Rulings
+R1-R5 were made before any execution began, and dispatch 000167 re-derived the review's nine
+verifiable claims from the v1.28.0 tag (commit `57a61c5`) before anything was chartered on them.
+This entry is the ratified register. The round-1 register -- the last bullet of Section 6 above --
+is unchanged and still stands.
+
+**Adopted -- `review-adopted-2026-07-31`.** A v1.28.1 PATCH front-door train, chartered from the
+000167 survey rather than from the review's own snapshot of the tree:
+
+`review-adopted: profile-first-ordering` (review P1) -- `profile` is declared LAST of the twenty
+`userConfig` knobs and its title reads "preset for the knobs above", so both the manifest and the
+README present nineteen individual knobs before the one knob that presets them. The knob moves
+first and the knobs behind it are categorized.
+
+`review-adopted: profile-label-rewording` (P2, ruling R2) -- human-facing labels become
+Compatibility / Recommended / Comprehensive. The STORED enum values `safe` / `recommended` /
+`strict` are FROZEN by this ruling; only description prose changes, so no config valid today
+changes meaning.
+
+`review-adopted: slash-command-quick-start` (P3) -- the README's primary install block ends on a
+raw `pwsh -File "$env:CLAUDE_PLUGIN_ROOT/scripts/doctor.ps1"` even though `/powershell-lsp:doctor`
+ships and is documented 91 lines further down. The command leads; the raw script is retained under
+troubleshooting for the out-of-session case.
+
+`review-adopted: install-time-wording` (P4) -- "Install and verify in under a minute" and "from
+install to a real caught diagnostic in about five minutes" describe the same path 132 lines apart.
+One of the two numbers goes.
+
+`review-adopted: scan-literal-data-contract` (P5a) -- `commands/scan.md` carries no
+treat-the-path-as-literal-data contract (quoting, unknown-option rejection, a leading hyphen still
+being a path) and its usage example shows an unquoted `<path>` placeholder. The contract text is
+added and the example is quoted.
+
+`review-adopted: literalpath-hardening` (P5b, ruling R5) -- adopted as survey-then-build, and the
+survey found NOTHING LEFT TO BUILD. See the derived-from-disk paragraph below; the conversion leg
+is dropped from the v1.28.1 charter as already-satisfied rather than carried as busywork.
+
+**Recorded measure-first -- ratified as questions, deliberately not as builds:**
+
+`review-measure-first: status-doctor-split` (P6, ruling R4) -- no split this round. 000167 leg 1
+measured both warm, and the split's premise does not survive: `status` is `doctor -Summary`, which
+runs the identical check set and differs only in the formatter, so it cannot be cheaper. A split
+would have to REMOVE checks, which is a different decision on different evidence.
+
+`review-measure-first: per-profile-context-volume` (P7) -- how much context each profile adds per
+edit is unmeasured. Recorded, not built; a later dispatch measures it.
+
+`review-measure-first: per-profile-latency` (P8) -- per-profile edit-path latency is unmeasured at
+`recommended` and `strict`. Recorded, not built. The existing measurement is the warm-path p95
+under `ruleset = base` (3292 ms, n=20, the 000166 leg), which is one cell of the question.
+
+**Declined, each with its ratified one-line reason:**
+
+`review-declined: scan-json-args-wrapper` (ruling R3) -- the reviewer's JSON-args wrapper for the
+scan command is more machinery than the problem needs, as the reviewer's own hedge conceded; the
+literal-data contract text plus `-LiteralPath` is the proportionate boundary.
+
+`review-declined: keeplastn-strict-removal` (ruling R1) -- declined FOR NOW, not on the merits: a
+profile-mapping change is MINOR-classed by the evolution policy recorded above
+`Get-PluginProfileMap`, so it cannot ride a PATCH train. Re-evaluate at the next MINOR.
+
+**Already planned, and not new:**
+
+`review-already-planned: arc-a-next` (P9) -- the diagnostic efficacy ledger was already the ratified
+next arc, arrived at independently. The reviewer's seven-state finding taxonomy --
+`arc-a-finding-taxonomy-2026-07-31`: fired / persisted / cleared-after-change / suppressed /
+removed / replaced / unknown -- is a genuine improvement and folds into the Arc A build inbox's
+open questions rather than into this train.
+
+`review-already-planned: external-user-testing` (P10) -- off-hub and Mike Andersen's, sequenced
+AFTER the v1.28.1 release so strangers test the corrected front door rather than the current one.
+
+**The claims were re-derived from disk, and the survey corrected two of them** (000167 leg 1, read
+at the v1.28.0 tag rather than carried from the review):
+
+- **P5b is moot as stated.** Every path-taking cmdlet call site in `scripts/lsp-scan.ps1` (5 active
+  lines) and in the helper the user path actually flows into, `scripts/lib/lsp-scan-common.ps1`
+  (17 active lines), was enumerated over a 35-cmdlet vocabulary, RED-proven by planting a known
+  site, with alias-shaped calls ruled out at zero in both files.
+  Every call whose cmdlet HAS a `-LiteralPath` parameter already uses it; the only
+  `-Path` uses are `Join-Path` and `New-Item`, neither of which has a `-LiteralPath` on Windows
+  PowerShell 5.1 or on PowerShell 7 (checked live on both hosts). The user-supplied path reaches
+  `[System.IO.Path]::GetFullPath`, then `Test-Path -LiteralPath`, then `Get-ChildItem -LiteralPath`
+  -- it never touches a globbing parameter. Zero convertible sites remain, so the hardening leg is
+  recorded as already-satisfied.
+- **P1's defect is in the title, not the description.** The self-referential phrase "the knobs
+  above" is in the `profile` knob's `title`, and its `description` says "Preset for the other
+  knobs", which is position-independent. The reorder must fix the title; a description-only edit
+  would leave the stale phrase on the surface a user actually reads first.
+- **Whether the reorder changes what the config panel shows first is NOT derivable locally.** No
+  document on this machine states how Claude Code orders `userConfig` rows, and no manifest schema
+  is cached; the one adjacent local datum (dispatch 000109, filed upstream as
+  anthropics/claude-code#74289) establishes that the panel renders a row per knob, not the order of
+  those rows. The reorder ships anyway: it is decisive if the panel follows declaration order and
+  harmless if it does not, and it is unconditionally correct on the two surfaces this project does
+  control, since `docs/configuration.md` states "The knobs, in manifest order" and the README table
+  follows the same order.
