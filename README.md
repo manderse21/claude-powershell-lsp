@@ -23,7 +23,8 @@ whole session, so each edit pays a fast pipe round-trip instead of a cold start.
 
 ![demo: Claude writes an unapproved-verb function, the diagnostic appears inline, Claude fixes it next turn](docs/media/demo.gif)
 
-**Install and verify in under a minute.** Requires `pwsh` (PowerShell 7+) on your PATH
+**Install and verify in about five minutes** -- install to a real caught diagnostic, including the
+first-session bootstrap you cannot skip. Requires `pwsh` (PowerShell 7+) on your PATH
 (`winget install Microsoft.PowerShell` if it is missing); then:
 
 ```text
@@ -37,7 +38,7 @@ whole session, so each edit pays a fast pipe round-trip instead of a cold start.
 
 # 3. Confirm it is healthy BEFORE you rely on it -- run the preflight DOCTOR from
 #    inside the enabled session (so it can see the plugin data dir):
-pwsh -File "$env:CLAUDE_PLUGIN_ROOT/scripts/doctor.ps1"
+/powershell-lsp:doctor
 #    All PASS (benign UNKNOWNs are fine) -> ready. A FAIL names the exact fix.
 ```
 
@@ -155,8 +156,7 @@ it simply cannot launch the hooks themselves. See [Platform support](#platform-s
 ## Quick start
 
 The three-step block at the top of this README is the whole job -- from install to a real caught
-diagnostic in about five minutes. A few of its steps are deliberate, documented here rather than
-removed:
+diagnostic. A few of its steps are deliberate, documented here rather than removed:
 
 - **`/plugin enable` stays an explicit step.** The plugin ships disabled by default
   (`defaultEnabled: false`) because it downloads a bundle and spawns a language server, so
@@ -167,11 +167,13 @@ removed:
   vendors PSScriptAnalyzer (both idempotent and marker-gated), then launches one warm daemon for
   the session. The first edit may briefly read `incomplete` while PSES finishes starting, then
   settles on the next edit (see [Diagnostics status](#diagnostics-status)).
-- **Run the doctor (step 3).** It turns the worst onboarding failure -- enabled but a prerequisite
-  is missing, so diagnostics silently do nothing -- into a named, actionable fix-list, and it
-  confirms the warm daemon is actually answering before you trust a silent result as "analyzed,
-  clean". It is **report-only**: it never downloads, repairs, or starts anything. See
-  [the preflight doctor](#troubleshooting).
+- **Run the doctor (step 3).** `/powershell-lsp:doctor` is the in-session form and needs no paths;
+  the raw `scripts/doctor.ps1` invocation under [Troubleshooting](#troubleshooting) is for the
+  out-of-session case, where the slash command is not available. It turns the worst onboarding
+  failure -- enabled but a prerequisite is missing, so diagnostics silently do nothing -- into a
+  named, actionable fix-list, and it confirms the warm daemon is actually answering before you
+  trust a silent result as "analyzed, clean". It is **report-only**: it never downloads, repairs,
+  or starts anything. See [the preflight doctor](#troubleshooting).
 
 ## Configuration
 
@@ -180,10 +182,29 @@ is safe: no knob has to be set for the live diagnostics loop to work.
 
 **[docs/configuration.md](docs/configuration.md) is the authoritative reference** -- every knob's
 allowed values, precedence, guards, and edge cases, one anchored section per knob. The config
-panel and the table below are summaries of it.
+panel and the tables below are summaries of it.
+
+**Start with one setting, not twenty.** The `profile` knob is a curated preset over every other
+knob. Pick the row that matches how much you want surfaced -- the middle column is the value you
+type into the config panel:
+
+| Profile | Value | What you get |
+|---------|-------|--------------|
+| Compatibility | `safe` (default) | Exactly today's shipped defaults. `safe` maps **nothing** rather than restating the defaults, so the diagnostics surface is byte-for-byte unchanged. Start here. |
+| Recommended | `recommended` | A broader but still quiet surface: the `base` ruleset, formatter and module hints as **suggestions**, reference-count facts, and two lines of edit context. Nothing writes to your files. |
+| Comprehensive | `strict` | `recommended` plus an audit posture: whole-file scope, no per-file cap, and longer log retention -- so a finding is never hidden by scoping or truncation. |
+
+**Three ways to configure, in one sentence each.** Leave everything alone and you get
+Compatibility (`safe`), which is byte-for-byte today's behavior. Set `profile` to `recommended` or
+`strict` for a curated preset. Or go **custom**: set knobs yourself -- an explicitly-set knob always
+wins, whether or not a profile is also set. "Custom" is not a `profile` value, it is what you get by
+setting a knob, which is why there is no fourth mechanism.
+
+**Every knob.** The full surface -- `profile` first, then the nineteen knobs it presets:
 
 | Key                | Default  | Meaning                                                                              |
 |--------------------|----------|--------------------------------------------------------------------------------------|
+| `profile`          | `safe`   | The preset chooser above: `safe` = Compatibility, `recommended` = Recommended, `strict` = Comprehensive. **A knob you set explicitly always wins over the profile.** See [profile](docs/configuration.md#profile) |
 | `ps_host`          | `pwsh`   | PSES host executable: `pwsh` (PowerShell 7+, recommended/tested) or `powershell` (Win 5.1) |
 | `severityThreshold`| `Hint`   | Least-severe level to report: `Error` > `Warning` > `Information` > `Hint`            |
 | `ruleInclude`      | _(empty)_| Comma-separated PSScriptAnalyzer rule codes to report exclusively; empty = all        |
@@ -203,13 +224,6 @@ panel and the table below are summaries of it.
 | `nativeServe`      | `off`    | `shim` serves hover / go-to-definition / find-references / documentSymbol to Claude Code's native LSP client through a handshake proxy. `off` is a byte-exact pass-through. See [Native code navigation](#2-native-code-navigation-opt-in) |
 | `referenceSurfacing`| `off`   | `counts` surfaces bare per-function facts (cross-file reference counts, where a call is defined) as additive **Information**, never a diagnostic. Silent on ambiguity, never writes. See [referenceSurfacing](docs/configuration.md#referencesurfacing) |
 | `orgPolicy`        | _(empty)_| **Absolute** path to a centrally-managed `PSScriptAnalyzerSettings.psd1` whose `ExcludeRules` are enforced above repo-local config -- an org can take a rule **away**, never force one **on**. Fails open. See [orgPolicy](docs/configuration.md#orgpolicy) |
-| `profile`          | `safe`   | Preset for every knob above. `safe` (default) is **exactly** today's shipped defaults; `recommended` broadens the surface; `strict` adds a repository-enforcement posture. **A knob you set explicitly always wins over the profile.** See [profile](docs/configuration.md#profile) |
-
-**Four ways to configure, in one sentence each.** Leave everything alone and you get `safe`, which
-is byte-for-byte today's behavior. Set `profile` to `recommended` or `strict` for a curated preset.
-Or go **custom**: set knobs yourself: an explicitly-set knob always wins, whether or not a profile
-is also set. There is no fourth mechanism -- "custom" is not a profile value, it is what you get by
-setting a knob.
 
 Diagnostics are returned in a stable order (severity, then line, then column), deduped,
 threshold- and rule-filtered, then capped per file.
@@ -363,10 +377,12 @@ are in [docs/dogfood.md](docs/dogfood.md).
 ## Troubleshooting
 
 **Start with the preflight doctor.** It checks prerequisites and bootstrap health in one place and
-prints a named fix-list:
+prints a named fix-list. Inside an enabled session use the slash command; the raw script is the
+form that still works **outside** a session, where the slash command does not exist:
 
 ```
-pwsh -File scripts/doctor.ps1
+/powershell-lsp:doctor          # inside an enabled Claude Code session
+pwsh -File scripts/doctor.ps1   # out-of-session (several checks then report UNKNOWN)
 ```
 
 It verifies, in order: PowerShell 7 (`pwsh`) is present and new enough; the plugin is enabled; the

@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "powershell-lsp",
   "displayName": "PowerShell Diagnostics (PSES)",
-  "version": "1.28.0",
+  "version": "1.28.1",
   "description": "Real-time PowerShell diagnostics in Claude Code: as Claude edits a .ps1/.psm1/.psd1, it runs PowerShell Editor Services + PSScriptAnalyzer over that file and surfaces syntax errors and lint fixes inline. Hover, go-to-definition, and find-references serve natively through an opt-in handshake shim (userConfig nativeServe, off by default).",
   "author": { "name": "Mike Andersen" },
   "license": "GPL-3.0-or-later",
@@ -10,11 +10,35 @@
   "defaultEnabled": false,
   "commands": "./commands",
   "userConfig": {
+    "profile": {
+      "type": "string",
+      "title": "Configuration profile (preset for every other knob)",
+      "description": "Preset: Compatibility ('safe', default) keeps today's defaults; Recommended ('recommended') broadens; Comprehensive ('strict') enforces. Explicit knobs win. See docs/configuration.md#profile.",
+      "default": "safe"
+    },
     "ps_host": {
       "type": "string",
       "title": "PowerShell host executable",
       "description": "Executable used to host PowerShell Editor Services. Recommended: 'pwsh' (PowerShell 7+, the default, tested) or 'powershell' (Windows PowerShell 5.1). See docs/configuration.md#ps_host.",
       "default": "pwsh"
+    },
+    "ruleset": {
+      "type": "string",
+      "title": "Live diagnostics ruleset",
+      "description": "Rule set on the live edit path when no repo settings resolve. Values: 'pses-default' (default), 'base' (broader shipped set). See docs/configuration.md#ruleset.",
+      "default": "pses-default"
+    },
+    "settingsPath": {
+      "type": "string",
+      "title": "PSScriptAnalyzerSettings.psd1 path (override)",
+      "description": "Absolute path to a PSScriptAnalyzerSettings.psd1 to honor, overriding auto-discovery; a relative value is ignored. Empty (default) = auto-discover. See docs/configuration.md#settingspath.",
+      "default": ""
+    },
+    "orgPolicy": {
+      "type": "string",
+      "title": "Org policy settings path (central ExcludeRules)",
+      "description": "Absolute path to an org-wide PSScriptAnalyzerSettings.psd1 whose ExcludeRules win over local config and cannot be re-enabled locally. Empty (default) = off. See docs/configuration.md#orgpolicy.",
+      "default": ""
     },
     "severityThreshold": {
       "type": "string",
@@ -34,47 +58,11 @@
       "description": "Comma-separated PSScriptAnalyzer rule codes to suppress (e.g. 'PSAvoidUsingWriteHost'); empty (default) = none. See docs/configuration.md#ruleexclude.",
       "default": ""
     },
-    "timeoutMs": {
-      "type": "string",
-      "title": "Client hard cap (ms)",
-      "description": "Total milliseconds the PostToolUse client waits before degrading to log-only. Default 5000. See docs/configuration.md#timeoutms.",
-      "default": "5000"
-    },
-    "debounceMs": {
-      "type": "string",
-      "title": "Debounce window (ms)",
-      "description": "Edits landing within this many milliseconds fold into one analysis pass. Default 150. See docs/configuration.md#debouncems.",
-      "default": "150"
-    },
-    "keepLastN": {
-      "type": "string",
-      "title": "Log files kept per family",
-      "description": "SessionStart sweeps each rolling log family down to this many newest files. Default 10. See docs/configuration.md#keeplastn.",
-      "default": "10"
-    },
-    "idleTtlMin": {
-      "type": "string",
-      "title": "Daemon idle TTL (minutes)",
-      "description": "The daemon self-terminates after this many minutes with no diagnostics request. Default 30. See docs/configuration.md#idlettlmin.",
-      "default": "30"
-    },
     "perFileCap": {
       "type": "string",
       "title": "Max diagnostics per file",
       "description": "Max diagnostics reported per file; the rest collapse into an 'and N more' line. '0' = no cap. Default 20. See docs/configuration.md#perfilecap.",
       "default": "20"
-    },
-    "enableStats": {
-      "type": "string",
-      "title": "Enable telemetry/stats",
-      "description": "Append one JSONL timing line per analyzed edit to logs/stats.jsonl; observe-only, never changes diagnostics. Values: 'false' (default), 'true'. See docs/configuration.md#enablestats.",
-      "default": "false"
-    },
-    "settingsPath": {
-      "type": "string",
-      "title": "PSScriptAnalyzerSettings.psd1 path (override)",
-      "description": "Absolute path to a PSScriptAnalyzerSettings.psd1 to honor, overriding auto-discovery; a relative value is ignored. Empty (default) = auto-discover. See docs/configuration.md#settingspath.",
-      "default": ""
     },
     "scopeToEdit": {
       "type": "string",
@@ -94,22 +82,10 @@
       "description": "Invoke-Formatter after edits: 'suggest' surfaces a diff only; 'apply' performs a guarded write-back. Values: 'off' (default), 'suggest', 'apply'. See docs/configuration.md#formatonedit.",
       "default": "off"
     },
-    "ruleset": {
-      "type": "string",
-      "title": "Live diagnostics ruleset",
-      "description": "Rule set on the live edit path when no repo settings resolve. Values: 'pses-default' (default), 'base' (broader shipped set). See docs/configuration.md#ruleset.",
-      "default": "pses-default"
-    },
     "moduleAwareness": {
       "type": "string",
       "title": "Module awareness (uninstalled-module hint)",
       "description": "Hints when the edited file calls a command from a known module that is not installed on this machine. Values: 'off' (default), 'suggest'. See docs/configuration.md#moduleawareness.",
-      "default": "off"
-    },
-    "nativeServe": {
-      "type": "string",
-      "title": "Native LSP serve (hover / go-to-definition / find-references)",
-      "description": "Native nav (hover, go-to-definition, find-references) via a stdio shim around upstream #1359; 'off' is a byte-exact relay. Values: 'off' (default), 'shim'. See docs/configuration.md#nativeserve.",
       "default": "off"
     },
     "referenceSurfacing": {
@@ -118,17 +94,41 @@
       "description": "Surfaces bare per-function facts (referenced-by-N, exported, defined-in) from a session workspace index. Values: 'off' (default), 'counts'. See docs/configuration.md#referencesurfacing.",
       "default": "off"
     },
-    "orgPolicy": {
+    "nativeServe": {
       "type": "string",
-      "title": "Org policy settings path (central ExcludeRules)",
-      "description": "Absolute path to an org-wide PSScriptAnalyzerSettings.psd1 whose ExcludeRules win over local config and cannot be re-enabled locally. Empty (default) = off. See docs/configuration.md#orgpolicy.",
-      "default": ""
+      "title": "Native LSP serve (hover / go-to-definition / find-references)",
+      "description": "Native nav (hover, go-to-definition, find-references) via a stdio shim around upstream #1359; 'off' is a byte-exact relay. Values: 'off' (default), 'shim'. See docs/configuration.md#nativeserve.",
+      "default": "off"
     },
-    "profile": {
+    "timeoutMs": {
       "type": "string",
-      "title": "Configuration profile (preset for the knobs above)",
-      "description": "Preset for the other knobs. 'safe' (default) is exactly today's shipped defaults; 'recommended' broadens the surface; 'strict' adds a repository-enforcement posture. A knob you set explicitly always wins over the profile. Values: 'safe' (default), 'recommended', 'strict'. See docs/configuration.md#profile.",
-      "default": "safe"
+      "title": "Client hard cap (ms)",
+      "description": "Total milliseconds the PostToolUse client waits before degrading to log-only. Default 5000. See docs/configuration.md#timeoutms.",
+      "default": "5000"
+    },
+    "debounceMs": {
+      "type": "string",
+      "title": "Debounce window (ms)",
+      "description": "Edits landing within this many milliseconds fold into one analysis pass. Default 150. See docs/configuration.md#debouncems.",
+      "default": "150"
+    },
+    "idleTtlMin": {
+      "type": "string",
+      "title": "Daemon idle TTL (minutes)",
+      "description": "The daemon self-terminates after this many minutes with no diagnostics request. Default 30. See docs/configuration.md#idlettlmin.",
+      "default": "30"
+    },
+    "keepLastN": {
+      "type": "string",
+      "title": "Log files kept per family",
+      "description": "SessionStart sweeps each rolling log family down to this many newest files. Default 10. See docs/configuration.md#keeplastn.",
+      "default": "10"
+    },
+    "enableStats": {
+      "type": "string",
+      "title": "Enable telemetry/stats",
+      "description": "Append one JSONL timing line per analyzed edit to logs/stats.jsonl; observe-only, never changes diagnostics. Values: 'false' (default), 'true'. See docs/configuration.md#enablestats.",
+      "default": "false"
     }
   },
   "lspServers": {
