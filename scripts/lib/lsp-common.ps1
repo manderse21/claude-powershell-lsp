@@ -210,27 +210,36 @@ function Resolve-PsHost {
 # knob is never affected by such a change, which is what makes a future re-mapping (including
 # the later enableStats flip, once redaction ships) contractually clean rather than a semver
 # argument.
-$script:PluginProfileMap = @{
-    'safe'        = @{}
-    'recommended' = @{
-        'editContextLines'   = '2'
-        'formatOnEdit'       = 'suggest'
-        'ruleset'            = 'base'
-        'moduleAwareness'    = 'suggest'
-        'referenceSurfacing' = 'counts'
-    }
-    'strict'      = @{
-        # strict = recommended, plus the three enforcement-posture departures.
-        # editContextLines rides along from recommended and is INERT here, because
-        # scopeToEdit=false already reports whole-file.
-        'editContextLines'   = '2'
-        'formatOnEdit'       = 'suggest'
-        'ruleset'            = 'base'
-        'moduleAwareness'    = 'suggest'
-        'referenceSurfacing' = 'counts'
-        'keepLastN'          = '30'
-        'perFileCap'         = '0'
-        'scopeToEdit'        = 'false'
+#
+# The map is a FUNCTION, not a top-level `$script:` assignment. This file is dot-sourced, and a
+# dot-source executes every top-level statement in the CALLER's scope -- so a module-level variable
+# here would silently write into every caller (the dispatch 000156 hazard class, structurally
+# guarded by G1 in tests/PowerShellLsp.LibPurity.Tests.ps1). A function definition is the one
+# top-level form that cannot leak. Returning the literal each call is deliberate over memoizing
+# into `$script:` for the same reason.
+function Get-PluginProfileMap {
+    return @{
+        'safe'        = @{}
+        'recommended' = @{
+            'editContextLines'   = '2'
+            'formatOnEdit'       = 'suggest'
+            'ruleset'            = 'base'
+            'moduleAwareness'    = 'suggest'
+            'referenceSurfacing' = 'counts'
+        }
+        'strict'      = @{
+            # strict = recommended, plus the three enforcement-posture departures.
+            # editContextLines rides along from recommended and is INERT here, because
+            # scopeToEdit=false already reports whole-file.
+            'editContextLines'   = '2'
+            'formatOnEdit'       = 'suggest'
+            'ruleset'            = 'base'
+            'moduleAwareness'    = 'suggest'
+            'referenceSurfacing' = 'counts'
+            'keepLastN'          = '30'
+            'perFileCap'         = '0'
+            'scopeToEdit'        = 'false'
+        }
     }
 }
 
@@ -276,8 +285,9 @@ function Get-ProfileKnobValue {
     # This plugin's own PostToolUse diagnostics flagged it while this function was being written.
     param([string]$ProfileName, [string]$Key)
     $p = ConvertTo-ProfileName $ProfileName
-    if (-not $script:PluginProfileMap.ContainsKey($p)) { return '' }
-    $map = $script:PluginProfileMap[$p]
+    $all = Get-PluginProfileMap
+    if (-not $all.ContainsKey($p)) { return '' }
+    $map = $all[$p]
     $target = ($Key -replace '_', '').ToLowerInvariant()
     foreach ($k in $map.Keys) {
         if ((([string]$k) -replace '_', '').ToLowerInvariant() -eq $target) { return [string]$map[$k] }
