@@ -31,6 +31,70 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.28.0] - 2026-07-30
+MINOR: **a `profile` meta-knob, three plugin commands, and a doctor that can prove diagnostics are
+actually working.** Two additive surfaces make this a MINOR; everything else is documentation.
+
+**`profile` -- one setting instead of nineteen.** A new `userConfig` knob with values `safe`
+(default), `recommended`, and `strict`. Precedence, highest wins: **an explicitly-set knob > the
+profile > the shipped default.** Explicit-wins is what keeps the 1.x contract intact -- if a
+profile could override a value you had set, every existing config would silently change meaning on
+upgrade, which this contract classes as MAJOR.
+
+`safe` maps **nothing**. It is not a table restating the defaults; it is the absence of a mapping,
+so with `profile` unset or `safe` every knob resolves on exactly the path it did before this knob
+existed and the diagnostics surface is byte-for-byte unchanged. An unrecognized value degrades to
+`safe` rather than to a partial preset. `recommended` sets `editContextLines` 2, `formatOnEdit`
+suggest, `ruleset` base, `moduleAwareness` suggest, `referenceSurfacing` counts; `strict` adds
+`keepLastN` 30, `perFileCap` 0, `scopeToEdit` false.
+
+Four values are deliberately in **no** profile, each a decision rather than an omission:
+`nativeServe` stays `off` (it is a workaround for an upstream client bug -- a preset must not put
+that in front of more users); `enableStats` stays `false` (`logs/stats.jsonl` records absolute
+paths today, and redaction ships before any profile turns telemetry on); `formatOnEdit = apply`
+appears nowhere (it is the one mode that rewrites your file); and `orgPolicy` stays empty (a
+profile cannot hardcode a site path -- `strict` names the slot, an administrator fills it).
+`timeoutMs` is unchanged in every profile for a **measured** reason: the warm edit-to-diagnostic
+round-trip under `ruleset = base` measured a p95 of 3292 ms over 20 samples (median 2678 ms),
+leaving about 34% headroom under the shipped 5000 ms, so the broader rule set did not need a
+bigger budget.
+
+**Evolution policy, stated so a later change is not a semver argument:** profile mappings are
+curated and **MAY change in a MINOR**; an explicitly-set knob is never affected by such a change.
+
+**Commands.** The plugin ships a command surface for the first time: `/powershell-lsp:doctor` (the
+full preflight report), `/powershell-lsp:status` (the same checks, one line each), and
+`/powershell-lsp:scan <path>` (an explicit whole-path scan with the same engine the edit hook
+uses). Each wraps a script that already shipped; no analysis code changed.
+
+**The doctor answers three questions it could not before.** *Active ruleset surface* reports which
+rules are really applied here and which config layer won -- resolved through the shipped resolver,
+not a second copy of the precedence -- which is what explains "I set `ruleset = base` and still see
+nothing new" (usually a repo-local settings file legitimately winning). *Test diagnostic observed
+end-to-end* sends a synthetic temp file with a deliberate defect through the warm daemon and
+requires the expected finding back; the existing liveness ping is answered **without** touching the
+language server, so a daemon can be alive, answering, and analyzing nothing. *Native-serve status*
+reports whether navigation is on, as a default check that spawns nothing (the heavier removability
+probe stays opt-in behind `-ProbeNativeServe`). The default doctor goes from 6 checks to 9.
+
+**One behavior change worth flagging.** The end-to-end check is the only check that can report
+`FAIL` for a *settled* analysis that produced nothing -- so a doctor run on a genuinely broken
+install may now exit 1 where it previously exited 0. That is the point: "analyzed, clean" when
+nothing was analyzed is the failure this plugin exists to prevent. The `pass` / `fail` / `unknown`
+vocabulary is unchanged and **`unknown` is still never a failure**; every could-not-determine path
+in the new checks reports `unknown`.
+
+**Documentation.** The README is restructured around three capabilities -- live edit diagnostics,
+native code navigation, repository/CI validation -- and drops from 1018 to under 500 lines by
+de-duplicating per-knob prose that already existed in full in `docs/configuration.md`; nothing was
+reduced, only relocated. A sentence beside the badges now names what the attestation does **not**
+cover (the boundary text was 936 lines below them). The live surface's PostToolUse-only coverage is
+stated where a reader meets it. `TRUST.md` gains a rationale for `-ExecutionPolicy Bypass` beside
+the posture it alarms readers about, naming all four hook entry points. `docs/configuration.md`
+now indexes every knob (its own table of contents had listed 17 while documenting all of them).
+The roadmap splits into a short public `ROADMAP.md` and the full `docs/decision-ledger.md`, with a
+pointer stub at the old path so existing links resolve.
+
 ## [1.27.3] - 2026-07-29
 PATCH: **the `ManifestConsistency` under-declared-export check was REMOVED.** Rung 2 of
 `Test-ManifestConsistency` -- which reported every function a module defines and exports that its

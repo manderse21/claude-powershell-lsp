@@ -2,12 +2,13 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "powershell-lsp",
   "displayName": "PowerShell Diagnostics (PSES)",
-  "version": "1.27.3",
+  "version": "1.28.0",
   "description": "Real-time PowerShell diagnostics in Claude Code: as Claude edits a .ps1/.psm1/.psd1, it runs PowerShell Editor Services + PSScriptAnalyzer over that file and surfaces syntax errors and lint fixes inline. Hover, go-to-definition, and find-references serve natively through an opt-in handshake shim (userConfig nativeServe, off by default).",
   "author": { "name": "Mike Andersen" },
   "license": "GPL-3.0-or-later",
   "keywords": ["powershell", "lsp", "editor-services", "diagnostics", "psscriptanalyzer", "claude-code", "linter"],
   "defaultEnabled": false,
+  "commands": "./commands",
   "userConfig": {
     "ps_host": {
       "type": "string",
@@ -122,6 +123,12 @@
       "title": "Org policy settings path (central ExcludeRules)",
       "description": "Absolute path to an org-wide PSScriptAnalyzerSettings.psd1 whose ExcludeRules win over local config and cannot be re-enabled locally. Empty (default) = off. See docs/configuration.md#orgpolicy.",
       "default": ""
+    },
+    "profile": {
+      "type": "string",
+      "title": "Configuration profile (preset for the knobs above)",
+      "description": "Preset for the other knobs. 'safe' (default) is exactly today's shipped defaults; 'recommended' broadens the surface; 'strict' adds a repository-enforcement posture. A knob you set explicitly always wins over the profile. Values: 'safe' (default), 'recommended', 'strict'. See docs/configuration.md#profile.",
+      "default": "safe"
     }
   },
   "lspServers": {

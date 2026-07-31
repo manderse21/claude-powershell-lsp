@@ -201,6 +201,165 @@ Describe 'Get-PluginOptionBool -- boolean userConfig (Track A enableStats)' {
     }
 }
 
+Describe 'profile meta-knob -- precedence and the ruled constants (dispatch 000166 B8)' {
+    # `profile` is a PRESET over the other knobs, resolved BETWEEN an explicitly-set knob and
+    # the shipped default: explicit > profile > default. These guards pin the three things the
+    # 1.x contract actually rests on.
+    #
+    # (1) THE BYTE-IDENTITY OBLIGATION. With `profile` unset OR set to `safe`, every knob must
+    #     resolve to the value it resolved to before this knob existed. The ground truth is
+    #     NOT a literal table copied into this file -- it is the DEFAULT the caller passes,
+    #     read back out. So the assertion is "the resolver returned the caller's default,
+    #     unchanged", which is the actual property, and a mapping bug under `safe` fails it
+    #     regardless of what any table says the defaults are.
+    #
+    # (2) EXPLICIT BEATS PROFILE. If a profile could override a value a user set, every
+    #     existing 1.x config silently changes meaning on upgrade -- CONTRACT.md:178-184 makes
+    #     that a MAJOR. Asserted on a knob the profile DOES map, with the explicit value set to
+    #     something the profile would otherwise have changed, so the test can only pass by
+    #     precedence and never by coincidence.
+    #
+    # (3) THE RULED CONSTANTS. nativeServe stays `off` (ruling R2), enableStats stays `false`
+    #     (R3b), and formatOnEdit `apply` appears in NO profile. These are asserted over EVERY
+    #     profile value -- including the unknown-value degrade path -- rather than over a
+    #     sampled one, because the failure they guard against is a future re-mapping quietly
+    #     adding one of them to a single profile.
+    #
+    # VACUITY: a positive control asserts that `recommended` DOES change something. Without it
+    # a resolver that returned $Default unconditionally -- i.e. a profile knob that does
+    # nothing at all -- would satisfy every "safe is unchanged" and "constant stays off"
+    # assertion in this Describe.
+    BeforeAll {
+        # The shipped defaults, as the CALLERS pass them (session-start.ps1 / lsp-client.ps1).
+        $script:ShippedDefaults = [ordered]@{
+            'ps_host'            = 'pwsh'
+            'severityThreshold'  = 'Hint'
+            'ruleInclude'        = ''
+            'ruleExclude'        = ''
+            'timeoutMs'          = '5000'
+            'debounceMs'         = '150'
+            'keepLastN'          = '10'
+            'idleTtlMin'         = '30'
+            'perFileCap'         = '20'
+            'enableStats'        = 'false'
+            'settingsPath'       = ''
+            'scopeToEdit'        = 'true'
+            'editContextLines'   = '0'
+            'formatOnEdit'       = 'off'
+            'ruleset'            = 'pses-default'
+            'moduleAwareness'    = 'off'
+            'nativeServe'        = 'off'
+            'referenceSurfacing' = 'off'
+            'orgPolicy'          = ''
+        }
+        $script:AllProfileValues = @('safe', 'recommended', 'strict')
+    }
+    BeforeEach {
+        Get-ChildItem Env: | Where-Object { $_.Name -like 'CLAUDE_PLUGIN_OPTION_*' } |
+            ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) -ErrorAction SilentlyContinue }
+    }
+    AfterEach {
+        Get-ChildItem Env: | Where-Object { $_.Name -like 'CLAUDE_PLUGIN_OPTION_*' } |
+            ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) -ErrorAction SilentlyContinue }
+    }
+
+    It 'with profile UNSET, every knob resolves to its shipped default (byte-identical surface)' {
+        $script:ShippedDefaults.Keys.Count | Should -BeGreaterThan 15   # vacuity floor
+        foreach ($k in $script:ShippedDefaults.Keys) {
+            (Get-PluginOption $k $script:ShippedDefaults[$k]) | Should -BeExactly $script:ShippedDefaults[$k] -Because "knob '$k' must be untouched when no profile is set"
+        }
+    }
+    It 'with profile=safe, every knob resolves to its shipped default (byte-identical surface)' {
+        $env:CLAUDE_PLUGIN_OPTION_profile = 'safe'
+        foreach ($k in $script:ShippedDefaults.Keys) {
+            (Get-PluginOption $k $script:ShippedDefaults[$k]) | Should -BeExactly $script:ShippedDefaults[$k] -Because "knob '$k' must be untouched under the safe profile"
+        }
+    }
+    It 'an UNRECOGNIZED profile value degrades to safe rather than to a partial preset' {
+        $env:CLAUDE_PLUGIN_OPTION_profile = 'aggressive'
+        foreach ($k in $script:ShippedDefaults.Keys) {
+            (Get-PluginOption $k $script:ShippedDefaults[$k]) | Should -BeExactly $script:ShippedDefaults[$k]
+        }
+    }
+    It 'POSITIVE CONTROL: recommended actually changes the surface (so the guards above are not vacuous)' {
+        $env:CLAUDE_PLUGIN_OPTION_profile = 'recommended'
+        $changed = @($script:ShippedDefaults.Keys | Where-Object {
+            (Get-PluginOption $_ $script:ShippedDefaults[$_]) -cne $script:ShippedDefaults[$_]
+        })
+        $changed.Count | Should -BeGreaterThan 0
+        # Named, so a mapping that drifted to changing something ELSE is a red, not a pass.
+        $changed | Should -Contain 'ruleset'
+        (Get-PluginOption 'ruleset' 'pses-default') | Should -BeExactly 'base'
+    }
+    It 'an explicitly-set knob BEATS the profile value (<_>)' -ForEach @('recommended', 'strict') {
+        $env:CLAUDE_PLUGIN_OPTION_profile = $_
+        # `ruleset` is mapped to 'base' by both profiles; setting it back explicitly must win.
+        (Get-PluginOption 'ruleset' 'pses-default') | Should -BeExactly 'base'   # profile applies first
+        $env:CLAUDE_PLUGIN_OPTION_ruleset = 'pses-default'
+        (Get-PluginOption 'ruleset' 'pses-default') | Should -BeExactly 'pses-default'
+        # ...and an explicit value the profile never mentions is honored too.
+        $env:CLAUDE_PLUGIN_OPTION_perFileCap = '7'
+        (Get-PluginOptionInt 'perFileCap' 20) | Should -Be 7
+    }
+    It 'nativeServe reads off under EVERY profile value (ruling R2)' {
+        foreach ($p in $script:AllProfileValues) {
+            $env:CLAUDE_PLUGIN_OPTION_profile = $p
+            (Get-PluginOption 'nativeServe' 'off') | Should -BeExactly 'off' -Because "profile '$p' must not put the shim in front of users"
+        }
+    }
+    It 'enableStats reads false under EVERY profile value (ruling R3b)' {
+        foreach ($p in $script:AllProfileValues) {
+            $env:CLAUDE_PLUGIN_OPTION_profile = $p
+            (Get-PluginOption 'enableStats' 'false') | Should -BeExactly 'false' -Because "profile '$p' must not enable stats before path redaction ships"
+            (Get-PluginOptionBool 'enableStats' $false) | Should -BeFalse
+        }
+    }
+    It 'formatOnEdit never resolves to apply under any profile value' {
+        foreach ($p in $script:AllProfileValues) {
+            $env:CLAUDE_PLUGIN_OPTION_profile = $p
+            (Get-PluginOption 'formatOnEdit' 'off') | Should -Not -BeExactly 'apply' -Because "a preset must never silently rewrite a user's file"
+        }
+    }
+    It 'the mapping tables themselves contain no ruled-out value (guards a FUTURE re-mapping)' {
+        # Reads the shipped mapping directly rather than only its resolved output: a re-mapping
+        # that added nativeServe='shim' to a profile would be caught here even if some future
+        # resolver change stopped surfacing it.
+        foreach ($p in $script:AllProfileValues) {
+            foreach ($k in @('nativeServe', 'enableStats')) {
+                (Get-ProfileKnobValue -ProfileName $p -Key $k) | Should -BeExactly '' -Because "profile '$p' must not map '$k' at all"
+            }
+            (Get-ProfileKnobValue -ProfileName $p -Key 'formatOnEdit') | Should -Not -BeExactly 'apply'
+            # orgPolicy is the intended STRICT slot but a profile cannot hardcode a site path.
+            (Get-ProfileKnobValue -ProfileName $p -Key 'orgPolicy') | Should -BeExactly ''
+        }
+    }
+    It 'timeoutMs is not a departure in any profile (OQ2: measured p95 leaves headroom under 5000)' {
+        foreach ($p in $script:AllProfileValues) {
+            $env:CLAUDE_PLUGIN_OPTION_profile = $p
+            (Get-PluginOptionInt 'timeoutMs' 5000) | Should -Be 5000
+        }
+    }
+    It 'strict is a SUPERSET of recommended (the charter shape), plus exactly three departures' {
+        $rec = @{}; foreach ($k in $script:ShippedDefaults.Keys) { $rec[$k] = (Get-ProfileKnobValue -ProfileName 'recommended' -Key $k) }
+        $str = @{}; foreach ($k in $script:ShippedDefaults.Keys) { $str[$k] = (Get-ProfileKnobValue -ProfileName 'strict' -Key $k) }
+        foreach ($k in $script:ShippedDefaults.Keys) {
+            if (-not [string]::IsNullOrWhiteSpace($rec[$k])) {
+                $str[$k] | Should -BeExactly $rec[$k] -Because "strict carries all of recommended; '$k' drifted"
+            }
+        }
+        $extra = @($script:ShippedDefaults.Keys | Where-Object {
+            [string]::IsNullOrWhiteSpace($rec[$_]) -and -not [string]::IsNullOrWhiteSpace($str[$_])
+        } | Sort-Object)
+        ($extra -join ',') | Should -BeExactly 'keepLastN,perFileCap,scopeToEdit'
+    }
+    It 'the profile knob is never itself profile-resolved (no recursion, no self-selection)' {
+        $env:CLAUDE_PLUGIN_OPTION_profile = 'strict'
+        (Get-PluginOption 'profile' 'safe') | Should -BeExactly 'strict'
+        Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_OPTION_profile' -ErrorAction SilentlyContinue
+        (Get-PluginOption 'profile' 'safe') | Should -BeExactly 'safe'
+    }
+}
+
 Describe 'Write-StatsLine -- telemetry writer (Track A: JSONL, append, rotation, fail-safe)' {
     # Stats land under Get-LogDir, which keys off CLAUDE_PLUGIN_DATA -- so each test
     # points it at a throwaway temp root and cleans up after.
@@ -2857,6 +3016,221 @@ Describe 'Preflight doctor -- native-serve removability (check 7, dispatch 00010
                 $s.Status | Should -Not -Be 'fail'
             }
         }
+    }
+}
+
+# ===========================================================================
+# Preflight doctor -- the 000166 B9 reshape: items 6, 8, and the item-7 promotion
+# ===========================================================================
+# Three checks closing the gaps the 000165 S3 survey measured against the reviewer's
+# eight-point checklist. Same discipline as the blocks above: the decision half is a PURE
+# function over injected observations, asserted here; the live probes
+# (Get-DoctorRulesetObservation, Get-DoctorTestDiagnosticObservation) are exercised by the
+# end-to-end run recorded in the dispatch outbox, which proved BOTH directions -- honest
+# UNKNOWN with no data dir, and a real PSUseApprovedVerbs observed through a live daemon.
+#
+# THE EXIT-CODE CONTRACT IS THE THING TO PROTECT. `unknown` is never `fail`, so a doctor run
+# that could not determine something must not change a caller's exit code. Every
+# could-not-determine path below is asserted `unknown` explicitly, and the ONE deliberate
+# `fail` (a settled analysis that produced nothing) is asserted to be the ONLY one.
+
+Describe 'Preflight doctor -- active ruleset surface (item 6, dispatch 000166)' {
+    BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
+
+    It 'is UNKNOWN, never fail, when the resolver could not be consulted' {
+        $r = Test-DoctorRuleset -Determinable $false -Reason 'no plugin root.'
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match 'no plugin root'
+    }
+    It 'is UNKNOWN when ruleset=base is requested but the shipped ruleset is unresolvable' {
+        # The honest half of both-directions: base was ASKED for and silently degraded to the
+        # NARROWER PSES set. Reporting that as a pass reading "PSES built-in" would be
+        # indistinguishable from a user who chose pses-default -- the misreport this guards.
+        $r = Test-DoctorRuleset -Determinable $true -RulesetKnob 'base' -ResolvedPath '' -Source 'unresolved-base' -ProbeDir 'C:\proj'
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match 'NARROWER'
+        $r.Remediation | Should -Not -BeNullOrEmpty
+    }
+    It 'PASSES and names the shipped base ruleset when base resolved' {
+        $r = Test-DoctorRuleset -Determinable $true -RulesetKnob 'base' -ResolvedPath 'C:\plugin\rulesets\base.psd1' -Source 'plugin-base' -ProbeDir 'C:\proj'
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'shipped base ruleset is active'
+        $r.Detail | Should -Match ([regex]::Escape('C:\plugin\rulesets\base.psd1'))
+    }
+    It 'PASSES and says the repo-local file WINS, naming the knob as inert' {
+        # The silent-precedence case the check exists for: a user sets ruleset=base, still sees
+        # nothing new, and had no way to learn a repo-local file was legitimately winning.
+        $r = Test-DoctorRuleset -Determinable $true -RulesetKnob 'base' -ResolvedPath 'C:\proj\PSScriptAnalyzerSettings.psd1' -Source 'repo-local' -ProbeDir 'C:\proj'
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'repo-local'
+        $r.Detail | Should -Match 'inert'
+        $r.Detail | Should -Match 'not a fault'
+    }
+    It 'PASSES and says an explicit settingsPath override wins over both' {
+        $r = Test-DoctorRuleset -Determinable $true -RulesetKnob 'base' -ResolvedPath 'C:\org\settings.psd1' -Source 'override' -ProbeDir 'C:\proj'
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'settingsPath override'
+    }
+    It 'PASSES and names the PSES built-in set (with the WriteHost caveat) on the default' {
+        $r = Test-DoctorRuleset -Determinable $true -RulesetKnob 'pses-default' -ResolvedPath '' -Source 'pses-default' -ProbeDir 'C:\proj'
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'built-in no-settings rule set'
+        $r.Detail | Should -Match 'PSAvoidUsingWriteHost is NOT among them'
+    }
+    It 'NEVER returns fail on any input shape (a configuration report is not a health gate)' {
+        foreach ($src in @('override', 'repo-local', 'plugin-base', 'pses-default', 'unresolved-base', '')) {
+            (Test-DoctorRuleset -Determinable $true -RulesetKnob 'base' -ResolvedPath 'x' -Source $src).Status | Should -Not -Be 'fail'
+        }
+        (Test-DoctorRuleset -Determinable $false).Status | Should -Not -Be 'fail'
+    }
+}
+
+Describe 'Preflight doctor -- test diagnostic observed end-to-end (item 8, dispatch 000166)' {
+    BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
+
+    It 'is UNKNOWN when there is no daemon to ask (the doctor never starts one)' {
+        $r = Test-DoctorTestDiagnostic -Determinable $false -Reason 'no live warm daemon was identified.'
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match 'no live warm daemon'
+    }
+    It 'is UNKNOWN when the daemon did not return a well-formed response' {
+        $r = Test-DoctorTestDiagnostic -Determinable $true -Responded $false
+        $r.Status | Should -Be 'unknown'
+    }
+    It 'is UNKNOWN (quoting the status) when the analysis did not settle: <_>' -ForEach @('incomplete', 'degraded', 'unavailable') {
+        # A non-ok status is the plugin's own honest banner working, not a failure to report.
+        $r = Test-DoctorTestDiagnostic -Determinable $true -Responded $true -Status $_ -ExpectedRule 'PSUseApprovedVerbs' -RuleIds @()
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match ([regex]::Escape($_))
+    }
+    It 'PASSES when the planted defect comes back' {
+        $r = Test-DoctorTestDiagnostic -Determinable $true -Responded $true -Status 'ok' -ExpectedRule 'PSUseApprovedVerbs' -RuleIds @('PSUseApprovedVerbs') -ElapsedMs 1234
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'observed end-to-end'
+        $r.Detail | Should -Match '1234 ms'
+    }
+    It 'PASSES when the expected rule is present ALONGSIDE other findings' {
+        $r = Test-DoctorTestDiagnostic -Determinable $true -Responded $true -Status 'ok' -ExpectedRule 'PSUseApprovedVerbs' -RuleIds @('PSAvoidUsingWriteHost', 'PSUseApprovedVerbs')
+        $r.Status | Should -Be 'pass'
+    }
+    It 'FAILS -- the one deliberate fail -- when a SETTLED analysis produced nothing' {
+        # This is the silent-failure mode the whole plugin exists to prevent: an edit reading
+        # as "analyzed, clean" when the analyzer is not producing findings at all.
+        $r = Test-DoctorTestDiagnostic -Determinable $true -Responded $true -Status 'ok' -ExpectedRule 'PSUseApprovedVerbs' -RuleIds @()
+        $r.Status | Should -Be 'fail'
+        $r.Detail | Should -Match 'no findings at all'
+        $r.Detail | Should -Match 'settled-but-empty'
+        $r.Remediation | Should -Not -BeNullOrEmpty
+    }
+    It 'FAILS and NAMES what did come back, when the wrong findings returned' {
+        $r = Test-DoctorTestDiagnostic -Determinable $true -Responded $true -Status '' -ExpectedRule 'PSUseApprovedVerbs' -RuleIds @('PSAvoidUsingWriteHost')
+        $r.Status | Should -Be 'fail'
+        $r.Detail | Should -Match 'PSAvoidUsingWriteHost'
+    }
+    It 'the SETTLED-but-empty case is the ONLY fail across every input shape' {
+        # Guards the exit-code contract from the other side: enumerate the shapes and assert
+        # exactly one of them fails. A future edit that turned an indeterminate path into a
+        # fail would start moving callers' exit codes, and this goes red.
+        $shapes = @(
+            @{ D = $false; R = $false; S = ''; Ids = @() }
+            @{ D = $true;  R = $false; S = ''; Ids = @() }
+            @{ D = $true;  R = $true;  S = 'incomplete';  Ids = @() }
+            @{ D = $true;  R = $true;  S = 'degraded';    Ids = @() }
+            @{ D = $true;  R = $true;  S = 'unavailable'; Ids = @() }
+            @{ D = $true;  R = $true;  S = 'ok'; Ids = @('PSUseApprovedVerbs') }
+            @{ D = $true;  R = $true;  S = 'ok'; Ids = @() }          # <- the only fail
+        )
+        $statuses = @($shapes | ForEach-Object {
+            (Test-DoctorTestDiagnostic -Determinable $_.D -Responded $_.R -Status $_.S -ExpectedRule 'PSUseApprovedVerbs' -RuleIds $_.Ids).Status
+        })
+        $statuses.Count | Should -Be 7                                   # vacuity floor
+        @($statuses | Where-Object { $_ -eq 'fail' }).Count | Should -Be 1
+        $statuses[-1] | Should -Be 'fail'
+    }
+}
+
+Describe 'Format-DoctorSummary -- the /status rendering over the Invoke-Doctor seam (000166 B10)' {
+    # /powershell-lsp:status is a RENDERING, not a second health check. The property that makes
+    # that claim true is that it is a pure function of the SAME result objects Format-DoctorReport
+    # consumes -- so it cannot re-decide anything, and it cannot disagree with the full report.
+    # These guards pin exactly that, plus the one thing a compact view could get wrong: silently
+    # swallowing the remediation for a failing check with no way to reach it.
+    BeforeAll {
+        . (Join-Path $script:ScriptsDir 'doctor.ps1')
+        $script:SummaryFixture = @(
+            (New-DoctorResult -Status pass -Component 'Alpha check' -Detail 'alpha detail prose')
+            (New-DoctorResult -Status unknown -Component 'Beta check' -Detail 'beta detail prose' -Remediation 'beta fix text')
+            (New-DoctorResult -Status fail -Component 'Gamma check' -Detail 'gamma detail prose' -Remediation 'gamma fix text')
+        )
+    }
+    It 'renders one line per check, naming every component' {
+        $s = Format-DoctorSummary -Results $script:SummaryFixture
+        foreach ($c in @('Alpha check', 'Beta check', 'Gamma check')) { $s | Should -Match ([regex]::Escape($c)) }
+    }
+    It 'reports the SAME counts the full report does (it cannot disagree)' {
+        $summary = Format-DoctorSummary -Results $script:SummaryFixture
+        $full = Format-DoctorReport -Results $script:SummaryFixture
+        $line = 'summary: 1 pass, 1 fail, 1 unknown (of 3 checks)'
+        $summary | Should -Match ([regex]::Escape($line))
+        $full | Should -Match ([regex]::Escape($line))
+    }
+    It 'OMITS the per-check detail prose (that is the whole point of the compact view)' {
+        $s = Format-DoctorSummary -Results $script:SummaryFixture
+        $s | Should -Not -Match 'alpha detail prose'
+        $s | Should -Not -Match 'gamma detail prose'
+        # ...and the full report DOES carry it -- otherwise this assertion would pass against a
+        # renderer that dropped everything, including the parts it must keep.
+        (Format-DoctorReport -Results $script:SummaryFixture) | Should -Match 'gamma detail prose'
+    }
+    It 'points at the full report when anything is not PASS (never a dead end)' {
+        (Format-DoctorSummary -Results $script:SummaryFixture) | Should -Match 'doctor\.ps1'
+    }
+    It 'stays quiet when everything passes' {
+        $allPass = @((New-DoctorResult -Status pass -Component 'Only check' -Detail 'd'))
+        $s = Format-DoctorSummary -Results $allPass
+        $s | Should -Match 'summary: 1 pass, 0 fail, 0 unknown'
+        $s | Should -Not -Match 'For the per-check detail'
+    }
+}
+
+Describe 'Preflight doctor -- native-serve STATUS, promoted out of opt-in (item 7, dispatch 000166)' {
+    BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
+
+    It 'PASSES on the shipped default and says plainly that it is not a fault' {
+        $r = Test-DoctorNativeServeStatus -Determinable $true -Value 'off' -ShimPresent $true
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'not a fault'
+        $r.Detail | Should -Match 'do NOT serve'
+    }
+    It 'treats a BLANK value as the default rather than as an error' {
+        (Test-DoctorNativeServeStatus -Determinable $true -Value '' -ShimPresent $true).Status | Should -Be 'pass'
+    }
+    It 'PASSES and reports navigation ENABLED under shim' {
+        $r = Test-DoctorNativeServeStatus -Determinable $true -Value 'shim' -ShimPresent $true
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'ENABLED'
+    }
+    It 'is UNKNOWN when shim is configured but the shim script is missing' {
+        $r = Test-DoctorNativeServeStatus -Determinable $true -Value 'shim' -ShimPresent $false
+        $r.Status | Should -Be 'unknown'
+    }
+    It 'is UNKNOWN on an unrecognized value, and says what the plugin will actually do' {
+        $r = Test-DoctorNativeServeStatus -Determinable $true -Value 'native' -ShimPresent $true
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match 'not a recognized value'
+        $r.Detail | Should -Match 'treats anything other than "shim" as "off"'
+    }
+    It 'points at the opt-in probe ONLY when the probe did not already run' {
+        (Test-DoctorNativeServeStatus -Determinable $true -Value 'off' -ShimPresent $true -Probed $false).Detail | Should -Match 'ProbeNativeServe'
+        (Test-DoctorNativeServeStatus -Determinable $true -Value 'off' -ShimPresent $true -Probed $true).Detail | Should -Not -Match 'Run with -ProbeNativeServe'
+    }
+    It 'NEVER returns fail (off by default is a supported configuration)' {
+        foreach ($v in @('off', 'shim', '', 'native', 'true')) {
+            foreach ($p in @($true, $false)) {
+                (Test-DoctorNativeServeStatus -Determinable $true -Value $v -ShimPresent $p).Status | Should -Not -Be 'fail'
+            }
+        }
+        (Test-DoctorNativeServeStatus -Determinable $false).Status | Should -Not -Be 'fail'
     }
 }
 

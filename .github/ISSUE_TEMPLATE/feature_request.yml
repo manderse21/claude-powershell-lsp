@@ -8,7 +8,7 @@ body:
       value: |
         Some commonly-requested capabilities (hover, go-to-definition, find-references,
         workspace-wide analysis) are already on the roadmap, gated on an upstream Claude Code
-        plugin LSP-registration fix -- see the README and `ROADMAP-powershell-lsp.md` before
+        plugin LSP-registration fix -- see the README and `ROADMAP.md` before
         filing, in case your idea is already tracked.
   - type: textarea
     id: problem

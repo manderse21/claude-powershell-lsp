@@ -175,11 +175,81 @@ function Resolve-PsHost {
 # each knob from the CLAUDE_PLUGIN_OPTION_<key> env vars CC exports to plugin
 # subprocesses, each with a fallback default.
 
-function Get-PluginOption {
-    # Return the CLAUDE_PLUGIN_OPTION_<key> value, or $Default if absent/blank. The
-    # exported name's casing is normalized away (underscores stripped, lower-cased)
-    # so 'ps_host' matches CLAUDE_PLUGIN_OPTION_PS_HOST / _ps_host / _psHost alike.
-    param([string]$Key, [string]$Default = '')
+# --- the `profile` meta-knob (dispatch 000166) -----------------------------
+# A profile is a PRESET over the other knobs, resolved BETWEEN an explicitly-set knob and
+# the shipped default. Precedence, highest wins:
+#
+#     explicit knob value  >  profile mapping  >  shipped default
+#
+# The explicit-wins half is load-bearing on the 1.x contract: if a profile could override a
+# value a user set, every existing 1.x config would silently change meaning on upgrade, which
+# CONTRACT.md:178-184 makes a MAJOR. It resolves inside Get-PluginOption rather than at each
+# call site so Get-PluginOptionInt / Get-PluginOptionBool (which both delegate here) inherit
+# it, and so no caller can forget it.
+#
+# `safe` maps NOTHING. That is not an oversight -- it is the proof obligation: with the
+# profile unset or `safe`, Get-PluginOption returns $Default on exactly the path it did
+# before this knob existed, so the diagnostics surface is byte-for-byte unchanged BY
+# CONSTRUCTION, not by a table that happens to restate the defaults correctly today.
+#
+# THREE VALUES ARE DELIBERATELY ABSENT FROM EVERY MAPPING, and each absence is a ruling:
+#   * nativeServe  -- stays `off` in every profile (Mike Andersen ruling R2, 2026-07-30). The
+#     shim works around an upstream client bug; a profile must not put a workaround in front
+#     of more users.
+#   * enableStats  -- stays `false` in every profile (ruling R3b). logs/stats.jsonl records
+#     absolute paths today; redaction lands BEFORE any flip, as its own later dispatch.
+#   * formatOnEdit=apply -- appears in NO profile. `apply` is the one mode that writes a
+#     user's file, and it is deliberately doubly opt-in; `suggest` is as far as a preset goes.
+# timeoutMs is absent for a measured reason rather than a ruling: the warm-path p95 under
+# ruleset=base measured 3292 ms on the build host (n=20), leaving 34.2 pct headroom under the
+# shipped 5000 ms, so per OQ2 the profiles keep 5000 and the cell is not a departure at all.
+# orgPolicy is absent because a profile cannot hardcode a site-specific path; `strict` names
+# it as the intended slot and the operator supplies the value.
+#
+# EVOLUTION POLICY: these mappings are CURATED and MAY change in a MINOR. An explicitly-set
+# knob is never affected by such a change, which is what makes a future re-mapping (including
+# the later enableStats flip, once redaction ships) contractually clean rather than a semver
+# argument.
+#
+# The map is a FUNCTION, not a top-level `$script:` assignment. This file is dot-sourced, and a
+# dot-source executes every top-level statement in the CALLER's scope -- so a module-level variable
+# here would silently write into every caller (the dispatch 000156 hazard class, structurally
+# guarded by G1 in tests/PowerShellLsp.LibPurity.Tests.ps1). A function definition is the one
+# top-level form that cannot leak. Returning the literal each call is deliberate over memoizing
+# into `$script:` for the same reason.
+function Get-PluginProfileMap {
+    return @{
+        'safe'        = @{}
+        'recommended' = @{
+            'editContextLines'   = '2'
+            'formatOnEdit'       = 'suggest'
+            'ruleset'            = 'base'
+            'moduleAwareness'    = 'suggest'
+            'referenceSurfacing' = 'counts'
+        }
+        'strict'      = @{
+            # strict = recommended, plus the three enforcement-posture departures.
+            # editContextLines rides along from recommended and is INERT here, because
+            # scopeToEdit=false already reports whole-file.
+            'editContextLines'   = '2'
+            'formatOnEdit'       = 'suggest'
+            'ruleset'            = 'base'
+            'moduleAwareness'    = 'suggest'
+            'referenceSurfacing' = 'counts'
+            'keepLastN'          = '30'
+            'perFileCap'         = '0'
+            'scopeToEdit'        = 'false'
+        }
+    }
+}
+
+function Get-RawPluginOption {
+    # The env-only read: the CLAUDE_PLUGIN_OPTION_<key> value, or '' if absent/blank. The
+    # exported name's casing is normalized away (underscores stripped, lower-cased) so
+    # 'ps_host' matches CLAUDE_PLUGIN_OPTION_PS_HOST / _ps_host / _psHost alike. Split out of
+    # Get-PluginOption so the profile lookup can read the `profile` knob itself WITHOUT
+    # recursing back through profile resolution.
+    param([string]$Key)
     $target = ($Key -replace '_', '').ToLowerInvariant()
     $prefix = 'CLAUDE_PLUGIN_OPTION_'
     foreach ($entry in [System.Environment]::GetEnvironmentVariables().GetEnumerator()) {
@@ -191,6 +261,51 @@ function Get-PluginOption {
                 if (-not [string]::IsNullOrWhiteSpace($val)) { return $val }
             }
         }
+    }
+    return ''
+}
+
+function ConvertTo-ProfileName {
+    # Canonicalize the profile knob: 'safe' (default), 'recommended', 'strict'. Anything else
+    # -- blank, an unexpanded '${user_config...}' token, a typo, a future value this build does
+    # not know -- degrades to 'safe', which maps nothing. An unrecognized profile therefore
+    # produces the SHIPPED defaults rather than a partial or guessed preset.
+    param([string]$Value)
+    $v = ([string]$Value).Trim().ToLowerInvariant()
+    if ($v -eq 'recommended' -or $v -eq 'strict') { return $v }
+    return 'safe'
+}
+
+function Get-ProfileKnobValue {
+    # The profile's value for one knob, or '' when the profile does not map it (which is
+    # every knob under 'safe'). Key matching is normalized the same way Get-RawPluginOption
+    # normalizes the env name, so a caller's casing never silently misses a mapping.
+    # NOTE: the parameter is $ProfileName, not $Profile -- $Profile is a PowerShell AUTOMATIC
+    # variable (the profile-script path) and binding it is PSAvoidAssignmentToAutomaticVariable.
+    # This plugin's own PostToolUse diagnostics flagged it while this function was being written.
+    param([string]$ProfileName, [string]$Key)
+    $p = ConvertTo-ProfileName $ProfileName
+    $all = Get-PluginProfileMap
+    if (-not $all.ContainsKey($p)) { return '' }
+    $map = $all[$p]
+    $target = ($Key -replace '_', '').ToLowerInvariant()
+    foreach ($k in $map.Keys) {
+        if ((([string]$k) -replace '_', '').ToLowerInvariant() -eq $target) { return [string]$map[$k] }
+    }
+    return ''
+}
+
+function Get-PluginOption {
+    # Resolve a knob: explicit CLAUDE_PLUGIN_OPTION_<key> value > the active profile's
+    # mapping > $Default. See the precedence note above Get-RawPluginOption.
+    param([string]$Key, [string]$Default = '')
+    $explicit = Get-RawPluginOption $Key
+    if (-not [string]::IsNullOrWhiteSpace($explicit)) { return $explicit }
+    # `profile` itself is never profile-resolved -- that would recurse, and a preset cannot
+    # sensibly select itself.
+    if (($Key -replace '_', '').ToLowerInvariant() -ne 'profile') {
+        $fromProfile = Get-ProfileKnobValue -ProfileName (Get-RawPluginOption 'profile') -Key $Key
+        if (-not [string]::IsNullOrWhiteSpace($fromProfile)) { return $fromProfile }
     }
     return $Default
 }
