@@ -1493,9 +1493,11 @@ AFTER the v1.28.1 release so strangers test the corrected front door rather than
 **The claims were re-derived from disk, and the survey corrected two of them** (000167 leg 1, read
 at the v1.28.0 tag rather than carried from the review):
 
-- **P5b is moot as stated.** Every path-taking cmdlet call site in `scripts/lsp-scan.ps1` (5 sites)
-  and in the helper the user path actually flows into, `scripts/lib/lsp-scan-common.ps1` (13 sites),
-  was enumerated. Every call whose cmdlet HAS a `-LiteralPath` parameter already uses it; the only
+- **P5b is moot as stated.** Every path-taking cmdlet call site in `scripts/lsp-scan.ps1` (5 active
+  lines) and in the helper the user path actually flows into, `scripts/lib/lsp-scan-common.ps1`
+  (17 active lines), was enumerated over a 35-cmdlet vocabulary, RED-proven by planting a known
+  site, with alias-shaped calls ruled out at zero in both files.
+  Every call whose cmdlet HAS a `-LiteralPath` parameter already uses it; the only
   `-Path` uses are `Join-Path` and `New-Item`, neither of which has a `-LiteralPath` on Windows
   PowerShell 5.1 or on PowerShell 7 (checked live on both hosts). The user-supplied path reaches
   `[System.IO.Path]::GetFullPath`, then `Test-Path -LiteralPath`, then `Get-ChildItem -LiteralPath`
