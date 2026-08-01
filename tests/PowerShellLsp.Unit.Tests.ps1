@@ -3615,6 +3615,163 @@ Describe 'Closed-loop agentic correction -- Get-FindingLifecycleDiff (dispatch 0
 }
 
 # ===========================================================================
+# Per-rule lifecycle persistence -- the sibling log (dispatch 000171 leg 2)
+# ===========================================================================
+# The cleared/still-present signal was COMPUTED and never persisted per rule, which is why the
+# efficacy ledger's fixed_next_turn_rate and persistence_rate could not be derived. It now lands
+# in a SIBLING log so dogfood/diagnostics.jsonl stays byte-unchanged for its two shipped readers.
+Describe 'Per-rule lifecycle persistence -- sibling log (dispatch 000171 leg 2)' {
+
+    Context 'the join key -- the EXISTING shape hash, identical on both sides by construction' {
+        It 'the capture-side hash and the lifecycle-side hash MATCH over the same material' {
+            # Add-DiagnosticCaptureEntries hashes (ruleId + snippet); New-LifecycleFinding hashes
+            # (ruleId + offending line). Same function, same material -> joinable with no new field.
+            $line = '    $x = gci -Path $env:TEMP   '
+            $capture = Get-DiagnosticShapeHash -RuleId 'PSAvoidUsingCmdletAliases' -OffendingLine $line
+            $lifecycle = (New-LifecycleFinding -Record @{ line = 1; code = 'PSAvoidUsingCmdletAliases'; message = 'm' } -Lines @($line)).hash
+            $lifecycle | Should -BeExactly $capture
+        }
+        It 'the hash is STABLE across turns when the finding MOVES to another line' {
+            # The hashed material carries no line NUMBER, which is what makes the join valid turn
+            # over turn -- and is the same property that stops a moved finding reading as cleared.
+            $line = '$x = gci .'
+            $atLine1 = (New-LifecycleFinding -Record @{ line = 1; code = 'R'; message = 'm' } -Lines @($line)).hash
+            $atLine3 = (New-LifecycleFinding -Record @{ line = 3; code = 'R'; message = 'm' } -Lines @('a', 'b', $line)).hash
+            $atLine3 | Should -BeExactly $atLine1
+        }
+        It 'RED: a DIFFERENT offending line does NOT collide' {
+            $a = Get-DiagnosticShapeHash -RuleId 'R' -OffendingLine '$x = gci .'
+            $b = Get-DiagnosticShapeHash -RuleId 'R' -OffendingLine '$y = Get-ChildItem'
+            $b | Should -Not -BeExactly $a
+        }
+    }
+
+    Context 'LedgerKeys is ADDITIVE -- the daemon payload arrays are unchanged' {
+        BeforeAll {
+            $script:LcPrior = @{
+                'h1' = @{ ruleId = 'PSUseApprovedVerbs'; line = 1; message = 'm1'; attempts = 0 }
+                'h2' = @{ ruleId = 'PSAvoidUsingCmdletAliases'; line = 2; message = 'm2'; attempts = 1 }
+            }
+            $script:LcCur = @([pscustomobject]@{ hash = 'h2'; ruleId = 'PSAvoidUsingCmdletAliases'; line = 2; message = 'm2' })
+            $script:LcDiff = Get-FindingLifecycleDiff -PriorMap $script:LcPrior -CurrentFull $script:LcCur `
+                -CurrentSurfaced $script:LcCur -ScopeApplied $true
+        }
+        It 'cleared[] still carries exactly ruleId/line/message -- NO hash leaked onto the payload' {
+            $json = (@($script:LcDiff.Cleared) | ConvertTo-Json -Depth 5 -Compress)
+            $json | Should -Not -Match '"hash"'
+        }
+        It 'stillPresent[] still carries no hash either' {
+            $json = (@($script:LcDiff.StillPresent) | ConvertTo-Json -Depth 5 -Compress)
+            $json | Should -Not -Match '"hash"'
+        }
+        It 'LedgerKeys carries the hashes the sibling log needs' {
+            @($script:LcDiff.LedgerKeys['cleared'])[0].hash | Should -BeExactly 'h1'
+            @($script:LcDiff.LedgerKeys['stillPresent'])[0].hash | Should -BeExactly 'h2'
+        }
+    }
+
+    Context 'records are PER RULE -- which is what bounds the per-turn growth rate' {
+        It 'two rules produce two records, sorted by ruleId (no ranking)' {
+            $keys = @{
+                cleared      = @([pscustomobject]@{ hash = 'h1'; ruleId = 'PSUseApprovedVerbs' })
+                stillPresent = @([pscustomobject]@{ hash = 'h2'; ruleId = 'PSAvoidUsingCmdletAliases'; attempts = 2; downgraded = $false })
+            }
+            $recs = @(New-LifecycleLedgerRecords -LedgerKeys $keys -File 'f.ps1' -Timestamp 't' -ScopeApplied $true)
+            $recs.Count | Should -Be 2
+            [string]$recs[0].ruleId | Should -BeExactly 'PSAvoidUsingCmdletAliases'
+            [string]$recs[1].ruleId | Should -BeExactly 'PSUseApprovedVerbs'
+        }
+        It 'MANY findings of ONE rule collapse to ONE record (the cardinality bound)' {
+            $keys = @{ cleared = @(1..40 | ForEach-Object { [pscustomobject]@{ hash = ('h' + $_); ruleId = 'PSUseApprovedVerbs' } }); stillPresent = @() }
+            $recs = @(New-LifecycleLedgerRecords -LedgerKeys $keys -File 'f.ps1' -Timestamp 't' -ScopeApplied $true)
+            $recs.Count | Should -Be 1
+            [int]$recs[0].cleared | Should -Be 40
+        }
+        It 'a turn with NO lifecycle event writes NOTHING (not an empty record)' {
+            $recs = @(New-LifecycleLedgerRecords -LedgerKeys @{ cleared = @(); stillPresent = @() } -File 'f.ps1' -Timestamp 't' -ScopeApplied $true)
+            $recs.Count | Should -Be 0
+        }
+        It 'StrictMode-safe on a null LedgerKeys' {
+            { New-LifecycleLedgerRecords -LedgerKeys $null -File 'f.ps1' -Timestamp 't' -ScopeApplied $true } | Should -Not -Throw
+        }
+    }
+
+    Context 'FAIL OPEN -- proven by fault injection, never by inspection' {
+        It 'a normal write succeeds' {
+            $p = Join-Path $TestDrive 'lifecycle-20260731-000000-000.jsonl'
+            $env:POWERSHELL_LSP_LIFECYCLE_LOG = $p
+            try {
+                $recs = @(New-LifecycleLedgerRecords -LedgerKeys @{ cleared = @([pscustomobject]@{ hash = 'h'; ruleId = 'R' }); stillPresent = @() } `
+                        -File 'f.ps1' -Timestamp 't' -ScopeApplied $true)
+                Add-LifecycleLedgerEntries -Records $recs -Stamp 's' | Should -BeTrue
+                Test-Path -LiteralPath $p | Should -BeTrue
+            } finally { $env:POWERSHELL_LSP_LIFECYCLE_LOG = $null }
+        }
+        It 'an EXCLUSIVELY-HELD log fails SOFT: returns $false and never throws' {
+            $p = Join-Path $TestDrive 'lifecycle-locked.jsonl'
+            [System.IO.File]::WriteAllText($p, '')
+            $env:POWERSHELL_LSP_LIFECYCLE_LOG = $p
+            $fs = [System.IO.File]::Open($p, 'Open', 'ReadWrite', 'None')
+            try {
+                $recs = @(New-LifecycleLedgerRecords -LedgerKeys @{ cleared = @([pscustomobject]@{ hash = 'h'; ruleId = 'R' }); stillPresent = @() } `
+                        -File 'f.ps1' -Timestamp 't' -ScopeApplied $true)
+                { Add-LifecycleLedgerEntries -Records $recs -Stamp 's' } | Should -Not -Throw
+                Add-LifecycleLedgerEntries -Records $recs -Stamp 's' | Should -BeFalse
+            } finally {
+                $fs.Close(); $fs.Dispose(); $env:POWERSHELL_LSP_LIFECYCLE_LOG = $null
+            }
+        }
+        It 'an UNRESOLVABLE path fails SOFT rather than throwing' {
+            $env:POWERSHELL_LSP_LIFECYCLE_LOG = $null
+            # No stamp and no override -> no path can be built. Must degrade, not throw.
+            $recs = @(New-LifecycleLedgerRecords -LedgerKeys @{ cleared = @([pscustomobject]@{ hash = 'h'; ruleId = 'R' }); stillPresent = @() } `
+                    -File 'f.ps1' -Timestamp 't' -ScopeApplied $true)
+            { Add-LifecycleLedgerEntries -Records $recs -Stamp '' } | Should -Not -Throw
+            Add-LifecycleLedgerEntries -Records $recs -Stamp '' | Should -BeFalse
+        }
+        It 'an EMPTY record set is a SUCCESS that writes nothing (a clean turn is not a failure)' {
+            Add-LifecycleLedgerEntries -Records @() -Stamp '' | Should -BeTrue
+        }
+    }
+
+    Context 'BOUNDED retention -- the log joins the EXISTING keepLastN rotation family' {
+        It 'a stamped lifecycle name collapses to a family stem under the SHIPPED sweep regex' {
+            # Invoke-LogSweep (scripts/session-start.ps1) groups by this exact substitution and keeps
+            # the newest keepLastN per stem. Matching it is what makes retention bounded with NO new
+            # sweep code.
+            $stem = [System.Text.RegularExpressions.Regex]::Replace('lifecycle-20260731-215959-123.jsonl', '-\d{8}-\d{6}-\d{3}', '-STAMP')
+            $stem | Should -BeExactly 'lifecycle-STAMP.jsonl'
+        }
+        It 'RED: an UNSTAMPED name would NOT be swept -- so the stamp is load-bearing' {
+            $stem = [System.Text.RegularExpressions.Regex]::Replace('lifecycle.jsonl', '-\d{8}-\d{6}-\d{3}', '-STAMP')
+            $stem | Should -BeExactly 'lifecycle.jsonl'
+        }
+        It 'Get-LifecycleLogPath honors the env override verbatim, and needs a stamp otherwise' {
+            $env:POWERSHELL_LSP_LIFECYCLE_LOG = 'C:\explicit\path.jsonl'
+            try { Get-LifecycleLogPath -Stamp 'ignored' | Should -BeExactly 'C:\explicit\path.jsonl' }
+            finally { $env:POWERSHELL_LSP_LIFECYCLE_LOG = $null }
+            Get-LifecycleLogPath -Stamp '' | Should -BeExactly ''
+        }
+    }
+
+    Context 'the CAPTURE record shape is untouched -- the pre-ruled sibling-log constraint' {
+        It 'a capture record still carries EXACTLY the shipped keys, in the shipped order' {
+            $log = Join-Path $TestDrive ('cap-' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '.jsonl')
+            $src = Join-Path $TestDrive 'capsrc.ps1'
+            [System.IO.File]::WriteAllText($src, "function Frobnicate-X { }`n")
+            $env:POWERSHELL_LSP_DOGFOOD_LOG = $log
+            try {
+                Add-DiagnosticCaptureEntries -File $src -Records @(@{ line = 1; col = 10; ruleId = 'PSUseApprovedVerbs'
+                        source = 'PSScriptAnalyzer'; severity = 'Warning'; message = 'm' })
+            } finally { $env:POWERSHELL_LSP_DOGFOOD_LOG = $null }
+            $keys = @((Get-Content -LiteralPath $log -Raw).Trim() | ConvertFrom-Json |
+                    ForEach-Object { $_.PSObject.Properties } | ForEach-Object { $_.Name })
+            ($keys -join ',') | Should -BeExactly 'ts,file,line,col,ruleId,source,severity,message,snippet,hash,verdict'
+        }
+    }
+}
+
+# ===========================================================================
 # pre-push guard -- refuse a direct push to origin/main (dispatch 000080)
 # ===========================================================================
 # The guard (scripts/pre-push-guard.ps1) makes the PR-and-HOLD discipline a refusal on the

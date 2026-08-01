@@ -494,3 +494,83 @@ Describe 'rule-efficacy-ledger -- review-dogfood.ps1 stays contract-unchanged' {
         $text | Should -Not -Match 'facts only, no scores'
     }
 }
+
+Describe 'rule-efficacy-ledger -- lifecycle columns: ABSENT, NO-EVENTS and a number are three claims (000171 leg 2)' {
+    BeforeAll {
+        function script:New-LifecycleLine {
+            param([string] $RuleId, [int] $Cleared = 0, [int] $StillPresent = 0)
+            $o = [ordered]@{
+                schema = 'powershell-lsp-lifecycle/1'; ts = '2026-07-31T00:00:00.0000000-04:00'
+                file = 'C:\proj\alpha\a.ps1'; ruleId = $RuleId
+                cleared = $Cleared; stillPresent = $StillPresent
+                clearedHashes = @(1..$Cleared | ForEach-Object { 'c' + $_ })
+                stillPresentHashes = @(1..$StillPresent | ForEach-Object { 's' + $_ })
+                attemptsMax = 1; downgraded = $false; scopeApplied = $true
+            }
+            return ($o | ConvertTo-Json -Depth 5 -Compress)
+        }
+    }
+
+    It 'renders (absent) -- NOT 0 -- when no lifecycle log exists at all' {
+        # THE criterion this leg exists to satisfy: a ledger over nothing and a ledger of zeros are
+        # different claims and must not render identically.
+        $dir = Join-Path $TestDrive ('lc-absent-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $log = Join-Path $dir 'diagnostics.jsonl'
+        Write-Utf8NoBom -Path $log -Lines @((New-CaptureLine -RuleId 'PSUseApprovedVerbs' -File $script:FileOther -Hash 'c1'))
+        $out = (& $script:HostExe -NoLogo -NoProfile -File $script:LedgerScript -Path $log -LifecyclePath (Join-Path $dir 'no-such-dir')) -join "`n"
+        $out | Should -Match '\(absent\)'
+        $out | Should -Match 'lifecycle logs read: NONE'
+        # And it must NOT have quietly rendered a zero.
+        $out | Should -Not -Match 'PSUseApprovedVerbs.*0\.0 pct'
+    }
+
+    It 'renders (no-events) when a lifecycle log EXISTS but holds nothing for this rule' {
+        $dir = Join-Path $TestDrive ('lc-noev-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $log = Join-Path $dir 'diagnostics.jsonl'
+        Write-Utf8NoBom -Path $log -Lines @((New-CaptureLine -RuleId 'PSUseApprovedVerbs' -File $script:FileOther -Hash 'c1'))
+        $lcDir = Join-Path $dir 'logs'
+        Write-Utf8NoBom -Path (Join-Path $lcDir 'lifecycle-20260731-000000-000.jsonl') -Lines @((New-LifecycleLine -RuleId 'PSAvoidUsingCmdletAliases' -Cleared 1))
+        $out = (& $script:HostExe -NoLogo -NoProfile -File $script:LedgerScript -Path $log -LifecyclePath $lcDir) -join "`n"
+        $out | Should -Match '\(no-events\)'
+        $out | Should -Not -Match '\(absent\)'
+    }
+
+    It 'DERIVES both rates from counted events, and they are complementary' {
+        $dir = Join-Path $TestDrive ('lc-derive-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $log = Join-Path $dir 'diagnostics.jsonl'
+        Write-Utf8NoBom -Path $log -Lines @((New-CaptureLine -RuleId 'PSUseApprovedVerbs' -File $script:FileOther -Hash 'c1'))
+        $lcDir = Join-Path $dir 'logs'
+        # 3 cleared + 1 still-present -> 75.0 pct fixed, 25.0 pct persistence, n=4. Hand-counted.
+        Write-Utf8NoBom -Path (Join-Path $lcDir 'lifecycle-20260731-000000-000.jsonl') -Lines @(
+            (New-LifecycleLine -RuleId 'PSUseApprovedVerbs' -Cleared 2 -StillPresent 1),
+            (New-LifecycleLine -RuleId 'PSUseApprovedVerbs' -Cleared 1 -StillPresent 0)
+        )
+        $out = (& $script:HostExe -NoLogo -NoProfile -File $script:LedgerScript -Path $log -LifecyclePath $lcDir) -join "`n"
+        $out | Should -Match '75 pct \(n=4\)'
+        $out | Should -Match '25 pct \(n=4\)'
+    }
+
+    It 'unions EVERY lifecycle-*.jsonl in the rotation family, not just the newest' {
+        # The log rotates per daemon run under keepLastN, so a reader that took only the newest file
+        # would silently shrink the denominator every time a session restarted.
+        $dir = Join-Path $TestDrive ('lc-union-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $log = Join-Path $dir 'diagnostics.jsonl'
+        Write-Utf8NoBom -Path $log -Lines @((New-CaptureLine -RuleId 'PSUseApprovedVerbs' -File $script:FileOther -Hash 'c1'))
+        $lcDir = Join-Path $dir 'logs'
+        Write-Utf8NoBom -Path (Join-Path $lcDir 'lifecycle-20260731-000000-000.jsonl') -Lines @((New-LifecycleLine -RuleId 'PSUseApprovedVerbs' -Cleared 1))
+        Write-Utf8NoBom -Path (Join-Path $lcDir 'lifecycle-20260731-111111-111.jsonl') -Lines @((New-LifecycleLine -RuleId 'PSUseApprovedVerbs' -Cleared 3))
+        $out = (& $script:HostExe -NoLogo -NoProfile -File $script:LedgerScript -Path $log -LifecyclePath $lcDir) -join "`n"
+        $out | Should -Match 'n=4'          # 1 + 3, so BOTH files were read
+        $out | Should -Match 'lifecycle logs read: 2'
+    }
+
+    It 'an ABSENT lifecycle log is NOT an error -- the capture ledger still renders and exits 0' {
+        # The two logs have independent lifetimes. Only the CAPTURE log carries the exit-3/exit-4
+        # never-a-silent-skip contract; a missing sibling must degrade to (absent), not fail.
+        $dir = Join-Path $TestDrive ('lc-noerr-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $log = Join-Path $dir 'diagnostics.jsonl'
+        Write-Utf8NoBom -Path $log -Lines @((New-CaptureLine -RuleId 'PSUseApprovedVerbs' -File $script:FileOther -Hash 'c1'))
+        & $script:HostExe -NoLogo -NoProfile -File $script:LedgerScript -Path $log -LifecyclePath (Join-Path $dir 'nope') | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+}

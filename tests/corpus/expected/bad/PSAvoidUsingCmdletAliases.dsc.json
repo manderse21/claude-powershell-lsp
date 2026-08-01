@@ -1,0 +1,34 @@
+[
+  {
+    "ruleId": "PSAvoidUsingCmdletAliases",
+    "source": "PSScriptAnalyzer",
+    "severity": "Warning",
+    "line": 26,
+    "col": 37,
+    "message": "'gci' is an alias of 'Get-ChildItem'. Alias can introduce possible problems and make scripts hard to maintain. Please consider changing alias to its full content."
+  },
+  {
+    "ruleId": "PSAvoidUsingCmdletAliases",
+    "source": "PSScriptAnalyzer",
+    "severity": "Warning",
+    "line": 29,
+    "col": 26,
+    "message": "'gci' is an alias of 'Get-ChildItem'. Alias can introduce possible problems and make scripts hard to maintain. Please consider changing alias to its full content."
+  },
+  {
+    "ruleId": "PSAvoidUsingCmdletAliases",
+    "source": "PSScriptAnalyzer",
+    "severity": "Warning",
+    "line": 30,
+    "col": 35,
+    "message": "'?' is an alias of 'Where-Object'. Alias can introduce possible problems and make scripts hard to maintain. Please consider changing alias to its full content."
+  },
+  {
+    "ruleId": "PSAvoidUsingCmdletAliases",
+    "source": "PSScriptAnalyzer",
+    "severity": "Warning",
+    "line": 30,
+    "col": 58,
+    "message": "'measure' is an alias of 'Measure-Object'. Alias can introduce possible problems and make scripts hard to maintain. Please consider changing alias to its full content."
+  }
+]

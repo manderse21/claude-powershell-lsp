@@ -252,6 +252,14 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
                 'alias-exportmember-good' {
                     $d.Count | Should -Be 0 -Because "$($s.Label) manages alias exports via Export-ModuleMember -Alias (BurntToast shape -- honest degrade, no false orphan)"
                 }
+                'binary-rootmodule' {
+                    # dispatch 000171 leg 3: a BINARY module -- RootModule is a .dll and the exports are
+                    # CMDLETS, which no AST walk can ever find. Resolve-ModuleRootModulePath returns ''
+                    # for a .dll/.exe, so the export surface is INDETERMINATE and the check must degrade
+                    # to silence. Reporting every declared cmdlet as an orphan would be the worst kind of
+                    # false positive: confidently wrong about code it structurally cannot read.
+                    $d.Count | Should -Be 0 -Because "$($s.Label) is a binary module (indeterminate export surface -- honest degrade, no false orphan)"
+                }
                 default {
                     $true | Should -BeFalse -Because "$($s.Label) is not a known module fixture type"
                 }
