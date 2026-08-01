@@ -62,8 +62,12 @@ function Measure-BenchColdStartMs {
     $ready = $false; $info = $null
     while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
         if (Test-Path -LiteralPath $sf) {
-            $info = Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json
-            if ($info.state -eq 'ready') { $ready = $true; break }
+            # Read through the guarded reader: the daemon writes this file WHILE we poll it, so a
+            # read can land mid-write. An unguarded read of a torn file is a terminating error
+            # under StrictMode -- see Read-BenchSessionFile (dispatch 000172 D2).
+            $probe = Read-BenchSessionFile -Path $sf
+            if ($null -ne $probe.Info) { $info = $probe.Info }
+            if ($probe.State -eq 'ready') { $ready = $true; break }
         }
         Start-Sleep -Milliseconds 25
     }
@@ -76,11 +80,67 @@ function Measure-BenchColdStartMs {
             -ExtraArgs @() -CapMs 8000 -DataRoot $DataRoot | Out-Null
     } catch { }
     if ($null -ne $info) {
-        foreach ($pidVal in @($info.pid, $info.psesPid)) {
+        # Same guard on the teardown read: $info may be the LAST partial parse we saw, so
+        # neither pid property is guaranteed to exist.
+        foreach ($pidVal in @((Get-BenchProp $info 'pid'), (Get-BenchProp $info 'psesPid'))) {
             if ($pidVal) { Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue }
         }
     }
     return $elapsed
+}
+
+function Get-BenchProp {
+    # StrictMode-safe member read: returns $null for an absent member instead of throwing.
+    # Direct dotted access on a PSCustomObject that lacks the member is a TERMINATING error under
+    # Set-StrictMode -Version Latest, which tests/bench/Invoke-LatencyBench.ps1,
+    # tests/validate-sarif-artifacts.ps1 and tests/ServeShim.Driver.ps1 all set.
+    #
+    # BOTH shapes are handled deliberately: Get-BenchStats returns an [ordered] dictionary
+    # (OrderedDictionary) while ConvertFrom-Json returns a PSCustomObject. A PSObject-only reader
+    # silently returns $null for EVERY key of the stats object -- which is a vacuous read, the same
+    # class of defect as the -1 sentinel this file's D1 fix exists to close.
+    param($Object, [string]$Name)
+    if ($null -eq $Object) { return $null }
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name)) { return $Object[$Name] }
+        return $null
+    }
+    $props = $Object.PSObject.Properties
+    if ($null -eq $props) { return $null }
+    $p = $props[$Name]
+    if ($null -eq $p) { return $null }
+    return $p.Value
+}
+
+function Read-BenchSessionFile {
+    # Read the per-session daemon state file, tolerating a MID-WRITE read (dispatch 000172, D2).
+    #
+    # THE DEFECT THIS CURES: the cold-start poller reads this file every 25 ms while the daemon is
+    # writing it. A read that lands mid-write yields truncated JSON, and the shipped code did
+    #     $info = Get-Content -Raw | ConvertFrom-Json ; if ($info.state -eq 'ready')
+    # which can die three separate ways -- ConvertFrom-Json throws on torn JSON, $info is $null on
+    # an empty file, and $info.state throws under StrictMode when the object parsed but the
+    # property has not been written yet. Any of the three aborts the whole benchmark run with an
+    # unhandled terminating error, turning a 25 ms timing artifact into a red leg.
+    #
+    # DISPOSITION (000172 leg 4, pre-authorized fork 2 -- guard, do not add a retry): a bad read is
+    # reported as a not-yet-ready MISS and the CALLER decides. No retry is added here because the
+    # caller is already a bounded retry loop -- it re-polls every 25 ms until its own TimeoutMs and
+    # then records the miss as -1. Adding a second retry budget inside the reader would nest two
+    # timeouts and make neither one the real bound.
+    #
+    # Returns an object with State (the state string, or $null when it could not be read) and Info
+    # (the parsed object, or $null). Never throws.
+    param([string]$Path)
+    $miss = [pscustomobject]@{ State = $null; Info = $null }
+    $raw = $null
+    try { $raw = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop } catch { return $miss }
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $miss }
+    $info = $null
+    try { $info = $raw | ConvertFrom-Json -ErrorAction Stop } catch { return $miss }
+    if ($null -eq $info) { return $miss }
+    $state = Get-BenchProp $info 'state'
+    return [pscustomobject]@{ State = $(if ($null -eq $state) { $null } else { [string]$state }); Info = $info }
 }
 
 function Measure-BenchWarmPathMs {
@@ -125,6 +185,11 @@ function Get-BenchPercentile {
 function Get-BenchStats {
     # min / median / p95 / max over a sample set, plus the raw samples. p95Ms is ADDITIVE
     # (dispatch 000127): existing consumers key on medianMs and are unaffected.
+    #
+    # `count` is the SAMPLE COUNT and is the load-bearing field for any threshold assertion --
+    # see Get-BenchMeasuredMedian below and dispatch 000172 D1. The -1 aggregates are a DISPLAY
+    # sentinel meaning "nothing was measured"; they are NOT a latency and must never be compared
+    # against a ceiling directly.
     param([int[]]$Values)
     $clean = @(@($Values) | Where-Object { $_ -ge 0 })
     if ($clean.Count -eq 0) {
@@ -139,6 +204,52 @@ function Get-BenchStats {
         p95Ms    = (Get-BenchPercentile -Values $clean -Percentile 0.95)
         maxMs    = [int]$sorted[-1]
     }
+}
+
+function Get-BenchMeasuredMedian {
+    # THE SELECTED-COUNT FLOOR, APPLIED TO A STATISTICS OBJECT (dispatch 000172, D1).
+    #
+    # THE DEFECT THIS CURES -- the vacuous-match class. Get-BenchStats returns medianMs = -1 when
+    # NOTHING WAS MEASURED. A threshold assertion written the obvious way,
+    #     $stats.medianMs | Should -BeLessThan 20000
+    # is then satisfied by -1: a run that produced zero samples reads as comfortably inside budget.
+    # That is exactly what happened on the failing CI run for PR #118 -- the companion
+    # `Should -BeGreaterThan 0` caught the real failure while the threshold assertion sat green.
+    #
+    # WHY NOT A $null SENTINEL (pre-authorized fork 2, REFUTED BY MEASUREMENT): making the empty
+    # aggregate $null does NOT make a bare comparison fail. PowerShell coerces $null to 0 in a
+    # numeric comparison, so ($null -lt 60000) is True and `$null | Should -BeLessThan 60000`
+    # PASSES just as -1 does. Measured on pwsh 7.6.3 while working 000172. Swapping the sentinel
+    # would have moved the defect, not closed it.
+    #
+    # THE MECHANISM: a threshold assertion can only reach a number by calling THIS, and this
+    # THROWS when count is zero. The comparison is therefore unreachable on an empty sample set
+    # by any path, rather than merely accompanied by a separate assertion someone can forget.
+    param($Stats, [string]$Label = 'measurement')
+    if ($null -eq $Stats) {
+        throw ("NOTHING WAS MEASURED for '" + $Label + "': the stats object is null. A threshold " +
+            'assertion must not run against an absent measurement.')
+    }
+    $count = [int](Get-BenchProp $Stats 'count')
+    if ($count -le 0) {
+        throw ("NOTHING WAS MEASURED for '" + $Label + "': 0 samples. medianMs is the -1 " +
+            '"not measured" sentinel, NOT a latency -- comparing it against a ceiling would ' +
+            'report a run that measured nothing as being within budget (dispatch 000172, D1).')
+    }
+    $median = [int](Get-BenchProp $Stats 'medianMs')
+    if ($median -lt 0) {
+        throw ("INCONSISTENT STATS for '" + $Label + "': count=" + $count + ' but medianMs=' +
+            $median + '. A counted sample set cannot have a negative median.')
+    }
+    return $median
+}
+
+function Format-BenchStatValue {
+    # Render an aggregate for a HUMAN report. The -1 sentinel means "not measured" and must never
+    # be printed as though it were a latency (dispatch 000172, D1 -- the display half).
+    param($Stats, [string]$Field)
+    if ($null -eq $Stats -or [int](Get-BenchProp $Stats 'count') -le 0) { return 'n/a (0 samples)' }
+    return [string](Get-BenchProp $Stats $Field)
 }
 
 # --- the 000061 closed-loop re-check turn (dispatch 000127, N1.5) -----------

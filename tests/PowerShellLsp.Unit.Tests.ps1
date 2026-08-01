@@ -2033,6 +2033,27 @@ Describe 'Format-FormattingSuggestionBlock -- the suggest-not-rewrite surface (d
 $script:AllPs1 = Get-ChildItem (Split-Path -Parent $PSScriptRoot) -Recurse -Filter *.ps1 -File
 
 Describe 'Shipped PowerShell is ASCII-clean and parses' {
+    # SELECTED-COUNT FLOOR (dispatch 000172). Without it, a broken root path or a -Filter typo
+    # makes $script:AllPs1 empty, the two -ForEach blocks below expand to ZERO cases, and the whole
+    # Describe reads as a pass while asserting nothing. That is the vacuous-match class: the floor
+    # is what makes "every shipped .ps1 parses" a claim rather than a shape.
+    #
+    # THE COUNT IS CAPTURED VIA -ForEach, ON PURPOSE. $script:AllPs1 is assigned at the top of this
+    # file, which runs in Pester's DISCOVERY pass only; by run phase it is $null, and reading it
+    # inside an It body yields @($null) -- a one-element array, which sails past a "greater than 0"
+    # floor and reports 1 against a real 146. (It did exactly that on the first full-suite run of
+    # 000172, which is the argument for running the suite locally before pushing.) -ForEach is
+    # evaluated at DISCOVERY time, where the variable is live, so this measures the SAME
+    # enumeration that feeds the two data-driven blocks below rather than a re-derived one.
+    It 'SELECTED-COUNT FLOOR: the enumeration actually walked the tree' -ForEach @(
+        @{ SelectedCount = @($script:AllPs1).Count }
+    ) {
+        $SelectedCount | Should -BeGreaterThan 0
+        $SelectedCount | Should -BeGreaterThan 100 -Because (
+            'the shipped tree carries well over a hundred .ps1 files (148 at dispatch 000172); a ' +
+            'count that collapses below this means the enumeration broke, not that the repo shrank')
+    }
+
     It '<_.Name> contains no bytes greater than 127' -ForEach $script:AllPs1 {
         $bad = @([System.IO.File]::ReadAllBytes($_.FullName) | Where-Object { $_ -gt 127 })
         $bad.Count | Should -Be 0

@@ -58,11 +58,63 @@ is a stated trust commitment. No knob is added, removed, renamed, or re-defaulte
   spans every version ever installed, so it inherits rules that no longer ship; the ledger now
   reports BOTH denominators side by side -- total, and current rule surface -- and filters neither,
   so no previously published figure changes value.
-- **Four diagnostic-corpus fixtures for shapes the analyzer had never been exercised against:** two
-  clean DSC samples (a `Configuration`/`Node` block and a class-based `[DscResource()]`), a
-  known-bad DSC sample proving the analyzer descends into DSC resource property script blocks, and
-  a binary-module manifest stub proving `ManifestConsistency` degrades to silence rather than
-  reporting every declared cmdlet as an orphan. None vendors any third-party source.
+- **Two diagnostic-corpus fixtures for shapes the analyzer had never been exercised against:** a
+  clean class-based `[DscResource()]` sample, and a binary-module manifest stub proving
+  `ManifestConsistency` degrades to silence rather than reporting every declared cmdlet as an
+  orphan. Neither vendors any third-party source. (Two further DSC fixtures were authored and then
+  withdrawn -- see *the DSC `Configuration` shape* under Fixed.)
+- **`tests/bench/Invoke-QuiescenceProbe.ps1`** and its library `Quiescence.Common.ps1` -- the
+  host-quiescence instrument that gates whether a measured latency is publishable at all. Committed
+  rather than rebuilt per measurement session, and report-only: it prints both excluded process
+  trees in full, and changes nothing.
+
+### Fixed
+
+- **The efficacy ledger's row-shape guard now expects seven columns, and still rejects an eighth.**
+  It asserted the five pre-lifecycle columns and went red on all four CI legs the moment
+  `fixed_next_turn_rate` and `persistence_rate` shipped -- the guard working, not failing. It is
+  re-baselined and renamed, with an adversarial control that plants an eighth column and proves the
+  same assertion still fires, so the repair could not quietly turn a guard into a rubber stamp.
+- **The DSC `Configuration` shape is UNREACHABLE in this corpus, and its two fixtures are
+  withdrawn.** `Configuration` is a dynamic keyword the parser can only bind when
+  PSDesiredStateConfiguration is discoverable. Measured on both hosts: it parses with zero errors
+  under Windows PowerShell 5.1 *and* pwsh 7 on Windows, and fails with three parse errors on Linux
+  and macOS, where DSC does not exist. The discriminator is the PLATFORM, not the host -- which is
+  why those fixtures were green on both Windows CI legs and red on the other two. A corpus sample
+  must derive identically on every scoring leg or the published false-positive and true-positive
+  denominators become platform-dependent, so a Windows-only fixture is worse than an absent one.
+  Recorded as a corpus limit in `tests/corpus/Corpus.Common.ps1`, not engineered around. Clean
+  samples move 51 -> 50 and known-bad 37 -> 36 (both were 49 and 36 before this entry's work).
+- **A benchmark threshold assertion can no longer pass on a run that measured nothing.**
+  `Get-BenchStats` returns `medianMs = -1` for an empty sample set, and `-1` compared cleanly under
+  every ceiling -- so a benchmark that produced zero samples reported as comfortably within budget.
+  Both the cold-start and warm-path thresholds now read their median through a count floor that
+  throws on an empty set, making the comparison unreachable rather than merely accompanied by a
+  separate assertion. An unmeasured aggregate also renders as `n/a (0 samples)` instead of `-1 ms`.
+- **The benchmark's cold-start poller survives a mid-write read of the session file.** It read and
+  dotted into that file every 25 ms while the daemon was writing it; a torn read threw on
+  `ConvertFrom-Json`, and a read that landed after the object was written but before `state` was
+  threw under `Set-StrictMode -Version Latest`. Either aborted the whole run. The read is guarded
+  and degrades to a not-yet-ready miss; the existing poll loop remains the only retry budget.
+- **The corpus snapshot generator is genuinely idempotent, and now proves it.** It documented
+  itself as a clean no-op against an unchanged tool and was not: `ConvertTo-Json` indents with
+  `[Environment]::NewLine`, so snapshots carried CRLF on Windows and LF elsewhere, and single- and
+  multi-finding snapshots used two different indentations. A re-run rewrote exactly 17
+  content-identical files. The serializer is now byte-deterministic and LF-only on every host, one
+  shape for one finding and for many, and "unchanged" is decided by canonical content rather than
+  by bytes so cosmetic drift never triggers a write. The docstring claim is a test that runs the
+  write path twice over every committed snapshot and compares hashes, with an adversarial control
+  proving a CRLF-writing generator fails it.
+- **Every efficacy-ledger readout carries the instant it was measured.** The capture logs are
+  append-only and live, so 120, 124 and 126 real occurrences were three correct readings of the
+  same growing log at three different times -- and nothing on the page said so. The readout now
+  stamps the instant the logs were READ, in UTC, labelled as a measurement rather than a render
+  time, with the read window beside it.
+- **The quiescence gate excludes its own apparatus dynamically.** The exclusion was resolved once
+  at probe start, so every process the agent spawned mid-probe had no ancestry in that snapshot and
+  scored as foreign load. Both excluded process trees are now re-resolved for every sample, each
+  observed process classified by its real ancestry at scoring time, and both pid sets are printed
+  in full. The 0.15-core threshold is unchanged.
 
 ### Notes
 
@@ -73,6 +125,11 @@ is a stated trust commitment. No knob is added, removed, renamed, or re-defaulte
   the `keepLastN` sweep already trims, with no new sweep code. Worst-case growth is one record per
   rule in the active surface per turn (53 under `base`, 15 under `pses-default`); a turn with no
   lifecycle event writes nothing at all.
+- **Snapshots committed before the determinism fix keep their original line endings.** 47 of them
+  carry Windows CRLF. They are content-correct, the corpus test compares canonical content rather
+  than bytes, and each converges to the deterministic LF form the next time its findings genuinely
+  change. Normalizing all 47 now would itself be the cosmetic churn the fix exists to prevent, so
+  the residue is recorded rather than swept.
 
 ## [1.28.1] - 2026-07-31
 PATCH: **the front door, corrected.** Six documentation and manifest-prose fixes to the surface a

@@ -45,6 +45,35 @@ function Get-CorpusPaths {
     }
 }
 
+<#
+KNOWN CORPUS LIMIT -- the DSC `Configuration` shape is UNREACHABLE here (dispatch 000172).
+
+Dispatch 000171 leg 3 added three DSC fixtures. Two used the `Configuration` KEYWORD and were
+removed by 000172; clean-dsc-class-resource.ps1 stays, because [DscResource()] is an ATTRIBUTE on
+a class and parses anywhere.
+
+MEASURED, on both hosts, rather than assumed (000172 leg 2):
+
+    fixture                             WPS 5.1 (Win)   pwsh 7.6.3 (Win)   pwsh (ubuntu/macOS CI)
+    clean-dsc-configuration.ps1         0 errors        0 errors           3 errors
+    PSAvoidUsingCmdletAliases.dsc.ps1   0 errors        0 errors           3 errors
+    clean-dsc-class-resource.ps1        0 errors        0 errors           0 errors
+
+The discriminator is the PLATFORM, not the host. `Configuration` is a dynamic keyword the parser
+can only bind when PSDesiredStateConfiguration is discoverable. On Windows it is discoverable from
+BOTH hosts -- pwsh 7 finds the inbox Windows PowerShell module through its compatibility entries in
+$env:PSModulePath, and `Get-Command Configuration` there resolves to a Function sourced from
+PSDesiredStateConfiguration. On Linux and macOS there is no DSC at all, so the parser cannot bind
+the keyword and the file yields parse errors.
+
+That is why the two removed fixtures were RED on ubuntu-pwsh and macos-pwsh but GREEN on BOTH
+Windows legs -- a 2-of-4 split, not the 4-of-4 a pwsh-vs-5.1 story would predict.
+
+A corpus sample must derive IDENTICALLY on every scoring leg, or the published false-positive and
+true-positive denominators become platform-dependent. A Windows-only fixture is therefore worse
+than an absent one. Covering the `Configuration` shape needs a second, Windows-only execution host
+for the corpus -- a design change, deliberately NOT chartered in 000172. Recorded, not solved.
+#>
 function Get-CorpusSampleSpec {
     # Enumerate every corpus sample as a flat spec the generator and the test both
     # iterate. Category drives only the expected/<category>/ subdir and the human
@@ -283,17 +312,75 @@ function Format-CorpusSnapshotJson {
     # (human-reviewable). Forces an array even for zero or one finding (PS 5.1
     # ConvertTo-Json unwraps a single-element array). Storage only -- the test compares
     # via Get-CorpusCanonicalString, not by JSON string equality.
+    #
+    # DETERMINISTIC BY CONSTRUCTION (dispatch 000172, D3). The previous implementation was
+    # HOST-DEPENDENT in two ways, and a re-run of the generator on a different host than the one
+    # that committed a snapshot rewrote it with no content change at all -- measured at exactly
+    # 17 files while working 000172, which is how 17 unrelated snapshots churned during 000171:
+    #
+    #   1. LINE ENDINGS. ConvertTo-Json -Depth N indents with [Environment]::NewLine, so it emits
+    #      CRLF on Windows and LF on Linux/macOS. The generator then appended a hard "`n", so a
+    #      Windows-written snapshot was a MIXED file (CRLF body, LF final byte).
+    #   2. INDENTATION. The one-finding case wrapped a bare object in literal brackets, so its
+    #      fields sat at 2 spaces and the object braces at column 0, while the multi-finding case
+    #      produced a real array with the object braces at 2 and its fields at 4. Two shapes for
+    #      what is the same document structure.
+    #
+    # Both are removed here: every object is serialized on its own, its endings normalized to LF,
+    # and it is indented into the array by hand. One shape for one finding and for many, byte
+    # identical on every host.
     param([object[]]$Findings)
     $arr = @($Findings | Where-Object { $null -ne $_ })
     if ($arr.Count -eq 0) { return '[]' }
-    $objs = @($arr | ForEach-Object {
-            [ordered]@{
+    $items = @($arr | ForEach-Object {
+            $obj = [ordered]@{
                 ruleId = [string]$_.ruleId; source = [string]$_.source; severity = [string]$_.severity
                 line = [int]$_.line; col = [int]$_.col; message = [string]$_.message
             }
+            $json = ($obj | ConvertTo-Json -Depth 5) -replace "`r`n", "`n"
+            (@($json -split "`n") | ForEach-Object { '  ' + $_ }) -join "`n"
         })
-    if ($objs.Count -eq 1) { return ('[' + ($objs[0] | ConvertTo-Json -Depth 5) + ']') }
-    return ($objs | ConvertTo-Json -Depth 5)
+    return ("[`n" + ($items -join ",`n") + "`n]")
+}
+
+function Get-CorpusSnapshotText {
+    # The EXACT text of a committed snapshot file: the rendered JSON plus its single trailing
+    # newline. One definition, so the generator and its idempotence test cannot disagree about
+    # what "the file contents" means.
+    param([object[]]$Findings)
+    return ((Format-CorpusSnapshotJson -Findings $Findings) + "`n")
+}
+
+function Test-CorpusSnapshotCurrent {
+    # Does the committed file already record EXACTLY these findings? Compared by CANONICAL
+    # CONTENT (Get-CorpusCanonicalString), NOT by bytes (dispatch 000172, D3).
+    #
+    # WHY CONTENT AND NOT BYTES: the corpus test asserts equality through
+    # Get-CorpusCanonicalString, so a snapshot's byte form is genuinely not load-bearing -- only
+    # the finding tuples are. A byte comparison therefore rewrites files whose MEANING is
+    # unchanged the moment the serializer or the host differs, which is exactly the churn that
+    # buried a real 000171 diff under 17 cosmetic ones. Content comparison makes "a re-run
+    # against an unchanged tool changes no snapshot bytes" true rather than aspirational.
+    #
+    # KNOWN RESIDUE, recorded rather than papered over: snapshots committed BEFORE this fix keep
+    # whatever endings their authoring host produced (47 carry Windows CRLF, measured at 000172).
+    # They are content-correct and the corpus test passes on them; each converges to the
+    # deterministic LF form the next time its CONTENT genuinely changes. Normalizing all of them
+    # now would itself be the 47-file churn this function exists to prevent.
+    param([string]$Path, [object[]]$Findings)
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    $committed = Import-CorpusSnapshot -Path $Path
+    return ((Get-CorpusCanonicalString -Findings $committed) -ceq (Get-CorpusCanonicalString -Findings $Findings))
+}
+
+function Write-CorpusSnapshotFile {
+    # Write a snapshot file: UTF-8 without BOM, LF endings, exactly Get-CorpusSnapshotText.
+    # The ONE write path, so the idempotence test exercises what the generator actually runs.
+    param([string]$Path, [object[]]$Findings)
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, (Get-CorpusSnapshotText -Findings $Findings), $enc)
 }
 
 function Import-CorpusSnapshot {

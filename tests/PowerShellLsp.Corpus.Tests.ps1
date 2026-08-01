@@ -303,3 +303,143 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
         }
     }
 }
+
+# ===========================================================================
+# D3 -- the snapshot generator's IDEMPOTENCE, as a test rather than a docstring
+# (dispatch 000172).
+#
+# Update-CorpusSnapshots.ps1 has always DOCUMENTED itself as idempotent -- "a re-run against an
+# unchanged tool is a clean no-op (no snapshot bytes change)" -- and that was FALSE. During
+# dispatch 000171 a re-run rewrote 17 unrelated snapshots with different line endings and
+# different indentation, no content change in any of them, and it was caught only because the
+# blast radius happened to be pinned at both ends. A contract asserted only in prose is how 17
+# files churn silently, so it is asserted here instead.
+#
+# NO DAEMON. The defect lived entirely in serialization and the changed/unchanged decision, not
+# in derivation, so these tests drive the real shipped write path over the COMMITTED finding sets
+# and need no PSES. That makes them fast, unskippable, and able to cover every snapshot rather
+# than only the ones a daemon run happens to reach.
+# ===========================================================================
+
+Describe 'Corpus snapshot generator is IDEMPOTENT (dispatch 000172, D3)' {
+
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'corpus/Corpus.Common.ps1')
+        $script:IdemSpecs = @(Get-CorpusSampleSpec | Where-Object { Test-Path -LiteralPath $_.ExpectedPath })
+        $script:IdemRoot = Join-Path $TestDrive ('idem-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:IdemRoot | Out-Null
+
+        function script:Get-IdemHash {
+            param([string]$Path)
+            return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+        }
+    }
+
+    It 'SELECTED-COUNT FLOOR: there are committed snapshots to test' {
+        # Without this the two -ForEach-free loops below would iterate an empty list and the whole
+        # Describe would read as a pass while asserting nothing.
+        @($script:IdemSpecs).Count | Should -BeGreaterThan 0
+        @($script:IdemSpecs).Count | Should -BeGreaterThan 100 -Because (
+            'the corpus carries 121 snapshots at dispatch 000172; a collapse below this floor ' +
+            'means the enumeration broke, not that the corpus shrank')
+    }
+
+    It 'RUN TWICE: writing every snapshot twice produces byte-identical files' {
+        # The literal contract: run the generator's write path twice against an unchanged tree and
+        # assert zero byte changes, across EVERY snapshot -- compared by SHA-256, not by content.
+        $checked = 0
+        foreach ($spec in $script:IdemSpecs) {
+            $findings = Import-CorpusSnapshot -Path $spec.ExpectedPath
+            $tmp = Join-Path $script:IdemRoot ($spec.ScratchName + '.json')
+
+            Write-CorpusSnapshotFile -Path $tmp -Findings $findings
+            $hash1 = Get-IdemHash -Path $tmp
+            Write-CorpusSnapshotFile -Path $tmp -Findings $findings
+            $hash2 = Get-IdemHash -Path $tmp
+
+            $hash2 | Should -BeExactly $hash1 -Because "$($spec.Label) must serialize to the same bytes twice"
+            $checked++
+        }
+        $checked | Should -Be @($script:IdemSpecs).Count
+    }
+
+    It 'HOST-INDEPENDENT: every written snapshot is LF-only, never CRLF' {
+        # The root cause. ConvertTo-Json indents with [Environment]::NewLine, so the old formatter
+        # emitted CRLF on Windows and LF elsewhere and a snapshot written on one host churned on
+        # the other. This is the assertion the adversarial control below must be able to fail.
+        $checked = 0
+        foreach ($spec in $script:IdemSpecs) {
+            $findings = Import-CorpusSnapshot -Path $spec.ExpectedPath
+            $text = Get-CorpusSnapshotText -Findings $findings
+            $text | Should -Not -Match "`r" -Because "$($spec.Label) must serialize with LF endings on every host"
+            $checked++
+        }
+        $checked | Should -BeGreaterThan 0
+    }
+
+    It 'ADVERSARIAL: a generator that writes CRLF FAILS that same assertion' {
+        # Demonstrating the failure once, as required -- otherwise "the test would catch a CRLF
+        # generator" is itself an unproven prose claim. Same assertion, CRLF-writing formatter.
+        $findings = @([pscustomobject]@{
+                ruleId = 'PSUseApprovedVerbs'; source = 'PSScriptAnalyzer'; severity = 'Warning'
+                line = 1; col = 1; message = 'adversarial control'
+            })
+        $good = Get-CorpusSnapshotText -Findings $findings
+        $crlf = $good -replace "`n", "`r`n"        # the pre-fix, [Environment]::NewLine behavior
+
+        $good | Should -Not -Match "`r"                                   # the real one passes
+        { $crlf | Should -Not -Match "`r" } | Should -Throw               # the CRLF one FAILS
+    }
+
+    It 'ONE SHAPE: a single finding indents exactly like one of many' {
+        # The other half of D3. The old formatter wrapped a lone object in literal brackets, so a
+        # one-finding snapshot indented its fields at 2 and its braces at 0, while a two-finding
+        # snapshot used 4 and 2. Same document structure, two renderings, and a corpus sample that
+        # crossed from one finding to two churned its whole file for no content reason.
+        $one = @([pscustomobject]@{ ruleId = 'R1'; source = 'PSScriptAnalyzer'; severity = 'Warning'; line = 1; col = 2; message = 'm1' })
+        $two = @($one[0], [pscustomobject]@{ ruleId = 'R2'; source = 'PSScriptAnalyzer'; severity = 'Warning'; line = 3; col = 4; message = 'm2' })
+
+        $oneLines = @((Format-CorpusSnapshotJson -Findings $one) -split "`n")
+        $twoLines = @((Format-CorpusSnapshotJson -Findings $two) -split "`n")
+
+        $oneLines[0] | Should -BeExactly '['
+        $oneLines[1] | Should -BeExactly '  {'
+        $oneLines[-1] | Should -BeExactly ']'
+        $twoLines[0] | Should -BeExactly '['
+        $twoLines[1] | Should -BeExactly '  {'
+        $twoLines[-1] | Should -BeExactly ']'
+        # The first object renders IDENTICALLY whether or not a second one follows it.
+        (($oneLines[1..7]) -join "`n") | Should -BeExactly (($twoLines[1..7]) -join "`n")
+    }
+
+    It 'ROUND-TRIPS: the deterministic rendering still parses back to the same findings' {
+        # A formatter that is deterministic but wrong would pass everything above. This closes it:
+        # every committed snapshot re-serializes and re-imports to the same canonical content.
+        $checked = 0
+        foreach ($spec in $script:IdemSpecs) {
+            $findings = Import-CorpusSnapshot -Path $spec.ExpectedPath
+            $tmp = Join-Path $script:IdemRoot ($spec.ScratchName + '.rt.json')
+            Write-CorpusSnapshotFile -Path $tmp -Findings $findings
+            $reread = Import-CorpusSnapshot -Path $tmp
+            (Get-CorpusCanonicalString -Findings $reread) |
+                Should -BeExactly (Get-CorpusCanonicalString -Findings $findings) -Because "$($spec.Label) must survive a write/read round trip"
+            $checked++
+        }
+        $checked | Should -BeGreaterThan 0
+    }
+
+    It 'NO CHURN: a re-run leaves every committed snapshot alone, cosmetics and all' {
+        # THE REGRESSION TEST FOR THE 17-FILE INCIDENT. Every committed snapshot -- including the
+        # 47 that carry pre-fix Windows CRLF -- must be judged CURRENT against its own findings,
+        # so the generator writes nothing. Under the old byte comparison this was false for 17 of
+        # them, measured while working 000172.
+        $stale = @()
+        foreach ($spec in $script:IdemSpecs) {
+            $findings = Import-CorpusSnapshot -Path $spec.ExpectedPath
+            if (-not (Test-CorpusSnapshotCurrent -Path $spec.ExpectedPath -Findings $findings)) {
+                $stale += $spec.Label
+            }
+        }
+        $stale -join ', ' | Should -BeExactly '' -Because 'a re-run against an unchanged tool must rewrite NOTHING'
+    }
+}

@@ -103,6 +103,14 @@ Describe 'rule-efficacy-ledger -- hand-counted per-rule aggregation over a fixtu
     #   PSAvoidUsingCmdletAliases  verdict_distribution false-positive=1
 
     BeforeAll {
+        # The FROZEN ledger row shape, declared ONCE so the guard and its RED control cannot drift
+        # apart: a control that compared against its own copy of the list would keep passing even
+        # if the guard were relaxed, which is exactly the failure mode it exists to prevent.
+        $script:LedgerRowColumns = @(
+            'ruleId', 'fired_count', 'distinct_shapes', 'source_split', 'verdict_distribution',
+            'fixed_next_turn_rate', 'persistence_rate'
+        )
+
         $script:FxDir = Join-Path $TestDrive ('ledger-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         $script:FxLog = Join-Path $script:FxDir 'diagnostics.jsonl'
         $script:FxAnn = Join-Path $script:FxDir 'annotations.jsonl'
@@ -135,15 +143,33 @@ Describe 'rule-efficacy-ledger -- hand-counted per-rule aggregation over a fixtu
             Should -Be @('PSAvoidUsingCmdletAliases', 'PSUseApprovedVerbs')
     }
 
-    It 'carries EXACTLY the four reader-side columns -- no cleared-derived column leaked in' {
-        # The two survey columns that need persistence the plugin does not have
-        # (fixed_next_turn_rate / persistence_rate) must be structurally absent, not zero-filled:
-        # a zero would read as "measured and found to be none", which would be a fabricated fact.
+    It 'carries EXACTLY the seven shipped columns -- the row shape is frozen, in order' {
+        # The row shape is a FROZEN contract, asserted as an exact ORDERED set. Until dispatch
+        # 000171 leg 2 the ledger carried five columns and this guard asserted that
+        # fixed_next_turn_rate / persistence_rate were structurally ABSENT, because the plugin had
+        # no persistence to derive them from and a zero would have read as "measured and found to
+        # be none" -- a fabricated fact. 000171 shipped the sibling lifecycle log, so those two
+        # columns are now DERIVED and present, and each carries a state ('absent' / 'no-events' /
+        # 'ok') precisely so an unmeasured rate STILL never renders as 0.
+        #
+        # The guard did its job when that landed: it went RED on all four CI legs because nobody
+        # told it about the design change. Updating it is therefore a re-baseline, NOT a
+        # relaxation -- the RED control immediately below proves an eighth column still fires it.
         $names = @($script:FxRows['PSUseApprovedVerbs'].PSObject.Properties.Name |
                 Where-Object { -not $_.StartsWith('_') })
-        $names | Should -Be @('ruleId', 'fired_count', 'distinct_shapes', 'source_split', 'verdict_distribution')
-        $names | Should -Not -Contain 'fixed_next_turn_rate'
-        $names | Should -Not -Contain 'persistence_rate'
+        $names | Should -Be $script:LedgerRowColumns
+    }
+
+    It 'RED control: an EIGHTH column FAILS that same guard -- it is a guard, not a rubber stamp' {
+        # Proof the re-baselined assertion still REJECTS an unannounced column. This runs the
+        # IDENTICAL comparison the guard above runs, over the same real row with one extra
+        # property planted on it, and asserts it throws. If the guard above were ever weakened to
+        # a subset test or a -Contain check, this control would stop throwing and go RED itself.
+        $planted = $script:FxRows['PSUseApprovedVerbs'] | Select-Object *
+        Add-Member -InputObject $planted -MemberType NoteProperty -Name 'leaked_eighth_column' -Value 1
+        $names = @($planted.PSObject.Properties.Name | Where-Object { -not $_.StartsWith('_') })
+        $names | Should -Contain 'leaked_eighth_column'   # the plant really is there
+        { $names | Should -Be $script:LedgerRowColumns } | Should -Throw
     }
 
     It 'fired_count matches the hand count, per rule' {
@@ -492,6 +518,88 @@ Describe 'rule-efficacy-ledger -- review-dogfood.ps1 stays contract-unchanged' {
         $text | Should -Match 'powershell-lsp dogfood review'
         $text | Should -Match 'by source'
         $text | Should -Not -Match 'facts only, no scores'
+    }
+}
+
+Describe 'rule-efficacy-ledger -- every readout carries its MEASUREMENT instant (000172 leg 6)' {
+    # WHY THIS EXISTS: the capture logs are append-only and LIVE. 000170 reported 120 real
+    # occurrences, 000171 reported 124 early in its session and 126 later, and all three are
+    # correct readings of the same growing log at three different instants. Unstamped, they read
+    # as a contradiction. The stamp is what makes a pasted figure re-derivable.
+
+    BeforeAll {
+        $script:StampDir = Join-Path $TestDrive ('stamp-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:StampLog = Join-Path $script:StampDir 'diagnostics.jsonl'
+        $script:StampAnn = Join-Path $script:StampDir 'annotations.jsonl'
+        Write-Utf8NoBom -Path $script:StampLog -Lines @(
+            (New-CaptureLine -RuleId 'PSUseApprovedVerbs' -File $script:FileOther -Hash 's1')
+            (New-CaptureLine -RuleId 'PSAvoidUsingCmdletAliases' -File $script:FileOther -Hash 's2')
+        )
+        Write-Utf8NoBom -Path $script:StampAnn -Lines @((New-AnnotationLine -Hash 's1' -Verdict 'useful'))
+    }
+
+    It 'stamps the read with a parseable UTC instant and a read-window duration' {
+        $before = [datetime]::UtcNow.AddSeconds(-5)
+        $read = Read-RuleLedgerInput -LogPaths @($script:StampLog) -AnnotationsPath $script:StampAnn
+        $after = [datetime]::UtcNow.AddSeconds(5)
+
+        $read.MeasuredAtUtc | Should -Not -BeNullOrEmpty
+        $parsed = [datetime]::Parse($read.MeasuredAtUtc, [cultureinfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind)
+        $parsed.Kind | Should -Be ([System.DateTimeKind]::Utc) -Because 'a stamp without a zone is not an instant'
+        ($parsed -gt $before -and $parsed -lt $after) | Should -BeTrue -Because 'the stamp must be the real read instant'
+        [int]$read.ReadWindowMs | Should -BeGreaterOrEqual 0
+    }
+
+    It 'PROOF: two readouts of the SAME UNCHANGED log carry DIFFERENT stamps' {
+        # The load-bearing assertion for leg 6: the stamp tracks WHEN THE READ HAPPENED, so two
+        # reads separated in time differ even though the underlying log is byte-identical
+        # throughout. A stamp derived from the log's own mtime, or hardcoded, would fail this.
+        $hashBefore = (Get-FileHash -LiteralPath $script:StampLog -Algorithm SHA256).Hash
+
+        $r1 = Read-RuleLedgerInput -LogPaths @($script:StampLog) -AnnotationsPath $script:StampAnn
+        Start-Sleep -Milliseconds 50
+        $r2 = Read-RuleLedgerInput -LogPaths @($script:StampLog) -AnnotationsPath $script:StampAnn
+
+        $hashAfter = (Get-FileHash -LiteralPath $script:StampLog -Algorithm SHA256).Hash
+        $hashAfter | Should -BeExactly $hashBefore -Because 'the log must be UNCHANGED between the two reads'
+
+        $r2.MeasuredAtUtc | Should -Not -BeExactly $r1.MeasuredAtUtc
+        ([datetime]::Parse($r2.MeasuredAtUtc, [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)) |
+            Should -BeGreaterThan ([datetime]::Parse($r1.MeasuredAtUtc, [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind))
+
+        # and the counts are identical, which is what makes the differing stamps meaningful
+        @($r2.Occurrences).Count | Should -Be @($r1.Occurrences).Count
+    }
+
+    It 'RENDERS the stamp in the readout, labelled as a READ instant and not a render time' {
+        $read = Read-RuleLedgerInput -LogPaths @($script:StampLog) -AnnotationsPath $script:StampAnn
+        $ledger = Get-RuleEfficacyLedger -Occurrences @($read.Occurrences) -Annotations $read.Annotations
+        $sources = [pscustomobject]@{ Discovery = 'test'; VersionDirs = @() }
+        $text = Format-RuleEfficacyLedger -Ledger $ledger -Sources $sources -LedgerInput $read
+
+        $text | Should -Match 'measured at: '
+        $text | Should -Match ([regex]::Escape($read.MeasuredAtUtc))
+        $text | Should -Match 'the instant the capture logs were READ'
+        $text | Should -Match 'NOT a render time'
+        $text | Should -Match 'APPEND-ONLY and LIVE'
+    }
+
+    It 'the RENDERED stamp differs between two renders over the same unchanged log' {
+        # End-to-end: it is the pasted READOUT that has to carry the vintage, not just the object.
+        $sources = [pscustomobject]@{ Discovery = 'test'; VersionDirs = @() }
+        $render = {
+            $rd = Read-RuleLedgerInput -LogPaths @($script:StampLog) -AnnotationsPath $script:StampAnn
+            $lg = Get-RuleEfficacyLedger -Occurrences @($rd.Occurrences) -Annotations $rd.Annotations
+            Format-RuleEfficacyLedger -Ledger $lg -Sources $sources -LedgerInput $rd
+        }
+        $t1 = & $render
+        Start-Sleep -Milliseconds 50
+        $t2 = & $render
+        $t1 | Should -Not -BeExactly $t2 -Because 'the readout must carry its own vintage'
+        # ...and the ONLY difference is the stamp line: the facts did not move.
+        $strip = { param($t) (@($t -split "`r?`n") | Where-Object { $_ -notmatch 'measured at: ' -and $_ -notmatch 'ms window' }) -join "`n" }
+        (& $strip $t1) | Should -BeExactly (& $strip $t2)
     }
 }
 

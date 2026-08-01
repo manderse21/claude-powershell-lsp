@@ -293,12 +293,23 @@ function Read-RuleLedgerInput {
     # hash. In practice hashes do not collide across version dirs unless the same shape really was
     # captured twice, in which case either verdict is the same judgment of the same shape.
     #
-    # Returns { Occurrences[]; Annotations{}; LogsRead[]; NonEmptyLogs[] }. Read-only.
+    # Returns { Occurrences[]; Annotations{}; LogsRead[]; NonEmptyLogs[]; MeasuredAtUtc;
+    # ReadWindowMs }. Read-only.
     param([string[]] $LogPaths, [string] $AnnotationsPath = '')
     $occ = New-Object System.Collections.Generic.List[object]
     $ann = @{}
     $read = New-Object System.Collections.Generic.List[object]
     $nonEmpty = New-Object System.Collections.Generic.List[string]
+
+    # THE MEASUREMENT INSTANT (dispatch 000172, leg 6). Stamped HERE -- immediately before the
+    # first log file is opened -- and NOT at render time, because the capture logs are append-only
+    # and LIVE: the installed plugin's hook writes to them while a session works, including the
+    # session running this reader. Dispatch 000171 measured 124 real occurrences early in its own
+    # session and 126 later, and 000170 reported 120; all three are CORRECT and differently aged.
+    # An unstamped readout makes correct readings look like a contradiction, so every figure this
+    # tool prints now carries the instant it was true.
+    $measuredAtUtc = [datetime]::UtcNow
+    $readSw = [System.Diagnostics.Stopwatch]::StartNew()
 
     foreach ($lp in @($LogPaths)) {
         if ([string]::IsNullOrWhiteSpace($lp)) { continue }
@@ -331,11 +342,16 @@ function Read-RuleLedgerInput {
     # NOTE: no unary comma on these properties. The comma operator is needed when RETURNING an array
     # from a function (it stops the pipeline unrolling it); assigning one to a property needs no
     # protection, and a comma there would nest the array one level deep instead.
+    $readSw.Stop()
     return [pscustomobject]@{
-        Occurrences  = @($occ.ToArray())
-        Annotations  = $ann
-        LogsRead     = @($read.ToArray())
-        NonEmptyLogs = @($nonEmpty.ToArray())
+        Occurrences   = @($occ.ToArray())
+        Annotations   = $ann
+        LogsRead      = @($read.ToArray())
+        NonEmptyLogs  = @($nonEmpty.ToArray())
+        # Round-trip ('o') format: UTC, 100-ns resolution. Two reads of the same logs seconds
+        # apart therefore carry visibly different stamps, which is the whole point.
+        MeasuredAtUtc = $measuredAtUtc.ToString('o')
+        ReadWindowMs  = [int]$readSw.ElapsedMilliseconds
     }
 }
 
@@ -645,6 +661,18 @@ function Format-RuleEfficacyLedger {
     param($Ledger, $Sources, $LedgerInput, $Lifecycle, $Attribution)
     $lines = @()
     $lines += 'powershell-lsp per-rule diagnostic efficacy ledger (Arc A slice A1) -- facts only, no scores'
+    # THE VINTAGE OF EVERY FIGURE BELOW (dispatch 000172, leg 6). Stated in the output itself so a
+    # pasted readout carries the instant it was true. This is a MEASUREMENT instant -- when the
+    # capture logs were READ -- not when this text was formatted, and it says so, because the
+    # difference is the whole reason two correct readings of a live log can disagree.
+    if ($null -ne $LedgerInput -and $LedgerInput.PSObject.Properties['MeasuredAtUtc']) {
+        $lines += ('  measured at: ' + [string]$LedgerInput.MeasuredAtUtc + '  (UTC, ISO-8601)')
+        $lines += ('    ^ the instant the capture logs were READ, over a ' + [string]$LedgerInput.ReadWindowMs +
+            ' ms window -- NOT a render time.')
+        $lines += '    The capture logs are APPEND-ONLY and LIVE: the installed plugin appends to them while'
+        $lines += '    a session works, including this one. A later read of the SAME logs will legitimately'
+        $lines += '    report larger figures. Quote this stamp with any number taken from this readout.'
+    }
     $lines += ('  discovery: ' + [string]$Sources.Discovery)
 
     $dirs = @($Sources.VersionDirs)

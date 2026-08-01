@@ -15,7 +15,11 @@
 #         pwsh -NoProfile -File tests/corpus/Update-CorpusSnapshots.ps1 -WhatIf   # derive + print, write nothing
 #
 # Idempotent: a re-run against an unchanged tool is a clean no-op (no snapshot bytes
-# change). ASCII-only.
+# change). That claim is no longer prose only -- it is asserted by
+# 'Corpus snapshot generator is IDEMPOTENT' in tests/PowerShellLsp.Corpus.Tests.ps1, which runs
+# the write path twice over every committed snapshot and compares hashes. It used to be prose
+# only, and it was FALSE: 17 snapshots churned during dispatch 000171 (see D3 in
+# tests/corpus/Corpus.Common.ps1). ASCII-only.
 
 [CmdletBinding(SupportsShouldProcess = $true)]
 param()
@@ -60,20 +64,20 @@ try {
         $findings = Invoke-CorpusDerivation -ScriptsDir $scriptsDir -DataRoot $dataRoot -SessionId $sid `
             -ScratchDir $scratchDir -ScratchName $spec.ScratchName -Bytes ([System.IO.File]::ReadAllBytes($spec.SourcePath)) `
             -ModuleDir $modDir
-        $json = Format-CorpusSnapshotJson -Findings $findings
         $ruleSummary = if (@($findings).Count -eq 0) { '(no findings)' } else { (@($findings) | ForEach-Object { $_.ruleId } | Where-Object { $_ } | Select-Object -Unique) -join ', ' }
         $expectedDir = Split-Path -Parent $spec.ExpectedPath
         New-Item -ItemType Directory -Force -Path $expectedDir | Out-Null
 
-        $old = if (Test-Path -LiteralPath $spec.ExpectedPath) { Get-Content -LiteralPath $spec.ExpectedPath -Raw } else { $null }
-        $newText = $json + "`n"
-        if ($old -eq $newText) {
+        # UNCHANGED is decided by CANONICAL CONTENT, not by bytes (dispatch 000172, D3). A byte
+        # comparison rewrote 17 content-identical snapshots whenever the authoring host's
+        # ConvertTo-Json line endings differed from this one's -- cosmetic churn that buried the
+        # real diff. See Test-CorpusSnapshotCurrent for the full reasoning and the recorded residue.
+        if (Test-CorpusSnapshotCurrent -Path $spec.ExpectedPath -Findings $findings) {
             $unchanged++
             Write-Host ('  = ' + $spec.Label.PadRight(48) + ' ' + @($findings).Count + ' finding(s): ' + $ruleSummary)
         } else {
             if ($PSCmdlet.ShouldProcess($spec.ExpectedPath, 'write snapshot')) {
-                $enc = New-Object System.Text.UTF8Encoding($false)
-                [System.IO.File]::WriteAllText($spec.ExpectedPath, $newText, $enc)
+                Write-CorpusSnapshotFile -Path $spec.ExpectedPath -Findings $findings
             }
             $changed++
             Write-Host ('  * ' + $spec.Label.PadRight(48) + ' ' + @($findings).Count + ' finding(s): ' + $ruleSummary)
