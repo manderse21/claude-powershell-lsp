@@ -1569,3 +1569,224 @@ at the v1.28.0 tag rather than carried from the review):
   harmless if it does not, and it is unconditionally correct on the two surfaces this project does
   control, since `docs/configuration.md` states "The knobs, in manifest order" and the README table
   follows the same order.
+
+## 9. External technical review, round 3 (2026-07-31) -- adjudicated
+
+A third external technical review, scoring v1.28.x at 9.2, moved the bottleneck it names: not
+architecture and not documentation, but **evidence**. Its single unanswered question is whether
+Claude actually writes better PowerShell because this plugin exists. Dispatch 000170 responded by
+**measuring and deriving rather than arguing**, and this entry is the ratified register. Section 8
+(round 2, same day) is unchanged and still stands; this section continues its token vocabulary.
+
+Two things this train did NOT do, deliberately: it built nothing, and it bumped no version. The
+build is chartered from what 000170 found, not from what the review claims.
+
+**Recorded measure-first -- ratified as questions, deliberately not as builds:**
+
+`review-measure-first: per-profile-telemetry` (round-3 Priority 3) -- round 2 already recorded
+this, twice, as `review-measure-first: per-profile-latency` (P8) and
+`review-measure-first: per-profile-context-volume` (P7). A second, independent external observer
+asking for the same two numbers is the **second observation** that promotes them from question to
+work. 000170 leg 1 attempted the sweep and **BLOCKED on host quiescence** -- see the named block
+below. The promotion stands; the numbers do not exist yet.
+
+`review-measure-first: annotation-throughput-not-persistence` (000170 leg 2, NEW -- not a review
+item) -- of the four columns the shipped ledger derives, `verdict_distribution` has **never
+received a single input**: annotations measured 0 at both the 2026-07-23 and 2026-07-31 vintages.
+That column is empty for want of **human annotation**, not for want of persistence. Whether
+annotation throughput rather than persistence is the binding constraint on Arc A is recorded here
+as a question and resolved in neither direction.
+
+**Declined, each with its ratified one-line reason:**
+
+`review-declined: ab-experiment-without-preregistration` -- the review's most quotable suggestion,
+a fixed-percentage before/after claim, is a self-run, self-scored comparison of one's own tool
+against a nondeterministic model at whatever n a solo maintainer can afford. It is not chartered,
+and it must not be improvised. If it is ever built the pre-registration comes first and separately:
+corpus, rubric, sample size, who scores, and a written commitment to publish a null or negative
+result. A number produced before that document exists cannot be published whatever it says.
+
+`review-declined: whitepaper-now` -- written today it would restate `benchmarks.md`, `TRUST.md` and
+`ARCHITECTURE.md` at greater length, which is on the review's own list of things not to build. It
+becomes worth writing when legs 1 and 2 have produced numbers it can carry.
+
+`review-declined-as-EMPTY: vendor-module-corpus` (000170 leg 3) -- **declined on a different
+ground than the roadmap's**, and the difference matters. See the corrected disposition below.
+
+**Already planned, and not new:**
+
+`review-already-planned: arc-a-closed-loop` (round-3 Priority 1) -- the diagnostic efficacy ledger
+was already the ratified next arc. 000170 leg 2 located the gap precisely and states it more
+narrowly than the review does; see correction (b).
+
+`review-already-planned: feature-freeze` -- the review's top recommendation is to freeze feature
+development for a release or two. v1.28.1 was already a corrections-only PATCH train and this train
+builds nothing, so the freeze is in force rather than newly adopted.
+
+**Adopted, and chartered rather than built:**
+
+`review-adopted: corpus-authorable-shapes` (000170 leg 3) -- of the ten shapes the review names,
+three are reachable today with **zero third-party source vendored**, and one is already covered.
+The classification is derived from the fixture files, not from prose about them; it is recorded in
+the 000170 outbox and chartered into dispatch B.
+
+### The named block -- leg 1 produced NO numbers, and that is reported rather than papered over
+
+Leg 1's per-profile sweep is **BLOCKED**. Two successive quiescence gates failed on this host:
+
+- **Gate A v1** (absolute CPU, mean < 10 pct): FAIL at **mean 26.60 pct**. The gate itself was
+  defective -- it was calibrated against an idle box while the sweep requires an agent host to
+  drive it, so **the apparatus could not be excluded from its own measurement**. Unreachable by
+  construction.
+- **Gate A v2** (foreign load only, agent host and sweep tree excluded by process tree, mean
+  < 0.15 cores): FAIL at **mean 0.6294 cores**, max 1.5316, with browser processes still resident
+  at the same PIDs across both probes. Agent-host draw, reported separately as the stated
+  unavoidable constant: 0.577 cores mean.
+
+Both gates were **pre-committed in writing before sampling**, precisely so the verdict could not be
+judged after the fact, and the relaxation from v1 to v2 was Mike Andersen's single authorized
+change on stated reasoning. **No latency, cold-start or context-volume figure is published, and the
+ceiling verdict against the shipped 5000 ms `timeoutMs` default is recorded UNMET** -- it requires a
+p95 that does not exist. A wrong latency number is worse than none, because it would be published.
+
+What leg 1 DID establish, none of it timing-sensitive and all of it standing:
+
+- **The profile-effect guard PASSES and can go RED.** `Get-PluginProfileMap` re-derived live:
+  `safe` maps 0 knobs, `recommended` 5, `strict` 8. All three resolved twenty-knob sets are
+  pairwise distinct and every mapped knob moved. Handed three identical sets, the same check
+  **failed at exit 7** -- so its GREEN means something.
+- **The shipped warm fixture cannot measure context volume at all.**
+  `tests/bench/bench-fixture.ps1` is deliberately PSScriptAnalyzer-clean, so
+  `additionalContext` is **zero bytes under every profile**. Any future context-volume measurement
+  needs a findings-producing fixture; the existing harness cannot answer P7 as written.
+- **The harness needs no code change to be pointed at a profile.** `Invoke-BenchHook` seeds its
+  child environment from the parent, so `CLAUDE_PLUGIN_OPTION_profile` reaches every hook child.
+  `tests/bench/` is byte-identical to `origin/main` (verified by git object id), and leg 1 landed
+  **no commit at all**.
+
+### Correcting the round-3 review, derived from disk
+
+**(a) No rule was deleted, and no measurement recorded 100 pct false positives.** The review
+credits the project with deleting a rule after measuring a 100 pct false-positive rate. What disk
+says: **four** rules are EXCLUDED from the opt-in `base` ruleset by a named, comment-cited list
+(`$BaseRuleExclusions`, `scripts/regen-base-ruleset.ps1`), and `rulesets/base.psd1` carries **53**
+rules as a result. The recorded measurements are `PSReviewUnusedParameter` **~90 pct** (9 of 10),
+`PSUseSingularNouns` **0 true-issues of 35**, `PSUseShouldProcessForStateChangingFunctions` 4 of 4
+on the known-good oracle, and `PSUseOutputTypeCorrectly` 2 pedantic Information hits. **None is
+recorded as 100 pct.** All four still ship in the pinned PSScriptAnalyzer and still fire wherever a
+user's own settings select them; they are absent only from this plugin's generated `base` list, and
+`pses-default` is byte-for-byte unaffected because none is in the PSES 15-rule allow-list. The
+mechanism is a reversible one-line exclusion, not a deletion -- and the real story is the better one.
+
+**(b) The project knows considerably more than "it produced diagnostics", and the missing half is
+narrower than stated.** The shipped ledger already derives **four** columns -- `fired_count`,
+`distinct_shapes`, `source_split`, `verdict_distribution`. Two are deliberately absent,
+`fixed_next_turn_rate` and `persistence_rate`, and the reason is nameable: the closed-loop cleared
+signal **is computed** (`Get-FindingLifecycleDiff`) and **is not persisted per rule**. 000170 leg 2
+re-derived that rather than inheriting it, enumerating **10 write sites across 26 files** and
+RED-proving the absence by planting a persisted rule-keyed write, catching it, and reverting. Zero
+sites are both persisted and rule-keyed: the payload is ephemeral, the client prose is rule-keyed
+but not persisted, and the daemon's debug line is persisted but carries only counts and a path.
+The correction to the review is that this is a **narrow persistence gap, not an absence of
+measurement** -- and, per the measure-first item above, one of the four shipped columns is empty
+for a completely different reason.
+
+**(c) Per-profile telemetry is not a new recommendation.** Round 2's register already carried it
+under two tokens, `review-measure-first: per-profile-latency` (P8) and
+`review-measure-first: per-profile-context-volume` (P7). Round 3 restating it is the second
+independent observation, which is what promotes it -- but it is recorded as a promotion, not as a
+new idea, and the register says so.
+
+### The front-door intersection, re-derived at HEAD
+
+Round 3's "the product is finally approachable" finding rests on Install / Doctor / PICK A PROFILE.
+Re-derived at HEAD (v1.28.1, commit `dc5ddf6`) rather than carried from 000169's outbox: the
+manifest declares **twenty** `userConfig` knobs and **every one of them declares exactly
+`type`, `title`, `description`, `default`**. **No knob declares a `values` or an `enum` field.**
+The v1.28.1 CHANGELOG's "the panel reads Compatibility / Recommended / Comprehensive" therefore
+describes **description prose**, not a declared manifest shape. This remains an **open front-door
+item**: whether the `userConfig` schema even ACCEPTS a `values` field is **not locally derivable**,
+since no manifest schema is cached on this machine (000167). Recorded and chartered; the manifest
+and the CHANGELOG are untouched by this train.
+
+### Arc A accrual -- the load-bearing figure is the NET one
+
+**Genuine accrual moved from 16 occurrences / 13 shapes (dispatch 000148, measured 2026-07-23) to
+55 occurrences across 12 rules (dispatch 000170, measured 2026-07-31), net of a removed rung.**
+
+The gross figure is 120 occurrences / 47 shapes / 13 rules, and it must never be quoted alone.
+**65 of those 120 -- 54 pct -- are `ManifestConsistency` firing on the UNDER-DECLARED-EXPORT rung
+that dispatch 000162 REMOVED on 2026-07-29** as wrong by design, after measuring it at **911 hits,
+0 true positives, 100 pct false positive**. All 65 sit in the `1.27.1` cache partition, timestamped
+2026-07-25 20:42 to 21:13 -- a single 31-minute editing episode four days before the removal, 13
+functions re-fired five times across one module pair, which is why their `distinct_shapes` is only
+**2**. They are historical captures of a rung that no longer ships.
+
+The same attribution applies to the canonical-checkout figure, which is why it too is never quoted
+alone: **canonical-checkout moved 0 -> 69 gross, but 0 -> 4 net** of the removed rung. The
+000148 baseline of 16 contained no `ManifestConsistency` at all, so the net comparison is
+like-for-like.
+
+### The union-read denominator inherits rules that no longer ship
+
+**This is the most consequential thing 000170 leg 2 found, and it is not a footnote.**
+
+`scripts/rule-efficacy-ledger.ps1` unions every per-version cache log it discovers, deliberately, so
+that a plugin upgrade does not reset the denominator. The consequence, unnoticed until now: **the
+union permanently includes occurrences produced by rules and rungs that have since been removed,
+and no field in the capture record distinguishes them.** The record schema is
+`ts, file, line, col, ruleId, source, severity, message, snippet, hash, verdict` -- it carries no
+plugin version, no rule-surface version, and no rung identity. A removed rung is therefore
+indistinguishable from a live one at read time except by matching message prose, which is what
+000170 had to do by hand to attribute the 65.
+
+Every future efficacy figure inherits this. It is recorded here and **deliberately not decided**:
+whether the union should filter to the current rule surface, and what such a filter would do to
+historical comparability, goes to the dispatch-B charter as a named open question.
+
+### The vendor-corpus ask is EMPTY, not blocked -- correcting this project's own rationale
+
+The roadmap places a real-world vendor corpus (Azure, Exchange, Active Directory, SharePoint, AWS,
+PowerCLI) behind Arc B's licensing and provenance audit. **The factual half holds and the rationale
+does not.** Covering those shapes as the review means them does require third-party source. But
+Arc B is **not** what blocks them, and clearing Arc B would **not** unblock them:
+
+- `pses-default`, the DEFAULT surface, reflected live from the vendored
+  `Microsoft.PowerShell.EditorServices.dll` v4.6.0 (`AnalysisService.s_defaultRules`): exactly
+  **15** rules, **0** matching `PSUseCompatible*`. All fifteen are generic PowerShell hygiene.
+  **Not one is module- or vendor-aware.**
+- `base`, the opt-in surface: **53** rules, **0** matching `PSUseCompatible*`, excluded **by
+  construction** in `scripts/regen-base-ruleset.ps1` and documented there as always dropped because
+  the family needs target-profile configuration.
+- `PSUseCompatibleCommands` and `PSUseCompatibleTypes` are recorded unshipped.
+- Corroborated empirically: a fixture calling `Get-AzVM`, `Get-Mailbox`, `Get-ADUser`,
+  `Get-PnPTenantSite`, `Get-S3Bucket` and `Get-VMHost`, with **none** of those six modules
+  installed, scanned to `"results": []` and exit 0.
+
+**Vendoring vendor module source would therefore exercise NO SHIPPED RULE.** The ask is empty, not
+gated. A vendor corpus becomes worth acquiring only AFTER a vendor-aware rule ships, which is a
+MINOR rule-surface decision on its own evidence -- not a licensing one.
+
+### Two Strategic-Claude corrections, recorded as corrections
+
+This train corrected its own instructions twice, and both are recorded as corrections rather than
+absorbed into the work:
+
+- **The 000170 inbox's Arc B rationale for the vendor corpus is wrong** (the section immediately
+  above). It was authored by Strategic-Claude and ratified before the rule surface was derived.
+- **A mid-train Strategic-Claude amendment attributed the 65 `ManifestConsistency` captures to
+  rungs 1 and 3, "the rungs 000162 left standing".** They are on the REMOVED rung 2. The
+  attribution was inferred rather than derived; the message text settles it, since rung 1 emits the
+  inverse wording and rung 3 emits an alias message. Corrected above.
+
+The standing method holds: derive from disk, and record what disk says even when it contradicts the
+instruction that asked for the derivation.
+
+### A per-rule lifecycle persistence change classifies MINOR -- ruled, not open
+
+Ruled by Mike Andersen before execution: **a per-rule lifecycle persistence change is MINOR, not
+PATCH.** `dogfood/diagnostics.jsonl` is read by two shipped consumers,
+`scripts/rule-efficacy-ledger.ps1` and `scripts/lib/dogfood-reader.psm1`, so its format is a
+**consumer contract** even though no user hand-edits it, and the 1.x semver freeze is a stated
+trust commitment. The ruling is carried into the dispatch-B charter as **pre-made**, not as an open
+question. This train did not build the persistence change.
