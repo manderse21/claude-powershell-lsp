@@ -135,6 +135,16 @@ $script:lastHash  = @{}   # uri -> content hash string
 # a PSES respawn (Reset-PsesState) -- it tracks findings about the file, not PSES lifecycle state,
 # so a respawn must not wipe the closed-loop memory.
 $script:lastSurfaced = @{}
+# Per-rule lifecycle persistence (dispatch 000171 leg 2). ONE stamp per daemon process, so the
+# sibling log is one file per daemon run and therefore a member of a rolling family that
+# session-start.ps1's existing Invoke-LogSweep already trims to keepLastN. Computed once here
+# rather than per turn: a per-turn stamp would create a new file every edit and defeat the sweep's
+# grouping entirely.
+$script:lifecycleStamp = [DateTime]::Now.ToString('yyyyMMdd-HHmmss-fff')
+# Latched so a persistently unwritable log warns ONCE per daemon, not once per edit. The
+# requirement is that a telemetry failure surfaces exactly one warning and never becomes a
+# diagnostics failure -- a warning per keystroke would be its own defect.
+$script:lifecycleWarned = $false
 $script:respSeen  = @{}   # request id -> $true once a response arrives
 $script:respResult = @{}  # request id -> response result body (for codeAction)
 $script:reqId     = 1000  # monotonic id for daemon-initiated requests (codeAction)
@@ -1090,6 +1100,36 @@ function Add-LifecycleSignal {
     if ($stillArr.Count -gt 0) { $Payload['stillPresent'] = $stillArr }
     if ($clearedArr.Count -gt 0 -or $stillArr.Count -gt 0) {
         Write-DLog ('lifecycle: ' + $clearedArr.Count + ' cleared, ' + $stillArr.Count + ' still-present for ' + $full)
+    }
+
+    # --- PER-RULE PERSISTENCE (dispatch 000171 leg 2) --------------------------------------
+    # Everything above this point has already happened: $Payload carries its diagnostics and its
+    # lifecycle fields, and the in-memory map is updated. This block is PURE TELEMETRY and sits
+    # in its OWN try/catch so that a failure here cannot reach the caller's catch, cannot alter
+    # $Payload, and cannot change what the user is told about their code.
+    #
+    # The write is per RULE, not per finding, and lands in a SIBLING log -- the capture record
+    # dogfood/diagnostics.jsonl is not touched, so both shipped readers keep their contract.
+    try {
+        $ledgerKeys = $null
+        if ($diff.Contains('LedgerKeys')) { $ledgerKeys = $diff['LedgerKeys'] }
+        $records = @(New-LifecycleLedgerRecords -LedgerKeys $ledgerKeys -File $full `
+                -Timestamp (Get-Date -Format 'o') -ScopeApplied $ScopeApplied)
+        if ($records.Count -gt 0) {
+            $ok = Add-LifecycleLedgerEntries -Records $records -Stamp $script:lifecycleStamp
+            if (-not $ok -and -not $script:lifecycleWarned) {
+                $script:lifecycleWarned = $true
+                Write-DLog ('lifecycle ledger: WARNING -- the per-rule lifecycle log could not be written; ' +
+                    'lifecycle telemetry is degraded for this daemon. Diagnostics are UNAFFECTED and were ' +
+                    'delivered normally. This warning is emitted once per daemon.')
+            }
+        }
+    } catch {
+        if (-not $script:lifecycleWarned) {
+            $script:lifecycleWarned = $true
+            Write-DLog ('lifecycle ledger: WARNING -- threw while persisting per-rule lifecycle records (' +
+                $_.Exception.Message + '). Diagnostics are UNAFFECTED. Once per daemon.')
+        }
     }
 }
 

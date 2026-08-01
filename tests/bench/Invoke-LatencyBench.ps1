@@ -173,8 +173,10 @@ Write-Host '================ LATENCY BENCH (dispatch 000127, N1.5) =============
 Write-Host ('host             : ' + $result.host + ' / ' + $platform + ' / ' + $result.processorCount + ' logical cores')
 Write-Host ('iterations       : ' + $Iterations + ' per path (>= 30 floor: ' + $result.meetsSampleFloor + ')')
 Write-Host ('cold start       : EXCLUDED (daemon warm + primed before timing)')
-Write-Host ('(a) warm hook    : median ' + $warmStats.medianMs + ' ms   p95 ' + $warmStats.p95Ms + ' ms   [min ' + $warmStats.minMs + ' / max ' + $warmStats.maxMs + ']')
-Write-Host ('(b) closed loop  : median ' + $loopStats.medianMs + ' ms   p95 ' + $loopStats.p95Ms + ' ms   [min ' + $loopStats.minMs + ' / max ' + $loopStats.maxMs + ']')
+# Rendered through Format-BenchStatValue so a zero-sample run prints "n/a (0 samples)" rather
+# than the -1 sentinel, which reads as a real (and absurdly fast) latency (dispatch 000172, D1).
+Write-Host ('(a) warm hook    : median ' + (Format-BenchStatValue $warmStats 'medianMs') + ' ms   p95 ' + (Format-BenchStatValue $warmStats 'p95Ms') + ' ms   [min ' + (Format-BenchStatValue $warmStats 'minMs') + ' / max ' + (Format-BenchStatValue $warmStats 'maxMs') + ']')
+Write-Host ('(b) closed loop  : median ' + (Format-BenchStatValue $loopStats 'medianMs') + ' ms   p95 ' + (Format-BenchStatValue $loopStats 'p95Ms') + ' ms   [min ' + (Format-BenchStatValue $loopStats 'minMs') + ' / max ' + (Format-BenchStatValue $loopStats 'maxMs') + ']')
 Write-Host ('    loop fired   : ' + $loopFiredCount + '/' + $loopSamples.Count + ' (' + $loopFiredRate + '%)')
 if ($loopFiredCount -eq 0) {
     Write-Host '    WARNING: the lifecycle signal NEVER fired -- (b) is a plain warm turn, not a closed-loop turn. Do not publish it as one.'

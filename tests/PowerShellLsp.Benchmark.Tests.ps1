@@ -132,8 +132,14 @@ Describe 'Performance benchmark (dispatch 000040)' -Skip:$script:SkipBench {
     }
 
     It 'cold-start median is within the regression threshold' {
-        $script:ColdStats.medianMs | Should -BeLessThan $script:ColdThresholdMs `
-            -Because ("cold-start median " + $script:ColdStats.medianMs + "ms must stay under the generous " + $script:ColdThresholdMs + "ms guard")
+        # The median is fetched THROUGH the selected-count floor (dispatch 000172, D1). Reading
+        # $script:ColdStats.medianMs directly here would let a zero-sample run satisfy the
+        # ceiling with the -1 "nothing was measured" sentinel; Get-BenchMeasuredMedian throws
+        # first, so this comparison is UNREACHABLE unless something was actually measured.
+        $median = Get-BenchMeasuredMedian -Stats $script:ColdStats -Label 'cold-start'
+        $median | Should -BeLessThan $script:ColdThresholdMs `
+            -Because ("cold-start median " + $median + "ms over " + $script:ColdStats.count +
+                " sample(s) must stay under the generous " + $script:ColdThresholdMs + "ms guard")
     }
 
     It 'measured a warm-path latency (the edit round-trip ran)' {
@@ -141,8 +147,11 @@ Describe 'Performance benchmark (dispatch 000040)' -Skip:$script:SkipBench {
     }
 
     It 'warm-path median is within the regression threshold' {
-        $script:WarmStats.medianMs | Should -BeLessThan $script:WarmThresholdMs `
-            -Because ("warm-path median " + $script:WarmStats.medianMs + "ms must stay under the generous " + $script:WarmThresholdMs + "ms guard")
+        # Same floor on the warm measurement -- see the cold-start note above.
+        $median = Get-BenchMeasuredMedian -Stats $script:WarmStats -Label 'warm-path'
+        $median | Should -BeLessThan $script:WarmThresholdMs `
+            -Because ("warm-path median " + $median + "ms over " + $script:WarmStats.count +
+                " sample(s) must stay under the generous " + $script:WarmThresholdMs + "ms guard")
     }
 
     It 'emitted a structured benchmark results file' {
@@ -152,5 +161,279 @@ Describe 'Performance benchmark (dispatch 000040)' -Skip:$script:SkipBench {
         $obj.schema | Should -BeExactly 'powershell-lsp-benchmark/1'
         $obj.coldStart.medianMs | Should -BeGreaterThan 0
         $obj.warmPath.medianMs | Should -BeGreaterThan 0
+    }
+}
+
+# ===========================================================================
+# Bench-harness defects banked by dispatch 000171 and closed by 000172.
+#
+# These are PURE-FUNCTION tests over tests/bench/Benchmark.Common.ps1 -- no daemon, no pipe, no
+# platform gate -- so they run on all four legs in ~milliseconds and cannot be skipped along with
+# the daemon-backed benchmark above. Each one REPRODUCES the original defect before asserting the
+# repair, because a fix whose bug was never reproduced is a guess.
+# ===========================================================================
+
+Describe 'D1 -- a threshold assertion is UNREACHABLE on an empty sample set (dispatch 000172)' {
+
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'bench/Benchmark.Common.ps1')
+        # The exact thresholds the shipped benchmark guards with.
+        $script:D1Cold = 20000
+        $script:D1Warm = 9000
+        $script:D1Empty = Get-BenchStats -Values @()
+        $script:D1Real = Get-BenchStats -Values @(1200, 1400, 1300)
+    }
+
+    It 'REPRO: an empty sample set yields count 0 and the -1 "not measured" sentinel' {
+        [int]$script:D1Empty.count | Should -Be 0
+        [int]$script:D1Empty.medianMs | Should -Be -1
+        [int]$script:D1Empty.p95Ms | Should -Be -1
+    }
+
+    It 'REPRO: the OLD bare comparison PASSES on that empty set -- the vacuous match, on BOTH measurements' {
+        # This is the defect as it shipped. `-1 -lt 20000` is true, so a run that measured NOTHING
+        # reported as comfortably within budget. Asserting -Not -Throw here is asserting that the
+        # bug is real: if PowerShell ever stopped accepting this, the fix below would be moot.
+        { $script:D1Empty.medianMs | Should -BeLessThan $script:D1Cold } | Should -Not -Throw
+        { $script:D1Empty.medianMs | Should -BeLessThan $script:D1Warm } | Should -Not -Throw
+    }
+
+    It 'REPRO: swapping the sentinel for $null would NOT have fixed it -- fork 2 refuted' {
+        # Recorded because it was a pre-authorized option: PowerShell coerces $null to 0 in a
+        # numeric comparison, so a $null aggregate passes a ceiling exactly as -1 does. The cure
+        # has to be a count floor, not a different sentinel value.
+        ($null -lt $script:D1Cold) | Should -BeTrue
+        { $null | Should -BeLessThan $script:D1Cold } | Should -Not -Throw
+    }
+
+    It 'FIXED: the floor THROWS on the empty set, for BOTH the cold and the warm measurement' {
+        { Get-BenchMeasuredMedian -Stats $script:D1Empty -Label 'cold-start' } |
+            Should -Throw -ExpectedMessage '*NOTHING WAS MEASURED*cold-start*'
+        { Get-BenchMeasuredMedian -Stats $script:D1Empty -Label 'warm-path' } |
+            Should -Throw -ExpectedMessage '*NOTHING WAS MEASURED*warm-path*'
+    }
+
+    It 'FIXED: a null stats object throws rather than comparing' {
+        { Get-BenchMeasuredMedian -Stats $null -Label 'cold-start' } |
+            Should -Throw -ExpectedMessage '*NOTHING WAS MEASURED*'
+    }
+
+    It 'FIXED: an INCONSISTENT stats object (counted, but negative median) throws' {
+        # Defends the floor itself: a stats-shaped object that claims samples but carries the
+        # sentinel must not slip a -1 through the gate.
+        $bogus = [ordered]@{ samples = @(); count = 3; minMs = -1; medianMs = -1; p95Ms = -1; maxMs = -1 }
+        { Get-BenchMeasuredMedian -Stats $bogus -Label 'cold-start' } |
+            Should -Throw -ExpectedMessage '*INCONSISTENT STATS*'
+    }
+
+    It 'GREEN: a real sample set passes THROUGH the floor and still compares normally' {
+        # The floor must not become a wall -- a genuine measurement still reaches the threshold.
+        $median = Get-BenchMeasuredMedian -Stats $script:D1Real -Label 'cold-start'
+        $median | Should -Be 1300
+        $median | Should -BeLessThan $script:D1Cold
+    }
+
+    It 'DISPLAY: an unmeasured aggregate renders as "n/a", never as a -1 latency' {
+        (Format-BenchStatValue $script:D1Empty 'medianMs') | Should -BeExactly 'n/a (0 samples)'
+        (Format-BenchStatValue $script:D1Real 'medianMs') | Should -BeExactly '1300'
+    }
+}
+
+Describe 'D2 -- the cold-start session-file read survives a MID-WRITE read (dispatch 000172)' {
+
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'bench/Benchmark.Common.ps1')
+
+        # Fault-injection fixtures: the shapes a poller actually sees while the daemon writes.
+        $script:D2Dir = Join-Path $TestDrive ('d2-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:D2Dir | Out-Null
+        $enc = New-Object System.Text.UTF8Encoding($false)
+        $script:D2Whole = Join-Path $script:D2Dir 'whole.json'
+        $script:D2Torn = Join-Path $script:D2Dir 'torn.json'
+        $script:D2Empty = Join-Path $script:D2Dir 'empty.json'
+        $script:D2NoState = Join-Path $script:D2Dir 'nostate.json'
+        $script:D2Absent = Join-Path $script:D2Dir 'absent.json'
+        [System.IO.File]::WriteAllText($script:D2Whole, '{"state":"ready","pid":4242,"psesPid":4243}', $enc)
+        # A genuinely TRUNCATED write -- the first 18 bytes of the whole file, as a 25ms poll
+        # landing mid-flush would see.
+        [System.IO.File]::WriteAllText($script:D2Torn, '{"state":"rea', $enc)
+        [System.IO.File]::WriteAllText($script:D2Empty, '', $enc)
+        # Parses cleanly, but the daemon has not written `state` yet.
+        [System.IO.File]::WriteAllText($script:D2NoState, '{"pid":4242}', $enc)
+    }
+
+    It 'REPRO: the OLD unguarded read THROWS on a TORN file (ConvertFrom-Json cannot parse it)' {
+        {
+            & {
+                Set-StrictMode -Version Latest
+                $info = Get-Content -LiteralPath $script:D2Torn -Raw | ConvertFrom-Json
+                if ($info.state -eq 'ready') { 'ready' }
+            }
+        } | Should -Throw
+    }
+
+    It 'REPRO: the OLD unguarded read THROWS under StrictMode when `state` is not written YET' {
+        # This one parses -- so it is NOT a JSON failure. It is the StrictMode property access:
+        # three separate callers set Set-StrictMode -Version Latest, and a dotted read of an
+        # absent member is a TERMINATING error under it.
+        {
+            & {
+                Set-StrictMode -Version Latest
+                $info = Get-Content -LiteralPath $script:D2NoState -Raw | ConvertFrom-Json
+                if ($info.state -eq 'ready') { 'ready' }
+            }
+        } | Should -Throw
+    }
+
+    It 'FIXED: the guarded reader degrades to a MISS on a <Case> file, and never throws' -ForEach @(
+        @{ Case = 'torn'; File = 'torn.json' }
+        @{ Case = 'empty'; File = 'empty.json' }
+        @{ Case = 'no-state-yet'; File = 'nostate.json' }
+        @{ Case = 'absent'; File = 'absent.json' }
+    ) {
+        $path = Join-Path $script:D2Dir $File
+        { & { Set-StrictMode -Version Latest; Read-BenchSessionFile -Path $path } | Out-Null } | Should -Not -Throw
+        $probe = & { Set-StrictMode -Version Latest; Read-BenchSessionFile -Path $path }
+        $probe | Should -Not -BeNullOrEmpty
+        $probe.State | Should -BeNullOrEmpty -Because "the $Case shape is a not-yet-ready MISS, not a state"
+    }
+
+    It 'FIXED: a WHOLE file still reads ready, with its pids -- the guard did not blind the reader' {
+        $probe = & { Set-StrictMode -Version Latest; Read-BenchSessionFile -Path $script:D2Whole }
+        $probe.State | Should -BeExactly 'ready'
+        [int](Get-BenchProp $probe.Info 'pid') | Should -Be 4242
+        [int](Get-BenchProp $probe.Info 'psesPid') | Should -Be 4243
+    }
+
+    It 'FIXED: the teardown pid read is guarded too -- an absent pid yields $null, not a throw' {
+        # Measure-BenchColdStartMs may carry the LAST partial parse into teardown, so neither
+        # pid property is guaranteed to exist on it.
+        $partial = & { Set-StrictMode -Version Latest; Read-BenchSessionFile -Path $script:D2NoState }
+        { & { Set-StrictMode -Version Latest; Get-BenchProp $partial.Info 'psesPid' } } | Should -Not -Throw
+        (Get-BenchProp $partial.Info 'psesPid') | Should -BeNullOrEmpty
+        [int](Get-BenchProp $partial.Info 'pid') | Should -Be 4242
+    }
+}
+
+Describe 'D4 -- the quiescence gate excludes its own apparatus DYNAMICALLY (dispatch 000172)' {
+    # THE DEFECT, in one sentence: dispatch 000171 resolved the excluded process trees ONCE at
+    # probe start, so every process the agent spawned DURING the probe had no ancestry in the
+    # snapshot and scored as FOREIGN load -- 0.064 of the 0.3363 cores it measured at point P1,
+    # against a 0.15-core threshold. The gate failed partly on its own apparatus's noise.
+    #
+    # The proof below is the one the charter asks for: spawn a child from the excluded tree DURING
+    # a probe, and show the dynamic resolver excludes it where the static one counts it foreign.
+
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'bench/Quiescence.Common.ps1')
+        $script:Q_Self = [int]$PID
+    }
+
+    It 'the process table is readable on this host (the exclusion needs ancestry)' {
+        # Floor: every assertion below is vacuous against an empty parent map, because a map with
+        # no entries excludes nothing but the roots and every claim about descendants is trivially
+        # true. Fail loud instead.
+        $map = Get-ProcessParentMap
+        $map.Count | Should -BeGreaterThan 0 -Because 'ancestry cannot be resolved without a process table'
+        $map.ContainsKey($script:Q_Self) | Should -BeTrue -Because 'this very process must appear in it'
+    }
+
+    It 'RED PROOF: a child spawned MID-PROBE is FOREIGN to the static set and EXCLUDED by the dynamic one' {
+        # STATIC: resolved before the child exists -- exactly what 000171 did, once, at probe start.
+        $staticExcl = Resolve-QuiescenceExclusion -AgentRootPid $script:Q_Self -ProbeRootPid $script:Q_Self
+        $staticPids = @($staticExcl.ExcludedPids)
+
+        $child = $null
+        try {
+            # Spawn a real child of THIS process, mid-probe, from inside the excluded tree.
+            $child = Start-Process -FilePath (Get-Process -Id $PID).Path `
+                -ArgumentList @('-NoLogo', '-NoProfile', '-Command', 'Start-Sleep -Seconds 20') `
+                -PassThru
+            $child | Should -Not -BeNullOrEmpty
+            $childPid = [int]$child.Id
+
+            # Give the OS a moment to publish the new process into the process table.
+            $seen = $false
+            for ($i = 0; $i -lt 40 -and -not $seen; $i++) {
+                if ((Get-ProcessParentMap).ContainsKey($childPid)) { $seen = $true; break }
+                Start-Sleep -Milliseconds 100
+            }
+            $seen | Should -BeTrue -Because 'the spawned child must reach the process table to be classifiable'
+
+            # DYNAMIC: re-resolved now, exactly as Measure-QuiescenceSample does per sample.
+            $dynamicExcl = Resolve-QuiescenceExclusion -AgentRootPid $script:Q_Self -ProbeRootPid $script:Q_Self
+            $dynamicPids = @($dynamicExcl.ExcludedPids)
+
+            # THE TWO HALVES OF THE PROOF.
+            $staticPids | Should -Not -Contain $childPid -Because (
+                'the static set was resolved before the child existed -- this is the 000171 defect, ' +
+                'and it is what made apparatus load score as foreign')
+            $dynamicPids | Should -Contain $childPid -Because (
+                're-resolving per sample classifies the child by its ANCESTRY, so a process spawned ' +
+                'mid-probe is correctly recognized as apparatus')
+
+            # BOTH EXCLUDED PID SETS, reported so the exclusion stays auditable.
+            Write-Host ('    [D4] agent tree pids (dynamic, ' + @($dynamicExcl.AgentPids).Count + '): ' +
+                ((@($dynamicExcl.AgentPids) | ForEach-Object { [string]$_ }) -join ' '))
+            Write-Host ('    [D4] probe tree pids (dynamic, ' + @($dynamicExcl.ProbePids).Count + '): ' +
+                ((@($dynamicExcl.ProbePids) | ForEach-Object { [string]$_ }) -join ' '))
+            Write-Host ('    [D4] static set size ' + $staticPids.Count + ' -> dynamic set size ' +
+                $dynamicPids.Count + '; mid-probe child ' + $childPid + ' is in the dynamic set only.')
+        } finally {
+            if ($null -ne $child) { Stop-Process -Id $child.Id -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'a GRANDCHILD is excluded too -- ancestry is walked, not just direct parentage' {
+        # The 000171 defect would also have missed a process two levels down. Walking ancestry
+        # rather than matching a parent id is what makes the whole subtree apparatus.
+        $map = Get-ProcessParentMap
+        $tree = @(Get-ProcessTreePids -RootPids @($script:Q_Self) -ParentMap $map)
+        # Synthesize a two-level descendant in the map: real spawning of a grandchild is timing
+        # dependent, while the CLASSIFIER is pure and can be exercised exactly.
+        $fakeChild = 999001; $fakeGrandchild = 999002
+        $map[$fakeChild] = $script:Q_Self
+        $map[$fakeGrandchild] = $fakeChild
+        $withKin = @(Get-ProcessTreePids -RootPids @($script:Q_Self) -ParentMap $map)
+
+        $tree | Should -Not -Contain $fakeGrandchild
+        $withKin | Should -Contain $fakeChild
+        $withKin | Should -Contain $fakeGrandchild -Because 'exclusion must cover the whole subtree'
+    }
+
+    It 'an UNRELATED process is NOT excluded -- the exclusion is not a blanket' {
+        # The control that keeps the fix honest. An exclusion that swallowed everything would pass
+        # every assertion above and make the gate unfailable, which is the 000170 failure mode in
+        # reverse. Something real must still be able to count as foreign.
+        $map = Get-ProcessParentMap
+        $map[999003] = 999004        # parented outside this tree entirely
+        $map[999004] = 1
+        $tree = @(Get-ProcessTreePids -RootPids @($script:Q_Self) -ParentMap $map)
+        $tree | Should -Not -Contain 999003
+        $tree | Should -Not -Contain 999004
+    }
+
+    It 'a SELF-PARENTED entry (a torn process table) terminates instead of spinning' {
+        $map = @{ 999005 = 999005 }
+        { Get-ProcessTreePids -RootPids @($script:Q_Self) -ParentMap $map | Out-Null } | Should -Not -Throw
+        @(Get-ProcessTreePids -RootPids @($script:Q_Self) -ParentMap $map) | Should -Not -Contain 999005
+    }
+
+    It 'the 0.15-core threshold is UNCHANGED by this train' {
+        # Pinned deliberately: 000171's measurements were taken against this value, and moving it
+        # would silently convert its failed gate into a passed one. 000172 fixes the apparatus and
+        # explicitly does NOT touch the bar.
+        Get-QuiescenceThresholdCores | Should -Be 0.15
+    }
+
+    It 'the probe is an INSTRUMENT, not a discovered test' {
+        # The committed-under-tests/ hazard, closed by the convention this directory already uses:
+        # Pester's default discovery matches *.Tests.ps1, so neither file is ever collected.
+        $benchDir = Join-Path $PSScriptRoot 'bench'
+        (Test-Path -LiteralPath (Join-Path $benchDir 'Invoke-QuiescenceProbe.ps1')) | Should -BeTrue
+        (Test-Path -LiteralPath (Join-Path $benchDir 'Quiescence.Common.ps1')) | Should -BeTrue
+        @(Get-ChildItem -LiteralPath $benchDir -Filter '*.Tests.ps1' -File).Count | Should -Be 0 -Because (
+            'tests/bench/ holds instruments only -- Invoke-LatencyBench.ps1 and Benchmark.Common.ps1 ' +
+            'already establish that convention, and the probe follows it')
     }
 }

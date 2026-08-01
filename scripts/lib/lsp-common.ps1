@@ -856,6 +856,156 @@ function Add-DiagnosticCaptureEntries {
     } catch { }
 }
 
+# --- per-rule lifecycle persistence (dispatch 000171 leg 2) ----------------
+# The closed-loop CLEARED / STILL-PRESENT signal is COMPUTED by Get-FindingLifecycleDiff and
+# emitted on the turn payload, but until now NOTHING persisted it PER RULE -- so the efficacy
+# ledger's fixed_next_turn_rate and persistence_rate columns could not be derived without
+# inventing data. Dispatch 000170 leg 2 enumerated the write sites and RED-proved the absence:
+# the payload is ephemeral, the client's prose is rule-keyed but not persisted, and the daemon's
+# debug line is persisted but carries only counts and a path.
+#
+# THIS LANDS IN A SIBLING LOG, NOT IN THE CAPTURE RECORD -- ruled before execution:
+#   * dogfood/diagnostics.jsonl stays BYTE-UNCHANGED in shape, so the consumer contract its two
+#     shipped readers (scripts/rule-efficacy-ledger.ps1, scripts/lib/dogfood-reader.psm1) depend
+#     on is untouched and no historical record needs migrating;
+#   * a defect in lifecycle persistence therefore cannot corrupt the capture log.
+#
+# JOIN KEY: the EXISTING shape hash. Add-DiagnosticCaptureEntries hashes (ruleId + offending
+# line) with Get-DiagnosticShapeHash; New-LifecycleFinding hashes the SAME material with the SAME
+# function. The two are identical BY CONSTRUCTION, so the join needs NO new field on the capture
+# record. (The hash material contains no line NUMBER, which is what makes it stable across turns
+# for the same finding -- the same property that lets the closed loop avoid reading a moved
+# finding as cleared.)
+#
+# FAIL OPEN, ALWAYS. This path is TELEMETRY. Any failure to resolve, open, write or flush
+# degrades to ONE warning in the daemon log and the diagnostic still reaches Claude Code
+# unchanged. A plugin that drops a diagnostic because a telemetry file was locked has inverted
+# its own purpose. Proven by fault injection, not by inspection.
+#
+# BOUNDED BY CONSTRUCTION. The file is lifecycle-<yyyyMMdd-HHmmss-fff>.jsonl in Get-LogDir, so it
+# is a member of a STAMPED ROLLING FAMILY that session-start.ps1's existing Invoke-LogSweep
+# already trims to the keepLastN newest -- ZERO new sweep code. Per-turn cardinality is bounded
+# by the active rule surface (53 under `base`, 15 under `pses-default`), because at most one
+# record per distinct ruleId is written per turn; a turn with no lifecycle event writes nothing.
+
+function Get-LifecycleLogPath {
+    # Resolve the per-rule lifecycle log. Precedence mirrors Get-DogfoodLogPath:
+    #   1. $env:POWERSHELL_LSP_LIFECYCLE_LOG -- explicit full-path override (test seam), verbatim.
+    #   2. <logDir>/lifecycle-<Stamp>.jsonl  -- the default. The STAMP is what makes this a member
+    #      of a rolling family Invoke-LogSweep already recognises (it collapses -\d{8}-\d{6}-\d{3}
+    #      to -STAMP and keeps the newest keepLastN per stem).
+    # Returns '' when neither resolves -- the caller then fails open and surfaces nothing.
+    param([string]$Stamp = '')
+    $override = $env:POWERSHELL_LSP_LIFECYCLE_LOG
+    if (-not [string]::IsNullOrWhiteSpace($override)) { return $override }
+    if ([string]::IsNullOrWhiteSpace($Stamp)) { return '' }
+    $dir = ''
+    try { $dir = Get-LogDir } catch { $dir = '' }
+    if ([string]::IsNullOrWhiteSpace($dir)) { return '' }
+    return (Join-Path $dir ('lifecycle-' + $Stamp + '.jsonl'))
+}
+
+function New-LifecycleLedgerRecords {
+    # PURE. Project one turn's lifecycle diff into ONE RECORD PER DISTINCT RULE ID.
+    #
+    # Per-rule, not per-finding, is what bounds the growth rate: the worst case is the size of the
+    # active rule surface, whatever the finding count. The shape-hash arrays are what let a reader
+    # join back to dogfood/diagnostics.jsonl without any change to that file.
+    #
+    # Returns @() when the turn produced no lifecycle event at all -- a clean edit costs zero bytes
+    # rather than an empty record.
+    param(
+        [object]$LedgerKeys,
+        [string]$File,
+        [string]$Timestamp,
+        [bool]$ScopeApplied
+    )
+    $out = New-Object System.Collections.ArrayList
+    if ($null -eq $LedgerKeys) { return @($out.ToArray()) }
+    $cleared = @()
+    $still = @()
+    try { $cleared = @($LedgerKeys['cleared'] | Where-Object { $null -ne $_ }) } catch { $cleared = @() }
+    try { $still = @($LedgerKeys['stillPresent'] | Where-Object { $null -ne $_ }) } catch { $still = @() }
+    if ($cleared.Count -eq 0 -and $still.Count -eq 0) { return @($out.ToArray()) }
+
+    # No nested helper function here, deliberately: a `function script:Foo` inside a dot-sourced
+    # library defines itself in the CALLER's script scope, which is the same leak class G1 in
+    # tests/PowerShellLsp.LibPurity.Tests.ps1 guards against for variables (dispatch 000156).
+    # The bucket init is inlined instead.
+    $byRule = [ordered]@{}
+    foreach ($c in $cleared) {
+        $rid = [string]$c.ruleId
+        if ([string]::IsNullOrWhiteSpace($rid)) { $rid = '(parser/no-rule)' }
+        if (-not $byRule.Contains($rid)) {
+            $byRule[$rid] = @{ cleared = (New-Object System.Collections.ArrayList)
+                still = (New-Object System.Collections.ArrayList); attemptsMax = 0; downgraded = $false }
+        }
+        [void]$byRule[$rid].cleared.Add([string]$c.hash)
+    }
+    foreach ($s in $still) {
+        $rid = [string]$s.ruleId
+        if ([string]::IsNullOrWhiteSpace($rid)) { $rid = '(parser/no-rule)' }
+        if (-not $byRule.Contains($rid)) {
+            $byRule[$rid] = @{ cleared = (New-Object System.Collections.ArrayList)
+                still = (New-Object System.Collections.ArrayList); attemptsMax = 0; downgraded = $false }
+        }
+        $b = $byRule[$rid]
+        [void]$b.still.Add([string]$s.hash)
+        $a = 0; try { $a = [int]$s.attempts } catch { $a = 0 }
+        if ($a -gt [int]$b.attemptsMax) { $b.attemptsMax = $a }
+        $d = $false; try { $d = [bool]$s.downgraded } catch { $d = $false }
+        if ($d) { $b.downgraded = $true }
+    }
+
+    # Sorted by ruleId -- a stable, magnitude-free order, matching the ledger's own S3.2 guardrail.
+    foreach ($rid in @($byRule.Keys | Sort-Object)) {
+        $b = $byRule[$rid]
+        [void]$out.Add([ordered]@{
+                schema             = 'powershell-lsp-lifecycle/1'
+                ts                 = [string]$Timestamp
+                file               = [string]$File
+                ruleId             = [string]$rid
+                cleared            = @($b.cleared).Count
+                stillPresent       = @($b.still).Count
+                clearedHashes      = @($b.cleared.ToArray())
+                stillPresentHashes = @($b.still.ToArray())
+                attemptsMax        = [int]$b.attemptsMax
+                downgraded         = [bool]$b.downgraded
+                scopeApplied       = [bool]$ScopeApplied
+            })
+    }
+    return @($out.ToArray())
+}
+
+function Add-LifecycleLedgerEntries {
+    # Append the per-rule lifecycle records as JSONL. FAIL-OPEN by contract: returns $true on a
+    # clean write and $false on ANY failure, and NEVER throws -- so the caller can surface exactly
+    # one warning and carry on. Writes nothing to stdout, so the diagnostics surface, its order,
+    # and the hook's exit code are byte-for-byte unchanged whether this succeeds, fails, or is
+    # absent. Same invisible-side-channel fence as Add-DiagnosticCaptureEntries.
+    #
+    # An empty record set is a SUCCESS that writes nothing (a clean turn is not a failure).
+    param([object[]]$Records, [string]$Stamp = '')
+    try {
+        $recs = @(@($Records) | Where-Object { $null -ne $_ })
+        if ($recs.Count -eq 0) { return $true }
+        $logPath = Get-LifecycleLogPath -Stamp $Stamp
+        if ([string]::IsNullOrWhiteSpace($logPath)) { return $false }
+        $dir = Split-Path -Parent $logPath
+        if (-not [string]::IsNullOrWhiteSpace($dir) -and -not (Test-Path -LiteralPath $dir)) {
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        }
+        $sb = New-Object System.Text.StringBuilder
+        foreach ($r in $recs) {
+            [void]$sb.Append(($r | ConvertTo-Json -Depth 5 -Compress))
+            [void]$sb.Append("`n")
+        }
+        $enc = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::AppendAllText($logPath, $sb.ToString(), $enc)
+        return $true
+    } catch { return $false }
+}
+
 # --- platform helpers (cross-platform forward-compat) ----------------------
 # Non-Windows branches below are AUTHORED but CI-verified later (this build runs
 # Windows only). They exist so the Windows-only calls are isolated and guarded.
@@ -3231,7 +3381,39 @@ function Get-FindingLifecycleDiff {
         # else: absent from full -> cleared (already reported) -> drop from memory
     }
 
-    return @{ Cleared = @($cleared); StillPresent = @($stillPresent); NewMap = $newMap }
+    # LedgerKeys (dispatch 000171 leg 2) -- ADDITIVE, and deliberately NOT part of the payload.
+    # Cleared/StillPresent carry {ruleId, line, message} and no hash, because the daemon payload
+    # never needed one. The per-rule lifecycle log DOES: the shape hash is its join key back to
+    # dogfood/diagnostics.jsonl. Rather than widen the two payload arrays (which the client
+    # renders) or re-derive the hashes at the call site (which would duplicate this function's
+    # own matching logic), the keys ride out alongside them.
+    #
+    # Cleared/StillPresent/NewMap are byte-identical to before, so Add-LifecycleSignal's payload
+    # and every existing test that asserts on them are unaffected.
+    $clearedKeys = New-Object System.Collections.ArrayList
+    foreach ($h in @($PriorMap.Keys)) {
+        $hk = [string]$h
+        if ($fullHashes.Contains($hk)) { continue }
+        [void]$clearedKeys.Add([pscustomobject]@{ hash = $hk; ruleId = [string]$PriorMap[$hk]['ruleId'] })
+    }
+    $stillKeys = New-Object System.Collections.ArrayList
+    foreach ($sp in @($stillPresent)) {
+        # Re-associate each emitted still-present entry with the surfaced finding it came from.
+        # $curSurf is this turn's surfaced set, already projected to {hash; ruleId; line; message},
+        # so the match is on identity of the emitted record, not a re-derivation of the hash.
+        foreach ($r in $curSurf) {
+            if ([string]$r.ruleId -eq [string]$sp.ruleId -and [int]$r.line -eq [int]$sp.line -and
+                [string]$r.message -eq [string]$sp.message) {
+                [void]$stillKeys.Add([pscustomobject]@{
+                    hash = [string]$r.hash; ruleId = [string]$r.ruleId
+                    attempts = [int]$sp.attempts; downgraded = [bool]$sp.downgraded })
+                break
+            }
+        }
+    }
+
+    return @{ Cleared = @($cleared); StillPresent = @($stillPresent); NewMap = $newMap
+        LedgerKeys = @{ cleared = @($clearedKeys.ToArray()); stillPresent = @($stillKeys.ToArray()) } }
 }
 
 # --- format-on-edit: suggest, never rewrite (dispatch 000059, PL-8) -----------
