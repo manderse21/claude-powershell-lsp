@@ -30,6 +30,8 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+
+## [1.29.0] - 2026-08-01
 MINOR: **the closed-loop signal is now persisted per rule, in a sibling log.** The
 cleared / still-present signal has always been *computed* (`Get-FindingLifecycleDiff`) and
 surfaced on the turn, but nothing persisted it keyed by rule -- so the efficacy ledger's
