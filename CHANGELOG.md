@@ -115,6 +115,25 @@ is a stated trust commitment. No knob is added, removed, renamed, or re-defaulte
   scored as foreign load. Both excluded process trees are now re-resolved for every sample, each
   observed process classified by its real ancestry at scoring time, and both pid sets are printed
   in full. The 0.15-core threshold is unchanged.
+- **The killed-at-cap flake-instrumentation assertion no longer compares two clocks at zero
+  margin.** It asserted that a killed-at-cap record's elapsed was at least the cap it names.
+  Elapsed is measured with a QPC `Stopwatch`; the wait it brackets is governed by the OS timer
+  inside `WaitForExit($CapMs)`, which promises to wait *at most* the interval and never at least
+  it. Measured over n=460 with no plugin code in the path, the QPC reading lands below the cap on
+  **both** hosts, and does so at **16.7% for the fresh-child-per-call wait shape the helper
+  actually uses** -- so this was never a .NET Framework quirk. The shipped assertion reproduced at
+  7 failures in 25 runs (28%) under Windows PowerShell 5.1. The verdict now comes from the
+  authoritative field -- the reason code, which is assigned only in the branch where the wait
+  expired without the child exiting -- and elapsed is bounded as an observation inside a two-sided
+  band at cap/2 and cap*4, roughly 82x and 170x the worst measured skew. The test is renamed, and
+  four committed controls prove it still rejects a skipped wait, a clean early exit, an overrun,
+  and any future narrowing of the band toward the cap.
+- **The corpus suite's selected-count floor is no longer blind to its own failure mode.** It read a
+  discovery-time `$script:` variable inside an `It` body, where it is `$null` -- and
+  `@($null).Count` is **one**, not zero, so the floor reported 1 against a real 121 and passed its
+  own greater-than-zero check while asserting nothing. It now captures the count through `-ForEach`
+  (evaluated at discovery, where the variable is live) and carries a real lower bound, with a
+  control proving it rejects both a genuinely empty enumeration and a run-phase read.
 
 ### Notes
 

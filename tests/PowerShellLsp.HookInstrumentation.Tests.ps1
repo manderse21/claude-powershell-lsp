@@ -79,6 +79,70 @@ BeforeAll {
         $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath
         return $stdoutTask.Result
     }
+
+    # --- the killed-at-cap OBSERVATION BAND (dispatch 000173, legs 1 + 3) ----------------------
+    #
+    # THE DEFECT THIS REPLACES: the assertion here used to be `ElapsedMs >= CapMs`. Invoke-HiHook
+    # above measures ElapsedMs with a QPC Stopwatch (line 66) while the wait it brackets is
+    # governed by the OS timer inside $p.WaitForExit($CapMs) (line 67). WaitForExit promises to
+    # wait AT MOST the interval, never at least it, so the QPC reading can legitimately land below
+    # the cap. Reproduced on this host: the shipped assertion failed 7 of 25 runs (28%) under
+    # Windows PowerShell 5.1, at elapsed values 1493-1499 ms against a 1500 ms cap.
+    #
+    # WHY A BAND AND NOT A BIGGER FLOOR. A cross-clock comparison is not cured by width alone --
+    # it is cured by putting the bound where clock disagreement cannot reach it. Measured skew
+    # (QPC elapsed minus nominal cap), n=460 across both hosts with no plugin code in the path:
+    # worst NEGATIVE excursion -5.678 ms this train, -9.1 ms in dispatch 000172; worst POSITIVE
+    # +26.53 ms. The edges below are therefore set two orders of magnitude outside that:
+    #
+    #   floor   = cap / 2  =  750 ms   ->   82x the worst observed negative skew (9.1 ms)
+    #   ceiling = cap * 4  = 6000 ms   ->  170x the worst observed positive skew (26.53 ms)
+    #
+    # At that distance the band cannot be crossed by skew; it can only be crossed by the wait not
+    # happening at all, or by it overrunning wildly. That is what makes it an observation check
+    # rather than a clock comparison. The band is TWO-SIDED deliberately: the floor catches a wait
+    # that was skipped, the ceiling catches one that ran far too long, and the ceiling costs
+    # nothing to carry. The VERDICT itself never depends on either edge -- see the helper below.
+    $script:HiKilledCapMs = 1500
+    $script:HiWaitFloorMs = 750
+    $script:HiWaitCeilingMs = 6000
+
+    function script:Get-HiKilledAtCapViolations {
+        # ONE definition of what a killed-at-cap record must satisfy, so the assertion and its
+        # adversarial controls cannot drift apart -- a control comparing against its own copy of
+        # the rules would keep passing after the rule was weakened.
+        #
+        # Returns a list of violation strings; EMPTY means the record is well formed.
+        #
+        # THE VERDICT comes from Reason. That is authoritative because Invoke-HiHook assigns
+        # 'killed-at-cap' in exactly one place -- the `if (-not $p.WaitForExit($CapMs))` branch --
+        # so the field IS the record of "the wait returned and the child had not exited". The
+        # record's own documentation agrees: tests/Integration.Common.ps1 defines killed-at-cap as
+        # "WaitForExit($CapMs) expired; the process tree was killed", saying nothing about elapsed.
+        # ELAPSED is an observation from a clock the wait never consulted, and is bounded, not
+        # trusted.
+        param($Outcome, [int]$ExpectedCapMs, [int]$FloorMs, [int]$CeilingMs)
+        if ($null -eq $Outcome) { return @('no outcome was recorded at all') }
+        $v = @()
+        if ([string]$Outcome.Reason -ne 'killed-at-cap') {
+            $v += ('VERDICT: reason is "' + [string]$Outcome.Reason + '", not killed-at-cap')
+        }
+        if ([int]$Outcome.CapMs -ne $ExpectedCapMs) {
+            $v += ('CAP: record names capMs=' + [int]$Outcome.CapMs + ', expected ' + $ExpectedCapMs)
+        }
+        if ($null -ne $Outcome.ExitCode) {
+            $v += ('EXIT: a killed record carries exit code ' + [string]$Outcome.ExitCode + '; it never exited on its own')
+        }
+        if ([int]$Outcome.ElapsedMs -lt $FloorMs) {
+            $v += ('OBSERVATION: elapsed ' + [int]$Outcome.ElapsedMs + 'ms is below the ' + $FloorMs +
+                'ms floor -- the wait did not happen at all')
+        }
+        if ([int]$Outcome.ElapsedMs -gt $CeilingMs) {
+            $v += ('OBSERVATION: elapsed ' + [int]$Outcome.ElapsedMs + 'ms is above the ' + $CeilingMs +
+                'ms ceiling -- the wait overran its cap by orders of magnitude')
+        }
+        return $v
+    }
 }
 
 AfterAll {
@@ -123,12 +187,100 @@ Describe 'Flake instrumentation: killed-at-cap and exited-empty-stdout are DISTI
         $killedText | Should -Not -Match 'wrote NOTHING to stdout'
     }
 
-    It 'the killed-at-cap record carries the cap it blew, and an elapsed at least that long' {
-        [void](Invoke-HiHook -ScriptPath $script:HiNeverExits -CapMs 1500)
+    It 'the killed-at-cap record names the cap it blew -- the VERDICT is the wait, not a clock reading' {
+        # RENAMED (dispatch 000173 leg 3). The old name -- "and an elapsed at least that long" --
+        # asserted the unsound claim in prose, so it would have re-taught the wrong thing to the
+        # next reader even after the assertion was fixed. What is actually guaranteed is that the
+        # WAIT expired and the record names the cap; elapsed is an observation, bounded below.
+        [void](Invoke-HiHook -ScriptPath $script:HiNeverExits -CapMs $script:HiKilledCapMs)
         $o = $script:PslsHookOutcome
-        $o.CapMs | Should -Be 1500
-        $o.ElapsedMs | Should -BeGreaterOrEqual 1500          # it waited the whole cap, then killed
-        $o.ExitCode | Should -BeNullOrEmpty                   # never exited on its own, so there is none
+        (Get-HiKilledAtCapViolations -Outcome $o -ExpectedCapMs $script:HiKilledCapMs `
+                -FloorMs $script:HiWaitFloorMs -CeilingMs $script:HiWaitCeilingMs) -join '; ' |
+            Should -BeExactly ''
+    }
+
+    # --- the three injections that prove the repaired check still guards (000173 leg 4) --------
+    # Each drives the SAME Get-HiKilledAtCapViolations the assertion above drives, so a weakening
+    # of the rule shows up here rather than passing silently.
+
+    It 'INJECTION 1: a hook that returned IMMEDIATELY without waiting is REJECTED' {
+        # The regression the elapsed floor exists for. A forged record carrying the right reason
+        # and the right cap but no elapsed means the wait was skipped -- dropping the elapsed
+        # bound entirely (a fork this train considered) would let exactly this through.
+        $forged = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $script:HiKilledCapMs -ElapsedMs 0 -ScriptPath 'forged'
+        $v = @(Get-HiKilledAtCapViolations -Outcome $forged -ExpectedCapMs $script:HiKilledCapMs `
+                -FloorMs $script:HiWaitFloorMs -CeilingMs $script:HiWaitCeilingMs)
+        $v.Count | Should -BeGreaterThan 0 -Because 'a skipped wait must not read as a killed-at-cap record'
+        ($v -join '; ') | Should -Match 'the wait did not happen at all'
+    }
+
+    It 'INJECTION 2: a child that EXITS CLEANLY before the cap is NOT classified killed-at-cap' {
+        # The classification boundary. A clean early exit must land on a different rung entirely,
+        # and it must fail the killed-at-cap rule on the VERDICT field rather than on elapsed.
+        [void](Invoke-HiHook -ScriptPath $script:HiEmptyStdout -CapMs $script:HiKilledCapMs)
+        $o = $script:PslsHookOutcome
+        $o.Reason | Should -Not -BeExactly 'killed-at-cap'
+        $o.Reason | Should -BeExactly 'exited-empty-stdout'
+        $v = @(Get-HiKilledAtCapViolations -Outcome $o -ExpectedCapMs $script:HiKilledCapMs `
+                -FloorMs $script:HiWaitFloorMs -CeilingMs $script:HiWaitCeilingMs)
+        ($v -join '; ') | Should -Match 'VERDICT: reason is'
+    }
+
+    It 'INJECTION 3: a record whose wait OVERRAN the cap by orders of magnitude is REJECTED' {
+        # The upper edge, which a one-sided floor would not carry. It costs nothing and catches a
+        # wait that ran far too long -- a hang the cap was supposed to bound.
+        $overrun = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $script:HiKilledCapMs `
+            -ElapsedMs ($script:HiWaitCeilingMs + 1) -ScriptPath 'forged'
+        $v = @(Get-HiKilledAtCapViolations -Outcome $overrun -ExpectedCapMs $script:HiKilledCapMs `
+                -FloorMs $script:HiWaitFloorMs -CeilingMs $script:HiWaitCeilingMs)
+        ($v -join '; ') | Should -Match 'overran its cap'
+    }
+
+    It 'INJECTION 4: a wait that was a BRIEF SLEEP rather than the cap is REJECTED' {
+        # The mirror of injection 1. Injection 1 forges elapsed = 0, which any floor above zero
+        # catches -- including a floor so low it asserts nothing. This one forges a SMALL BUT
+        # NON-ZERO elapsed, the shape a skipped wait actually takes if someone replaces the wait
+        # with a brief sleep. A floor at cap/100 would let this through while still passing
+        # injection 1, so the two injections together are what pin the floor from both directions.
+        $brief = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $script:HiKilledCapMs `
+            -ElapsedMs ([int]($script:HiKilledCapMs / 100)) -ScriptPath 'forged'
+        $v = @(Get-HiKilledAtCapViolations -Outcome $brief -ExpectedCapMs $script:HiKilledCapMs `
+                -FloorMs $script:HiWaitFloorMs -CeilingMs $script:HiWaitCeilingMs)
+        ($v -join '; ') | Should -Match 'the wait did not happen at all' -Because (
+            'a wait of one hundredth the cap is not a wait; a floor that accepted it would be ' +
+            'asserting nothing about whether the wait happened')
+    }
+
+    It 'the band is pinned from BOTH directions -- neither edge may drift' {
+        # The soundness argument, committed rather than left in a comment. It bounds the floor
+        # TWICE, because the floor has two opposite failure modes and guarding only one leaves the
+        # other open:
+        #
+        #   floor too HIGH (drifting toward the cap) -> clock skew crosses it -> the ORIGINAL
+        #       defect returns. Measured skew is single-digit ms over n=460, so the floor must sit
+        #       at least ~50x that below the cap.
+        #   floor too LOW (drifting toward zero)     -> a brief sleep clears it -> the band stops
+        #       asserting that the wait happened at all, which is the whole point of keeping it.
+        #       So the floor must also remain a SUBSTANTIAL FRACTION of the cap.
+        #
+        # A control that only pinned the first would accept a floor at cap/100 and quietly turn
+        # injections 1 and 4 into no-ops.
+        $worstNegativeSkewMs = 9.1     # dispatch 000172, the largest observed sub-cap excursion
+        $worstPositiveSkewMs = 26.53   # dispatch 000173 leg 1, pwsh design A max
+
+        # 1. far enough BELOW the cap that skew cannot reach it
+        (($script:HiKilledCapMs - $script:HiWaitFloorMs) / $worstNegativeSkewMs) |
+            Should -BeGreaterThan 50 -Because 'the floor must be far below any skew the clocks can produce'
+        # 2. and still a real fraction OF the cap, so it remains a did-it-wait check
+        ($script:HiWaitFloorMs / [double]$script:HiKilledCapMs) |
+            Should -BeGreaterThan 0.25 -Because (
+                'a floor that drifted toward zero would pass a brief-sleep injection and assert ' +
+                'nothing about whether the wait happened')
+        # 3. and the ceiling far enough ABOVE the cap that skew cannot reach it either
+        (($script:HiWaitCeilingMs - $script:HiKilledCapMs) / $worstPositiveSkewMs) |
+            Should -BeGreaterThan 50 -Because 'the ceiling must be far above any skew the clocks can produce'
+        # 4. and the band must not be inverted or degenerate
+        $script:HiWaitFloorMs | Should -BeLessThan $script:HiWaitCeilingMs
     }
 
     It 'a normal run records ok with its real exit code -- the happy rung is not vacuous' {

@@ -96,8 +96,31 @@ Describe 'Diagnostic-correctness corpus (dispatch 000040)' -Skip:$script:SkipCor
         $script:DaemonInfo | Should -Not -BeNullOrEmpty
     }
 
-    It 'corpus is non-empty (samples are present)' {
-        @($script:CorpusSamples).Count | Should -BeGreaterThan 0
+    # SELECTED-COUNT FLOOR, repaired (dispatch 000173 leg 6; found and handed back by 000172).
+    #
+    # THE DEFECT: this read $script:CorpusSamples inside an It body. That variable is assigned at
+    # the top of this file, which executes in Pester's DISCOVERY pass only; by run phase it is
+    # $null, and @($null).Count is ONE, not zero. So the floor reported 1 against a real 121 and
+    # sailed straight past its own `greater than 0` check, asserting nothing at all about the two
+    # `-ForEach $script:CorpusSamples` blocks below that it exists to guard.
+    #
+    # Twenty lines further down, the very next It already documents this hazard -- "Re-enumerate at
+    # run phase: a discovery-time $script: variable is not carried into the run pass" -- and applies
+    # the workaround to its own enumeration. The knowledge was in the file; it had not reached the
+    # floor.
+    #
+    # THE REPAIR, two parts, because either alone leaves a hole:
+    #   1. Capture the count through -ForEach, which IS evaluated at discovery where the variable
+    #      is live, so this measures the SAME enumeration the data-driven blocks consume.
+    #   2. Give it a REAL lower bound. A bare `greater than 0` floor is structurally blind to this
+    #      failure mode, because the failure reads as 1 rather than 0.
+    It 'SELECTED-COUNT FLOOR: the corpus enumeration is non-empty AND was read in the right phase' -ForEach @(
+        @{ SelectedCount = @($script:CorpusSamples).Count }
+    ) {
+        $SelectedCount | Should -BeGreaterThan 0
+        $SelectedCount | Should -BeGreaterThan 100 -Because (
+            'the corpus carries 121 samples at dispatch 000173; a count that collapses below this ' +
+            'floor means the enumeration broke or was read at the wrong phase, not that the corpus shrank')
     }
 
     It 'every sample has a committed expected snapshot' -ForEach $script:CorpusSamples {
@@ -441,5 +464,57 @@ Describe 'Corpus snapshot generator is IDEMPOTENT (dispatch 000172, D3)' {
             }
         }
         $stale -join ', ' | Should -BeExactly '' -Because 'a re-run against an unchanged tool must rewrite NOTHING'
+    }
+}
+
+# ===========================================================================
+# The selected-count floor's OWN adversarial control (dispatch 000173 leg 6).
+#
+# The floor above must reject BOTH failure shapes, and the second one is why a bare
+# "greater than 0" floor is not enough:
+#
+#   shape A -- a genuinely BROKEN enumeration          reads 0   a >0 floor REJECTS it
+#   shape B -- a DISCOVERY-time variable read at run   reads 1   a >0 floor ACCEPTS it
+#
+# Shape B is the hole. @($null).Count is ONE, so the failure does not look like emptiness; it
+# looks like a corpus of one sample. Only a floor with a real lower bound can tell them apart,
+# and that is the property this control pins. No daemon, no platform gate -- pure logic.
+# ===========================================================================
+
+Describe 'Selected-count floor rejects BOTH failure shapes (dispatch 000173 leg 6)' {
+
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'corpus/Corpus.Common.ps1')
+        # The floor as the corpus test applies it: a real lower bound, not zero.
+        $script:FloorMin = 100
+        function script:Test-FloorAccepts { param([int]$Count) return ($Count -gt $script:FloorMin) }
+        function script:Test-BareZeroFloorAccepts { param([int]$Count) return ($Count -gt 0) }
+    }
+
+    It 'SHAPE A: a genuinely broken enumeration reads 0, and BOTH floors reject it' {
+        # Get-ChildItem over a directory that does not exist: the honest empty case.
+        $broken = @(Get-ChildItem -LiteralPath (Join-Path $TestDrive 'no-such-corpus-dir') -Recurse -Filter '*.ps1' -File -ErrorAction SilentlyContinue).Count
+        $broken | Should -Be 0
+        (Test-FloorAccepts -Count $broken) | Should -BeFalse
+        (Test-BareZeroFloorAccepts -Count $broken) | Should -BeFalse -Because 'even a bare floor catches genuine emptiness'
+    }
+
+    It 'SHAPE B: a run-phase read of a discovery variable reads 1, and ONLY the real floor rejects it' {
+        # THE HOLE, demonstrated rather than described. $script:NeverAssignedAtRunPhase is $null
+        # here exactly as $script:CorpusSamples was, and @($null).Count is 1 -- not 0.
+        $runPhaseRead = @($script:NeverAssignedAtRunPhase).Count
+        $runPhaseRead | Should -Be 1 -Because '@($null).Count is ONE, which is why this failure mode hides'
+
+        (Test-BareZeroFloorAccepts -Count $runPhaseRead) | Should -BeTrue -Because (
+            'this is the defect: a bare greater-than-zero floor ACCEPTS the broken read and asserts nothing')
+        (Test-FloorAccepts -Count $runPhaseRead) | Should -BeFalse -Because (
+            'a floor with a real lower bound is what distinguishes 1-because-broken from a real corpus')
+    }
+
+    It 'GREEN: the real corpus count clears the floor, so the floor is not simply a wall' {
+        # Re-enumerated at RUN phase on purpose -- this It is proving the floor admits reality.
+        $real = @(Get-CorpusSampleSpec).Count
+        $real | Should -BeGreaterThan $script:FloorMin
+        (Test-FloorAccepts -Count $real) | Should -BeTrue
     }
 }
