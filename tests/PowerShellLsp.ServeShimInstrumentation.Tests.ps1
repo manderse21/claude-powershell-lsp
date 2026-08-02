@@ -214,19 +214,43 @@ Describe 'ServeShim instrumentation: the markers stay COUPLED to the shipped shi
         $outer = $script:ShimOuterTries[0]
         ($outer.Extent.EndLineNumber - $outer.Extent.StartLineNumber) | Should -BeGreaterThan 100 -Because 'the block under study wraps the whole two-source pump'
     }
-    It 'the shipped shim still has NO catch on its OUTER try -- the premise this whole leg rests on' {
-        # If a `catch` is ever added there, the unhandled exception stops being invisible and this
-        # instrumentation should be revisited. Assert the premise rather than assume it.
-        @($script:ShimOuterTries[0].CatchClauses).Count | Should -Be 0
+    It 'the shipped shim CATCHES on its OUTER try, catch-all -- the forced exit is reachable on the throwing path' {
+        # PREMISE INVERTED, NOT RETIRED (000163 leg 2 -> 000180). 000163 leg 2 asserted this count
+        # was ZERO, because it WAS zero: the outer try carried only a `finally`, so an unhandled
+        # exception in the pump propagated PAST the closing [System.Environment]::Exit -- the line
+        # that exists to avoid a graceful runspace shutdown waiting on the background client-reader
+        # thread blocked in a synchronous Read. 000180 (63f93c1) added the catch, and this assertion
+        # fired: the defect it documented had been fixed. It is re-stated here rather than deleted,
+        # pinning the FIX exactly as its predecessor pinned the defect -- remove the catch and the
+        # wedge comes back, and this must go RED rather than let the instrumentation go on
+        # describing a world that no longer exists.
+        $catches = @($script:ShimOuterTries[0].CatchClauses)
+        $catches.Count | Should -Be 1 -Because 'exactly one catch is the shipped shape; a second clause could only be a TYPED one, which changes which exceptions reach the Exit and is a structural change this block must not pass over silently'
+        $catches[0].IsCatchAll | Should -BeTrue -Because 'reachable on EVERY throwing path is the property under study: a typed catch would leave every other exception type propagating past the Exit, re-opening the wedge for a subset'
     }
-    It 'the AST premise check is not vacuous: the shim DOES have catch clauses elsewhere' {
-        # Guards the inverse error -- if CatchClauses were always empty for every try (a wrong AST
-        # property, say), the assertion above would pass for free.
+    It 'the AST premise check is not vacuous: CatchClauses can still report ZERO, and is not constant either way' {
+        # THE DIRECTION FLIPPED WITH THE ASSERTION ABOVE (000163 leg 2 -> 000180). While that
+        # assertion expected ZERO, the free-pass risk was "CatchClauses is always empty" and this
+        # control proved catches CAN be reported. Now that the assertion expects a catch to be
+        # PRESENT, proving catches can be reported is precisely what it already requires -- so the
+        # old control would pass whether or not the property works, and a control that only
+        # re-proves the thing under test guards nothing. The risk inverted to "the property always
+        # reports SOMETHING", which is what a wrong property name looks like: it reads $null, and
+        # @($null).Count is 1 on both hosts, so a typo would report exactly one catch on every try
+        # and hand the assertion above a free pass. Hence the zero arm. Both arms are kept, because
+        # together they say the property is neither constant-empty nor constant-nonempty.
         $allTries = @($script:ShimAst.FindAll({ $args[0] -is [System.Management.Automation.Language.TryStatementAst] }, $true))
+        $noCatch = @($allTries | Where-Object { @($_.CatchClauses).Count -eq 0 })
         $withCatch = @($allTries | Where-Object { @($_.CatchClauses).Count -gt 0 })
-        $withCatch.Count | Should -BeGreaterThan 0 -Because 'the log-path setup and the job guard both catch, so the property does report catches when present'
+        $noCatch.Count | Should -BeGreaterThan 0 -Because 'the client-reader queue lock and the pump queue drain are both try/finally with NO catch, so the property must still be able to report zero -- if it cannot, the assertion above passes for free'
+        $withCatch.Count | Should -BeGreaterThan 0 -Because 'the log-path setup and the job guard both catch, so the property must also report catches where they exist'
     }
-    It 'the shim still ends in [System.Environment]::Exit -- the line the exception path SKIPS' {
+    It 'the shim still ends in exactly one [System.Environment]::Exit -- the line EVERY path now reaches' {
+        # RE-TITLED, assertion unchanged (000163 leg 2 -> 000180). The old title called this "the
+        # line the exception path SKIPS", which held only while the outer try had no catch. 000180's
+        # catch sets $shimExit = 2, logs the exception, and falls through to this same line, so the
+        # throwing path REACHES it now. The count is what the reachability argument rests on either
+        # way: a second Exit, or none, and that argument stops holding.
         @($script:ShimActiveLines | Where-Object { $_ -match '^\[System\.Environment\]::Exit\(' }).Count | Should -Be 1
     }
 }
