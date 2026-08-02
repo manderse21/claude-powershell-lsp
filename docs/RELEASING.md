@@ -27,7 +27,7 @@ unvalidated or wrong commit.
 > because Gate 2 refuses a tag that already exists, it also *blocks* the pipeline until someone
 > deletes it. This is not hypothetical: it happened on the v1.26.0 release, where a pre-existing
 > `v1.26.0` tag had to be deleted before the pipeline could cut its own. **To release, trigger the
-> workflow with the target version** (step 5 below) -- never a printed command.
+> workflow with the target version** (step 6 below) -- never a printed command.
 
 The pipeline is the GitHub Actions workflow [`powershell-lsp release`](../.github/workflows/powershell-lsp-release.yml)
 that the maintainer triggers manually; it never runs on push or merge. At a high level,
@@ -52,14 +52,37 @@ release. The exact steps and the exact checks follow below.
    `PATCH:` / `MINOR:` / `MAJOR:` summary line (see [the SemVer policy](../CHANGELOG.md#versioning)).
    This entry becomes the release notes verbatim, so write it for the reader of the release.
 
-3. **Open a pull request and merge it.** The PR runs the four-leg CI. Merge to main once it is
+3. **Advance the roadmap.** Before the release PR merges, bring
+   [ROADMAP.md](../ROADMAP.md) into line with what this release actually ships. Two checks, both
+   by hand:
+
+   - **No item under "What is next" that this release ships.** Anything the CHANGELOG entry from
+     step 2 records as shipped must have left that list -- into "Recently completed", or out of
+     the document entirely. An item under "What is next" that already shipped reads as a false
+     claim about the project's state, and the roadmap says so itself in its own header.
+   - **Any design question this release RESOLVED is rewritten as the next unresolved one** -- not
+     deleted, and not left standing as open. A resolved question left in place tells a reader an
+     adjudicated decision is still up for debate; deleting it silently loses the thread. State
+     the successor question, or state plainly that the arc has none.
+
+   **This gate is HUMAN and the pipeline does not enforce it.** That is deliberate, not an
+   omission. Roadmap currency is a judgement, and a check that cannot adjudicate its subject
+   should not pretend to -- a guard that is wrong in a way it cannot settle gets silenced, and one
+   silenced guard teaches that guards are advisory. Numbers are a different matter and ARE
+   machine-enforced: see `tests/doc-claims.psd1`, which fails CI when a published number disagrees
+   with the thing it counts.
+
+   Introduced by dispatch 000177 leg 8, after v1.29.0 shipped Arc A's opener while the roadmap
+   still listed it under "What is next" and still called its adjudicated design question open.
+
+4. **Open a pull request and merge it.** The PR runs the four-leg CI. Merge to main once it is
    green and reviewed. **Do not tag here, and do not run the tag commands the bump helper
    prints.** Those are a manual FALLBACK for a broken pipeline (see
    [Manual fallback](#manual-fallback-if-the-pipeline-misbehaves)), never the release path --
-   the pipeline cuts the tag in step 5. A hand-cut tag is unsigned and unattested, and it will
+   the pipeline cuts the tag in step 6. A hand-cut tag is unsigned and unattested, and it will
    make Gate 2 refuse the pipeline run until someone deletes it.
 
-4. **(Optional) Wait for the push CI on main to go green.** After the merge, the
+5. **(Optional) Wait for the push CI on main to go green.** After the merge, the
    [`powershell-lsp CI`](../.github/workflows/powershell-lsp-ci.yml) workflow runs on the
    merge commit on all four legs (`windows-pwsh`, `windows-powershell`, `ubuntu-pwsh`,
    `macos-pwsh`). You no longer have to hand-time the next step to the window after CI
@@ -68,7 +91,7 @@ release. The exact steps and the exact checks follow below.
    release job **wait** for CI rather than refuse. Waiting here yourself is therefore optional --
    it just lets you confirm green before you trigger.
 
-5. **Trigger the release workflow** with the version you just merged:
+6. **Trigger the release workflow** with the version you just merged:
 
    - In the GitHub UI: **Actions -> powershell-lsp release -> Run workflow**, enter the
      version (e.g. `1.13.0`), leave **commit** blank to release the current `main` tip, and
