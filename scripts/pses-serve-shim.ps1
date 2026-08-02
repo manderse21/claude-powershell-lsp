@@ -313,6 +313,27 @@ public static bool AssignProcess(IntPtr hJob, IntPtr hProcess) { return AssignPr
             if ($c -le 0) { $psEof = $true } else { $sub = New-Object byte[] $c; [System.Array]::Copy($psChunk, 0, $sub, 0, $c); $psBuf.AddRange($sub) }
         }
     }
+} catch {
+    # THE FORCED EXIT MUST BE REACHABLE ON EVERY PATH OUT OF THIS TRY, INCLUDING THE THROWING
+    # ONE (dispatch 000180). Before this catch existed the try had only a `finally`, so any
+    # unhandled exception in the pump propagated past the closing
+    # [System.Environment]::Exit($shimExit) -- and that line exists precisely to avoid the
+    # graceful runspace shutdown that WAITS on the background client-reader thread blocked in a
+    # synchronous Read on an unclosed client stdin. Skipping it is what turned a one-line write
+    # failure into an 87-minute wedge with twelve-plus live pwsh processes.
+    #
+    # This catches EVERYTHING, but it does not pretend everything is fine: the broken-pipe class
+    # is already absorbed upstream by Write-ServeFrameGuarded and never arrives here, so anything
+    # reaching this point is a genuine defect. It gets its own exit code (2 -- distinct from 0
+    # clean and 1 PSES-died, and NOT a wire or protocol change; nothing consumes these codes but
+    # the client's restart policy) and its text goes to the side-channel log, which is strictly
+    # more evidence than the previous behaviour left behind.
+    $shimExit = 2
+    $exMsg = ''
+    try { $exMsg = [string]$_.Exception.GetType().FullName + ': ' + [string]$_.Exception.Message } catch { $exMsg = '<unavailable>' }
+    $exAt = ''
+    try { $exAt = ' at ' + [string]$_.InvocationInfo.ScriptName + ':' + [string]$_.InvocationInfo.ScriptLineNumber } catch { $exAt = '' }
+    Write-ShimLog ('UNHANDLED exception in the pump -- exiting ' + $shimExit + ' rather than wedging: ' + $exMsg + $exAt)
 } finally {
     # Graceful PSES shutdown (the daemon's Stop-Pses sequence), then tree-kill. On PS 5.1 the
     # Kill($true) tree overload is absent -> fall back to Kill() (the Windows job object still
