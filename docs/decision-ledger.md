@@ -1218,7 +1218,14 @@ real usage, not machinery.
   missing directory, artifacts present but none from host 5, and a non-conformant payload rejected
   naming `/runs` as the offending pointer. **CLOSED:** all of it is on main, released in v1.27.2, and
   green on the `windows-powershell` leg of the release-gating run. No further dispatch needed.
-- **A NEW integration flake species -- `macos-pwsh` / ServeShim, SIGHTED TWICE on 2026-07-29, distinct
+- **The `macos-pwsh` / ServeShim EPIPE flake -- FOUR SIGHTINGS, mechanism CONFIRMED, and FIXED in
+  dispatch 000180 (2026-08-02). Still deliberately NOT folded into the windows-pwsh
+  daemon-initializing flake above.** The fix, the confirmed mechanism, and the measurements that
+  settled it are at the END of this item. What comes first is the investigation record that produced
+  them, retained rather than rewritten: a fix is only defensible alongside the evidence that ruled it,
+  and the interim statuses below are marked superseded rather than deleted so the reasoning that once
+  said "do not fix this yet" stays legible. Originally recorded as:
+  **A NEW integration flake species -- `macos-pwsh` / ServeShim, SIGHTED TWICE on 2026-07-29, distinct
   from the windows-pwsh daemon-initializing flake above and deliberately NOT folded into it.**
   `tests/PowerShellLsp.ServeShim.Tests.ps1` around **line 307** failed on the **`macos-pwsh`** leg of
   CI run **30465192375** (the push run on merge commit `49ce894`), attempt 1: the assertion
@@ -1233,7 +1240,8 @@ real usage, not machinery.
   and no shared mechanism has been established between them. Folding two unexplained intermittents
   into one item would manufacture a pattern the evidence does not support, and would make either
   one's eventual root cause look like it explained the other.
-  **Status: SIGHTED TWICE, now INSTRUMENTED (dispatch 000163 leg 2) and still UNFIXED.** The second
+  **Status as of 2026-07-29 -- SUPERSEDED by the fix record at the end of this item: SIGHTED TWICE,
+  now INSTRUMENTED (dispatch 000163 leg 2) and still UNFIXED.** The second
   sighting landed the same day on CI run **30472816851**, `macos-pwsh` leg, over merge commit
   **d05ec7a** -- and that commit is a **DOCS-ONLY merge**, which is what makes the flake reading
   near-certain rather than merely likely: a tree that moves no code cannot regress a test. The
@@ -1263,12 +1271,69 @@ real usage, not machinery.
   **Do not theorise from the reported durations.** The first sighting's "13ms" and the second's 42ms are
   `It`-block times; all of the scenario's work happens in the `BeforeAll`, so those numbers measure the
   assertion, not the wait. 000156 leg 4 already burned a dispatch on exactly this class of inference.
-  **NOT FIXED, deliberately.** 000163 leg 2's charter (OQ1) permitted instrumentation only; a
+  **NOT FIXED, deliberately -- SUPERSEDED 2026-08-02 by dispatch 000180.** 000163 leg 2's charter (OQ1)
+  permitted instrumentation only; a
   control-flow change to the shim is a future fix dispatch, to be taken AFTER a third sighting arrives
   with the recorded exception text naming the throwing line. The instrumentation now writes a per-run
   `serveshim-lifecycle-crash-*.json` into the uploaded logs tree carrying the classified exit path, the
   shim's own log slice, its stderr, and the phase timings, and the failing assertion's message now names
   the classified exit path instead of reporting a bare `$false`.
+  **FIXED in dispatch 000180, 2026-08-02. The hypothesis above was right, and it is now a conclusion.**
+  Four sightings by the time it was taken: the two `macos-pwsh` CI legs recorded above, plus PR #121's
+  `macos-pwsh` leg failing twice and then passing on a bare re-run of the identical commit -- a measured
+  1-in-3 rate, with an empty commit off main and main-plus-one-test-file both green, ruling out trunk
+  and the new file. Alongside them, one 87-minute local wedge: a verify claiming the full suite hung at
+  a 4200-second timeout and hung again under f2 at 1200 seconds, the timeout value making no difference,
+  and a `taskkill /T` on the verify tree terminating three processes while leaving twelve-plus `pwsh`
+  alive, one still accruing CPU.
+  **The mechanism, no longer a hypothesis.** 000180 reproduced it deterministically instead of waiting
+  for a fifth sighting. Driving the real `pses-serve-shim.ps1` against a stub PSES, killing the stub
+  while continuing to feed client frames, and running that against a scratch copy with the guard removed
+  produced the exception text the record above said a third sighting would need -- naming the throwing
+  line directly: `scripts/lib/serve-shim-common.ps1:142`, `$Stream.Flush()`, *"Exception calling Flush
+  with 0 argument(s): The pipe is being closed."* It is a broken-pipe throw on the client->PSES write,
+  reached ahead of the pump's own EOF branch, exactly as predicted from the preserved pid-18428 log.
+  **One correction to the reasoning, measured rather than argued.** The write that throws is the one to
+  the PSES CHILD'S STDIN, and only that one. A write to the CLIENT's stdout cannot throw: .NET's console
+  stream treats `ERROR_BROKEN_PIPE` / `EPIPE` as success, and a probe pushed 160KB into a closed pipe
+  without a single exception. Any future reading of this species that assumes the client-stdout write is
+  a throwing path is wrong; the shim guards it anyway, as defence in depth rather than as the cure.
+  **The fix.** `Write-ServeFrameGuarded` wraps every frame write on the shim's pump path, absorbing
+  `IOException` and `ObjectDisposedException` -- and ONLY those two, so a real defect is never laundered
+  into a quiet shutdown -- and rejoining the pump's existing peer-loss shutdown rather than inventing a
+  new one. The outer `try` gained the `catch` it never had, so
+  `[System.Environment]::Exit($shimExit)` is now reachable on every path out, including the throwing
+  one; an unexpected exception exits 2 and names itself in the log instead of wedging.
+  **Held to the adversarial standard.** With the guard bypassed in a scratch copy, 4 of the 10 new
+  assertions go RED; with it in place, 10 of 10 pass, the shim exiting in **121-146ms** with exit code
+  **1** (10 injections, windows-pwsh). Worth recording precisely because it is a limit on the evidence:
+  on a Windows host the
+  "does it exit" and "exit code" assertions did NOT discriminate -- the unhandled throw still terminated
+  `pwsh` with a coincidental exit 1 in ~193-201ms, and the wedge did not reproduce there. What discriminates
+  is the assertion that the guard LOGGED its firing and the one that stderr carries no unhandled-exception
+  record. A future reader tempted to simplify those two away should know they are the only reason a
+  bypassed guard fails on Windows at all.
+  **The injection is deterministic, and was not always.** As first written it killed the stub and then
+  fed frames, hoping to catch the pump mid-write; it lost that race about one run in five, exiting 1 via
+  the HasExited branch with the guard never firing. Since the exit code cannot tell those two apart, it
+  was the guard-logged-its-firing assertion that caught it rather than a green vacuous pass -- the second
+  time that assertion has earned its place. The stub now stops DRAINING while staying ALIVE, so a flood
+  parks the pump inside the write before the kill. Both figures above are re-measured against that
+  injection: 10 consecutive green injections, and the bypassed control reproducing 6-passed/4-RED on
+  three consecutive runs with the same four assertions each time.
+  **A 5.1 host trap the new test walked straight into, worth knowing for any future one.** As first
+  written the injection was INERT on `windows-powershell` -- it failed 2 of 10 there while passing
+  under `pwsh`, which reads like a shim defect on one platform and is nothing of the kind. On .NET
+  Framework, reading `$proc.StandardInput` builds a `StreamWriter` over `[Console]::InputEncoding` and
+  sets `AutoFlush`, and that setter flushes the encoding PREAMBLE immediately -- so against a UTF-8
+  console three bytes (`EF BB BF`) land ahead of the first frame. The shim's parser wants
+  `Content-Length` at offset 0, so it stalls: 486KB written from a 5.1 host arrived as **0 bytes**, and
+  prepending those same three bytes from a `pwsh` host reproduces it exactly. Only this Context is
+  exposed, because it pins the shim to `pwsh` while the e2e Describes spawn the shim under the TEST
+  host, and a 5.1-hosted shim absorbs the BOM. The cure is on the TEST side and the wire is unchanged:
+  a BOM-less `InputEncoding` for the launch, restored afterwards. With it, 55/55 on both hosts and the
+  bypassed control goes 6-passed/4-RED on 5.1 too -- so the adversarial evidence now covers the host
+  where it previously could not have, having never fired at all.
 - **A THIRD flake species -- `killed-at-cap` in the flake-instrumentation suite itself. WATCH ENTRY
   ONLY: recorded, not theorised about, not fixed.** One sighting, 2026-07-29: an elapsed-vs-cap
   assertion in `tests/PowerShellLsp.HookInstrumentation.Tests.ps1` failed and **cleared on rerun**.

@@ -245,14 +245,19 @@ public static bool AssignProcess(IntPtr hJob, IntPtr hProcess) { return AssignPr
                 try { $cMethod = [string](Get-Prop ([System.Text.Encoding]::UTF8.GetString($cf) | ConvertFrom-Json) 'method') } catch { $cMethod = '' }
                 if ($cMethod -eq 'initialize') {
                     $patched = Edit-InitializeMessageForServe ([System.Text.Encoding]::UTF8.GetString($cf))
-                    Write-ServeFrame $psesIn ([System.Text.Encoding]::UTF8.GetBytes($patched))
+                    if (-not (Write-ServeFrameGuarded $psesIn ([System.Text.Encoding]::UTF8.GetBytes($patched)) 'PSES stdin')) { $psEof = $true; break }
                     $initPatched = $true
                     Write-ShimLog 'initialize patched (dynamicRegistration=false; workspaceFolders dropped; rename ensured) and forwarded'
                     $cf = Read-ServeFrame $ccBuf
                     continue
                 }
             }
-            Write-ServeFrame $psesIn $cf
+            # A dead PSES stdin reads as PSES loss, which is exactly what the psEof exit
+            # condition below already means -- so a broken pipe rejoins the normal shutdown
+            # path rather than becoming an unhandled throw (dispatch 000180). This write is
+            # reached AHEAD of the (c) HasExited check, which is why the crash-mid-session
+            # shape hit the throw before it ever hit the EOF branch.
+            if (-not (Write-ServeFrameGuarded $psesIn $cf 'PSES stdin')) { $psEof = $true; break }
             $cf = Read-ServeFrame $ccBuf
         }
 
@@ -269,14 +274,20 @@ public static bool AssignProcess(IntPtr hJob, IntPtr hProcess) { return AssignPr
                         $sMethod = [string](Get-Prop $m 'method')
                         if (Test-ServeInterceptMethod $sMethod) {
                             $resp = New-ServeInterceptResponseJson -Id (Get-Prop $m 'id') -Method $sMethod -Params (Get-Prop $m 'params')
-                            Write-ServeFrame $psesIn ([System.Text.Encoding]::UTF8.GetBytes($resp))
+                            if (-not (Write-ServeFrameGuarded $psesIn ([System.Text.Encoding]::UTF8.GetBytes($resp)) 'PSES stdin')) { $psEof = $true }
                             Write-ShimLog ('intercepted server->client ' + $sMethod + ' (answered locally)')
                             $forward = $false
                         }
                     }
                 } catch { $forward = $true }
             }
-            if ($forward) { Write-ServeFrame $ccOut $pf }
+            if ($psEof) { break }
+            # A dead client stdout reads as client loss -- the same condition the ccEof exit
+            # below already handles, so the client going away stays a clean exit 0 shutdown
+            # instead of an unhandled throw (dispatch 000180).
+            if ($forward) {
+                if (-not (Write-ServeFrameGuarded $ccOut $pf 'client stdout')) { $ccEof = $true; break }
+            }
             $pf = Read-ServeFrame $psBuf
         }
 
@@ -302,6 +313,27 @@ public static bool AssignProcess(IntPtr hJob, IntPtr hProcess) { return AssignPr
             if ($c -le 0) { $psEof = $true } else { $sub = New-Object byte[] $c; [System.Array]::Copy($psChunk, 0, $sub, 0, $c); $psBuf.AddRange($sub) }
         }
     }
+} catch {
+    # THE FORCED EXIT MUST BE REACHABLE ON EVERY PATH OUT OF THIS TRY, INCLUDING THE THROWING
+    # ONE (dispatch 000180). Before this catch existed the try had only a `finally`, so any
+    # unhandled exception in the pump propagated past the closing
+    # [System.Environment]::Exit($shimExit) -- and that line exists precisely to avoid the
+    # graceful runspace shutdown that WAITS on the background client-reader thread blocked in a
+    # synchronous Read on an unclosed client stdin. Skipping it is what turned a one-line write
+    # failure into an 87-minute wedge with twelve-plus live pwsh processes.
+    #
+    # This catches EVERYTHING, but it does not pretend everything is fine: the broken-pipe class
+    # is already absorbed upstream by Write-ServeFrameGuarded and never arrives here, so anything
+    # reaching this point is a genuine defect. It gets its own exit code (2 -- distinct from 0
+    # clean and 1 PSES-died, and NOT a wire or protocol change; nothing consumes these codes but
+    # the client's restart policy) and its text goes to the side-channel log, which is strictly
+    # more evidence than the previous behaviour left behind.
+    $shimExit = 2
+    $exMsg = ''
+    try { $exMsg = [string]$_.Exception.GetType().FullName + ': ' + [string]$_.Exception.Message } catch { $exMsg = '<unavailable>' }
+    $exAt = ''
+    try { $exAt = ' at ' + [string]$_.InvocationInfo.ScriptName + ':' + [string]$_.InvocationInfo.ScriptLineNumber } catch { $exAt = '' }
+    Write-ShimLog ('UNHANDLED exception in the pump -- exiting ' + $shimExit + ' rather than wedging: ' + $exMsg + $exAt)
 } finally {
     # Graceful PSES shutdown (the daemon's Stop-Pses sequence), then tree-kill. On PS 5.1 the
     # Kill($true) tree overload is absent -> fall back to Kill() (the Windows job object still

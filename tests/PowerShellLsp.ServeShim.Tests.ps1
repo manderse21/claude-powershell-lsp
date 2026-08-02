@@ -148,6 +148,349 @@ Describe 'ServeShim unit: the server->client intercept answer table' {
     }
 }
 
+Describe 'ServeShim: the broken-pipe (EPIPE) guard on the write path (dispatch 000180)' {
+    # THE DEFECT THIS PINS. Every frame the shim writes lands on a pipe owned by another
+    # process. When that peer dies the write throws, and the shim's outer try had a `finally`
+    # and NO `catch` -- so the throw propagated past the closing [System.Environment]::Exit,
+    # the line that exists precisely to avoid a graceful runspace shutdown waiting forever on
+    # the background client-reader thread blocked in a synchronous Read. Four sightings, a
+    # measured 1-in-3 macos-pwsh CI rate, and one 87-minute local wedge that a tree kill
+    # answered by terminating three processes and leaving twelve-plus pwsh alive.
+    #
+    # Two layers, deliberately: the unit Context proves the guard's DISCRIMINATOR (it absorbs
+    # a dead peer and nothing else), and the process Context proves the CONSEQUENCE that
+    # actually matters -- the real shim script exits rather than wedging.
+
+    Context 'unit: the guard absorbs a dead peer, and ONLY a dead peer' {
+        BeforeAll { . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/serve-shim-common.ps1') }
+
+        It 'returns $true and writes the frame byte-exactly on a HEALTHY stream (non-vacuity)' {
+            # Without this, every assertion below could pass against a guard that returned
+            # $false unconditionally and wrote nothing at all.
+            $body = [System.Text.Encoding]::UTF8.GetBytes('{"jsonrpc":"2.0","id":1,"result":null}')
+            $ms = New-Object System.IO.MemoryStream
+            Write-ServeFrameGuarded $ms $body 'test' | Should -BeTrue
+            $buf = New-Object System.Collections.Generic.List[byte]
+            $buf.AddRange($ms.ToArray())
+            $out = Read-ServeFrame $buf
+            [System.Convert]::ToBase64String($out) | Should -BeExactly ([System.Convert]::ToBase64String($body))
+        }
+
+        It 'returns $false instead of throwing on a DISPOSED stream (ObjectDisposedException)' {
+            $ms = New-Object System.IO.MemoryStream
+            $ms.Dispose()
+            # The bare call would throw here; the guard must convert it into a $false.
+            Write-ServeFrameGuarded $ms ([System.Text.Encoding]::UTF8.GetBytes('{}')) 'test' | Should -BeFalse
+        }
+
+        It 'returns $false instead of throwing on a BROKEN PIPE (IOException) -- a real closed pipe, not a mock' {
+            # A genuine anonymous pipe whose READ end is disposed: the production shape of a
+            # peer that died, reproduced without a peer.
+            $server = New-Object System.IO.Pipes.AnonymousPipeServerStream ([System.IO.Pipes.PipeDirection]::Out, [System.IO.HandleInheritability]::None)
+            try {
+                # No child ever received the read end, so disposing the local copy closes the
+                # ONLY read handle: the write end stays open and undisposed, and the pipe is
+                # broken. Measured to raise IOException 'Pipe is broken.'
+                $server.DisposeLocalCopyOfClientHandle()
+                $big = New-Object byte[] 200000    # exceed the pipe buffer so the write must reach the OS
+                Write-ServeFrameGuarded $server $big 'test' | Should -BeFalse
+            } finally {
+                try { $server.Dispose() } catch { }
+            }
+        }
+
+        # --- THE ADVERSARIAL CONTROL, AND WHAT IT MEASURED (dispatch 000180) --------------
+        # A guard nobody has watched fail has not been tested. So the guard was BYPASSED in a
+        # scratch copy of scripts/ + tests/ outside the repo -- the try/catch stripped out of
+        # Write-ServeFrameGuarded, leaving a plain unguarded write, and the outer `catch`
+        # removed from pses-serve-shim.ps1, which together reconstruct the exact pre-fix
+        # control flow -- and this Describe was re-run against it.
+        #
+        #   guard bypassed: 10 selected, 6 passed, 4 FAILED
+        #   guard in place: 10 selected, 10 passed, 0 failed
+        #
+        # The bypassed run also captured, deterministically, the evidence the decision ledger
+        # said a third flake sighting would have to arrive with -- the exception text naming
+        # the throwing line:
+        #   serve-shim-common.ps1:142  $Stream.Flush()
+        #   "Exception calling Flush with 0 argument(s): The pipe is being closed."
+        #
+        # READ THIS BEFORE SIMPLIFYING THE PROCESS CONTEXT BELOW. On a Windows host only FOUR
+        # of the ten assertions discriminated: the two unit assertions here, and -- in the
+        # process Context -- the guard-logged-its-firing one and the clean-stderr one. The
+        # "does it exit", "exit code" and "exits promptly" assertions did NOT go red, because
+        # the unhandled throw still terminated pwsh with a COINCIDENTAL exit 1 in ~193-201ms and
+        # the wedge does not reproduce on that host. That split was re-measured against the
+        # deterministic injection, three consecutive bypassed runs, same four RED each time. Those three are honest regression guards
+        # for the platforms where the wedge does reproduce, but they are not the proof. The
+        # two that are load-bearing on every platform are the ones a future cleanup would be
+        # most tempted to delete as redundant.
+        It 'still THROWS a foreign exception type -- the guard is narrow, not a blanket swallow (adversarial)' {
+            # The failure mode a too-wide guard would introduce: laundering a real defect into
+            # a quiet shutdown, which is strictly worse than the crash it replaced. A
+            # read-only stream raises NotSupportedException, which must NOT be absorbed.
+            $ro = New-Object System.IO.MemoryStream (New-Object byte[] 8), $false
+            $threw = $null
+            try { $null = Write-ServeFrameGuarded $ro ([System.Text.Encoding]::UTF8.GetBytes('{}')) 'test' } catch { $threw = $_ }
+            $threw | Should -Not -BeNullOrEmpty -Because 'a foreign exception type must propagate, not be converted into a $false'
+            # PowerShell wraps an exception thrown by a .NET METHOD in a
+            # MethodInvocationException. `catch [IOException]` still matches through that
+            # wrapper (which is why the guard works), but the OUTER type is the wrapper -- so
+            # the type assertion has to unwrap. Pester's -ExceptionType compares the outer type
+            # and would report the wrapper here, which is why this is written out longhand.
+            $inner = $threw.Exception
+            while (($inner -is [System.Management.Automation.MethodInvocationException]) -and ($null -ne $inner.InnerException)) { $inner = $inner.InnerException }
+            $inner.GetType().FullName | Should -BeExactly 'System.NotSupportedException'
+        }
+    }
+
+    Context 'process: the REAL shim exits (not wedges) when the PSES stdin pipe breaks' -Skip:$script:SkipServe {
+        # This drives scripts/pses-serve-shim.ps1 ITSELF -- not a copy of its control flow --
+        # against a STUB PSES, so no bundle bootstrap is needed.
+        #
+        # WHY THE PSES-STDIN SIDE AND NOT THE CLIENT SIDE. Measured 2026-08-02, and it is the
+        # reason this test targets the peer it does: a write to [Console]::OpenStandardOutput()
+        # whose reader has gone away DOES NOT THROW. .NET's console stream treats
+        # ERROR_BROKEN_PIPE / EPIPE as success -- 160KB was pushed into a closed pipe in a probe
+        # without a single exception. So the client-stdout guard is defence in depth, and the
+        # LOAD-BEARING path is the write to the PSES child's stdin, which is an ordinary pipe
+        # FileStream and throws IOException 'Pipe is broken.' That is also exactly the path the
+        # decision ledger's mechanism hypothesis named, from the preserved macOS crash log.
+        #
+        # HOW THE ORDERING IS PINNED RATHER THAN RACED. The pump runs (a) forward-client-frames
+        # BEFORE (c) check-exit-conditions on every iteration, and the broken-pipe write must be
+        # reached AHEAD of the HasExited branch -- the production ordering. Merely feeding frames
+        # continuously and hoping only WINS that race about four times in five; the stub therefore
+        # stops draining first (PSLS_EPIPE_STUB_STOP_AFTER), so a flood parks the pump INSIDE the
+        # write under test before the stub is killed. See the injection steps below.
+        # A pump parked in (a) cannot reach (c), so the kill can surface only through the write.
+        # Were that ever to change, the pump would exit via (c) with the SAME exit code, which is
+        # why the log-line assertion below (not the exit code) is what proves the guard fired.
+        #
+        # The shim's stdin is deliberately left OPEN, so the background client-reader thread
+        # stays blocked in its synchronous Read -- the exact state that makes a graceful
+        # runspace shutdown hang and the forced exit load-bearing.
+        BeforeAll {
+            . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+
+            $script:G = @{ ShimPid = 0; StubPid = 0 }
+            $root = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-epipe-' + ([guid]::NewGuid().ToString('N').Substring(0, 8)))
+            $bundleDir = Join-Path $root 'bundle/PowerShellEditorServices'
+            $dataDir = Join-Path $root 'data'
+            New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
+            New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+            $script:EpipeRoot = $root
+            $script:EpipeStubPidFile = Join-Path $root 'stub.pid'
+            $script:EpipeStubRxFile = Join-Path $root 'stub.rx'
+
+            # The stub PSES: accepts the shim's launch arguments, records its pid, and DRAINS
+            # its stdin forever, recording the running byte count. Draining matters twice --
+            # it keeps the pipe from filling, and the byte count is the positive evidence that
+            # the client->PSES write path worked before the injection.
+            $stub = @'
+param([string]$HostName, [string]$HostProfileId, [string]$HostVersion, [string]$BundledModulesPath,
+      [string]$LogPath, [string]$LogLevel, [string]$SessionDetailsPath, [switch]$Stdio)
+Set-Content -LiteralPath $env:PSLS_EPIPE_STUB_PIDFILE -Value $PID -Encoding ascii
+$stopAfter = 0
+if (-not [string]::IsNullOrWhiteSpace($env:PSLS_EPIPE_STUB_STOP_AFTER)) { $stopAfter = [int]$env:PSLS_EPIPE_STUB_STOP_AFTER }
+$in = [Console]::OpenStandardInput()
+$buf = New-Object byte[] 65536
+$total = 0
+while ($true) {
+    $n = 0
+    try { $n = $in.Read($buf, 0, $buf.Length) } catch { break }
+    if ($n -le 0) { break }
+    $total += $n
+    try { Set-Content -LiteralPath $env:PSLS_EPIPE_STUB_RXFILE -Value $total -Encoding ascii } catch { }
+    # STOP DRAINING but STAY ALIVE. This is what makes the injection deterministic: once the
+    # stub stops reading, the shim's writes fill the pipe and the pump BLOCKS inside its
+    # forward-to-PSES write, where it cannot reach the HasExited exit branch.
+    if (($stopAfter -gt 0) -and ($total -ge $stopAfter)) { break }
+}
+Start-Sleep -Seconds 600
+'@
+            Set-Content -LiteralPath (Join-Path $bundleDir 'Start-EditorServices.ps1') -Value $stub -Encoding ascii
+
+            # Launch the real shim under pwsh (the production host for lspServers).
+            $shimPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/pses-serve-shim.ps1'
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.CreateNoWindow = $true
+            Add-ProcessArguments $psi @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $shimPath)
+            # Set the environment on the CHILD only -- mutating $env: here would leak into the
+            # other Describes in this file.
+            $psi.EnvironmentVariables['PSES_BUNDLE_PATH'] = (Join-Path $root 'bundle')
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $dataDir
+            $psi.EnvironmentVariables['PSLS_EPIPE_STUB_PIDFILE'] = $script:EpipeStubPidFile
+            $psi.EnvironmentVariables['PSLS_EPIPE_STUB_RXFILE'] = $script:EpipeStubRxFile
+            $psi.EnvironmentVariables['PSLS_EPIPE_STUB_STOP_AFTER'] = '4096'
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_OPTION_NATIVESERVE'] = 'off'
+
+            # NO BOM ON THE WIRE. On Windows PowerShell 5.1 (.NET Framework), reading
+            # $proc.StandardInput builds a StreamWriter over [Console]::InputEncoding and sets
+            # AutoFlush, and that setter FLUSHES THE ENCODING PREAMBLE immediately -- so when the
+            # host console is UTF-8, three bytes (EF BB BF) land ahead of our first frame. The
+            # shim's parser needs 'Content-Length' at offset 0, so it then stalls forever: zero
+            # frames forwarded, the stub receives NOTHING, and the injection is inert. Measured:
+            # 486KB written from a 5.1 host arrived as 0 bytes, and prepending those same three
+            # bytes from a pwsh host reproduces it exactly.
+            #
+            # This Context is the only one in the file that hits it, because it pins the shim to
+            # pwsh while the e2e Describes spawn the shim under the TEST host -- a 5.1-hosted shim
+            # absorbs the BOM, a Core-hosted one does not. So it presents as "the EPIPE tests fail
+            # only on the windows-powershell leg", which looks like a shim defect and is not one.
+            # Restored in AfterAll; guarded because the setter can throw on a detached console.
+            $script:EpipePrevInputEncoding = $null
+            if ($PSVersionTable.PSEdition -ne 'Core') {
+                try {
+                    $script:EpipePrevInputEncoding = [Console]::InputEncoding
+                    [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
+                } catch { $script:EpipePrevInputEncoding = $null }
+            }
+
+            $script:EpipeProc = [System.Diagnostics.Process]::Start($psi)
+            $script:G.ShimPid = $script:EpipeProc.Id
+            $script:EpipeErrTask = $script:EpipeProc.StandardError.ReadToEndAsync()
+            $shimLogPath = Join-Path $dataDir 'logs/pses-serve-shim.log'
+
+            # (1) Wait for the shim's pump to be up and the stub to have registered.
+            $deadline = (Get-Date).AddSeconds(90)
+            while ((Get-Date) -lt $deadline) {
+                $pumped = (Test-Path -LiteralPath $shimLogPath) -and ((Get-Content -LiteralPath $shimLogPath -Raw) -match 'pump started')
+                if ($pumped -and (Test-Path -LiteralPath $script:EpipeStubPidFile)) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            if (Test-Path -LiteralPath $script:EpipeStubPidFile) {
+                try { $script:G.StubPid = [int]((Get-Content -LiteralPath $script:EpipeStubPidFile -Raw).Trim()) } catch { $script:G.StubPid = 0 }
+            }
+
+            # (2) Drive client frames through the shim to the stub, and confirm they ARRIVE.
+            #     This is the healthy write path working -- without it the test below could
+            #     pass having never exercised a write at all.
+            $inStream = $script:EpipeProc.StandardInput.BaseStream
+            $body = [System.Text.Encoding]::UTF8.GetBytes('{"jsonrpc":"2.0","method":"$/psls-epipe-probe","params":{}}')
+            $hdr = [System.Text.Encoding]::ASCII.GetBytes("Content-Length: " + $body.Length + "`r`n`r`n")
+            $warmEnd = (Get-Date).AddSeconds(6)
+            $script:EpipeStubRx = 0
+            while ((Get-Date) -lt $warmEnd) {
+                try { $inStream.Write($hdr, 0, $hdr.Length); $inStream.Write($body, 0, $body.Length); $inStream.Flush() } catch { break }
+                if (Test-Path -LiteralPath $script:EpipeStubRxFile) {
+                    try { $script:EpipeStubRx = [int]((Get-Content -LiteralPath $script:EpipeStubRxFile -Raw).Trim()) } catch { }
+                }
+                if ($script:EpipeStubRx -gt 0) { break }
+                Start-Sleep -Milliseconds 50
+            }
+
+            # (3) PARK THE PUMP INSIDE A WRITE. The stub has stopped draining (STOP_AFTER), so
+            #     flooding frames fills the PSES stdin pipe and the pump BLOCKS in its
+            #     forward-to-PSES write. This is the whole reason the injection is
+            #     deterministic: a pump blocked in (a) cannot reach the (c) HasExited branch,
+            #     so killing the stub can ONLY surface through the write. Feeding the shim
+            #     never blocks the test in turn -- its background reader drains our pipe into
+            #     an unbounded in-memory queue regardless of how stuck the pump is.
+            #
+            #     An earlier revision of this test just killed the stub and fed frames
+            #     afterwards, and it LOST this race in about one run in five: the pump reached
+            #     HasExited first and exited 1 with the guard never firing. It was the
+            #     guard-logged-its-firing assertion that caught it rather than a green vacuous
+            #     pass, which is the second time that assertion has earned its place here.
+            $flood = 0
+            while ($flood -lt 6000) {
+                try { $inStream.Write($hdr, 0, $hdr.Length); $inStream.Write($body, 0, $body.Length); $inStream.Flush() } catch { break }
+                $flood++
+            }
+            $script:EpipeFloodFrames = $flood
+            Start-Sleep -Milliseconds 750   # let the pump reach and park in the blocked write
+
+            $script:EpipeStubAliveAtInjection = $false
+            $stubProc = $null
+            if ($script:G.StubPid -gt 0) {
+                $stubProc = Get-Process -Id $script:G.StubPid -ErrorAction SilentlyContinue
+                $script:EpipeStubAliveAtInjection = ($null -ne $stubProc)
+            }
+
+            # (4) THE INJECTION: kill the stub. The pump's blocked write breaks under it.
+            $script:EpipeSw = [System.Diagnostics.Stopwatch]::StartNew()
+            if ($null -ne $stubProc) { try { $stubProc.Kill() } catch { } }
+            $exitDeadline = (Get-Date).AddSeconds(25)
+            while ((Get-Date) -lt $exitDeadline) {
+                if ($script:EpipeProc.HasExited) { break }
+                try { $inStream.Write($hdr, 0, $hdr.Length); $inStream.Write($body, 0, $body.Length); $inStream.Flush() } catch { }
+                Start-Sleep -Milliseconds 10
+            }
+            $script:EpipeExited = $script:EpipeProc.WaitForExit(5000)
+            $script:EpipeSw.Stop()
+            $script:EpipeElapsedMs = $script:EpipeSw.ElapsedMilliseconds
+            $script:EpipeExitCode = if ($script:EpipeExited) { $script:EpipeProc.ExitCode } else { -999 }
+            $script:EpipeStderr = ''
+            if ($script:EpipeExited) { try { $script:EpipeStderr = [string]$script:EpipeErrTask.Result } catch { $script:EpipeStderr = '<unread>' } }
+            $script:EpipeShimLog = ''
+            if (Test-Path -LiteralPath $shimLogPath) { $script:EpipeShimLog = Get-Content -LiteralPath $shimLogPath -Raw }
+            Write-Host ('[epipe guard] stubRxBytes=' + $script:EpipeStubRx + ' floodFrames=' + $script:EpipeFloodFrames +
+                ' stubAlive=' + $script:EpipeStubAliveAtInjection +
+                ' exited=' + $script:EpipeExited + ' exitCode=' + $script:EpipeExitCode +
+                ' elapsedMs=' + $script:EpipeElapsedMs + ' shimPid=' + $script:G.ShimPid + ' stubPid=' + $script:G.StubPid)
+        }
+        AfterAll {
+            # Put the host's console encoding back before any other Describe runs.
+            if ($null -ne $script:EpipePrevInputEncoding) {
+                try { [Console]::InputEncoding = $script:EpipePrevInputEncoding } catch { }
+            }
+            # Reap ONLY the two processes this Context started, by pid. Never a broad sweep.
+            foreach ($pidToKill in @($script:G.ShimPid, $script:G.StubPid)) {
+                if ($pidToKill -le 0) { continue }
+                try {
+                    $doomed = Get-Process -Id $pidToKill -ErrorAction SilentlyContinue
+                    if ($null -ne $doomed) { try { $doomed.Kill($true) } catch { try { $doomed.Kill() } catch { } } }
+                } catch { }
+            }
+            try { if (Test-Path -LiteralPath $script:EpipeRoot) { Remove-Item -LiteralPath $script:EpipeRoot -Recurse -Force -ErrorAction SilentlyContinue } } catch { }
+        }
+
+        It 'the client->PSES write path WORKED and the stub was ALIVE at injection (the guard cannot pass vacuously)' {
+            # Received bytes prove the write under test was really being exercised; a live stub
+            # proves the pipe was healthy right up to the injection, so what follows measures
+            # the break rather than a shim that had already given up for some other reason.
+            $script:G.StubPid | Should -BeGreaterThan 0 -Because 'the stub PSES must have launched and recorded its pid'
+            $script:EpipeStubRx | Should -BeGreaterThan 0 -Because 'client frames must have travelled through the shim into the stub before the pipe was broken'
+            $script:EpipeStubAliveAtInjection | Should -BeTrue -Because 'the pipe must be healthy at the moment of injection'
+        }
+
+        It 'the shim EXITS rather than wedging when the PSES stdin pipe breaks' {
+            # THE WHOLE DEFECT IN ONE ASSERTION. Pre-fix this is $false: the unhandled throw
+            # skips [System.Environment]::Exit and the graceful shutdown blocks forever on the
+            # background reader thread. The 25s budget is generous against an unbounded wedge.
+            $script:EpipeExited | Should -BeTrue -Because ('the forced exit must be reachable on the throwing path; shim stderr was: ' + $script:EpipeStderr)
+        }
+
+        It 'exits with the intended code -- PSES loss before client EOF is exit 1' {
+            $script:EpipeExitCode | Should -Be 1 -Because 'a broken PSES stdin rejoins the existing psEof shutdown, which exits 1 when the client has not closed'
+        }
+
+        It 'exits PROMPTLY -- a fix that exits correctly but slowly has not addressed the wedge' {
+            $script:EpipeElapsedMs | Should -BeGreaterThan -1
+            $script:EpipeElapsedMs | Should -BeLessThan 15000 -Because ('measured ' + $script:EpipeElapsedMs + 'ms from pipe break to process exit')
+        }
+
+        It 'logged the guard firing, naming the peer -- this, not the exit code, is what proves the guard did the work' {
+            # The exit code alone cannot discriminate: the pump's own HasExited branch produces
+            # the same 1. Only this line distinguishes "the guard caught the write" from "the
+            # race was lost and the exit came from somewhere else", so it is the assertion that
+            # keeps a vacuous pass from reading as a fix.
+            $script:EpipeShimLog | Should -Match 'write to PSES stdin failed -- pipe closed'
+            $script:EpipeShimLog | Should -Match 'PSES exited / stdout EOF; propagating EOF to the client'
+        }
+
+        It 'left NO unhandled-exception error record on stderr (the throw is handled, not merely outrun)' {
+            $script:EpipeStderr | Should -Not -Match 'ScriptHalted|Exception'
+        }
+    }
+}
+
 Describe 'ServeShim harness: the PSES-child lookup is scoped to THIS run (dispatch 000127)' -Skip:$script:SkipServe {
     # The 000125 outbox recorded two ServeShim lifecycle tests (process reap + crash-propagation
     # exit) failing intermittently on BOTH hosts, with the failing pair VARYING every run, one
