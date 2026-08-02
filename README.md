@@ -366,8 +366,11 @@ are therefore the full scored sets, not a subset.
 known-good cases produced any finding) and **100% true-positive coverage** (36 of 36 known-bad
 cases surfaced their expected rule). These numbers are not prose -- they are recomputed from the
 live tool on every CI run and **guarded** (`tests/PowerShellLsp.Corpus.Tests.ps1` fails CI if the
-false-positive rate rises above zero, coverage drops below 100%, or the corpus shrinks), with the
-per-run report uploaded as a CI artifact. The claim is *measured and defensible*, not *exhaustive*.
+false-positive rate rises above zero or coverage drops below 100%, and separately **floors** each
+scored set at **30 fixtures**, so a rate cannot be made defensible by shrinking the oracle), with
+the per-run report uploaded as a CI artifact. That floor is a floor, **not a ratchet**: it does
+not pin the corpus at its present size, so a deliberate withdrawal -- as in v1.29.0 -- stays green
+while it stays above the floor. The claim is *measured and defensible*, not *exhaustive*.
 
 **The invariant that makes it trustworthy:** every expected finding is *derived* by running the
 REAL tool over the sample and snapshotting exactly what it emits -- never hand-authored, never
