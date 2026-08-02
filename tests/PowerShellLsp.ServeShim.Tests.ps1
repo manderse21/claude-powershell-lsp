@@ -287,6 +287,8 @@ Describe 'ServeShim: the broken-pipe (EPIPE) guard on the write path (dispatch 0
 param([string]$HostName, [string]$HostProfileId, [string]$HostVersion, [string]$BundledModulesPath,
       [string]$LogPath, [string]$LogLevel, [string]$SessionDetailsPath, [switch]$Stdio)
 Set-Content -LiteralPath $env:PSLS_EPIPE_STUB_PIDFILE -Value $PID -Encoding ascii
+$stopAfter = 0
+if (-not [string]::IsNullOrWhiteSpace($env:PSLS_EPIPE_STUB_STOP_AFTER)) { $stopAfter = [int]$env:PSLS_EPIPE_STUB_STOP_AFTER }
 $in = [Console]::OpenStandardInput()
 $buf = New-Object byte[] 65536
 $total = 0
@@ -296,6 +298,10 @@ while ($true) {
     if ($n -le 0) { break }
     $total += $n
     try { Set-Content -LiteralPath $env:PSLS_EPIPE_STUB_RXFILE -Value $total -Encoding ascii } catch { }
+    # STOP DRAINING but STAY ALIVE. This is what makes the injection deterministic: once the
+    # stub stops reading, the shim's writes fill the pipe and the pump BLOCKS inside its
+    # forward-to-PSES write, where it cannot reach the HasExited exit branch.
+    if (($stopAfter -gt 0) -and ($total -ge $stopAfter)) { break }
 }
 Start-Sleep -Seconds 600
 '@
@@ -317,6 +323,7 @@ Start-Sleep -Seconds 600
             $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $dataDir
             $psi.EnvironmentVariables['PSLS_EPIPE_STUB_PIDFILE'] = $script:EpipeStubPidFile
             $psi.EnvironmentVariables['PSLS_EPIPE_STUB_RXFILE'] = $script:EpipeStubRxFile
+            $psi.EnvironmentVariables['PSLS_EPIPE_STUB_STOP_AFTER'] = '4096'
             $psi.EnvironmentVariables['CLAUDE_PLUGIN_OPTION_NATIVESERVE'] = 'off'
 
             $script:EpipeProc = [System.Diagnostics.Process]::Start($psi)
@@ -352,6 +359,27 @@ Start-Sleep -Seconds 600
                 Start-Sleep -Milliseconds 50
             }
 
+            # (3) PARK THE PUMP INSIDE A WRITE. The stub has stopped draining (STOP_AFTER), so
+            #     flooding frames fills the PSES stdin pipe and the pump BLOCKS in its
+            #     forward-to-PSES write. This is the whole reason the injection is
+            #     deterministic: a pump blocked in (a) cannot reach the (c) HasExited branch,
+            #     so killing the stub can ONLY surface through the write. Feeding the shim
+            #     never blocks the test in turn -- its background reader drains our pipe into
+            #     an unbounded in-memory queue regardless of how stuck the pump is.
+            #
+            #     An earlier revision of this test just killed the stub and fed frames
+            #     afterwards, and it LOST this race in about one run in five: the pump reached
+            #     HasExited first and exited 1 with the guard never firing. It was the
+            #     guard-logged-its-firing assertion that caught it rather than a green vacuous
+            #     pass, which is the second time that assertion has earned its place here.
+            $flood = 0
+            while ($flood -lt 6000) {
+                try { $inStream.Write($hdr, 0, $hdr.Length); $inStream.Write($body, 0, $body.Length); $inStream.Flush() } catch { break }
+                $flood++
+            }
+            $script:EpipeFloodFrames = $flood
+            Start-Sleep -Milliseconds 750   # let the pump reach and park in the blocked write
+
             $script:EpipeStubAliveAtInjection = $false
             $stubProc = $null
             if ($script:G.StubPid -gt 0) {
@@ -359,8 +387,7 @@ Start-Sleep -Seconds 600
                 $script:EpipeStubAliveAtInjection = ($null -ne $stubProc)
             }
 
-            # (3) THE INJECTION: kill the stub, then KEEP FEEDING frames so the pump's (a)
-            #     block has work pending on its next iteration and hits the now-broken pipe.
+            # (4) THE INJECTION: kill the stub. The pump's blocked write breaks under it.
             $script:EpipeSw = [System.Diagnostics.Stopwatch]::StartNew()
             if ($null -ne $stubProc) { try { $stubProc.Kill() } catch { } }
             $exitDeadline = (Get-Date).AddSeconds(25)
@@ -377,7 +404,8 @@ Start-Sleep -Seconds 600
             if ($script:EpipeExited) { try { $script:EpipeStderr = [string]$script:EpipeErrTask.Result } catch { $script:EpipeStderr = '<unread>' } }
             $script:EpipeShimLog = ''
             if (Test-Path -LiteralPath $shimLogPath) { $script:EpipeShimLog = Get-Content -LiteralPath $shimLogPath -Raw }
-            Write-Host ('[epipe guard] stubRxBytes=' + $script:EpipeStubRx + ' stubAlive=' + $script:EpipeStubAliveAtInjection +
+            Write-Host ('[epipe guard] stubRxBytes=' + $script:EpipeStubRx + ' floodFrames=' + $script:EpipeFloodFrames +
+                ' stubAlive=' + $script:EpipeStubAliveAtInjection +
                 ' exited=' + $script:EpipeExited + ' exitCode=' + $script:EpipeExitCode +
                 ' elapsedMs=' + $script:EpipeElapsedMs + ' shimPid=' + $script:G.ShimPid + ' stubPid=' + $script:G.StubPid)
         }
