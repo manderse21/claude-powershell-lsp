@@ -142,6 +142,54 @@ function Write-ServeFrame {
     $Stream.Flush()
 }
 
+function Write-ServeFrameGuarded {
+    # Broken-pipe-tolerant Write-ServeFrame (dispatch 000180). Returns $true when the frame
+    # was written, $false when the PEER'S PIPE IS GONE -- so the caller can treat a dead peer
+    # as the controlled shutdown it is instead of taking an unhandled throw.
+    #
+    # WHY THIS EXISTS. Every write here lands on a pipe owned by another process: the PSES
+    # child's stdin, or the client's stdout. When that peer dies, the write throws --
+    # IOException for a broken pipe, ObjectDisposedException for a stream already torn down --
+    # and in the shim's pump that throw was unhandled. It escaped an outer `try` that had a
+    # `finally` and no `catch`, which SKIPPED the closing [System.Environment]::Exit and left
+    # the process to a graceful runspace shutdown that waits forever on the background
+    # client-reader thread blocked in a synchronous Read. That is the EPIPE flake: on macOS the
+    # leg dies, locally the run wedges. Sighted four times before it was fixed.
+    #
+    # THE DISCRIMINATOR IS DELIBERATELY NARROW. Only IOException and ObjectDisposedException
+    # are absorbed, because only those two mean "the peer is gone". EVERY other exception type
+    # propagates untouched -- a guard that swallowed everything would launder a real bug into a
+    # quiet shutdown, which is strictly worse than the crash it replaced. The unit tests hold
+    # both directions: the two absorbed types return $false, and a foreign type still throws.
+    #
+    # LOGGING. A warning goes to the shim's side-channel log when a sink exists, and the write
+    # is silent when one does not (the lib is dot-sourced by tests that define no Write-ShimLog).
+    # It is a side channel by construction -- stdout here is the LSP byte stream.
+    param([System.IO.Stream]$Stream, [byte[]]$BodyBytes, [string]$Peer = 'peer')
+    try {
+        Write-ServeFrame $Stream $BodyBytes
+        return $true
+    } catch [System.IO.IOException] {
+        Write-ServeWriteClosedWarning $Peer $_.Exception
+        return $false
+    } catch [System.ObjectDisposedException] {
+        Write-ServeWriteClosedWarning $Peer $_.Exception
+        return $false
+    }
+}
+
+function Write-ServeWriteClosedWarning {
+    # Best-effort side-channel warning for an absorbed broken-pipe write. Never throws, and
+    # never touches stdout. Silent when the caller defines no Write-ShimLog sink.
+    param([string]$Peer, [System.Exception]$Ex)
+    try {
+        if (-not (Get-Command -Name 'Write-ShimLog' -ErrorAction SilentlyContinue)) { return }
+        $t = if ($null -eq $Ex) { 'unknown' } else { $Ex.GetType().Name }
+        $m = if ($null -eq $Ex) { '' } else { $Ex.Message }
+        Write-ShimLog ('write to ' + $Peer + ' failed -- pipe closed (' + $t + ': ' + $m + '); treating as peer loss and shutting down cleanly')
+    } catch { }
+}
+
 # --- the initialize patch (the whole client->server intervention) ----------
 # Under a rich (CC-like) client PSES v4.6.0 sends client/registerCapability ONLY because
 # the client declared dynamicRegistration=true; under dynamicRegistration=false it advertises

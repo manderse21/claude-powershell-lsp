@@ -245,14 +245,19 @@ public static bool AssignProcess(IntPtr hJob, IntPtr hProcess) { return AssignPr
                 try { $cMethod = [string](Get-Prop ([System.Text.Encoding]::UTF8.GetString($cf) | ConvertFrom-Json) 'method') } catch { $cMethod = '' }
                 if ($cMethod -eq 'initialize') {
                     $patched = Edit-InitializeMessageForServe ([System.Text.Encoding]::UTF8.GetString($cf))
-                    Write-ServeFrame $psesIn ([System.Text.Encoding]::UTF8.GetBytes($patched))
+                    if (-not (Write-ServeFrameGuarded $psesIn ([System.Text.Encoding]::UTF8.GetBytes($patched)) 'PSES stdin')) { $psEof = $true; break }
                     $initPatched = $true
                     Write-ShimLog 'initialize patched (dynamicRegistration=false; workspaceFolders dropped; rename ensured) and forwarded'
                     $cf = Read-ServeFrame $ccBuf
                     continue
                 }
             }
-            Write-ServeFrame $psesIn $cf
+            # A dead PSES stdin reads as PSES loss, which is exactly what the psEof exit
+            # condition below already means -- so a broken pipe rejoins the normal shutdown
+            # path rather than becoming an unhandled throw (dispatch 000180). This write is
+            # reached AHEAD of the (c) HasExited check, which is why the crash-mid-session
+            # shape hit the throw before it ever hit the EOF branch.
+            if (-not (Write-ServeFrameGuarded $psesIn $cf 'PSES stdin')) { $psEof = $true; break }
             $cf = Read-ServeFrame $ccBuf
         }
 
@@ -269,14 +274,20 @@ public static bool AssignProcess(IntPtr hJob, IntPtr hProcess) { return AssignPr
                         $sMethod = [string](Get-Prop $m 'method')
                         if (Test-ServeInterceptMethod $sMethod) {
                             $resp = New-ServeInterceptResponseJson -Id (Get-Prop $m 'id') -Method $sMethod -Params (Get-Prop $m 'params')
-                            Write-ServeFrame $psesIn ([System.Text.Encoding]::UTF8.GetBytes($resp))
+                            if (-not (Write-ServeFrameGuarded $psesIn ([System.Text.Encoding]::UTF8.GetBytes($resp)) 'PSES stdin')) { $psEof = $true }
                             Write-ShimLog ('intercepted server->client ' + $sMethod + ' (answered locally)')
                             $forward = $false
                         }
                     }
                 } catch { $forward = $true }
             }
-            if ($forward) { Write-ServeFrame $ccOut $pf }
+            if ($psEof) { break }
+            # A dead client stdout reads as client loss -- the same condition the ccEof exit
+            # below already handles, so the client going away stays a clean exit 0 shutdown
+            # instead of an unhandled throw (dispatch 000180).
+            if ($forward) {
+                if (-not (Write-ServeFrameGuarded $ccOut $pf 'client stdout')) { $ccEof = $true; break }
+            }
             $pf = Read-ServeFrame $psBuf
         }
 
