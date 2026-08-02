@@ -1305,13 +1305,22 @@ real usage, not machinery.
   `[System.Environment]::Exit($shimExit)` is now reachable on every path out, including the throwing
   one; an unexpected exception exits 2 and names itself in the log instead of wedging.
   **Held to the adversarial standard.** With the guard bypassed in a scratch copy, 4 of the 10 new
-  assertions go RED; with it in place, 10 of 10 pass, the shim exiting in **140-177ms** with exit code
-  **1**. Worth recording precisely because it is a limit on the evidence: on a Windows host the
+  assertions go RED; with it in place, 10 of 10 pass, the shim exiting in **121-146ms** with exit code
+  **1** (10 injections, windows-pwsh). Worth recording precisely because it is a limit on the evidence:
+  on a Windows host the
   "does it exit" and "exit code" assertions did NOT discriminate -- the unhandled throw still terminated
-  `pwsh` with a coincidental exit 1 in ~255ms, and the wedge did not reproduce there. What discriminates
+  `pwsh` with a coincidental exit 1 in ~193-201ms, and the wedge did not reproduce there. What discriminates
   is the assertion that the guard LOGGED its firing and the one that stderr carries no unhandled-exception
   record. A future reader tempted to simplify those two away should know they are the only reason a
   bypassed guard fails on Windows at all.
+  **The injection is deterministic, and was not always.** As first written it killed the stub and then
+  fed frames, hoping to catch the pump mid-write; it lost that race about one run in five, exiting 1 via
+  the HasExited branch with the guard never firing. Since the exit code cannot tell those two apart, it
+  was the guard-logged-its-firing assertion that caught it rather than a green vacuous pass -- the second
+  time that assertion has earned its place. The stub now stops DRAINING while staying ALIVE, so a flood
+  parks the pump inside the write before the kill. Both figures above are re-measured against that
+  injection: 10 consecutive green injections, and the bypassed control reproducing 6-passed/4-RED on
+  three consecutive runs with the same four assertions each time.
 - **A THIRD flake species -- `killed-at-cap` in the flake-instrumentation suite itself. WATCH ENTRY
   ONLY: recorded, not theorised about, not fixed.** One sighting, 2026-07-29: an elapsed-vs-cap
   assertion in `tests/PowerShellLsp.HookInstrumentation.Tests.ps1` failed and **cleared on rerun**.

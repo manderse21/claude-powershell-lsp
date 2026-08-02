@@ -219,8 +219,9 @@ Describe 'ServeShim: the broken-pipe (EPIPE) guard on the write path (dispatch 0
         # of the ten assertions discriminated: the two unit assertions here, and -- in the
         # process Context -- the guard-logged-its-firing one and the clean-stderr one. The
         # "does it exit", "exit code" and "exits promptly" assertions did NOT go red, because
-        # the unhandled throw still terminated pwsh with a COINCIDENTAL exit 1 in ~255ms and
-        # the wedge does not reproduce on that host. Those three are honest regression guards
+        # the unhandled throw still terminated pwsh with a COINCIDENTAL exit 1 in ~193-201ms and
+        # the wedge does not reproduce on that host. That split was re-measured against the
+        # deterministic injection, three consecutive bypassed runs, same four RED each time. Those three are honest regression guards
         # for the platforms where the wedge does reproduce, but they are not the proof. The
         # two that are load-bearing on every platform are the ones a future cleanup would be
         # most tempted to delete as redundant.
@@ -256,12 +257,15 @@ Describe 'ServeShim: the broken-pipe (EPIPE) guard on the write path (dispatch 0
         # FileStream and throws IOException 'Pipe is broken.' That is also exactly the path the
         # decision ledger's mechanism hypothesis named, from the preserved macOS crash log.
         #
-        # WHY THE CLIENT KEEPS WRITING THROUGHOUT. The pump runs (a) forward-client-frames
-        # BEFORE (c) check-exit-conditions on every iteration. Feeding a frame continuously
-        # guarantees (a) has work pending on the first iteration after the stub dies, so the
-        # broken-pipe write is reached AHEAD of the HasExited branch -- the production ordering.
-        # If that race were ever lost the pump would exit via (c) with the SAME exit code, which
-        # is why the log-line assertion below (not the exit code) is what proves the guard fired.
+        # HOW THE ORDERING IS PINNED RATHER THAN RACED. The pump runs (a) forward-client-frames
+        # BEFORE (c) check-exit-conditions on every iteration, and the broken-pipe write must be
+        # reached AHEAD of the HasExited branch -- the production ordering. Merely feeding frames
+        # continuously and hoping only WINS that race about four times in five; the stub therefore
+        # stops draining first (PSLS_EPIPE_STUB_STOP_AFTER), so a flood parks the pump INSIDE the
+        # write under test before the stub is killed. See the injection steps below.
+        # A pump parked in (a) cannot reach (c), so the kill can surface only through the write.
+        # Were that ever to change, the pump would exit via (c) with the SAME exit code, which is
+        # why the log-line assertion below (not the exit code) is what proves the guard fired.
         #
         # The shim's stdin is deliberately left OPEN, so the background client-reader thread
         # stays blocked in its synchronous Read -- the exact state that makes a graceful
