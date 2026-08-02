@@ -28,6 +28,14 @@ pipeline itself uses -- produces from today's CHANGELOG. Over all 22 published r
 standing gate that these two are debt against is documented as step 4 of
 [docs/RELEASING.md](./RELEASING.md#how-to-cut-a-release).
 
+Both are now carried as rows in `release/release-body-divergences.psd1`, so the shipped sweep
+reports **SELECTED 22, MATCH 20, ACKNOWLEDGED 2, MISMATCH 0, STALE-ACK 0** and exits 0. That is
+not the debt being written off: each row prints its reason in full on every run, and each pins
+the SHA-256 of the body it acknowledges -- so **applying either correction below changes that
+body, retires its row, and turns the sweep red until someone re-examines it.** The
+acknowledgement exists because neither divergence can ever be resolved by making the two texts
+equal, and a guard that can never go green is a guard that gets silenced.
+
 ---
 
 ## 1. v1.29.0 -- the corpus transition `main` never made

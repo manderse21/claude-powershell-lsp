@@ -30,9 +30,21 @@
 #   space, trimmed) before comparing, so re-wrapping and trailing-newline noise cannot
 #   raise a false divergence.
 #
+# ACKNOWLEDGED DIVERGENCES
+#   Some divergences are permanent by construction: once a correction is APPENDED to a
+#   published body, that body is longer than the entry it was cut from and can never
+#   compare equal again. release/release-body-divergences.psd1 lists those, and a listed
+#   tag reports ACKNOWLEDGED rather than MISMATCH. Without that the sweep would be red on
+#   day one and stay red, and a guard that can never go green is a guard that gets
+#   silenced. The list is held to its own premise: an acknowledged tag that turns out to
+#   MATCH is reported STALE and FAILS, because a stale entry would silently excuse the next
+#   real divergence on that tag.
+#
 # EXIT CODES
-#   0  every published body agrees with its CHANGELOG entry
-#   2  at least one divergence (or a release with no CHANGELOG entry at all)
+#   0  every published body agrees with its CHANGELOG entry, or diverges only in a way
+#      that is acknowledged and still true
+#   2  at least one UNACKNOWLEDGED divergence, a STALE acknowledgement, or a release with
+#      no CHANGELOG entry at all
 #   1  the sweep could not run (gh missing / not authenticated / bad arguments)
 #
 # ASCII-only (PS 5.1 em-dash trap). Reads only; never mutates a release.
@@ -55,6 +67,10 @@ param(
     # against a captured snapshot; a tag with no file in the dir is still fetched via gh.
     [string] $BodyDir,
 
+    # The acknowledged-divergence list. Default: release/release-body-divergences.psd1.
+    # Pass an empty existing-but-empty list to see every divergence unfiltered.
+    [string] $AcknowledgedPath,
+
     # Emit the per-tag result as JSON on stdout instead of the human table.
     [switch] $Json
 )
@@ -74,6 +90,51 @@ $extractor = Join-Path (Join-Path $repoRoot 'release') 'Get-ChangelogEntry.ps1'
 if (-not (Test-Path -LiteralPath $extractor)) {
     Write-Error "Release-notes extractor not found: $extractor"
     exit 1
+}
+
+if ([string]::IsNullOrWhiteSpace($AcknowledgedPath)) {
+    $AcknowledgedPath = Join-Path (Join-Path $repoRoot 'release') 'release-body-divergences.psd1'
+}
+# A MISSING list is an error, not an empty one. Silently treating absence as "nothing is
+# acknowledged" would turn a deleted or mistyped path into a sweep that looks stricter than
+# it is on the day someone needs it to be honest.
+if (-not (Test-Path -LiteralPath $AcknowledgedPath)) {
+    Write-Error "Acknowledged-divergence list not found: $AcknowledgedPath"
+    exit 1
+}
+$ackData = Import-PowerShellDataFile -LiteralPath $AcknowledgedPath
+$ackByTag = @{}
+if ($ackData.ContainsKey('Acknowledged')) {
+    foreach ($row in @($ackData.Acknowledged)) {
+        if (-not $row.ContainsKey('Tag') -or [string]::IsNullOrWhiteSpace($row.Tag)) {
+            Write-Error "An entry in $AcknowledgedPath has no Tag."
+            exit 1
+        }
+        # PublishedSha256 is REQUIRED, not optional. An acknowledgement that names only a tag
+        # would go on excusing that tag forever, including drift introduced AFTER it was
+        # written -- so the row would suppress exactly the thing the sweep exists to find.
+        # Pinning the body means any change to it, including applying the correction this
+        # dispatch drafted, retires the row and forces a fresh look.
+        if (-not $row.ContainsKey('PublishedSha256') -or [string]::IsNullOrWhiteSpace($row.PublishedSha256)) {
+            Write-Error ("The acknowledgement for " + $row.Tag + " in $AcknowledgedPath has no PublishedSha256.")
+            exit 1
+        }
+        $ackByTag[$row.Tag] = $row
+    }
+}
+$ackSeen = @{}
+
+# SHA-256 over the NORMALIZED body, so the pin survives re-wrapping and line-ending noise
+# exactly as the comparison does.
+function Get-NormalizedSha256 {
+    param([string] $Normalized)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Normalized))
+        return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
+    } finally {
+        $sha.Dispose()
+    }
 }
 
 # Collapse everything the comparison must not care about: line endings, hard-wrap
@@ -130,6 +191,8 @@ if ($Tag -and $Tag.Count -gt 0) {
 
 $results = New-Object System.Collections.Generic.List[object]
 $mismatch = 0
+$acknowledged = 0
+$stale = 0
 $errors = 0
 
 foreach ($t in ($tags | Sort-Object)) {
@@ -168,20 +231,79 @@ foreach ($t in ($tags | Sort-Object)) {
 
     $ne = Get-NormalizedText $expected
     $nb = Get-NormalizedText $body
+    $isAck = $ackByTag.ContainsKey($t)
+    if ($isAck) { $ackSeen[$t] = $true }
+
     if ($ne -eq $nb) {
-        $results.Add([pscustomobject]@{ tag = $t; status = 'MATCH'; detail = ''; divergence = $null })
+        if ($isAck) {
+            # The acknowledgement's own premise has flipped. Reported as a failure, not
+            # quietly dropped: an entry that no longer describes anything would silently
+            # excuse the NEXT divergence on this tag.
+            $stale++
+            $results.Add([pscustomobject]@{
+                tag = $t; status = 'STALE-ACK'
+                detail = 'this tag is listed in the acknowledged-divergence list but its body and CHANGELOG entry AGREE -- remove the entry'
+                divergence = $null
+            })
+        } else {
+            $results.Add([pscustomobject]@{ tag = $t; status = 'MATCH'; detail = ''; divergence = $null })
+        }
     } else {
-        $mismatch++
         $d = Get-FirstDivergence -Expected $ne -Published $nb
-        $results.Add([pscustomobject]@{
-            tag        = $t
-            status     = 'MISMATCH'
-            detail     = ('published body and CHANGELOG entry diverge at normalized offset ' + $d.offset)
-            divergence = $d
-        })
+        if ($isAck) {
+            $pinned = $ackByTag[$t].PublishedSha256
+            $actual = Get-NormalizedSha256 -Normalized $nb
+            if ($actual -ne $pinned) {
+                # The body itself moved. Whatever was examined when this row was written is
+                # not what is published now, so the acknowledgement no longer covers it.
+                $stale++
+                $results.Add([pscustomobject]@{
+                    tag = $t; status = 'STALE-ACK'
+                    detail = ('the PUBLISHED body has changed since this divergence was acknowledged (pinned ' +
+                              $pinned.Substring(0, 12) + '..., now ' + $actual.Substring(0, 12) +
+                              '...) -- re-examine it and update or remove the entry')
+                    divergence = $d
+                })
+            } else {
+                $acknowledged++
+                $results.Add([pscustomobject]@{
+                    tag = $t; status = 'ACKNOWLEDGED'
+                    detail = (($ackByTag[$t].Reason -replace '\s+', ' ').Trim())
+                    divergence = $d
+                })
+            }
+        } else {
+            $mismatch++
+            $results.Add([pscustomobject]@{
+                tag        = $t
+                status     = 'MISMATCH'
+                detail     = ('published body and CHANGELOG entry diverge at normalized offset ' + $d.offset)
+                divergence = $d
+            })
+        }
     }
 }
 $ErrorActionPreference = 'Stop'
+
+# An acknowledgement for a release that does not exist is also stale -- it would otherwise sit
+# unread forever, looking like coverage.
+#
+# Only judged on a FULL sweep. Under -Tag the sweep is deliberately narrowed, and every
+# acknowledgement outside that narrowing is unreached BY REQUEST, not by drift. Flagging them
+# would make every scoped run red and teach the reader to ignore STALE-ACK -- the guard-gets-
+# silenced failure this whole layer exists to avoid.
+if (-not ($Tag -and $Tag.Count -gt 0)) {
+    foreach ($k in $ackByTag.Keys) {
+        if (-not $ackSeen.ContainsKey($k)) {
+            $stale++
+            $results.Add([pscustomobject]@{
+                tag = $k; status = 'STALE-ACK'
+                detail = 'listed in the acknowledged-divergence list but no such published release exists'
+                divergence = $null
+            })
+        }
+    }
+}
 
 if ($Json) {
     $results | ConvertTo-Json -Depth 5
@@ -191,26 +313,34 @@ if ($Json) {
     Write-Host ('CHANGELOG: ' + $ChangelogPath)
     Write-Host ''
     foreach ($r in $results) {
-        $line = '{0,-10} {1}' -f $r.status, $r.tag
+        $line = '{0,-13} {1}' -f $r.status, $r.tag
         Write-Host $line
-        if ($r.status -eq 'MISMATCH') {
-            Write-Host ('             ' + $r.detail)
-            Write-Host ('             CHANGELOG : ...' + $r.divergence.expectedExcerpt + '...')
-            Write-Host ('             PUBLISHED : ...' + $r.divergence.publishedExcerpt + '...')
+        if ($r.status -eq 'MISMATCH' -or $r.status -eq 'ACKNOWLEDGED') {
+            Write-Host ('                ' + $r.detail)
+            Write-Host ('                CHANGELOG : ...' + $r.divergence.expectedExcerpt + '...')
+            Write-Host ('                PUBLISHED : ...' + $r.divergence.publishedExcerpt + '...')
         } elseif ($r.status -ne 'MATCH' -and $r.detail) {
-            Write-Host ('             ' + $r.detail)
+            Write-Host ('                ' + $r.detail)
         }
     }
     $matched = @($results | Where-Object { $_.status -eq 'MATCH' }).Count
     Write-Host ''
-    Write-Host ('SELECTED ' + $results.Count + ' release(s); MATCH ' + $matched + ', MISMATCH ' + $mismatch + ', ERROR ' + $errors)
+    Write-Host ('SELECTED ' + $results.Count + ' release(s); MATCH ' + $matched +
+                ', ACKNOWLEDGED ' + $acknowledged + ', MISMATCH ' + $mismatch +
+                ', STALE-ACK ' + $stale + ', ERROR ' + $errors)
     if ($mismatch -gt 0) {
         Write-Host ''
         Write-Host 'A MISMATCH means the PUBLISHED body no longer says what the CHANGELOG says.'
         Write-Host 'Per docs/RELEASING.md, mirror the CHANGELOG correction into the published body'
         Write-Host 'by APPENDING a dated correction -- never by rewriting the shipped text.'
     }
+    if ($stale -gt 0) {
+        Write-Host ''
+        Write-Host 'A STALE-ACK means an acknowledged divergence no longer describes anything.'
+        Write-Host 'Remove the entry from the acknowledged-divergence list; leaving it in place'
+        Write-Host 'would silently excuse the next real divergence on that tag.'
+    }
 }
 
-if ($mismatch -gt 0 -or $errors -gt 0) { exit 2 }
+if ($mismatch -gt 0 -or $stale -gt 0 -or $errors -gt 0) { exit 2 }
 exit 0

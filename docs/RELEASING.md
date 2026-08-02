@@ -84,8 +84,21 @@ release. The exact steps and the exact checks follow below.
 
    It reads every published release body with `gh` and compares it, whitespace-normalized,
    against what `release/Get-ChangelogEntry.ps1` -- the extractor the pipeline itself uses --
-   would produce from today's CHANGELOG. It exits 0 when all agree and 2 on any divergence.
-   Do not add a release on top of an unresolved MISMATCH.
+   would produce from today's CHANGELOG. **Do not add a release on top of an unresolved
+   MISMATCH.**
+
+   Some divergences are permanent by construction -- once a correction is APPENDED to a
+   published body, that body is longer than the entry it was cut from and can never compare
+   equal again. Those live in `release/release-body-divergences.psd1` and report ACKNOWLEDGED
+   rather than MISMATCH, with their reason printed in full so they stay visible rather than
+   merely quiet. Each row pins the SHA-256 of the body it acknowledges, so applying a
+   correction retires the row and forces a fresh look; an acknowledgement that stops
+   describing anything reports STALE-ACK and fails. Adding a row is a deliberate statement
+   that a reader is not being misled -- it is not a way to quiet a red sweep.
+
+   Exit codes: **0** all agree or diverge only in an acknowledged, still-true way; **2** an
+   unacknowledged divergence, a stale acknowledgement, or a release with no CHANGELOG entry;
+   **1** the sweep could not run.
 
    Two duties, and the second is the one that creates the drift:
 
