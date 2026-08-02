@@ -199,6 +199,48 @@ Describe 'ServeShim: the broken-pipe (EPIPE) guard on the write path (dispatch 0
             }
         }
 
+        # --- THE ADVERSARIAL CONTROL, AND WHAT IT MEASURED (dispatch 000180) --------------
+        # A guard nobody has watched fail has not been tested. So the guard was BYPASSED in a
+        # scratch copy of scripts/ + tests/ outside the repo -- the try/catch stripped out of
+        # Write-ServeFrameGuarded, leaving a plain unguarded write, and the outer `catch`
+        # removed from pses-serve-shim.ps1, which together reconstruct the exact pre-fix
+        # control flow -- and this Describe was re-run against it.
+        #
+        #   guard bypassed: 10 selected, 6 passed, 4 FAILED
+        #   guard in place: 10 selected, 10 passed, 0 failed
+        #
+        # The bypassed run also captured, deterministically, the evidence the decision ledger
+        # said a third flake sighting would have to arrive with -- the exception text naming
+        # the throwing line:
+        #   serve-shim-common.ps1:142  $Stream.Flush()
+        #   "Exception calling Flush with 0 argument(s): The pipe is being closed."
+        #
+        # READ THIS BEFORE SIMPLIFYING THE PROCESS CONTEXT BELOW. On a Windows host only FOUR
+        # of the ten assertions discriminated: the two unit assertions here, and -- in the
+        # process Context -- the guard-logged-its-firing one and the clean-stderr one. The
+        # "does it exit", "exit code" and "exits promptly" assertions did NOT go red, because
+        # the unhandled throw still terminated pwsh with a COINCIDENTAL exit 1 in ~255ms and
+        # the wedge does not reproduce on that host. Those three are honest regression guards
+        # for the platforms where the wedge does reproduce, but they are not the proof. The
+        # two that are load-bearing on every platform are the ones a future cleanup would be
+        # most tempted to delete as redundant.
+        It 'still THROWS a foreign exception type -- the guard is narrow, not a blanket swallow (adversarial)' {
+            # The failure mode a too-wide guard would introduce: laundering a real defect into
+            # a quiet shutdown, which is strictly worse than the crash it replaced. A
+            # read-only stream raises NotSupportedException, which must NOT be absorbed.
+            $ro = New-Object System.IO.MemoryStream (New-Object byte[] 8), $false
+            $threw = $null
+            try { $null = Write-ServeFrameGuarded $ro ([System.Text.Encoding]::UTF8.GetBytes('{}')) 'test' } catch { $threw = $_ }
+            $threw | Should -Not -BeNullOrEmpty -Because 'a foreign exception type must propagate, not be converted into a $false'
+            # PowerShell wraps an exception thrown by a .NET METHOD in a
+            # MethodInvocationException. `catch [IOException]` still matches through that
+            # wrapper (which is why the guard works), but the OUTER type is the wrapper -- so
+            # the type assertion has to unwrap. Pester's -ExceptionType compares the outer type
+            # and would report the wrapper here, which is why this is written out longhand.
+            $inner = $threw.Exception
+            while (($inner -is [System.Management.Automation.MethodInvocationException]) -and ($null -ne $inner.InnerException)) { $inner = $inner.InnerException }
+            $inner.GetType().FullName | Should -BeExactly 'System.NotSupportedException'
+        }
     }
 
     Context 'process: the REAL shim exits (not wedges) when the PSES stdin pipe breaks' -Skip:$script:SkipServe {
