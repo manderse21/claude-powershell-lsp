@@ -27,7 +27,7 @@ unvalidated or wrong commit.
 > because Gate 2 refuses a tag that already exists, it also *blocks* the pipeline until someone
 > deletes it. This is not hypothetical: it happened on the v1.26.0 release, where a pre-existing
 > `v1.26.0` tag had to be deleted before the pipeline could cut its own. **To release, trigger the
-> workflow with the target version** (step 6 below) -- never a printed command.
+> workflow with the target version** (step 7 below) -- never a printed command.
 
 The pipeline is the GitHub Actions workflow [`powershell-lsp release`](../.github/workflows/powershell-lsp-release.yml)
 that the maintainer triggers manually; it never runs on push or merge. At a high level,
@@ -75,14 +75,72 @@ release. The exact steps and the exact checks follow below.
    Introduced by dispatch 000177 leg 8, after v1.29.0 shipped Arc A's opener while the roadmap
    still listed it under "What is next" and still called its adjudicated design question open.
 
-4. **Open a pull request and merge it.** The PR runs the four-leg CI. Merge to main once it is
+4. **Confirm every already-published release body still AGREES with its CHANGELOG entry.**
+   Run the sweep:
+
+   ```
+   pwsh -File scripts/audit-release-bodies.ps1
+   ```
+
+   It reads every published release body with `gh` and compares it, whitespace-normalized,
+   against what `release/Get-ChangelogEntry.ps1` -- the extractor the pipeline itself uses --
+   would produce from today's CHANGELOG. **Do not add a release on top of an unresolved
+   MISMATCH.**
+
+   Some divergences are permanent by construction -- once a correction is APPENDED to a
+   published body, that body is longer than the entry it was cut from and can never compare
+   equal again. Those live in `release/release-body-divergences.psd1` and report ACKNOWLEDGED
+   rather than MISMATCH, with their reason printed in full so they stay visible rather than
+   merely quiet. Each row pins the SHA-256 of the body it acknowledges, so applying a
+   correction retires the row and forces a fresh look; an acknowledgement that stops
+   describing anything reports STALE-ACK and fails. Adding a row is a deliberate statement
+   that a reader is not being misled -- it is not a way to quiet a red sweep.
+
+   Exit codes: **0** all agree or diverge only in an acknowledged, still-true way; **2** an
+   unacknowledged divergence, a stale acknowledgement, or a release with no CHANGELOG entry;
+   **1** the sweep could not run.
+
+   Two duties, and the second is the one that creates the drift:
+
+   - **Before publishing**, the sweep must be clean, or every outstanding divergence must be a
+     known one you are choosing to carry. At publish time the new release's body cannot disagree
+     with its entry -- the pipeline generates the notes from the CHANGELOG at the target commit,
+     so they agree by construction. The sweep is therefore not checking the release you are about
+     to cut; it is checking that no EARLIER release has drifted since it was published.
+   - **Whenever a CHANGELOG entry for an already-released version is corrected, mirror that
+     correction into the published release body in the same change.** The body was cut from that
+     entry and is not regenerated; correcting the entry alone leaves the published notes saying
+     the superseded thing, to the readers most likely to be relying on them. Mirror it the way
+     this project corrects any shipped text: **APPEND a dated correction beneath the original,
+     never rewrite or delete the published sentence** (the v1.17.0 and v1.29.0 corrections are
+     the precedent). Editing a published release body is a deliberate act of publishing to an
+     external surface; it is the maintainer's call and no automation performs it.
+
+   **This gate is HUMAN, and unlike the roadmap gate above it could not be machine-enforced even
+   if we wanted it to be.** A published release body is **external state** -- it lives in
+   GitHub's Releases API, not in the working tree. `tests/doc-claims.psd1` works because it
+   derives the true value from a file ON DISK and fails CI when a published number disagrees with
+   the thing it counts; there is nothing on disk for it to derive a release body from. A registry
+   row pointed at one would either never run or silently pass, which is strictly worse than no
+   row, because the row itself would read as evidence the surface is guarded. So the asymmetry is
+   recorded here instead of papered over with a check that cannot exist. `scripts/audit-release-bodies.ps1`
+   does not close that gap -- it makes honouring this gate one command instead of an act of
+   diligence.
+
+   Introduced by dispatch 000179, after a hand sweep of all 22 published bodies found two carrying
+   a statement their CHANGELOG entry no longer supports: **v1.29.0** (a corpus transition `main`
+   never made) and **v1.27.1** (whose notes still tell the reader both manifests stay at 1.27.0).
+   Both are the same shape -- a CHANGELOG corrected after publication, and a body that did not
+   follow.
+
+5. **Open a pull request and merge it.** The PR runs the four-leg CI. Merge to main once it is
    green and reviewed. **Do not tag here, and do not run the tag commands the bump helper
    prints.** Those are a manual FALLBACK for a broken pipeline (see
    [Manual fallback](#manual-fallback-if-the-pipeline-misbehaves)), never the release path --
-   the pipeline cuts the tag in step 6. A hand-cut tag is unsigned and unattested, and it will
+   the pipeline cuts the tag in step 7. A hand-cut tag is unsigned and unattested, and it will
    make Gate 2 refuse the pipeline run until someone deletes it.
 
-5. **(Optional) Wait for the push CI on main to go green.** After the merge, the
+6. **(Optional) Wait for the push CI on main to go green.** After the merge, the
    [`powershell-lsp CI`](../.github/workflows/powershell-lsp-ci.yml) workflow runs on the
    merge commit on all four legs (`windows-pwsh`, `windows-powershell`, `ubuntu-pwsh`,
    `macos-pwsh`). You no longer have to hand-time the next step to the window after CI
@@ -91,7 +149,7 @@ release. The exact steps and the exact checks follow below.
    release job **wait** for CI rather than refuse. Waiting here yourself is therefore optional --
    it just lets you confirm green before you trigger.
 
-6. **Trigger the release workflow** with the version you just merged:
+7. **Trigger the release workflow** with the version you just merged:
 
    - In the GitHub UI: **Actions -> powershell-lsp release -> Run workflow**, enter the
      version (e.g. `1.13.0`), leave **commit** blank to release the current `main` tip, and
