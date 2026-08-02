@@ -350,11 +350,19 @@ and the transport is `System.IO.Pipes`.
 ## Diagnostic-correctness corpus
 
 A curated corpus (`tests/corpus/`) proves the diagnostics the tool *reports* are correct -- not
-merely present, and not merely honest when it cannot analyze. Three sample categories: **clean**
-(34 cases, expect zero findings), **known-bad** (36 cases, six per surfaced rule, asserting the
-exact rule id, line, and severity), and **parser-error** (3 cases).
+merely present, and not merely honest when it cannot analyze. Three sample categories carry the
+headline: **clean** (50 cases, expect zero findings), **known-bad** (36 cases, six per surfaced
+rule, asserting the exact rule id, line, and severity), and **parser-error** (3 cases).
 
-**Measured correctness (default config, all four CI legs):** a **0% false-positive rate** (0 of 34
+**Which fixtures the headline scores.** `Get-CorpusCorrectnessReport`
+(`tests/corpus/Corpus.Common.ps1`) builds the false-positive denominator from every `clean` spec
+and the true-positive denominator from every `bad` spec, as enumerated by `Get-CorpusSampleSpec`:
+`samples/clean` contributes both its `*.ps1` and its `*.txt` fixtures, `samples/bad` its `*.ps1`
+fixtures. The corpus also carries `bashism`, `compat`, `pre-pssa` and `module` fixtures, each
+separately asserted; **none of them enters either headline denominator.** The denominators below
+are therefore the full scored sets, not a subset.
+
+**Measured correctness (default config, all four CI legs):** a **0% false-positive rate** (0 of 50
 known-good cases produced any finding) and **100% true-positive coverage** (36 of 36 known-bad
 cases surfaced their expected rule). These numbers are not prose -- they are recomputed from the
 live tool on every CI run and **guarded** (`tests/PowerShellLsp.Corpus.Tests.ps1` fails CI if the
