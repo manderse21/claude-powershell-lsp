@@ -1321,6 +1321,19 @@ real usage, not machinery.
   parks the pump inside the write before the kill. Both figures above are re-measured against that
   injection: 10 consecutive green injections, and the bypassed control reproducing 6-passed/4-RED on
   three consecutive runs with the same four assertions each time.
+  **A 5.1 host trap the new test walked straight into, worth knowing for any future one.** As first
+  written the injection was INERT on `windows-powershell` -- it failed 2 of 10 there while passing
+  under `pwsh`, which reads like a shim defect on one platform and is nothing of the kind. On .NET
+  Framework, reading `$proc.StandardInput` builds a `StreamWriter` over `[Console]::InputEncoding` and
+  sets `AutoFlush`, and that setter flushes the encoding PREAMBLE immediately -- so against a UTF-8
+  console three bytes (`EF BB BF`) land ahead of the first frame. The shim's parser wants
+  `Content-Length` at offset 0, so it stalls: 486KB written from a 5.1 host arrived as **0 bytes**, and
+  prepending those same three bytes from a `pwsh` host reproduces it exactly. Only this Context is
+  exposed, because it pins the shim to `pwsh` while the e2e Describes spawn the shim under the TEST
+  host, and a 5.1-hosted shim absorbs the BOM. The cure is on the TEST side and the wire is unchanged:
+  a BOM-less `InputEncoding` for the launch, restored afterwards. With it, 55/55 on both hosts and the
+  bypassed control goes 6-passed/4-RED on 5.1 too -- so the adversarial evidence now covers the host
+  where it previously could not have, having never fired at all.
 - **A THIRD flake species -- `killed-at-cap` in the flake-instrumentation suite itself. WATCH ENTRY
   ONLY: recorded, not theorised about, not fixed.** One sighting, 2026-07-29: an elapsed-vs-cap
   assertion in `tests/PowerShellLsp.HookInstrumentation.Tests.ps1` failed and **cleared on rerun**.

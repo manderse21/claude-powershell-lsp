@@ -330,6 +330,28 @@ Start-Sleep -Seconds 600
             $psi.EnvironmentVariables['PSLS_EPIPE_STUB_STOP_AFTER'] = '4096'
             $psi.EnvironmentVariables['CLAUDE_PLUGIN_OPTION_NATIVESERVE'] = 'off'
 
+            # NO BOM ON THE WIRE. On Windows PowerShell 5.1 (.NET Framework), reading
+            # $proc.StandardInput builds a StreamWriter over [Console]::InputEncoding and sets
+            # AutoFlush, and that setter FLUSHES THE ENCODING PREAMBLE immediately -- so when the
+            # host console is UTF-8, three bytes (EF BB BF) land ahead of our first frame. The
+            # shim's parser needs 'Content-Length' at offset 0, so it then stalls forever: zero
+            # frames forwarded, the stub receives NOTHING, and the injection is inert. Measured:
+            # 486KB written from a 5.1 host arrived as 0 bytes, and prepending those same three
+            # bytes from a pwsh host reproduces it exactly.
+            #
+            # This Context is the only one in the file that hits it, because it pins the shim to
+            # pwsh while the e2e Describes spawn the shim under the TEST host -- a 5.1-hosted shim
+            # absorbs the BOM, a Core-hosted one does not. So it presents as "the EPIPE tests fail
+            # only on the windows-powershell leg", which looks like a shim defect and is not one.
+            # Restored in AfterAll; guarded because the setter can throw on a detached console.
+            $script:EpipePrevInputEncoding = $null
+            if ($PSVersionTable.PSEdition -ne 'Core') {
+                try {
+                    $script:EpipePrevInputEncoding = [Console]::InputEncoding
+                    [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
+                } catch { $script:EpipePrevInputEncoding = $null }
+            }
+
             $script:EpipeProc = [System.Diagnostics.Process]::Start($psi)
             $script:G.ShimPid = $script:EpipeProc.Id
             $script:EpipeErrTask = $script:EpipeProc.StandardError.ReadToEndAsync()
@@ -414,6 +436,10 @@ Start-Sleep -Seconds 600
                 ' elapsedMs=' + $script:EpipeElapsedMs + ' shimPid=' + $script:G.ShimPid + ' stubPid=' + $script:G.StubPid)
         }
         AfterAll {
+            # Put the host's console encoding back before any other Describe runs.
+            if ($null -ne $script:EpipePrevInputEncoding) {
+                try { [Console]::InputEncoding = $script:EpipePrevInputEncoding } catch { }
+            }
             # Reap ONLY the two processes this Context started, by pid. Never a broad sweep.
             foreach ($pidToKill in @($script:G.ShimPid, $script:G.StubPid)) {
                 if ($pidToKill -le 0) { continue }
