@@ -150,7 +150,9 @@ Describe 'rule-efficacy-ledger -- hand-counted per-rule aggregation over a fixtu
         # no persistence to derive them from and a zero would have read as "measured and found to
         # be none" -- a fabricated fact. 000171 shipped the sibling lifecycle log, so those two
         # columns are now DERIVED and present, and each carries a state ('absent' / 'no-events' /
-        # 'ok') precisely so an unmeasured rate STILL never renders as 0.
+        # 'derived') precisely so an unmeasured rate STILL never renders as 0. Those three are the
+        # COMPLETE set Get-LifecycleRates returns; it is the emitting code, so read the state names
+        # there rather than trusting this comment.
         #
         # The guard did its job when that landed: it went RED on all four CI legs because nobody
         # told it about the design change. Updating it is therefore a re-baseline, NOT a

@@ -256,10 +256,24 @@ checked" banner, so even the no-pipe case is never silent.
 
 ## Performance
 
-Measured on `pwsh` 7.6.3, Windows 11, at the v1.12.0 build: **warm-path latency** (edit ->
-diagnostic round-trip, median of 5) **~2.2 s**; **cold-start latency** (SessionStart -> daemon
-ready, median of 3) **~3.9 s**. Roughly 0.7 s of the warm path is the per-hook `pwsh` process
-spawn that Claude Code pays regardless of plugin code.
+Measured on `pwsh` 7.6.3, Windows 11 Pro, at the **v1.24.3** build, on 2026-07-17:
+**warm-path latency** (edit -> diagnostic round-trip) has a **median of 2228 ms** and a **p95 of
+2463 ms** over **30 iterations**. A figure without its sample size is not evidence, which is why
+the n travels with it.
+
+**Cold-start latency is not published here, because it is not currently measured to publication
+standard.** The benchmark harness excludes cold start deliberately, so the repository holds no
+cold-start measurement to quote. Cold start *is* threshold-guarded in
+`tests/PowerShellLsp.Benchmark.Tests.ps1`, but a guard threshold is chosen to be generous and is
+not a measurement; publishing it as one would render *not currently measured* as a measurement --
+precisely the failure the plugin's own four-state diagnostic model exists to prevent, applied here
+to the README. Publishing a cold-start number would require a cold-start path in the harness,
+reported with its sample size, host, and build on the same footing as the warm figure above.
+
+A v1.12.0-era note attributed roughly 0.7 s of the warm path to the per-hook `pwsh` process spawn
+that Claude Code pays regardless of plugin code. That attribution has **not** been re-measured
+against the figures above, so it is recorded with its original vintage rather than restated as
+current.
 
 These latencies are **measured and guarded in CI** by a repeatable benchmark harness
 (`tests/PowerShellLsp.Benchmark.Tests.ps1`) on all four CI legs, which emits structured results
@@ -350,16 +364,27 @@ and the transport is `System.IO.Pipes`.
 ## Diagnostic-correctness corpus
 
 A curated corpus (`tests/corpus/`) proves the diagnostics the tool *reports* are correct -- not
-merely present, and not merely honest when it cannot analyze. Three sample categories: **clean**
-(34 cases, expect zero findings), **known-bad** (36 cases, six per surfaced rule, asserting the
-exact rule id, line, and severity), and **parser-error** (3 cases).
+merely present, and not merely honest when it cannot analyze. Three sample categories carry the
+headline: **clean** (50 cases, expect zero findings), **known-bad** (36 cases, six per surfaced
+rule, asserting the exact rule id, line, and severity), and **parser-error** (3 cases).
 
-**Measured correctness (default config, all four CI legs):** a **0% false-positive rate** (0 of 34
+**Which fixtures the headline scores.** `Get-CorpusCorrectnessReport`
+(`tests/corpus/Corpus.Common.ps1`) builds the false-positive denominator from every `clean` spec
+and the true-positive denominator from every `bad` spec, as enumerated by `Get-CorpusSampleSpec`:
+`samples/clean` contributes both its `*.ps1` and its `*.txt` fixtures, `samples/bad` its `*.ps1`
+fixtures. The corpus also carries `bashism`, `compat`, `pre-pssa` and `module` fixtures, each
+separately asserted; **none of them enters either headline denominator.** The denominators below
+are therefore the full scored sets, not a subset.
+
+**Measured correctness (default config, all four CI legs):** a **0% false-positive rate** (0 of 50
 known-good cases produced any finding) and **100% true-positive coverage** (36 of 36 known-bad
 cases surfaced their expected rule). These numbers are not prose -- they are recomputed from the
 live tool on every CI run and **guarded** (`tests/PowerShellLsp.Corpus.Tests.ps1` fails CI if the
-false-positive rate rises above zero, coverage drops below 100%, or the corpus shrinks), with the
-per-run report uploaded as a CI artifact. The claim is *measured and defensible*, not *exhaustive*.
+false-positive rate rises above zero or coverage drops below 100%, and separately **floors** each
+scored set at **30 fixtures**, so a rate cannot be made defensible by shrinking the oracle), with
+the per-run report uploaded as a CI artifact. That floor is a floor, **not a ratchet**: it does
+not pin the corpus at its present size, so a deliberate withdrawal -- as in v1.29.0 -- stays green
+while it stays above the floor. The claim is *measured and defensible*, not *exhaustive*.
 
 **The invariant that makes it trustworthy:** every expected finding is *derived* by running the
 REAL tool over the sample and snapshotting exactly what it emits -- never hand-authored, never

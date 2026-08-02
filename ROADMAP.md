@@ -9,16 +9,44 @@ stale between releases and a stale count reads as a false claim. For the current
 decision below -- including the ones that were declined and why -- see the
 [decision ledger](docs/decision-ledger.md).
 
+## Recently completed
+
+Deliberately short: this records only what has *left* "What is next", so that list stays a list of
+open work. What shipped and when is [CHANGELOG.md](./CHANGELOG.md); why is the
+[decision ledger](docs/decision-ledger.md).
+
+- **Diagnostic efficacy ledger (Arc A) -- opener shipped.** Per-rule fired / fixed / ignored facts,
+  aggregated reader-side from the dogfood capture the plugin already writes. Facts, not scores. The
+  design question this arc carried -- whether the closed-loop "cleared" signal must be persisted
+  per rule -- has been **adjudicated and built**: it is persisted, in a sibling log, and the derived
+  clearance columns read from it. That question is settled, not open.
+
+  **The next unresolved question on this arc is whether the union read should filter.** The reader
+  unions every per-version capture log it discovers, deliberately, so that an upgrade does not
+  reset the denominator -- which means the union permanently includes occurrences produced by rules
+  that no longer ship. That much is now *visible*: the ledger reports both denominators side by
+  side, total and current-rule-surface, and names the out-of-surface rules. It **filters neither**,
+  on purpose, so that no previously published figure changes value. The open question is whether it
+  ever should, and what such a filter would cost in historical comparability.
+
+  The **clearance columns have no equivalent**, and that is the sharper half. The attribution above
+  works because a committed surface history maps releases to the rule surface that shipped with
+  them. The sibling lifecycle log has no counterpart: its records carry no version field and its
+  path is not version-partitioned, so for those columns the provenance is not merely unfiltered but
+  unrecoverable. Recorded in the [decision ledger](docs/decision-ledger.md).
+
 ## What is next
 
-- **Diagnostic efficacy ledger (Arc A).** Per-rule fired / fixed / ignored facts, aggregated
-  reader-side from the dogfood capture the plugin already writes. Facts, not scores. This is the
-  opener because it is unblocked today and needs no new knob and no capture-format change --
-  though whether the closed-loop "cleared" signal must be persisted per-rule is an open design
-  question the build dispatch adjudicates, not a settled one.
-- **Plugin-catalog submission.** The queued next external action, gated on the maintainer.
 - **Doctor and command surface.** Continuing to close the gap between "the plugin is installed"
   and "the user can prove it is working", through the preflight doctor and plugin commands.
+
+> **Plugin-catalog submission is not an item on this list.** It is maintainer-owned and is not
+> tracked on this page as an open action. It previously appeared under "What is next" as "the queued
+> next external action", and that framing is an operational hazard rather than a cosmetic staleness:
+> a prior session read it as evidence that submission had not happened and caused a duplicate.
+> **Do not infer submission state from this page, and do not try to establish it by querying the
+> catalog** -- submission goes through a Console form that is invisible to the API, so a query
+> cannot answer the question, and acting on one has already gone wrong once. Ask the maintainer.
 
 ## What is blocked
 

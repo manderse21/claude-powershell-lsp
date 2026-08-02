@@ -22,8 +22,14 @@ state, and tears it down when done.
 
 ## Results
 
-Measured 2026-07-17. Host: pwsh 7.6.3 on Windows 11 Pro (10.0.26200), AMD Ryzen AI 7 PRO 350,
-16 logical cores, 31 GB. **30 iterations per path. Cold start excluded.** Idle machine.
+Measured 2026-07-17 at plugin **v1.24.3**. Host: pwsh 7.6.3 on Windows 11 Pro (10.0.26200),
+AMD Ryzen AI 7 PRO 350, 16 logical cores, 31 GB. **30 iterations per path. Cold start excluded.**
+Idle machine.
+
+The build stamp is not decoration: a date and a host do not tell a reader which build produced the
+numbers, and this page previously carried none. It is derived, not recalled -- `a3f6973` is the
+only commit in this file's history and is the one that recorded these figures, and both manifests
+(`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`) read `1.24.3` at that commit.
 
 | path | median | p95 | min | max | n |
 |---|---|---|---|---|---|
