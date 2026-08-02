@@ -4,20 +4,27 @@
 # over the two shipped dogfood logs (dispatch 000153, chartered by the 000148 leg-2 survey).
 #
 # WHAT IT IS. A per-rule aggregation of what the plugin has already captured, keyed by `ruleId`,
-# carrying EXACTLY the four reader-side columns the 000148 survey section (c) proved derivable
-# from persisted data:
+# carrying SIX data columns. Four are the reader-side columns the 000148 survey section (c) proved
+# derivable from the capture logs alone:
 #
 #   fired_count           capture occurrences per rule          diagnostics.jsonl (Add-DiagnosticCaptureEntries)
 #   distinct_shapes       distinct shape-hash per rule          diagnostics.jsonl `.hash` / Get-DiagnosticShapeHash
 #   source_split          per-record source bucket              Get-DogfoodSourceBucket over `.file`
 #   verdict_distribution  annotation verdicts by shape-hash     annotations.jsonl `.verdict` (frozen enum)
 #
-# The survey's other two candidate columns -- fixed_next_turn_rate and persistence_rate -- are
-# DELIBERATELY ABSENT. They derive from the closed-loop CLEARED / STILL-PRESENT signal, which
-# Get-FindingLifecycleDiff computes and the daemon emits but NOTHING PERSISTS per-rule (it lives in
-# daemon in-memory state, in the turn payload, and as a per-file aggregate debug line). A
-# reader-side slice cannot populate them without a persistence change, which is a separately gated
-# dispatch. Adding them here would mean inventing data.
+# The other two derive from the closed-loop CLEARED / STILL-PRESENT signal:
+#
+#   fixed_next_turn_rate  cleared / (cleared + stillPresent)       lifecycle-*.jsonl (Get-LifecycleRates)
+#   persistence_rate      stillPresent / (cleared + stillPresent)  lifecycle-*.jsonl (Get-LifecycleRates)
+#
+# HISTORY, kept because the reason still governs how those two RENDER. Through dispatch 000153 they
+# were deliberately absent: Get-FindingLifecycleDiff computed the signal and the daemon emitted it,
+# but nothing PERSISTED it per rule -- it lived in daemon in-memory state, in the turn payload, and
+# as a per-file aggregate debug line -- so a reader-side slice could not have populated them without
+# inventing data. Dispatch 000171 leg 2 shipped that persistence as a SIBLING log, which is why they
+# are derived and present now. The old constraint survives as a rendering rule: each rate carries a
+# state -- 'absent', 'no-events' or 'derived', per Get-LifecycleRates -- so an unmeasured rate
+# renders '(absent)' or '(no-events)' and NEVER 0. A zero would still be a fabricated fact.
 #
 # FACTS ONLY -- the S3.2 positioning guardrail. This tool reports counts. It does NOT score, rank,
 # grade, prioritize, or recommend: rows come out sorted by `ruleId` (a stable, meaningful-free
