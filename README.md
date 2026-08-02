@@ -256,10 +256,24 @@ checked" banner, so even the no-pipe case is never silent.
 
 ## Performance
 
-Measured on `pwsh` 7.6.3, Windows 11, at the v1.12.0 build: **warm-path latency** (edit ->
-diagnostic round-trip, median of 5) **~2.2 s**; **cold-start latency** (SessionStart -> daemon
-ready, median of 3) **~3.9 s**. Roughly 0.7 s of the warm path is the per-hook `pwsh` process
-spawn that Claude Code pays regardless of plugin code.
+Measured on `pwsh` 7.6.3, Windows 11 Pro, at the **v1.24.3** build, on 2026-07-17:
+**warm-path latency** (edit -> diagnostic round-trip) has a **median of 2228 ms** and a **p95 of
+2463 ms** over **30 iterations**. A figure without its sample size is not evidence, which is why
+the n travels with it.
+
+**Cold-start latency is not published here, because it is not currently measured to publication
+standard.** The benchmark harness excludes cold start deliberately, so the repository holds no
+cold-start measurement to quote. Cold start *is* threshold-guarded in
+`tests/PowerShellLsp.Benchmark.Tests.ps1`, but a guard threshold is chosen to be generous and is
+not a measurement; publishing it as one would render *not currently measured* as a measurement --
+precisely the failure the plugin's own four-state diagnostic model exists to prevent, applied here
+to the README. Publishing a cold-start number would require a cold-start path in the harness,
+reported with its sample size, host, and build on the same footing as the warm figure above.
+
+A v1.12.0-era note attributed roughly 0.7 s of the warm path to the per-hook `pwsh` process spawn
+that Claude Code pays regardless of plugin code. That attribution has **not** been re-measured
+against the figures above, so it is recorded with its original vintage rather than restated as
+current.
 
 These latencies are **measured and guarded in CI** by a repeatable benchmark harness
 (`tests/PowerShellLsp.Benchmark.Tests.ps1`) on all four CI legs, which emits structured results
