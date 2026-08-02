@@ -151,6 +151,18 @@ is a stated trust commitment. No knob is added, removed, renamed, or re-defaulte
   than bytes, and each converges to the deterministic LF form the next time its findings genuinely
   change. Normalizing all 47 now would itself be the cosmetic churn the fix exists to prevent, so
   the residue is recorded rather than swept.
+- **Correction (2026-08-01) to this entry's corpus-count transition.** The *DSC `Configuration`
+  shape* bullet under **Fixed** reads "Clean samples move 51 -> 50 and known-bad 37 -> 36". Those
+  are intermediate states from **inside PR #119**, not transitions `main` ever made. Verified by
+  walking every first-parent commit on `main`: it has never held 51 clean samples, and never held
+  37 known-bad ones. What `main` actually did across this release is **clean 49 -> 50** and
+  **known-bad 36 -> 36** -- no movement at all, the known-bad count having stood at 36 continuously
+  since `3718a5b` (2026-06-24). The **end states are right** (50 and 36); it is the narrated
+  transition that is wrong, and its known-bad half narrates a net change that did not happen.
+  Recorded here rather than by rewriting the shipped sentence, on the same principle as this
+  project's earlier correction to the v1.17.0 release notes: shipped history stands. Note also that
+  the **GitHub release-notes body for v1.29.0 carries this same sentence**; amending published
+  release notes was out of scope for the dispatch that found this, so it is reported, not edited.
 
 ## [1.28.1] - 2026-07-31
 PATCH: **the front door, corrected.** Six documentation and manifest-prose fixes to the surface a
