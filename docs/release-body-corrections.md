@@ -84,6 +84,64 @@ project's correction to the v1.17.0 release notes: shipped history stands. The C
 for 1.29.0 carries the same correction (dispatch 000177 leg 6).
 ```
 
+---
+
+## 2. v1.27.1 -- notes that still place the manifests at 1.27.0
+
+Release published `2026-07-25T21:32:51Z`. The body ends:
+
+> no code, no knob, no capture-format change, no other manifest field touched, and **no version
+> move**: both manifests stay lockstep at 1.27.0 and a future cut classifies this entry. See dispatch
+> 000153 leg 3.
+
+The CHANGELOG entry on `main` today reads, at the same point:
+
+> no code, no knob, no capture-format change, no other manifest field touched, and **no version move
+> made by the authoring change itself**: dispatch 000154 classified this entry PATCH and cut it,
+> moving both manifests in lockstep to 1.27.1. See dispatch 000153 leg 3.
+
+**This is a post-publication CHANGELOG correction, not an edit to the body**, and the evidence is
+mechanical rather than inferred:
+
+- Running the sweep against `git show v1.27.1:CHANGELOG.md` -- the CHANGELOG exactly as it stood
+  at the tagged commit -- reports **MATCH** for `v1.27.1`. The published body is therefore
+  byte-for-byte (whitespace-normalized) the notes the pipeline generated at publish time. It has
+  not been touched since.
+- Running the same sweep against the CHANGELOG on `main` today reports **MISMATCH**, diverging at
+  the clause above.
+- The CHANGELOG-side edit lands in commit `4690cdb` (2026-07-27, PR #107, dispatch 000158 legs
+  1-2), whose subject names it: "fix the released v1.27.1 CHANGELOG clause". That is roughly a
+  day and a half **after** the release was published.
+
+**What is true.** The claim was accurate about the *authoring* change (dispatch 000153 leg 3
+edited one clause in `marketplace.json` and moved no version), and became false the moment
+dispatch 000154 classified that entry PATCH and cut it. At the tagged commit `v1.27.1`, both
+`.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` read `1.27.1`. The body is
+therefore telling a reader of the **v1.27.1** notes that the manifests are at **1.27.0** --
+inside the release that moved them off it.
+
+### Draft correction text (append below the existing body; nothing above it changes)
+
+```markdown
+### Correction (2026-08-02)
+
+The last sentence above reads: "**no version move**: both manifests stay lockstep at 1.27.0 and
+a future cut classifies this entry."
+
+That was true of the authoring change (dispatch 000153 leg 3 edited one clause in
+`marketplace.json` and moved no version) and stopped being true before these notes were
+published: dispatch 000154 classified the entry PATCH and cut it. **At this tag, both
+`.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` read 1.27.1.** The "future
+cut" the sentence anticipates is the release these notes belong to.
+
+The CHANGELOG entry for 1.27.1 was corrected to say so on 2026-07-27; this body was cut before
+that correction and did not follow it, which is the drift being repaired here. Everything else
+in these notes -- the marketplace-description fix, the one-clause-one-file scope, the absence of
+any code, knob or capture-format change -- is unaffected and stands as published.
+```
+
+---
+
 ## Why there is no test guarding this
 
 There is deliberately **no `tests/doc-claims.psd1` row** for either of these, and none can be
