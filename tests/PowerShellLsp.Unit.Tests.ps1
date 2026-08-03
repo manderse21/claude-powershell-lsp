@@ -360,6 +360,78 @@ Describe 'profile meta-knob -- precedence and the ruled constants (dispatch 0001
     }
 }
 
+Describe 'Data-root provenance seam (dispatch 000185 D1-A) -- legible resolution, unchanged behavior' {
+    # THE POINT OF THIS SUITE. Get-PluginDataRoot substitutes a temp fallback SILENTLY when
+    # CLAUDE_PLUGIN_DATA is unset, and nothing in its return value says which branch was taken.
+    # A reader that searches the substituted root then publishes 'absent' -- a claim about the
+    # WORLD -- on evidence that only supports 'not found here' -- a claim about the READER. The
+    # seam makes the resolution legible WITHOUT changing what Get-PluginDataRoot returns, because
+    # out-of-band invocations and this very suite depend on the fallback continuing to exist.
+    BeforeEach {
+        $script:PrevRootData = $env:CLAUDE_PLUGIN_DATA
+    }
+    AfterEach {
+        if ($null -eq $script:PrevRootData) {
+            Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_DATA' -ErrorAction SilentlyContinue
+        } else {
+            $env:CLAUDE_PLUGIN_DATA = $script:PrevRootData
+        }
+    }
+
+    It 'PINS Get-PluginDataRoot output under a SET CLAUDE_PLUGIN_DATA -- byte-identical, unchanged' {
+        $env:CLAUDE_PLUGIN_DATA = 'C:\pinned\data\root'
+        (Get-PluginDataRoot) | Should -BeExactly 'C:\pinned\data\root'
+    }
+
+    It 'PINS Get-PluginDataRoot output under an UNSET CLAUDE_PLUGIN_DATA -- the temp fallback SURVIVES' {
+        # The fallback is deliberately NOT removed, narrowed or made strict (000185 do_not). This
+        # asserts the exact prior value, so a change that made resolution strict goes RED here.
+        Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_DATA' -ErrorAction SilentlyContinue
+        $expected = Join-Path ([System.IO.Path]::GetTempPath()) 'powershell-lsp-data'
+        (Get-PluginDataRoot) | Should -BeExactly $expected
+    }
+
+    It 'the resolution object returns the IDENTICAL root Get-PluginDataRoot returns, both ways' {
+        $env:CLAUDE_PLUGIN_DATA = 'C:\pinned\data\root'
+        (Get-PluginDataRootResolution).Root | Should -BeExactly (Get-PluginDataRoot)
+        Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_DATA' -ErrorAction SilentlyContinue
+        (Get-PluginDataRootResolution).Root | Should -BeExactly (Get-PluginDataRoot)
+    }
+
+    It 'reports Known/Provenance from the env var -- the fact the old return value could not carry' {
+        $env:CLAUDE_PLUGIN_DATA = 'C:\pinned\data\root'
+        $r = Get-PluginDataRootResolution
+        $r.Known | Should -BeTrue
+        $r.Provenance | Should -BeExactly 'env:CLAUDE_PLUGIN_DATA'
+
+        Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_DATA' -ErrorAction SilentlyContinue
+        $r = Get-PluginDataRootResolution
+        $r.Known | Should -BeFalse
+        $r.Provenance | Should -BeExactly 'fallback:temp'
+    }
+
+    It 'RED control: the predicate DISCRIMINATES -- it is not hard-wired to either answer' {
+        # A predicate that always returned $true (or always $false) would satisfy a one-direction
+        # test. Both directions are asserted in ONE It, plus their inequality, so a constant-return
+        # implementation cannot pass.
+        $env:CLAUDE_PLUGIN_DATA = 'C:\pinned\data\root'
+        $set = Test-PluginDataRootKnown
+        Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_DATA' -ErrorAction SilentlyContinue
+        $unset = Test-PluginDataRootKnown
+        $set | Should -BeTrue
+        $unset | Should -BeFalse
+        $set | Should -Not -Be $unset
+    }
+
+    It 'the predicate cannot disagree with the resolution object -- one implementation, two shapes' {
+        foreach ($v in @('C:\pinned\data\root', '')) {
+            if ([string]::IsNullOrEmpty($v)) { Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_DATA' -ErrorAction SilentlyContinue }
+            else { $env:CLAUDE_PLUGIN_DATA = $v }
+            (Test-PluginDataRootKnown) | Should -Be ([bool](Get-PluginDataRootResolution).Known)
+        }
+    }
+}
+
 Describe 'Write-StatsLine -- telemetry writer (Track A: JSONL, append, rotation, fail-safe)' {
     # Stats land under Get-LogDir, which keys off CLAUDE_PLUGIN_DATA -- so each test
     # points it at a throwaway temp root and cleans up after.

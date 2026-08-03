@@ -546,7 +546,13 @@ function Get-DoctorPluginRootResolved {
 function Get-DoctorDataRootKnown {
     # $true iff CLAUDE_PLUGIN_DATA is set, so Get-PluginDataRoot returns the REAL data dir
     # rather than its temp fallback (which would make marker checks meaningless).
-    return (-not [string]::IsNullOrWhiteSpace($env:CLAUDE_PLUGIN_DATA))
+    #
+    # DELEGATES to the shared seam (dispatch 000185, D1-A). This file is where the correct
+    # shape was FIRST written, and for a while it was the only place that had it -- which is
+    # why six other readers re-invented the wrong version or skipped it. Test-PluginDataRootKnown
+    # is this same predicate promoted into lib/lsp-common.ps1; doctor now CONSUMES it rather
+    # than keeping a private second copy. Same input, same answer, one implementation.
+    return (Test-PluginDataRootKnown)
 }
 
 function Get-DoctorPin {
