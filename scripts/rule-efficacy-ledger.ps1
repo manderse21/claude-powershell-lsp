@@ -396,28 +396,65 @@ function Get-SurfaceAttribution {
     # Split occurrences into those whose rule was in the CURRENT shipped surface and those whose
     # rule is not, and separately count those attributable to a surface that has since changed.
     #
-    # OWNED FINDERS AND PARSER DIAGNOSTICS are counted as in-surface: they are not PSScriptAnalyzer
-    # rules and rulesets/base.psd1 says nothing about them. That is a REAL LIMIT of this attribution
-    # and it is reported rather than hidden -- see the note the readout prints.
+    # OWNED FINDERS AND PARSER DIAGNOSTICS ARE UNATTRIBUTABLE (dispatch 000185, ND-B). They are not
+    # PSScriptAnalyzer rules and rulesets/base.psd1 says nothing about them, so this table cannot
+    # tell whether the RUNG that produced one is still shipped.
+    #
+    # WHAT CHANGED AND WHY. Until 000185 the loop opened with
+    #
+    #     if (-not $rid.StartsWith('PS')) { $ownedOrParser++; $inCurrent++; continue }
+    #
+    # which counted every owned-finder occurrence as IN the current surface and `continue`d past
+    # BOTH the removed-rule test and the unknown-partition test. The consequence was not a
+    # measurement error, it was an unreachable category: an owned finder's occurrences could never
+    # be reported out-of-surface BY CONSTRUCTION, so the reported figure read as "measured zero"
+    # when it was really "never tested". The 65 ManifestConsistency occurrences dispatch 000170 had
+    # to attribute BY HAND sat silently inside in-current-surface the whole time.
+    #
+    # Option (iii) of the ND-B fork is taken: an explicit UNATTRIBUTABLE bucket that is REPORTED
+    # rather than folded into either side. It changes NOTHING about what is written per capture
+    # record -- the write side stays exactly as it was -- and it refuses to guess. A rung catalog
+    # keyed by message shape (option (i)) would move occurrences out of this bucket and into net;
+    # it remains available as a follow-on and does not change the shape reported here.
+    #
+    # The partition test now runs for EVERY occurrence, including these. It was skipped only as a
+    # side effect of the same `continue`, which is the same defect wearing a second hat.
     param([object[]] $Occurrences, [string[]] $CurrentSurface, [hashtable] $History)
     $cur = @{}
     foreach ($r in @($CurrentSurface)) { $cur[[string]$r] = $true }
     $inCurrent = 0; $outCurrent = 0; $ownedOrParser = 0
     $outRules = @{}
+    $unattributableRules = @{}
     $unknownPartition = 0
     foreach ($o in @($Occurrences)) {
         $rid = [string]$o.ruleId
-        if (-not $rid.StartsWith('PS')) { $ownedOrParser++; $inCurrent++; continue }
-        if ($cur.ContainsKey($rid)) { $inCurrent++ } else { $outCurrent++; $outRules[$rid] = $true }
         $p = [string]$o.partition
         if ([string]::IsNullOrWhiteSpace($p) -or -not $History.ContainsKey($p)) { $unknownPartition++ }
+        if (-not $rid.StartsWith('PS')) {
+            $ownedOrParser++
+            if (-not $unattributableRules.ContainsKey($rid)) { $unattributableRules[$rid] = 0 }
+            $unattributableRules[$rid]++
+            continue
+        }
+        if ($cur.ContainsKey($rid)) { $inCurrent++ } else { $outCurrent++; $outRules[$rid] = $true }
     }
+    # THE THREE NUMBERS (dispatch 000185, ND-C). gross = net + unattributable, exactly, always.
+    #   gross          every real occurrence the union produced
+    #   net            the occurrences this mechanism CAN reason about (in-surface + out-of-surface)
+    #   unattributable the occurrences it cannot, said out loud instead of absorbed
+    $gross = @($Occurrences).Count
     return [pscustomobject]@{
-        Total = @($Occurrences).Count
+        Total = $gross
+        Gross = $gross
+        Net = ($inCurrent + $outCurrent)
+        Unattributable = $ownedOrParser
         InCurrentSurface = $inCurrent
         OutOfCurrentSurface = $outCurrent
         OwnedOrParser = $ownedOrParser
         OutOfSurfaceRules = @($outRules.Keys | Sort-Object)
+        UnattributableRules = @($unattributableRules.Keys | Sort-Object | ForEach-Object {
+                [pscustomobject]@{ ruleId = [string]$_; occurrences = [int]$unattributableRules[$_] }
+            })
         UnknownPartition = $unknownPartition
         HistoryVersions = @($History.Keys).Count
     }
@@ -435,6 +472,28 @@ function Resolve-LifecycleLogPaths {
     # Returns @() when nothing is found -- which the caller renders as ABSENT, never as zeros.
     # Read-only: Test-Path / Get-ChildItem only.
     param([string] $LifecyclePath = '')
+    return @((Resolve-LifecycleLogSearch -LifecyclePath $LifecyclePath).Paths)
+}
+
+function Resolve-LifecycleLogSearch {
+    # Resolve the lifecycle log family AND report WHERE it searched and HOW that directory was
+    # resolved (dispatch 000185, D1-B).
+    #
+    # THE DEFECT THIS CLOSES. Resolve-LifecycleLogPaths returns only paths. When it returned an
+    # empty set the caller set Present=$false, and Get-LifecycleRates rendered 'absent' -- whose
+    # documented meaning is "the signal was NEVER CAPTURED", a claim about THE WORLD. But the
+    # default search directory is Get-LogDir, which derives from Get-PluginDataRoot, which in a
+    # bare shell SILENTLY substitutes a temp fallback. So the world-claim was reachable on
+    # evidence that only supported "I found no lifecycle file under the directory I happened to
+    # resolve" -- a claim about THE READER. Nothing in the call chain carried the substitution.
+    #
+    # RootKnown is what closes it. It is $false only when the search fell back to Get-LogDir AND
+    # the data root came from the temp fallback rather than from CLAUDE_PLUGIN_DATA. An EXPLICIT
+    # -LifecyclePath is always Known: the caller named the directory, so a miss there really is
+    # a miss, not a misdirection.
+    #
+    # Read-only: Test-Path / Get-ChildItem only.
+    param([string] $LifecyclePath = '')
     $candidates = New-Object System.Collections.Generic.List[string]
     if (-not [string]::IsNullOrWhiteSpace($LifecyclePath)) {
         if (Test-Path -LiteralPath $LifecyclePath -PathType Leaf) { $candidates.Add($LifecyclePath) | Out-Null }
@@ -443,7 +502,12 @@ function Resolve-LifecycleLogPaths {
                 $candidates.Add([string]$f.FullName) | Out-Null
             }
         }
-        return @($candidates.ToArray())
+        return [pscustomobject]@{
+            Paths      = @($candidates.ToArray())
+            SearchRoot = [string]$LifecyclePath
+            RootKnown  = $true
+            Provenance = 'explicit:-LifecyclePath'
+        }
     }
     $dir = ''
     try { $dir = Get-LogDir } catch { $dir = '' }
@@ -452,7 +516,17 @@ function Resolve-LifecycleLogPaths {
             $candidates.Add([string]$f.FullName) | Out-Null
         }
     }
-    return @($candidates.ToArray())
+    # The shared seam (lib/lsp-common.ps1, dispatch 000185 D1-A). Consulted, never re-derived.
+    $res = $null
+    try { $res = Get-PluginDataRootResolution } catch { $res = $null }
+    $known = $true; $prov = 'unknown'
+    if ($null -ne $res) { $known = [bool]$res.Known; $prov = [string]$res.Provenance }
+    return [pscustomobject]@{
+        Paths      = @($candidates.ToArray())
+        SearchRoot = [string]$dir
+        RootKnown  = $known
+        Provenance = $prov
+    }
 }
 
 function Read-LifecycleLog {
@@ -460,7 +534,12 @@ function Read-LifecycleLog {
     # Tolerates a torn or partial trailing line (the writer appends; a reader can catch it
     # mid-append) by skipping any line that does not parse -- and REPORTS the skip count rather
     # than swallowing it, because a silently-dropped record would understate a rate.
-    param([string[]] $LogPaths)
+    #
+    # -Search (dispatch 000185, D1-B) is the Resolve-LifecycleLogSearch result, carried through
+    # verbatim so the rendering layer and Get-LifecycleRates both see WHERE the reader looked and
+    # HOW that directory was resolved. Optional: omitted means the caller named its own paths, so
+    # there is no fallback to disclose and RootKnown stays $true.
+    param([string[]] $LogPaths, $Search = $null)
     $byRule = @{}
     $records = 0
     $skipped = 0
@@ -492,6 +571,11 @@ function Read-LifecycleLog {
         # NOT "at least one record": a log that exists and holds nothing is a different claim
         # from no log at all, and the two must not render identically.
         Present = (@($read.ToArray()).Count -gt 0)
+        # The search provenance (dispatch 000185, D1-B), so a NOT-PRESENT result can say whether
+        # it is entitled to the word 'absent'. Defaults are the no-fallback-to-disclose case.
+        SearchRoot = $(if ($null -ne $Search) { [string]$Search.SearchRoot } else { '' })
+        RootKnown  = $(if ($null -ne $Search) { [bool]$Search.RootKnown } else { $true })
+        Provenance = $(if ($null -ne $Search) { [string]$Search.Provenance } else { 'caller-supplied paths' })
     }
 }
 
@@ -506,8 +590,25 @@ function Get-LifecycleRates {
     #   'no-events'    -- a log exists, but this rule has no lifecycle event in it.
     #   a number       -- genuine, derived from counted events.
     # A ledger over nothing and a ledger of zeros must not look the same.
-    param([hashtable] $ByRule, [bool] $Present, [string] $RuleId)
-    if (-not $Present) { return @{ fixed = $null; persistence = $null; state = 'absent'; events = 0 } }
+    #
+    # A FOURTH rendering (dispatch 000185, D1-B), because there was a fourth distinct claim the
+    # three could not express:
+    #
+    #   'unresolvable' -- nothing was found, but the search ran under a FALLBACK data root, so
+    #                     ABSENT and NOT-FOUND cannot be told apart from this evidence.
+    #
+    # The three above are unchanged and still mean exactly what they meant. 'absent' now carries
+    # its full weight honestly: it is reached ONLY when the reader knows which directory it was
+    # supposed to search. Rendering 'absent' after searching a substituted root was the 000182
+    # D1 defect -- a claim about the world published on evidence about the reader -- and this
+    # branch is what stops it. RootKnown defaults to $true so every existing caller and test
+    # keeps its exact prior behavior; only a caller that actually knows the root was substituted
+    # can reach the new state.
+    param([hashtable] $ByRule, [bool] $Present, [string] $RuleId, [bool] $RootKnown = $true)
+    if (-not $Present) {
+        if (-not $RootKnown) { return @{ fixed = $null; persistence = $null; state = 'unresolvable'; events = 0 } }
+        return @{ fixed = $null; persistence = $null; state = 'absent'; events = 0 }
+    }
     if ($null -eq $ByRule -or -not $ByRule.ContainsKey($RuleId)) {
         return @{ fixed = $null; persistence = $null; state = 'no-events'; events = 0 }
     }
@@ -551,9 +652,14 @@ function Get-RuleEfficacyLedger {
     # measurement into a measured zero.
     $lcPresent = $false
     $lcByRule = @{}
+    # RootKnown defaults TRUE (dispatch 000185, D1-B): a Lifecycle object that does not carry the
+    # field is a caller that never resolved a root, so it cannot have fallen back, and its
+    # rendering must stay byte-identical to before. Only an explicit $false reaches 'unresolvable'.
+    $lcRootKnown = $true
     if ($null -ne $Lifecycle) {
         $lcPresent = [bool]$Lifecycle.Present
         if ($null -ne $Lifecycle.ByRule) { $lcByRule = $Lifecycle.ByRule }
+        if ($Lifecycle.PSObject.Properties['RootKnown']) { $lcRootKnown = [bool]$Lifecycle.RootKnown }
     }
 
     $real = @(@($Occurrences) | Where-Object { $script:LedgerRealBuckets -contains [string]$_.bucket })
@@ -607,7 +713,7 @@ function Get-RuleEfficacyLedger {
         # The two lifecycle columns (dispatch 000171 leg 2). DERIVED from the sibling log, never
         # invented: with no log the state is 'absent', with a log but no event for this rule it is
         # 'no-events', and only counted events produce a number.
-        $lc = Get-LifecycleRates -ByRule $lcByRule -Present $lcPresent -RuleId $rid
+        $lc = Get-LifecycleRates -ByRule $lcByRule -Present $lcPresent -RuleId $rid -RootKnown $lcRootKnown
         $row.fixed_next_turn_rate = [pscustomobject]@{ state = [string]$lc.state; value = $lc.fixed; events = [int]$lc.events }
         $row.persistence_rate = [pscustomobject]@{ state = [string]$lc.state; value = $lc.persistence; events = [int]$lc.events }
     }
@@ -653,10 +759,16 @@ function Format-LedgerRate {
     # 000171 leg 2 acceptance): '(absent)' means the signal was never captured, '(no-events)'
     # means it was captured but this rule had no lifecycle event, and a percentage is a real
     # derived figure. Rendering absence as '0.0' would state a measurement that was never made.
+    #
+    # '(unresolvable)' is the fourth (dispatch 000185, D1-B): nothing was found, but under a
+    # FALLBACK data root, so absent and not-found are indistinguishable from this evidence. It
+    # renders DIFFERENTLY from '(absent)' on purpose -- collapsing the two would re-create the
+    # exact defect the fourth state exists to fix.
     param($Rate)
     if ($null -eq $Rate) { return '(absent)' }
     $state = [string]$Rate.state
     if ($state -eq 'absent') { return '(absent)' }
+    if ($state -eq 'unresolvable') { return '(unresolvable)' }
     if ($state -eq 'no-events') { return '(no-events)' }
     return ([string]$Rate.value + ' pct (n=' + [string]$Rate.events + ')')
 }
@@ -697,10 +809,32 @@ function Format-RuleEfficacyLedger {
     $lines += ('  annotations read: ' + [string]$Ledger.AnnotationsRead)
     # The lifecycle sibling log is reported with its own provenance, so a reader can tell an
     # ABSENT signal (nothing was ever persisted) from a captured signal that happens to be empty.
+    #
+    # THE RESOLVED ROOT AND ITS PROVENANCE PRINT ON EVERY RUN (dispatch 000185, D1-B), including
+    # runs that find nothing -- especially those. A reader has to be able to see WHICH CLAIM they
+    # are being handed without re-deriving where the tool looked.
+    if ($null -ne $Lifecycle -and $Lifecycle.PSObject.Properties['SearchRoot']) {
+        $lines += ('  lifecycle search root: ' +
+            $(if ([string]::IsNullOrWhiteSpace([string]$Lifecycle.SearchRoot)) { '(none resolved)' } else { [string]$Lifecycle.SearchRoot }))
+        $lines += ('    resolved via: ' + [string]$Lifecycle.Provenance +
+            '   data-root known: ' + $(if ([bool]$Lifecycle.RootKnown) { 'YES' } else { 'NO' }))
+    }
     if ($null -ne $Lifecycle -and [bool]$Lifecycle.Present) {
         $lines += ('  lifecycle logs read: ' + @($Lifecycle.LogsRead).Count + ' (' + [string]$Lifecycle.Records + ' records)')
         foreach ($l in @($Lifecycle.LogsRead)) { $lines += ('    ' + [string]$l.LogPath + '  (' + [string]$l.Records + ' records)') }
         if ([int]$Lifecycle.Skipped -gt 0) { $lines += ('    unparseable lines SKIPPED: ' + [string]$Lifecycle.Skipped) }
+    } elseif ($null -ne $Lifecycle -and $Lifecycle.PSObject.Properties['RootKnown'] -and -not [bool]$Lifecycle.RootKnown) {
+        # The word 'absent' is DELIBERATELY not used here. Nothing was found, but the search ran
+        # under a substituted root, so this reader cannot tell an uncaptured signal from a signal
+        # it failed to locate -- and it says so instead of picking the flattering reading.
+        # The words 'absent' and '(absent)' are DELIBERATELY not used anywhere in this branch, not
+        # even to say what is NOT being claimed. A reader grepping the readout for the absent
+        # rendering must not match on prose that merely mentions it -- that is the same
+        # self-documenting-needle trap the ledger's own guards are written to avoid.
+        $lines += '  lifecycle logs read: NONE FOUND, under a FALLBACK data root -- CANNOT DETERMINE whether the'
+        $lines += '    signal was never captured or merely not found here. fixed_next_turn_rate and'
+        $lines += '    persistence_rate render (unresolvable), and NEVER 0.'
+        $lines += '    Set CLAUDE_PLUGIN_DATA to the real data root and re-run to get a determinate answer.'
     } else {
         $lines += '  lifecycle logs read: NONE -- fixed_next_turn_rate and persistence_rate render (absent), not 0.'
     }
@@ -733,18 +867,33 @@ function Format-RuleEfficacyLedger {
     if ($null -ne $Attribution) {
         $lines += ''
         $lines += '  RULE-SURFACE ATTRIBUTION -- both denominators, neither replaces the other:'
-        $lines += ('    denominator (TOTAL, every rule ever captured)  : ' + [string]$Attribution.Total + ' occurrences')
-        $lines += ('    denominator (CURRENT shipped rule surface)     : ' + [string]$Attribution.InCurrentSurface + ' occurrences')
-        $lines += ('    attributable to a rule NO LONGER in the surface: ' + [string]$Attribution.OutOfCurrentSurface + ' occurrences')
+        # THE THREE NUMBERS (dispatch 000185, ND-C). gross = net + unattributable. A net figure
+        # that hides what it could not attribute is the same defect one level up, so the remainder
+        # is printed beside it rather than folded into either side.
+        $lines += ('    GROSS          (every real occurrence)          : ' + [string]$Attribution.Gross + ' occurrences')
+        $lines += ('    NET            (attributable by this mechanism) : ' + [string]$Attribution.Net + ' occurrences')
+        $lines += ('    UNATTRIBUTABLE (this table cannot represent it) : ' + [string]$Attribution.Unattributable + ' occurrences')
+        $lines += '      ^ gross = net + unattributable, exactly. The remainder is REPORTED, never absorbed.'
+        $lines += ''
+        $lines += ('    of the NET figure -- in the CURRENT shipped rule surface : ' + [string]$Attribution.InCurrentSurface + ' occurrences')
+        $lines += ('    of the NET figure -- rule NO LONGER in the surface       : ' + [string]$Attribution.OutOfCurrentSurface + ' occurrences')
         if (@($Attribution.OutOfSurfaceRules).Count -gt 0) {
             $lines += ('      rules: ' + (@($Attribution.OutOfSurfaceRules) -join ', '))
         }
         $lines += ('    surface history: ' + [string]$Attribution.HistoryVersions + ' versions known; ' +
             [string]$Attribution.UnknownPartition + ' occurrences from a partition the history does not cover')
-        $lines += ('    NOTE: ' + [string]$Attribution.OwnedOrParser + ' occurrences are OWNED FINDERS or parser ' +
-            'diagnostics, counted IN-surface. rulesets/base.psd1 records PSScriptAnalyzer rules only, so a')
-        $lines += '          finder whose rule id still ships but one of whose internal RUNGS was removed is NOT'
-        $lines += '          distinguishable here. That case is real (dispatch 000162) and is a KNOWN LIMIT.'
+        # The UNATTRIBUTABLE bucket, itemized. Until dispatch 000185 these occurrences were counted
+        # IN-surface, which made the out-of-surface category unreachable for them by construction --
+        # the reported figure read as a measured zero when it was never tested.
+        $lines += ('    NOTE: the ' + [string]$Attribution.Unattributable + ' UNATTRIBUTABLE occurrences are OWNED FINDERS or ' +
+            'parser diagnostics. rulesets/base.psd1 records')
+        $lines += '          PSScriptAnalyzer rules only, so a finder whose rule id still ships but one of whose'
+        $lines += '          internal RUNGS was removed is NOT distinguishable from this table alone. That case is'
+        $lines += '          real (dispatch 000162). They are NOT counted in-surface and NOT counted out-of-surface:'
+        $lines += '          this mechanism has no evidence either way, and says so.'
+        foreach ($u in @($Attribution.UnattributableRules)) {
+            $lines += ('            ' + [string]$u.ruleId + '  ' + [string]$u.occurrences + ' occurrences')
+        }
     }
     return ($lines -join [Environment]::NewLine)
 }
@@ -784,7 +933,10 @@ if ($MyInvocation.InvocationName -ne '.') {
     # be one: the capture log and the lifecycle log have independent lifetimes, and a ledger over
     # captures alone is still a valid ledger -- it simply renders the two lifecycle columns as
     # (absent). Only the capture log carries the exit-3 / exit-4 never-a-silent-skip contract.
-    $lifecycle = Read-LifecycleLog -LogPaths @(Resolve-LifecycleLogPaths -LifecyclePath $script:LedgerArgLifecyclePath)
+    # Resolved through the provenance-carrying seam (dispatch 000185, D1-B) so a NOT-FOUND result
+    # knows whether it searched the real data root or a silent temp substitute.
+    $lifecycleSearch = Resolve-LifecycleLogSearch -LifecyclePath $script:LedgerArgLifecyclePath
+    $lifecycle = Read-LifecycleLog -LogPaths @($lifecycleSearch.Paths) -Search $lifecycleSearch
 
     $ledger = Get-RuleEfficacyLedger -Occurrences @($ledgerInput.Occurrences) -Annotations $ledgerInput.Annotations `
         -Lifecycle $lifecycle

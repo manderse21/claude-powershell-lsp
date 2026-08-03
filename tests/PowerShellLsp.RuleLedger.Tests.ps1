@@ -684,3 +684,172 @@ Describe 'rule-efficacy-ledger -- lifecycle columns: ABSENT, NO-EVENTS and a num
         $LASTEXITCODE | Should -Be 0
     }
 }
+
+Describe 'D1 -- a NOT-FOUND under a FALLBACK data root must not render as ABSENT (dispatch 000185)' {
+    # THE DEFECT, restated so this suite reads without the dispatch in hand. 'absent' is documented
+    # in Get-LifecycleRates as "the signal was NEVER CAPTURED" -- a claim about the WORLD. It was
+    # reachable whenever the lifecycle search returned nothing, and the default search directory
+    # derives from Get-PluginDataRoot, which SILENTLY substitutes a temp fallback when
+    # CLAUDE_PLUGIN_DATA is unset. So the world-claim was published on evidence that only supported
+    # "I found no file under the directory I happened to resolve" -- a claim about the READER.
+    #
+    # THE RED CONTROL THIS SUITE IS BUILT ON is the differential 000183 recorded and 000185
+    # re-derived: lifecycle logs PRESENT under the real data root, ZERO under the %TEMP% fallback.
+    # The fixture below reproduces that shape hermetically under $TestDrive -- the real logs are
+    # never read, per this file's header -- and these assertions FAIL against the pre-000185
+    # reader, which had no fourth state to render.
+
+    It 'renders (unresolvable), NOT (absent), when the search ran under a FALLBACK root' {
+        # The load-bearing assertion. Pre-fix this returned state 'absent' and this test goes RED.
+        $r = Get-LifecycleRates -ByRule @{} -Present $false -RuleId 'PSUseApprovedVerbs' -RootKnown $false
+        [string]$r.state | Should -BeExactly 'unresolvable'
+        (Format-LedgerRate -Rate ([pscustomobject]@{ state = $r.state; value = $r.fixed; events = $r.events })) |
+            Should -BeExactly '(unresolvable)'
+    }
+
+    It 'still renders (absent) when the root IS known -- the original claim keeps its meaning' {
+        # The fix must not smear every not-found into "cannot determine". When the reader knows
+        # which directory it was supposed to search, a miss really is an absence.
+        $r = Get-LifecycleRates -ByRule @{} -Present $false -RuleId 'PSUseApprovedVerbs' -RootKnown $true
+        [string]$r.state | Should -BeExactly 'absent'
+        (Format-LedgerRate -Rate ([pscustomobject]@{ state = $r.state; value = $r.fixed; events = $r.events })) |
+            Should -BeExactly '(absent)'
+    }
+
+    It 'RED control: the two states are DISTINCT renderings -- collapsing them fails this test' {
+        # A "fix" that rendered 'unresolvable' as '(absent)' would satisfy every one-direction
+        # assertion above while restoring the exact defect. This asserts the two differ.
+        $unres = Format-LedgerRate -Rate ([pscustomobject]@{ state = 'unresolvable'; value = $null; events = 0 })
+        $abs = Format-LedgerRate -Rate ([pscustomobject]@{ state = 'absent'; value = $null; events = 0 })
+        $unres | Should -Not -Be $abs
+        $unres | Should -Not -Match 'absent'
+    }
+
+    It 'RED control: the PRE-FIX two-branch reader produces (absent) on the SAME input' {
+        # A replica of the pre-000185 branch, fed the identical arguments the first It uses. It
+        # returns 'absent' -- what the shipped reader used to do and what the first It now forbids.
+        # Revert the fix and the first It goes RED while this one still passes, so the pair pins
+        # the change in both directions rather than asserting only the new behavior.
+        function script:Get-LifecycleRatesPreFix {
+            param([hashtable] $ByRule, [bool] $Present, [string] $RuleId)
+            if (-not $Present) { return @{ fixed = $null; persistence = $null; state = 'absent'; events = 0 } }
+            return @{ fixed = 0; persistence = 0; state = 'derived'; events = 0 }
+        }
+        $pre = Get-LifecycleRatesPreFix -ByRule @{} -Present $false -RuleId 'PSUseApprovedVerbs'
+        $post = Get-LifecycleRates -ByRule @{} -Present $false -RuleId 'PSUseApprovedVerbs' -RootKnown $false
+        [string]$pre.state | Should -BeExactly 'absent'
+        [string]$post.state | Should -BeExactly 'unresolvable'
+        [string]$pre.state | Should -Not -Be ([string]$post.state)
+    }
+
+    It 'the DIFFERENTIAL: logs under the real root are invisible to a fallback-root search' {
+        # The 000183/000185 differential, hermetically. Two lifecycle logs exist under the
+        # fixture's REAL root; the FALLBACK root holds none. This is the evidence that makes
+        # 'absent' FALSE rather than merely unproven.
+        #
+        # The fixture line is built INLINE rather than via the New-LifecycleLine helper defined in
+        # the Describe above. That helper is script-scoped from ANOTHER Describe's BeforeAll, so it
+        # only exists here if that Describe happened to run first -- which is true in a full-file
+        # run and FALSE under -FullNameFilter. Depending on it made this test pass for a reason
+        # unrelated to what it asserts; the D1-D falsification harness filters by name and caught it.
+        $base = Join-Path $TestDrive ('d1-diff-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $realLogs = Join-Path $base 'real/logs'
+        $fallbackLogs = Join-Path $base 'fallback/logs'
+        $lcLine = ([ordered]@{
+                schema = 'powershell-lsp-lifecycle/1'; ts = '2026-08-02T00:00:00.0000000-04:00'
+                file = 'C:\proj\alpha\a.ps1'; ruleId = 'PSUseApprovedVerbs'
+                cleared = 1; stillPresent = 0; clearedHashes = @('c1'); stillPresentHashes = @()
+                attemptsMax = 1; downgraded = $false; scopeApplied = $true
+            } | ConvertTo-Json -Depth 5 -Compress)
+        foreach ($n in @('lifecycle-20260802-070007-318.jsonl', 'lifecycle-20260802-165744-226.jsonl')) {
+            $p = Join-Path $realLogs $n
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $p) | Out-Null
+            [System.IO.File]::WriteAllText($p, ($lcLine + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+        }
+        New-Item -ItemType Directory -Force -Path $fallbackLogs | Out-Null
+
+        @(Get-ChildItem -LiteralPath $realLogs -Filter 'lifecycle-*.jsonl' -File).Count | Should -Be 2
+        @(Get-ChildItem -LiteralPath $fallbackLogs -Filter 'lifecycle-*.jsonl' -File).Count | Should -Be 0
+
+        # Pointed at the real root the reader FINDS them; pointed at the fallback it does not.
+        @((Resolve-LifecycleLogSearch -LifecyclePath $realLogs).Paths).Count | Should -Be 2
+        @((Resolve-LifecycleLogSearch -LifecyclePath $fallbackLogs).Paths).Count | Should -Be 0
+    }
+
+    It 'the search result CARRIES its provenance, and an explicit -LifecyclePath is always Known' {
+        # An explicitly named directory cannot be a silent substitution: the caller chose it, so a
+        # miss there is a real miss and must still render (absent), not (unresolvable).
+        $dir = Join-Path $TestDrive ('d1-prov-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $s = Resolve-LifecycleLogSearch -LifecyclePath $dir
+        $s.RootKnown | Should -BeTrue
+        $s.Provenance | Should -BeExactly 'explicit:-LifecyclePath'
+        [string]$s.SearchRoot | Should -BeExactly $dir
+    }
+
+    It 'the ledger READOUT names the resolved root and its provenance on a run that finds NOTHING' {
+        # Acceptance: the readout names the root on EVERY run, including runs that find nothing.
+        $dir = Join-Path $TestDrive ('d1-readout-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $log = Join-Path $dir 'diagnostics.jsonl'
+        Write-Utf8NoBom -Path $log -Lines @((New-CaptureLine -RuleId 'PSUseApprovedVerbs' -File $script:FileOther -Hash 'c1'))
+        $missing = Join-Path $dir 'no-such-dir'
+        $out = (& $script:HostExe -NoLogo -NoProfile -File $script:LedgerScript -Path $log -LifecyclePath $missing) -join "`n"
+        $out | Should -Match 'lifecycle search root:'
+        $out | Should -Match 'resolved via: explicit:-LifecyclePath'
+        $out | Should -Match 'data-root known: YES'
+    }
+}
+
+Describe 'ND-B/ND-C -- owned finders are UNATTRIBUTABLE, reported as a third number (dispatch 000185)' {
+    # THE DEFECT. Get-SurfaceAttribution opened its loop with a short-circuit that counted every
+    # non-PS ruleId as IN the current surface and `continue`d past both the removed-rule test and
+    # the unknown-partition test. An owned finder's occurrences could therefore never be reported
+    # out-of-surface BY CONSTRUCTION: the reported zero was not a measurement, it was a category
+    # that could not be entered. Option (iii) of the ND-B fork is taken -- an explicit
+    # UNATTRIBUTABLE bucket, reported rather than folded into either side. Nothing about what is
+    # WRITTEN per capture record changes.
+    BeforeAll {
+        $script:NdHistory = @{ '1.27.1' = @('PSAvoidUsingCmdletAliases') }
+        $script:NdSurface = @('PSAvoidUsingCmdletAliases')
+        $script:NdOcc = @(
+            [pscustomobject]@{ ruleId = 'PSAvoidUsingCmdletAliases'; partition = '1.27.1' }   # in surface
+            [pscustomobject]@{ ruleId = 'PSUseApprovedVerbs'; partition = '1.27.1' }          # out of surface
+            [pscustomobject]@{ ruleId = 'ManifestConsistency'; partition = '1.27.1' }         # owned finder
+            [pscustomobject]@{ ruleId = 'ManifestConsistency'; partition = '1.27.1' }         # owned finder
+        )
+        $script:NdAttr = Get-SurfaceAttribution -Occurrences $script:NdOcc -CurrentSurface $script:NdSurface -History $script:NdHistory
+    }
+
+    It 'emits gross, net and unattributable as THREE separate numbers' {
+        [int]$script:NdAttr.Gross | Should -Be 4
+        [int]$script:NdAttr.Net | Should -Be 2
+        [int]$script:NdAttr.Unattributable | Should -Be 2
+    }
+
+    It 'gross = net + unattributable, exactly -- the remainder is never absorbed' {
+        ([int]$script:NdAttr.Net + [int]$script:NdAttr.Unattributable) | Should -Be ([int]$script:NdAttr.Gross)
+    }
+
+    It 'the owned finder is NOT counted in-surface -- this is the short-circuit closing' {
+        # Pre-fix InCurrentSurface was 3 (1 real + 2 owned) and this goes RED against that reader.
+        [int]$script:NdAttr.InCurrentSurface | Should -Be 1
+        [int]$script:NdAttr.OutOfCurrentSurface | Should -Be 1
+        @(@($script:NdAttr.UnattributableRules) | Where-Object { $_.ruleId -eq 'ManifestConsistency' })[0].occurrences |
+            Should -Be 2
+    }
+
+    It 'RED control: fold the bucket back in and the in-surface count changes -- the guard bites' {
+        # Proof the assertion above discriminates. This recomputes what the PRE-FIX line produced
+        # (in-surface absorbing the owned finders) and asserts it DIFFERS from what ships now.
+        $preFixInCurrent = [int]$script:NdAttr.InCurrentSurface + [int]$script:NdAttr.Unattributable
+        $preFixInCurrent | Should -Be 3
+        $preFixInCurrent | Should -Not -Be ([int]$script:NdAttr.InCurrentSurface)
+    }
+
+    It 'the partition test now runs for owned finders too -- it was skipped by the same continue' {
+        $occ = @([pscustomobject]@{ ruleId = 'ManifestConsistency'; partition = '9.9.9' })
+        $a = Get-SurfaceAttribution -Occurrences $occ -CurrentSurface $script:NdSurface -History $script:NdHistory
+        [int]$a.UnknownPartition | Should -Be 1
+        [int]$a.Unattributable | Should -Be 1
+    }
+}

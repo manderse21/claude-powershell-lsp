@@ -19,6 +19,45 @@ function Get-PluginDataRoot {
     return $root
 }
 
+function Get-PluginDataRootResolution {
+    # THE SHARED PROVENANCE SEAM (dispatch 000185, D1-A). Returns the data root TOGETHER WITH
+    # how it was resolved, so a reader can distinguish "the input is absent" from "I did not
+    # find the input under the directory I happened to resolve".
+    #
+    # WHY THIS EXISTS. Get-PluginDataRoot above substitutes a temp fallback SILENTLY when
+    # CLAUDE_PLUGIN_DATA is unset, and nothing in its return value carries which branch was
+    # taken. A reader that searches the substituted root and finds nothing then renders a claim
+    # about THE WORLD ("the signal was never captured") on evidence that only supports a claim
+    # about THE READER ("I found no file where I looked"). Dispatch 000182 found that live in
+    # rule-efficacy-ledger.ps1; 000183 leg 2 found the same silent-fallback shape at four
+    # independent sites resolving to three different directories, with doctor.ps1's
+    # Get-DoctorDataRootKnown as the one in-tree site that already had it right. This function
+    # PROMOTES that predicate into the shared library so the knowledge lives in one place
+    # instead of being re-invented per reader.
+    #
+    # Get-PluginDataRoot is deliberately NOT changed: its signature and return value stay
+    # byte-identical, its fallback stays, and every existing caller keeps its behavior. The fix
+    # is to make the resolution LEGIBLE, not to make it strict -- out-of-band invocations and
+    # the test suite depend on the fallback existing.
+    #
+    # Root is byte-identical to Get-PluginDataRoot's return by construction: this calls it.
+    $known = (-not [string]::IsNullOrWhiteSpace($env:CLAUDE_PLUGIN_DATA))
+    return [pscustomobject]@{
+        Root       = (Get-PluginDataRoot)
+        Known      = $known
+        Provenance = $(if ($known) { 'env:CLAUDE_PLUGIN_DATA' } else { 'fallback:temp' })
+    }
+}
+
+function Test-PluginDataRootKnown {
+    # $true iff the data root came from CLAUDE_PLUGIN_DATA rather than the temp fallback.
+    #
+    # DERIVED from Get-PluginDataRootResolution above, never re-implemented, so the predicate
+    # and the resolution object cannot disagree -- which is the exact failure (the same
+    # knowledge written down twice and drifting) this seam exists to end.
+    return [bool](Get-PluginDataRootResolution).Known
+}
+
 function Get-SessionDir {
     return (Join-Path (Get-PluginDataRoot) 'session')
 }
