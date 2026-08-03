@@ -827,9 +827,13 @@ function Format-RuleEfficacyLedger {
         # The word 'absent' is DELIBERATELY not used here. Nothing was found, but the search ran
         # under a substituted root, so this reader cannot tell an uncaptured signal from a signal
         # it failed to locate -- and it says so instead of picking the flattering reading.
+        # The words 'absent' and '(absent)' are DELIBERATELY not used anywhere in this branch, not
+        # even to say what is NOT being claimed. A reader grepping the readout for the absent
+        # rendering must not match on prose that merely mentions it -- that is the same
+        # self-documenting-needle trap the ledger's own guards are written to avoid.
         $lines += '  lifecycle logs read: NONE FOUND, under a FALLBACK data root -- CANNOT DETERMINE whether the'
         $lines += '    signal was never captured or merely not found here. fixed_next_turn_rate and'
-        $lines += '    persistence_rate render (unresolvable), NOT (absent) and NOT 0.'
+        $lines += '    persistence_rate render (unresolvable), and NEVER 0.'
         $lines += '    Set CLAUDE_PLUGIN_DATA to the real data root and re-run to get a determinate answer.'
     } else {
         $lines += '  lifecycle logs read: NONE -- fixed_next_turn_rate and persistence_rate render (absent), not 0.'
