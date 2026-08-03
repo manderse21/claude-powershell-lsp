@@ -25,7 +25,16 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
 
-if ([string]::IsNullOrWhiteSpace($Path)) { $Path = Join-Path (Get-LogDir) 'stats.jsonl' }
+# DATA-ROOT PROVENANCE (dispatch 000185, D1-C). Only the DEFAULT path is exposed to the silent
+# fallback: an explicit -Path is a directory the caller named, so a miss there is a real miss.
+$script:StatsRootKnown = $true
+$script:StatsProvenance = 'explicit:-Path'
+if ([string]::IsNullOrWhiteSpace($Path)) {
+    $res = Get-PluginDataRootResolution
+    $script:StatsRootKnown = [bool]$res.Known
+    $script:StatsProvenance = [string]$res.Provenance
+    $Path = Join-Path (Get-LogDir) 'stats.jsonl'
+}
 
 function Read-StatsLines([string]$file) {
     # Return parsed record objects from one JSONL file, skipping blank / malformed
@@ -72,8 +81,22 @@ $rolled = Read-StatsLines $rolledPath
 $records = @(@($live) + @($rolled))
 
 Write-Host ('powershell-lsp telemetry -- ' + $Path)
+Write-Host ('  data root resolved via: ' + $script:StatsProvenance +
+    '   data-root known: ' + $(if ($script:StatsRootKnown) { 'YES' } else { 'NO' }))
 
 if (@($records).Count -eq 0) {
+    # A FALLBACK ROOT CANNOT SUPPORT "no telemetry recorded yet" (dispatch 000185, D1-C).
+    # That sentence is a claim about THE WORLD -- nothing was ever written. What a bare-shell run
+    # actually establishes is a claim about THE READER: it found no stats.jsonl under a directory
+    # it substituted for one it was never told. This is the same defect 000182 found in
+    # rule-efficacy-ledger.ps1, at a second live site, and it is PROVEN here rather than inferred:
+    # a stats.jsonl under the real data root is invisible to a bare-shell run.
+    if (-not $script:StatsRootKnown) {
+        Write-Host '  NO TELEMETRY FOUND, under a FALLBACK data root -- CANNOT DETERMINE whether none was ever'
+        Write-Host '    recorded or it simply is not here. Set CLAUDE_PLUGIN_DATA to the real data root and'
+        Write-Host '    re-run to get a determinate answer.'
+        exit 0
+    }
     Write-Host '  no telemetry recorded yet (enable the plugin option "enableStats" and make an edit).'
     exit 0
 }
