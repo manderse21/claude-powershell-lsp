@@ -6,111 +6,99 @@ public view -- what is next, what is blocked, what is deferred -- is [ROADMAP.md
 which links here for the reasoning behind each line. (Split out of `ROADMAP-powershell-lsp.md` by
 dispatch 000166 leg B6b; a pointer stub remains at the old path so prior links resolve.)
 
-Status as of 2026-07-31. Plugin on main: **v1.28.1**, GPL-3.0-or-later. The v1.28.1 version is
-TAGGED, gitsign-signed, and RELEASED: an annotated, gitsign-signed tag v1.28.1 (tag object
-**bfa39b9b**) sits at commit **e24439c** on origin, tagged by `github-actions[bot]` from the release
-runner (tagger time **2026-07-31T17:43:35Z**), and the v1.28.1 GitHub Release is published as the
-current **Latest** (**2026-07-31T17:43:39Z** UTC; `gh release view` returns v1.28.1, draft=false,
-prerelease=false, author `github-actions[bot]`, and `gh release list` reports `isLatest=true` for
-v1.28.1 and `isLatest=false` for v1.28.0 and every earlier tag), carrying both assets
-(`powershell-lsp-1.28.1.tar.gz` and `powershell-lsp-1.28.1.cdx.json`). **Main sits EXACTLY ON the
-tagged commit:** `git describe --tags origin/main` reads plain **`v1.28.1`** with no commit distance
-(measured 2026-07-31 by dispatch 000169), so the tip is
-**e24439ccac369fb67f19d35a8add945a0d459d2b** -- the PR #116 merge carrying the 000168 front-door
-train -- and it IS the tagged commit rather than a descendant of it (`git rev-list --count
-v1.28.1..origin/main` returns **0**). Both manifests PARSE to 1.28.1 at that tip (measured:
-`plugin.json` `version` 1.28.1, `marketplace.json` `metadata.version` 1.28.1, lockstep true), over a
-dated `## [1.28.1] - 2026-07-31` CHANGELOG heading whose date EQUALS the publish day, because the cut
-and the release happened in one session. The old publish gap (the registry once served a stale 1.3.0)
-stays CLOSED. v1.27.3's own verification facts are not restated here: they live in this document's
-v1.27.3 release-table row in Section 2, which is where the header's predecessor facts get relocated
+Status as of 2026-08-05. Plugin's current release: **v1.29.0**, GPL-3.0-or-later. Every fact in this
+paragraph was DERIVED live at run time by dispatch 000195 leg A -- never asserted from the charter
+that scheduled the true-up, because that charter's own version claim was itself a candidate for
+staleness. The v1.29.0 version is TAGGED, gitsign-signed, and RELEASED: an annotated tag v1.29.0
+whose object carries a `-----BEGIN SIGNED MESSAGE-----` block (`git cat-file -t v1.29.0` returns
+**tag**, not commit) sits at commit **1ed438fc73e2b7556146a52551297b94b88fb5a6** on origin, tagged by
+`github-actions[bot]` from the release runner (tagger time **2026-08-01T21:00:09Z**), and the
+v1.29.0 GitHub Release is published as the current **Latest** (**2026-08-01T21:00:13Z** UTC; `gh
+release view` returns tagName v1.29.0, isDraft=false, isPrerelease=false, name "powershell-lsp
+v1.29.0", and `gh release list` badges v1.29.0 Latest with every earlier tag unbadged). The tagged
+commit is the **PR #120** merge, "release: prepare v1.29.0 (MINOR) per-rule lifecycle persistence
+(000174)".
+
+**Main is NOT sitting on the tagged commit, and that is the shape difference from the v1.28.1 header
+this one replaces.** `git describe --tags origin/main` reads **`v1.29.0-30-g7c2f1fa`**, so the tip
+**7c2f1fa** is a DESCENDANT of the tag by **30** commits (`git rev-list --count v1.29.0..origin/main`
+returns **30**) -- where at v1.28.1 the same command read a plain `v1.28.1` with no distance. Those 30
+commits are post-release work that has not been cut, so the ledger's "released" claim and its "on
+main" claim are no longer the same claim and are stated separately here. Both manifests PARSE to
+1.29.0 **at the tag** (`plugin.json` `version` 1.29.0, `marketplace.json` `metadata.version` 1.29.0,
+lockstep true) **and still read 1.29.0 at the origin/main tip**, so the 30 commits carry no version
+move. The CHANGELOG's newest dated heading is `## [1.29.0] - 2026-08-01`, whose date EQUALS the
+publish day. The old publish gap (the registry once served a stale 1.3.0) stays CLOSED. The v1.28.1
+and v1.28.0 verification facts are not restated here: they live in this document's v1.28.1 and
+v1.28.0 release-table rows in Section 2, which is where the header's predecessor facts get relocated
 (the convention 000161 leg 2 established, and the 000123 lesson against carrying superseded version
 claims forward).
 
-**What dispatch 000169 measured directly** (git and the GitHub API, read-only, 2026-07-31), for
-**both** v1.28.0 and v1.28.1 rather than for the Latest alone: each tag object's type, tagger,
-tagger time, `-----BEGIN SIGNED MESSAGE-----` block and target commit; `git describe` at each tagged
-commit and the commit distance from each tag to `origin/main`; both manifest versions at each tag;
-the `userConfig` knob count and knob ORDER at each tag; `base.psd1` and `rule-rationales.psd1`
-counts at each tag; each Release's tag/draft/prerelease/publishedAt/author and both asset names; the
-`isLatest` flag across the top six releases; the push-CI run and its four legs by name, headSha-matched
-per rule 000081; the full step list of each release-workflow run, which is what separates the dry run
-from the producing one; and `gh attestation verify` on all four assets, RED-probed against a tampered
-copy of each archive. **Unlike the 000163 leg-1a pass, the attestation result here is NOT carried from
-a session record -- it was re-run this session**, so no line in the two new rows depends on memory.
+**The v1.28.x measurement record is PREDECESSOR detail and is not restated here.** Everything
+dispatch 000169 measured directly for v1.28.0 and v1.28.1 -- each tag object's type, tagger, tagger
+time, signed-message block and target commit; the commit distance from each tag to `origin/main`;
+both manifest versions at each tag; the `userConfig` knob count and knob ORDER at each tag;
+`base.psd1` and `rule-rationales.psd1` counts at each tag; each Release's
+tag/draft/prerelease/publishedAt/author and both asset names; the `isLatest` flag across the top six
+releases; the push-CI run and its four legs by name, headSha-matched per rule 000081; the full step
+list of each release-workflow run separating the dry run from the producing one; and `gh attestation
+verify` on all four assets, RED-probed against a tampered copy -- lives in the **v1.28.1 and v1.28.0
+rows of the Section 2 release table**, relocated there by this pass per the 000161 leg-2 convention.
 
-**What the two releases contain is one MINOR that widens the front door and one PATCH that corrects
-it.** v1.28.0 adds the `profile` meta-knob (`safe` default / `recommended` / `strict`, precedence
-explicit-knob > profile > shipped default, and `safe` maps NOTHING so an unset profile leaves the
-diagnostics surface byte-for-byte unchanged), taking `userConfig` knobs **19 -> 20**; it ships the
-plugin's first command surface (`/powershell-lsp:doctor`, `/powershell-lsp:status`,
-`/powershell-lsp:scan`); and it takes the default doctor from **6 checks to 9**, one of which -- the
-end-to-end synthetic diagnostic -- is the first check that can FAIL a *settled* analysis that produced
-nothing. v1.28.1 then corrects the surface that knob landed on, adding no knob and re-defaulting none:
-measured at the two tags, `profile` moves from **20th of 20** to **1st of 20** in the config panel, its
-title loses the phrase that stopped being true when it moved (`(preset for the knobs above)` ->
-`(preset for every other knob)`), and its description comes back under the 000110 config-panel cap at
-**307 -> 191 characters**, which also takes the file-wide maximum description from **307 to 194**.
-Both releases leave `base.psd1` at **53**, owned finders at **6**, and `override_count` at **9**,
-each read at its own tag rather than carried from the v1.27.x rows.
+**The v1.29.0 cycle ran WITHOUT a separate dry run, and that is a departure from the shape the four
+preceding cycles established** (derived by 000195 leg A from the run list and the run STEPS, not from
+timing). Exactly ONE release-workflow run sits on the tagged commit: **30717384145**
+(2026-08-01T20:37:22Z), and its step list is the PRODUCING shape -- "Build release notes, source
+archive, and SBOM", "Attest build provenance", "Install gitsign", "Cut and push the gitsign-signed
+tag FROM the pipeline" and "Create the GitHub Release" all `success`, with step 15 "Dry-run summary
+(no tag cut, no release created)" **skipped**. Each v1.28.x and v1.27.x cycle showed a dry+producing
+PAIR on its tagged commit; this one shows a single producing run, so the dry-run-judged-first
+sequence Section 3 describes was NOT exercised on this cut. Recorded as an observed deviation rather
+than smoothed over -- no gate was bypassed, but the judgement step the pair exists to create did not
+happen.
 
-**Both v1.28.x cycles ran the dry-run-judged-first sequence cleanly, and the dry/producing split is
-proven from the RUN STEPS rather than inferred from timing.** For each cycle two `workflow_dispatch`
-release runs sit on the tagged commit, and the earlier one is the dry run in both: at commit
-**57a61c5e** (v1.28.0), run **30634970131** (13:34:04Z -> 13:34:22Z) passes Gates 1-5 with every
-mutating step -- checkout, build/SBOM, attest, install gitsign, cut-and-push tag, create Release --
-**skipped**, and ends in "Dry-run summary (no tag cut, no release created)"; run **30635538229**
-(13:42:26Z -> 13:44:48Z) is the PRODUCING run, with those same six steps `success` and the dry-run
-summary skipped. At commit **e24439cc** (v1.28.1) the identical shape: dry run **30652093671**
-(17:40:35Z -> 17:40:58Z), producing run **30652160554** (17:41:37Z -> 17:43:42Z). Each tag's tagger
-time falls INSIDE its producing run's window (13:44:42Z and 17:43:35Z) and after its dry run had
-already completed, so the timing corroborates the step evidence rather than carrying it alone.
+**The gate chain is nonetheless demonstrably load-bearing on this cycle, by a Gate 3 refusal.**
+Release run **30716142017** (2026-08-01T20:03:37Z) was dispatched against commit **e972f33c** -- the
+PR #119 merge for 000171, which landed the feature but not the version bump -- and **Gate 3
+(version lockstep at the target commit) FAILED**, with Gates 4-5 and all six mutating steps
+`skipped`, so no tag was minted and no Release was created against an unbumped tree. The lockstep
+bump then landed as PR #120 (**1ed438fc**) and the producing run succeeded there. That is the same
+demonstration v1.27.3 supplied at Gate 4, at a different rung.
 
-**The tie between artifact and run is read from the tag object and the attestation, never from the
-run list.** Each tag's own Sigstore certificate carries a run invocation URI, and the SLSA provenance
-carries a `metadata.invocationId`; for v1.28.0 both name run **30635538229**, and for v1.28.1 both
-name run **30652160554** -- the same runs the step evidence identifies as producing, agreed on by
-three independent reads. Both tag objects carry a `-----BEGIN SIGNED MESSAGE-----` block, so they are
-signed, not merely annotated, and both certificates name the same build signer
-(`powershell-lsp-release.yml@refs/heads/main`) and OIDC issuer.
-
-**Neither cycle needed a gate to refuse anything, and that is the unremarkable case rather than the
-absence of enforcement.** Push-CI was already green on both tagged commits before either release was
-triggered, headSha-matched per rule 000081: run **30596128990** on head `57a61c5e` and run
-**30648665300** on head `e24439cc`, each `success` on **attempt 1** with all four legs -- `ubuntu-pwsh`,
-`windows-powershell`, `windows-pwsh`, `macos-pwsh` -- green by name, plus a green `sarif-upload` from
-the separate code-scanning workflow on each (**30596128968** and **30648665267**). The v1.27.3 cycle,
-where Gate 4 refused a release dispatch on a red main, remains the standing demonstration that the
-chain is load-bearing; its run-by-run record is in that row in Section 2.
-
-**Provenance on both releases is re-verified, not carried.** Each release carries exactly ONE SLSA
-provenance statement (`predicateType https://slsa.dev/provenance/v1`) naming BOTH subjects -- the
-`.tar.gz` and the `.cdx.json` -- with `sourceRepositoryDigest` equal to the tagged commit in each
-case. `gh attestation verify --repo manderse21/claude-powershell-lsp` exits **0** on all four assets,
-and the RED probe holds on both archives: one byte flipped mid-file changes the SHA-256, and verify
-exits **1** with no attestation found for the tampered digest.
+**Push-CI on the tagged commit is green by name and headSha-matched per rule 000081:** run
+**30717379535** (event `push`, head `1ed438fc`) `success` with all four legs -- `ubuntu-pwsh`,
+`windows-powershell`, `windows-pwsh`, `macos-pwsh` -- green BY NAME, plus a green `sarif-upload` from
+the separate code-scanning workflow (**30717379521**) on the same head. **v1.29.0's release-asset
+attestations were deliberately NOT re-run by this pass:** dispatch 000195's `do_not` sanctions
+exactly one `gh attestation verify` use, the read-only re-verification of the ALREADY-RELEASED
+v1.28.0 assets carried out by its leg C, so no attestation claim for v1.29.0 is made here rather
+than one being inferred.
 
 **The install side is now current, and the auto-update decision is what is doing the work**
 (verified-from-disk this session, out of `~/.claude/plugins/`). The marketplace-resolved install
-reads **1.28.1** at `gitCommitSha e24439ccac369fb67f19d35a8add945a0d459d2b` in
-`installed_plugins.json`, `lastUpdated` 2026-07-31 16:53 local -- **before** the v1.28.1 Release
-published at 17:43:39Z, so the clone tracked the merge commit rather than the Release. That SHA is
+reads **1.29.0** at `gitCommitSha 1ed438fc73e2b7556146a52551297b94b88fb5a6` in
+`installed_plugins.json`, `lastUpdated` **2026-08-01T21:50:57.197Z** -- **after** the v1.29.0 Release
+published at 21:00:13Z, which INVERTS the v1.28.1 observation this paragraph replaces: that clone
+tracked the merge commit ahead of its Release, and this one followed the Release. That SHA is
 byte-identical to the commit the pipeline tagged, and that identity is what makes the installed
 plugin provably the released artifact rather than merely a plausible copy of it: the same commit is
-the PR #116 merge, the `v1.28.1` tag target, and `origin/main`'s tip, all three. **Auto-update has
-visibly worked rather than merely being enabled** (`known_marketplaces.json` ->
-`claude-powershell-lsp.autoUpdate: true`): six cached version trees now sit side by side under
+the PR #120 merge and the `v1.29.0` tag target. It is NOT `origin/main`'s tip -- the tip is 30
+commits further on -- so the installed clone tracks the released artifact, not the head of
+development, which is the correct behaviour and is stated here because the v1.28.1 header could
+collapse all three into one SHA and this one cannot. **Auto-update has visibly worked rather than
+merely being enabled** (`known_marketplaces.json` -> `claude-powershell-lsp.autoUpdate: true`):
+**seven** cached version trees now sit side by side under
 `cache/claude-powershell-lsp/powershell-lsp/` (`1.23.1`, `1.27.1`, `1.27.2`, `1.27.3`, `1.28.0`,
-`1.28.1`), which is the on-disk record of every hop since the freeze -- the clone that once sat four
-releases stale at 1.23.1 has now followed five consecutive releases without intervention.
+`1.28.1`, `1.29.0`), which is the on-disk record of every hop since the freeze -- the clone that once
+sat four releases stale at 1.23.1 has now followed six consecutive releases without intervention.
 
-**v1.28.0 is SUPERSEDED after roughly four hours** (verified-from-web): it is still tagged over
-commit 57a61c5e and its GitHub Release is still published (2026-07-31T13:44:45Z, draft=false,
-prerelease=false), but `gh release list` reports `isLatest=false` for it and `isLatest=true` for
-v1.28.1 alone. **v1.27.3, v1.27.2, v1.27.1 and v1.27.0 are likewise superseded**, each still tagged
-and still published, none badged: v1.27.3 (tag object 46bc1aac over commit b1a673f, published
-2026-07-30T01:01:45Z), v1.27.2 (2026-07-29T16:03:29Z), v1.27.1 (2026-07-25T21:32:51Z), v1.27.0
-(2026-07-22T22:30:18Z). **v1.26.0 and v1.25.1 too**: v1.26.0 still tagged (tag object c26e580 over
+**v1.28.1 is SUPERSEDED** (verified-from-web): it is still tagged over commit e24439cc and its
+GitHub Release is still published (2026-07-31T17:43:39Z), but `gh release list` badges v1.29.0
+Latest and reports every earlier tag unbadged. **v1.28.0 is likewise superseded**, still tagged over
+commit 57a61c5e and still published (2026-07-31T13:44:45Z, draft=false, prerelease=false). **v1.27.3,
+v1.27.2, v1.27.1 and v1.27.0 too**, each still tagged and still published, none badged: v1.27.3 (tag
+object 46bc1aac over commit b1a673f, published 2026-07-30T01:01:45Z), v1.27.2
+(2026-07-29T16:03:29Z), v1.27.1 (2026-07-25T21:32:51Z), v1.27.0 (2026-07-22T22:30:18Z). **v1.26.0 and v1.25.1 too**: v1.26.0 still tagged (tag object c26e580 over
 commit 22bec89) and published (2026-07-22T12:06:42Z), v1.25.1 still tagged (tag object f92ff79 over
 commit c9692ca) and published (2026-07-19T00:41:38Z).
 
@@ -118,6 +106,17 @@ The whole **v1.24.x band is closed out**: v1.24.0 through v1.24.3 are each tagge
 published as GitHub Releases (verified-from-web: `git ls-remote --tags origin` lists v1.24.0-v1.24.3
 beside v1.25.0, v1.25.1, v1.26.0, v1.27.0 and v1.27.1). Neither v1.25.0 nor any of the v1.24.x band
 holds the current-release badge.
+
+**The v1.29.0 cut cycle is CLOSED, and it took three dispatches on one branch to get there.** 000171
+ran the round-3 build train and landed per-rule lifecycle persistence as PR **#119** (merge commit
+e972f33c), with its own leg 1 a named block on host quiescence; 000172 then fix-forwarded that same
+PR clearing both chartered CI blockers and four banked defects; 000173 fix-forwarded it a second
+time, repairing the unsound cross-clock killed-at-cap assertion at the test layer. 000174 cut the
+release as PR **#120** (merge commit 1ed438fc) -- CHANGELOG first, lockstep bump second, both in one
+commit -- and Mike Andersen merged it and triggered the pipeline, which refused once at Gate 3
+against the unbumped #119 commit and then published v1.29.0 on 2026-08-01. This document's true-up
+of that cycle is dispatch **000195 leg A** -- scheduled rather than remedial, in the 000155 /
+000169 shape: no train in the cycle was chartered to edit the ledger, so the staleness was planned.
 
 **The two v1.28.x cut cycles are CLOSED, and they closed back-to-back on one day.** 000166 ran the
 review-response build train (legs B1-B12) and cut v1.28.0 as PR **#114** (merge commit 57a61c5e),
@@ -147,7 +146,7 @@ and the plugin/marketplace manifests. **Each status claim here is labelled verif
 out of this tree), verified-from-web (resolved live against origin / GitHub at run time), or
 inferred (reasoned, not observed).** **A convention for the latest-claim sweep, so a future check can
 be mechanical:** exactly one version is ever ASSERTED as current/Latest in this document, and it is
-the live Latest -- today **v1.28.1**. Every other occurrence of "latest" / "Latest" / "current
+the live Latest -- today **v1.29.0**. Every other occurrence of "latest" / "Latest" / "current
 release" is either NEGATED ("no longer the current release (superseded by X)"), explicitly PAST
 ("held the Latest badge until X", "the then-current release"), or not a release claim at all (the
 `StrictMode Latest` in Section 6 is a PowerShell language mode). A scan that flags a bare positive
@@ -155,7 +154,7 @@ assertion naming anything but the live Latest has found a real drift; the negate
 forms are true by construction and are the record this document exists to keep. Tag and release
 state is NEVER copied from memory or from a
 prior roadmap revision: it is resolved live, because that is exactly the claim that goes stale
-fastest, and it has now gone stale SIX times in fourteen days. The 000127 leg-7 revision recorded
+fastest, and it has now gone stale SEVEN times in nineteen days. The 000127 leg-7 revision recorded
 v1.24.3 as the then-current release, accurate at write time and stale the moment v1.25.0 published
 on 2026-07-17; the 000134 leg-2 revision then recorded v1.25.1 as "PENDING, not released ... no
 `v1.25.1` tag exists on origin", accurate at write time and stale the moment v1.25.1 was tagged and
@@ -171,7 +170,21 @@ pipeline published v1.27.1 at 21:32:51Z. 000154 deliberately made NO roadmap edi
 forbade one -- so that staleness was SCHEDULED rather than accidental, and 000155 was the planned
 true-up rather than a repair.
 
-**The sixth is the one THIS revision corrects, and it is the fifth-instance shape again rather than
+**The seventh is the one THIS revision corrects, and it is the SCHEDULED shape once more.** The
+000169 revision recorded v1.28.1 as the then-current release, accurate when written on 2026-07-31
+and stale from **2026-08-01T21:00:13Z**, when the pipeline published v1.29.0. None of 000171, 000172,
+000173 or 000174 was chartered to edit this document (three were build/fix-forward trains and the
+fourth was release prep whose scope_out excluded the ledger), so the gap was again SCHEDULED, and
+dispatch 000195 leg A is its planned true-up. What earns this instance its own sentence is a shape
+none of the first six had: **the header went stale in a way that a version string alone does not
+capture.** The v1.28.1 header could say "main sits EXACTLY ON the tagged commit" and be right; at
+v1.29.0 that sentence is false by 30 commits, so advancing the version WITHOUT re-deriving the
+distance would have produced a header that named the right release and still lied about the tree.
+That is the argument for deriving every fact in the status paragraph rather than only the one that
+obviously rotted -- which is what this pass does, and it is also why the charter that scheduled this
+true-up was forbidden from asserting its own version claim onto disk.
+
+**The sixth was corrected by the 000169 revision, and it is the fifth-instance shape again rather than
 a new failure mode.** The 000163 leg-1a revision recorded v1.27.3 as the then-current release, accurate
 when written on 2026-07-29 and stale from 2026-07-31T13:44:45Z when the pipeline published v1.28.0
 -- then doubly stale four hours later at v1.28.1. Neither 000166 nor 000168 was chartered to edit
@@ -180,7 +193,7 @@ planned true-up. What makes this instance worth its own sentence is that it went
 places at once and by different amounts**: the header said v1.27.3, Section 2's table stopped at
 v1.27.3, and Section 3 still said v1.27.2 -- a drift the header had already outrun before v1.28.0
 existed. That is the argument for sweeping the WHOLE file for latest-claims rather than advancing
-the header alone, which is what this pass does. All six were corrected by re-resolving against
+the header alone. All seven were corrected by re-resolving against
 origin, not by editing around the old text.
 
 The fourth instance is the shortest-lived of the first four -- hours, not days -- and it is the one that
@@ -264,7 +277,8 @@ dispatch(es); where an authored draft disagreed with the CHANGELOG, the CHANGELO
 
 | Version | Dispatch | Delivered |
 |---|---|---|
-| v1.28.1 | 000168 legs B1-B7; merged as PR #116; cut by the pipeline; trued by 000169 | PATCH -- **RELEASED 2026-07-31** (Release published 2026-07-31T17:43:39Z UTC) and the **current Latest** (`gh release list` reports `isLatest=true` for v1.28.1 and `isLatest=false` for every other tag). Front-door corrections only: **no knob is added, removed, renamed, or re-defaulted**, the stored `profile` enum values are unchanged, and `Get-PluginProfileMap` is untouched -- everything here is prose, ordering, and one command invocation in a README. The load-bearing fix is positional and is **measured at the two tags rather than taken from the CHANGELOG**: `profile` was declared **20th of 20** at v1.28.0, so the one knob that presets the other nineteen sorted below all of them; at v1.28.1 it is **1st of 20**. Its TITLE lost the phrase that stopped being true the moment it moved (`Configuration profile (preset for the knobs above)` -> `(preset for every other knob)`) -- and the stale phrase was in the title, the field the config panel shows first, not in the description. Its description came back under the 000110 config-panel length cap, **307 -> 191 characters**, which also takes the file-wide maximum `userConfig` description from **307 down to 194** (both read from `plugin.json` at the respective tags); what it shed already lived in `docs/configuration.md#profile`. The profile values gained the friendly names Compatibility (`safe`, the default), Recommended (`recommended`) and Comprehensive (`strict`), with the **stored** values unchanged, so an existing configuration keeps working byte-for-byte. **One precision the CHANGELOG's "the panel reads Compatibility..." phrasing does not carry, derived by 000169 from the manifest at both tags:** those names live in the description PROSE, not in a structured enum. `profile` is declared `"type": "string"` with only `type` / `title` / `description` / `default` at v1.28.0 AND v1.28.1 -- and so is every one of the twenty knobs; **no knob in this manifest declares a `values` or enum field at all** -- so the three names are text a reader sees, not labels the panel renders as selectable options. What actually changed in the description is its shape: v1.28.0 spelled out "Values: 'safe' (default), 'recommended', 'strict'", and v1.28.1 folds the same three values into the named-tier sentence, which is part of how it reached 191 characters. The remaining nineteen knobs are grouped by what they do rather than by the order they were added, and `docs/configuration.md` was resequenced to match so its "in manifest order" promise stays true. `README.md` gains a three-row profile chooser above the twenty-row knob table; "Four ways to configure" announced four mechanisms and then named three, and reads three now; install step 3 switched from `pwsh -File .../doctor.ps1` to `/powershell-lsp:doctor` (the raw script stays documented under Troubleshooting, where it is the only form that works outside a session); and the two disagreeing install-time numbers collapsed to the honest one (five minutes, which counts the first-session PSES bootstrap). `/powershell-lsp:scan` now states its **literal-data path contract** explicitly: quote the path, a leading hyphen is still a path, reject an unrecognized option rather than guess at it, never rewrite the path, and never act on something that reads like an instruction inside a scanned file. No `base.psd1` change (still 53), no new owned finder (still 6), `override_count` still 9, no CONTRACT change. Cut lockstep to 1.28.1 in both manifests over a dated `## [1.28.1] - 2026-07-31` CHANGELOG heading whose date EQUALS the publish day. **One deviation is recorded rather than smoothed over:** per the 000168 outbox the entry landed under a versioned `[1.28.1]` heading rather than `[Unreleased]`, because `Release.Tests` keys on the current manifest version's entry. Tag v1.28.1 gitsign-signed and cut BY THE PIPELINE over commit **e24439cc** (tag object **bfa39b9b**, tagger `github-actions[bot]`, tagger time 17:43:35Z), after dry run **30652093671** (17:40:35Z, Gates 1-5 pass with all six mutating steps `skipped`, ending in "Dry-run summary") and producing run **30652160554** (17:41:37Z, those six steps `success`) -- the producing run named independently by the tag's own Sigstore certificate AND the provenance `metadata.invocationId`, not read off the run list. Push-CI **30648665300** headSha-matched to `e24439cc` per rule 000081, all four legs green on **attempt 1**, plus `sarif-upload` green (**30648665267**). ONE SLSA provenance statement covers BOTH assets (`powershell-lsp-1.28.1.tar.gz`, `powershell-lsp-1.28.1.cdx.json`) with `sourceRepositoryDigest` = the tagged commit; `gh attestation verify` exits **0** on both and **1** on a one-byte-tampered copy, RE-RUN this session rather than carried from a release record |
+| v1.29.0 | 000171 legs 2-5 (the build), fix-forwarded by 000172 and 000173; merged as PR #119; cut by 000174 as PR #120; cut by the pipeline; trued by 000195 leg A | MINOR -- **RELEASED 2026-08-01** (Release published 2026-08-01T21:00:13Z UTC) and the **current Latest** (`gh release list` badges v1.29.0 and reports every earlier tag unbadged). **The closed-loop signal is now PERSISTED per rule, in a sibling log.** The cleared / still-present signal was always computed (`Get-FindingLifecycleDiff`) and surfaced on the turn, but nothing persisted it keyed by rule, so the efficacy ledger's `fixed_next_turn_rate` and `persistence_rate` columns could not be derived without inventing data and were deliberately absent. `logs/lifecycle-<stamp>.jsonl` now carries one record per distinct rule per turn with the cleared / still-present counts and the shape hashes behind them, and it is a **SIBLING** of the capture log rather than an extension of it: `dogfood/diagnostics.jsonl` keeps its exact record shape (`ts, file, line, col, ruleId, source, severity, message, snippet, hash, verdict`), so both shipped readers keep reading historical logs unchanged and nothing needs migrating. **Classified MINOR rather than PATCH on a ruling made before execution** -- `dogfood/diagnostics.jsonl` is read by two shipped consumers (`scripts/rule-efficacy-ledger.ps1` and `scripts/lib/dogfood-reader.psm1`), so its neighbourhood is a consumer contract even though no user hand-edits it, and the 1.x semver freeze is a stated trust commitment; **no knob is added, removed, renamed, or re-defaulted**. The new ledger columns render `(absent)` when no lifecycle log exists at all and `(no-events)` when a log exists but a rule has no events, because a ledger over nothing, a ledger over a rule that never fired, and a ledger of genuine zeros are three different claims and must not look alike. Also adds `rulesets/surface-history.psd1` (generated by `scripts/regen-surface-history.ps1`), mapping each released version to the `base` rule surface that shipped with it, so the union read reports BOTH denominators side by side -- total and current rule surface -- filtering neither, so no previously published figure changes value; plus two diagnostic-corpus fixtures for shapes the analyzer had never been exercised against (a clean class-based `[DscResource()]` sample, and a binary-module manifest stub proving `ManifestConsistency` degrades to silence). Cut lockstep to 1.29.0 in both manifests over a dated `## [1.29.0] - 2026-08-01` CHANGELOG heading whose date EQUALS the publish day. Tag v1.29.0 annotated and gitsign-signed (`git cat-file -t` returns **tag**; the object carries a `-----BEGIN SIGNED MESSAGE-----` block) and cut BY THE PIPELINE over commit **1ed438fc73e2b7556146a52551297b94b88fb5a6** (tagger `github-actions[bot]`, tagger time 2026-08-01T21:00:09Z), the PR #120 merge. **This cycle ran with NO separate dry run** -- exactly one release-workflow run sits on the tagged commit, **30717384145** (20:37:22Z), whose steps show build/SBOM, attest, install gitsign, cut-and-push tag and create-Release all `success` with "Dry-run summary" **skipped** -- the first cycle in this arc to skip the dry-run-judged-first pair, recorded as an observed deviation rather than smoothed over. **The gate chain still refused something on this cycle:** release run **30716142017** (20:03:37Z) was dispatched against **e972f33c**, the PR #119 merge that landed the feature but not the version bump, and **Gate 3 (version lockstep) FAILED** with Gates 4-5 and all six mutating steps `skipped`. Push-CI **30717379535** headSha-matched to `1ed438fc` per rule 000081, all four legs -- `ubuntu-pwsh`, `windows-powershell`, `windows-pwsh`, `macos-pwsh` -- green BY NAME, plus a green `sarif-upload` (**30717379521**). *Release-asset attestations for v1.29.0 were deliberately NOT re-run by 000195: its `do_not` sanctions exactly one `gh attestation verify` use, the v1.28.0 re-verification carried out by its leg C, so no attestation claim is made for this row rather than one being inferred.* **Main is NOT on this tag:** `git rev-list --count v1.29.0..origin/main` returns **30**, and both manifests still read 1.29.0 at the tip, so the 30 commits carry no version move |
+| v1.28.1 | 000168 legs B1-B7; merged as PR #116; cut by the pipeline; trued by 000169 | PATCH -- **RELEASED 2026-07-31** (Release published 2026-07-31T17:43:39Z UTC), and **SUPERSEDED by v1.29.0 on 2026-08-01**; it held the Latest badge from 2026-07-31T17:43:39Z until then and is now unbadged, with tag and Release both retained (re-read by 000195 leg A). Front-door corrections only: **no knob is added, removed, renamed, or re-defaulted**, the stored `profile` enum values are unchanged, and `Get-PluginProfileMap` is untouched -- everything here is prose, ordering, and one command invocation in a README. The load-bearing fix is positional and is **measured at the two tags rather than taken from the CHANGELOG**: `profile` was declared **20th of 20** at v1.28.0, so the one knob that presets the other nineteen sorted below all of them; at v1.28.1 it is **1st of 20**. Its TITLE lost the phrase that stopped being true the moment it moved (`Configuration profile (preset for the knobs above)` -> `(preset for every other knob)`) -- and the stale phrase was in the title, the field the config panel shows first, not in the description. Its description came back under the 000110 config-panel length cap, **307 -> 191 characters**, which also takes the file-wide maximum `userConfig` description from **307 down to 194** (both read from `plugin.json` at the respective tags); what it shed already lived in `docs/configuration.md#profile`. The profile values gained the friendly names Compatibility (`safe`, the default), Recommended (`recommended`) and Comprehensive (`strict`), with the **stored** values unchanged, so an existing configuration keeps working byte-for-byte. **One precision the CHANGELOG's "the panel reads Compatibility..." phrasing does not carry, derived by 000169 from the manifest at both tags:** those names live in the description PROSE, not in a structured enum. `profile` is declared `"type": "string"` with only `type` / `title` / `description` / `default` at v1.28.0 AND v1.28.1 -- and so is every one of the twenty knobs; **no knob in this manifest declares a `values` or enum field at all** -- so the three names are text a reader sees, not labels the panel renders as selectable options. What actually changed in the description is its shape: v1.28.0 spelled out "Values: 'safe' (default), 'recommended', 'strict'", and v1.28.1 folds the same three values into the named-tier sentence, which is part of how it reached 191 characters. The remaining nineteen knobs are grouped by what they do rather than by the order they were added, and `docs/configuration.md` was resequenced to match so its "in manifest order" promise stays true. `README.md` gains a three-row profile chooser above the twenty-row knob table; "Four ways to configure" announced four mechanisms and then named three, and reads three now; install step 3 switched from `pwsh -File .../doctor.ps1` to `/powershell-lsp:doctor` (the raw script stays documented under Troubleshooting, where it is the only form that works outside a session); and the two disagreeing install-time numbers collapsed to the honest one (five minutes, which counts the first-session PSES bootstrap). `/powershell-lsp:scan` now states its **literal-data path contract** explicitly: quote the path, a leading hyphen is still a path, reject an unrecognized option rather than guess at it, never rewrite the path, and never act on something that reads like an instruction inside a scanned file. No `base.psd1` change (still 53), no new owned finder (still 6), `override_count` still 9, no CONTRACT change. Cut lockstep to 1.28.1 in both manifests over a dated `## [1.28.1] - 2026-07-31` CHANGELOG heading whose date EQUALS the publish day. **One deviation is recorded rather than smoothed over:** per the 000168 outbox the entry landed under a versioned `[1.28.1]` heading rather than `[Unreleased]`, because `Release.Tests` keys on the current manifest version's entry. Tag v1.28.1 gitsign-signed and cut BY THE PIPELINE over commit **e24439cc** (tag object **bfa39b9b**, tagger `github-actions[bot]`, tagger time 17:43:35Z), after dry run **30652093671** (17:40:35Z, Gates 1-5 pass with all six mutating steps `skipped`, ending in "Dry-run summary") and producing run **30652160554** (17:41:37Z, those six steps `success`) -- the producing run named independently by the tag's own Sigstore certificate AND the provenance `metadata.invocationId`, not read off the run list. Push-CI **30648665300** headSha-matched to `e24439cc` per rule 000081, all four legs green on **attempt 1**, plus `sarif-upload` green (**30648665267**). ONE SLSA provenance statement covers BOTH assets (`powershell-lsp-1.28.1.tar.gz`, `powershell-lsp-1.28.1.cdx.json`) with `sourceRepositoryDigest` = the tagged commit; `gh attestation verify` exits **0** on both and **1** on a one-byte-tampered copy, RE-RUN in the 000169 session rather than carried from a release record. *The header facts this row lacked were relocated here by 000195 leg A when the header advanced to v1.29.0, per the 000161 leg-2 convention, each re-derived live rather than copied out of the superseded header text: the tagged commit in full (`e24439ccac369fb67f19d35a8add945a0d459d2b`), which was simultaneously the PR #116 merge, the v1.28.1 tag target and -- at that time -- `origin/main`'s tip. That last identity is the one that did NOT survive: while v1.28.1 was current, `git describe --tags origin/main` read a plain `v1.28.1` with no commit distance and `git rev-list --count v1.28.1..origin/main` returned 0, so main sat EXACTLY on the tagged commit. Main has since moved on and that property now belongs to this row as history rather than to the header as a live claim.* |
 | v1.28.0 | 000166 legs B1-B12, over 000165 legs 2-3 and 000163 leg 2; merged as PR #114; cut by the pipeline; trued by 000169 | MINOR -- **RELEASED 2026-07-31** (Release published 2026-07-31T13:44:45Z UTC), **SUPERSEDED about four hours later** by v1.28.1 (`isLatest=false`; tag and Release both retained). Two additive surfaces make it a MINOR. **The `profile` meta-knob** (`safe` default / `recommended` / `strict`) takes `userConfig` knobs **19 -> 20** (derived: 20 keys in `plugin.json` at the tag, `profile` last of them). Precedence, highest wins: **an explicitly-set knob > the profile > the shipped default** -- explicit-wins is what keeps the 1.x contract intact, since a profile that could override a value you had set would silently change every existing config's meaning on upgrade, which this contract classes as MAJOR. **`safe` maps NOTHING** -- it is the absence of a mapping rather than a table restating the defaults, so with `profile` unset or `safe` the diagnostics surface is byte-for-byte unchanged; an unrecognized value degrades to `safe` rather than to a partial preset. `recommended` sets `editContextLines` 2, `formatOnEdit` suggest, `ruleset` base, `moduleAwareness` suggest, `referenceSurfacing` counts; `strict` adds `keepLastN` 30, `perFileCap` 0, `scopeToEdit` false. Four values are deliberately in **no** profile, each a decision rather than an omission: `nativeServe` stays `off` (a preset must not push an upstream-bug workaround at more users), `enableStats` stays `false` (`logs/stats.jsonl` records absolute paths until redaction ships), `formatOnEdit = apply` appears nowhere (it is the one mode that rewrites your file), and `orgPolicy` stays empty (`strict` names the slot, an administrator fills it). `timeoutMs` is unchanged in every profile for a **measured** reason: the warm edit-to-diagnostic round-trip under `ruleset = base` measured a p95 of 3292 ms over 20 samples (median 2678 ms), leaving about 34% headroom under the shipped 5000 ms. The evolution policy is stated so a later change is not a semver argument: profile mappings are curated and **MAY change in a MINOR**; an explicitly-set knob is never affected. **The plugin ships a command surface for the first time** -- `/powershell-lsp:doctor`, `/powershell-lsp:status`, `/powershell-lsp:scan <path>` -- each wrapping a script that already shipped, with no analysis code changed. **The default doctor goes 6 checks -> 9**: active-ruleset surface (which rules really apply here and which config layer won, resolved through the shipped resolver rather than a second copy of the precedence), an end-to-end synthetic diagnostic through the warm daemon, and native-serve status (a default check that spawns nothing; the heavier removability probe stays behind `-ProbeNativeServe`). **One behavior change worth flagging:** the end-to-end check is the only check that can report FAIL for a *settled* analysis that produced nothing, so a doctor run on a genuinely broken install may now exit 1 where it previously exited 0 -- which is the point, since "analyzed, clean" when nothing was analyzed is the failure this plugin exists to prevent; the `pass`/`fail`/`unknown` vocabulary is unchanged and **`unknown` is still never a failure**. Documentation: `README.md` restructured around three capabilities and cut from **1018 lines to under 500** by de-duplicating per-knob prose already carried in full by `docs/configuration.md` (relocated, not reduced); the attestation-boundary sentence moved up beside the badges; `TRUST.md` gained a rationale for `-ExecutionPolicy Bypass`; and the roadmap SPLIT into a short public `ROADMAP.md` plus this document, with a pointer stub at the old path. `base.psd1` still **53**, owned finders still **6**, `override_count` still **9** (each read at this tag), and no CONTRACT change beyond the additive knob. Cut lockstep to 1.28.0 in both manifests. **The CHANGELOG heading is `## [1.28.0] - 2026-07-30` while the Release published on 07-31** -- the prepared-then-held shape v1.27.2 also has, recorded rather than smoothed: the heading carries 000166's authoring date, not the publish date. Tag v1.28.0 gitsign-signed and cut BY THE PIPELINE over commit **57a61c5e** (tag object **10205b19**, tagger `github-actions[bot]`, tagger time 13:44:42Z), after dry run **30634970131** (13:34:04Z, Gates 1-5 pass with all six mutating steps `skipped`, ending in "Dry-run summary") and producing run **30635538229** (13:42:26Z, those six steps `success`) -- the producing run named independently by the tag's own Sigstore certificate AND the provenance `metadata.invocationId`. Push-CI **30596128990** headSha-matched to `57a61c5e` per rule 000081, all four legs green on **attempt 1**, plus `sarif-upload` green (**30596128968**). ONE SLSA provenance statement covers BOTH assets (`powershell-lsp-1.28.0.tar.gz`, `powershell-lsp-1.28.0.cdx.json`) with `sourceRepositoryDigest` = the tagged commit; `gh attestation verify` exits **0** on both and **1** on a one-byte-tampered copy, re-run this session |
 | v1.27.3 | 000162 leg 1 (the removal) + leg 3 (the cut); merged as PR #111; cut by the pipeline; header trued by 000163 leg 1a, relocated here by 000169 | PATCH -- **RELEASED 2026-07-29** (Release published 2026-07-30T01:01:45Z UTC), and the first release in this arc that is a deliberate behaviour **REMOVAL** rather than an addition or a correction. **000162 leg 1 (PATCH)** DELETES the `Test-ManifestConsistency` under-declared-export rung from the source on Mike Andersen's SILENCE ruling of 2026-07-29 -- not an `orgPolicy` suppression, not a narrowing, not a severity drop. The rung measured **100% false positive** (909 confirmed FPs, 0 true positives, hand-triaged against each module's real `Import-Module` surface) for a structural reason: a manifest's `FunctionsToExport` IS the final export gate, so a function the manifest omits simply is not exported, and the rung was wrong-by-design in every shape that reached it. Re-measured on the same machine-day against the same 169/36 denominator: under-declared **911 -> 0**, orphan and alias-orphan **unchanged at 2 and 1**, asserted row-for-row (rung + name + manifest) rather than by count, with the pre-change count floored nonzero first. The repo's `typo-export` corpus expectation was deliberately INVERTED to pin the rung silent and RED-proven: against the pre-change code the flipped expectation fails, and it is the ONLY one of 119 corpus samples that moves. The shipped `ManifestConsistency` rationale also lost its "or an exported one is unlisted" clause, re-derived through `scripts/regen-rule-rationales.ps1` -- a removal has to reach the user-facing text or the plugin documents a check it does not run. Rung numbering keeps a deliberate GAP (rungs 1 and 3 retain the identities this document and the CHANGELOG already cite). No knob (still 19), no `base.psd1` change (still 53), no new owned finder (still 6), no CONTRACT change. Cut lockstep to 1.27.3 in both manifests over a dated `## [1.27.3] - 2026-07-29` heading -- the date EQUALS the publish day here, unlike v1.27.2's prepared-then-held shape. Tag v1.27.3 gitsign-signed and cut BY THE PIPELINE over commit **b1a673f** (tag object **46bc1aac**, tagger `github-actions[bot]`, tagger time 01:01:41Z), producing run **30504336296**. **The gate chain is demonstrably load-bearing on this cycle:** push-CI **30500633289** attempt 1 FAILED, a release dispatch **30502935547** was then REFUSED at Gate 4 on the red main, the failed leg was rerun green on attempt 2, and only then did a **dry run (30504277713, 00:58:15Z)** precede the producing run (00:59:27Z) -- the tag's 01:01:41Z tagger time proves the dry run minted no tag. Per the 2026-07-29 session record, both assets are covered by one SLSA provenance statement, `gh attestation verify`-clean at exit 0 and RED-probed against a tampered copy -- **that one line is carried from the release session record and was NOT re-verified**, unlike the v1.28.x rows above. *Relocated here by 000169 when the header advanced to v1.28.1, per the 000161 leg-2 convention: only the header facts this row lacked were folded in, each re-derived live rather than copied out of the superseded header text -- the tagged commit in full (`b1a673f36521c19c7521e38a3baa0a087d69323c`), the Release's `draft=false` / `prerelease=false` / author `github-actions[bot]`, and both asset names (`powershell-lsp-1.27.3.tar.gz` and `powershell-lsp-1.27.3.cdx.json`). v1.27.3 held the Latest badge from 2026-07-30T01:01:45Z until v1.28.0 published on 2026-07-31; it now reports `isLatest=false`, with tag and Release both retained. The full measurement record for the removal is in Section 6.* |
 | v1.27.2 | 000159 legs 1a/1b/2; merged as PR #108; cut by the pipeline; verified by 000161 leg 1 | PATCH -- **RELEASED 2026-07-29**, and the first release in this arc whose verification was run as its own chartered leg rather than asserted at write time. **000159 leg 2 (PATCH)** teaches `ManifestConsistency` to read multi-name `Export-ModuleMember` lists in both idiomatic forms -- `-Function 'A', 'B'` (one `ArrayLiteralAst`) and `-Function @('A','B')` (one `ArrayExpressionAst`) -- which the export-name collector previously skipped whole; an empty collected set reads as "no explicit `Export-ModuleMember`" and answers export-all, so every private function was reported as an under-declared export. Measured on the plugin's own `scripts/lib/dogfood-reader.psm1`: **13 false warnings before, 0 after**, with the modelled surface matching `Import-Module` ground truth exactly. `-Cmdlet` was measured to share the collection path and is fixed with it; `-Alias` is deliberately NOT folded into the function set (the BurntToast shape, v1.24.x); a list carrying any non-literal element DEGRADES to silence rather than resolving the literal half. **000159 leg 1a (test-infra, no bump)** instruments the daemon-initializing flake: an outcome recorder wired into all 12 collapsing hooks, derived by AST with a vacuity floor, plus a rescue that copies each isolated data root's `logs/` inside the glob CI actually uploads. **000159 leg 1b (CI, no bump)** closes the 5.1 SARIF schema-validation gap at the artifact level. No knob (still 19), no `base.psd1` change (still 53), no new owned finder (still 6), no CONTRACT change. Cut lockstep to 1.27.2 in both manifests over a dated `## [1.27.2] - 2026-07-27` CHANGELOG heading (the heading carries 000159's authoring date, not the 07-29 publish date -- the expected shape for a prepared-then-held cut). Tag v1.27.2 gitsign-signed and cut BY THE PIPELINE over commit 49ce894 (tag object de60bd2, tagger `github-actions[bot]`, build signer `powershell-lsp-release.yml@refs/heads/main`, producing run **30468710698** read from the tag's own Sigstore certificate and corroborated by the attestation's `metadata.invocationId`); GitHub Release published 2026-07-29T16:03:29Z (verified-from-web), held the Latest badge until v1.27.3 published the following day and now reports `isLatest=false` (re-read by 000169), with both assets covered by ONE SLSA provenance statement naming both subjects and `gh attestation verify`-clean at exit 0, RED-proven to exit 1 on a single tampered byte. Push-CI **30465192375** headSha-matched to the tagged commit, all four legs green on attempt 2 |
@@ -404,6 +418,59 @@ and `windows-powershell`, the leg that had been red. `sarif-upload` is **not** a
 it is the sole job of a separate workflow (`.github/workflows/powershell-lsp-code-scanning.yml`) that
 does not fire on the pull-request event, and it ran green on the merge commit's own push, alongside a
 second green four-leg CI run (runs **30186769853** and **30186769851**, both on `ea3434db`).
+
+### 000169 through 000174 -- dispositions
+
+One paragraph each, sourced from the outboxes in the strategic-dispatch hub by dispatch 000195 leg A.
+Together they are the whole of the v1.29.0 cycle plus the ledger true-up that preceded it.
+
+**000169 -- docs-only decision-ledger true-up. CLOSED.** It advanced this document's header to the
+then-live Latest (v1.28.1) and added the missing v1.28.0 and v1.28.1 rows to the Section 2 table,
+measuring both releases directly rather than the Latest alone -- tag objects, taggers, manifest
+versions, knob counts and order, Release metadata, `isLatest` across the top six, headSha-matched
+push-CI, the full step list separating each dry run from its producing run, and `gh attestation
+verify` on all four assets RED-probed against a tampered copy. It is the direct predecessor of THIS
+pass, and it established the shape this one repeats: a scheduled true-up, not a repair.
+
+**000170 -- round-3 evidence train. Leg 1 BLOCKED; legs 2-5 delivered (PR #118 HELD).** Leg 1 was to
+publish per-profile telemetry numbers and did not: the host would not hold quiescence, so NO numbers
+were published rather than numbers published without their gate evidence. That refusal is the
+precedent the Gate A v2 protocol was written from. Legs 2-5 landed regardless -- the Arc A gap
+RED-proven, the union-read denominator finding raised, the vendor-corpus ask found EMPTY rather than
+blocked, and Section 9 appended.
+
+**000171 -- round-3 build train. Leg 1 BLOCKED AGAIN; legs 2-5 all DELIVERED (PR #119).** The
+quiescence gate failed a second time, at **3 of 5 pre-committed gate points**, and again no numbers
+were published. Everything else shipped: per-rule lifecycle persistence landed in a SIBLING log with
+the capture format proven byte-unchanged, four corpus shapes were authored and scoring, the
+union-denominator question was decided with its cost and its measured limit stated, and a MINOR
+`[Unreleased]` entry was written. It also raised two Section 9 corrections and a two-defect pattern
+in the benchmark suite. This is the build that v1.29.0 released.
+
+**000172 -- fix-forward on PR #119. Nine legs delivered; the four-green criterion a NAMED BLOCK.**
+Both chartered CI blockers were cleared and all four banked defects closed, with the original
+failure reproduced first in every case. It stopped short of its own acceptance honestly:
+`windows-powershell` stayed red on a THIRD, pre-existing unsound timing assertion the train was
+forbidden to touch, measured at 3-in-10 on 5.1 and 1-in-10 on pwsh **with no plugin code in the
+path**. Two premises were corrected BY MEASUREMENT rather than argued -- the DSC split is by
+PLATFORM, not by host, and the pre-authorized D1 null-sentinel fork was REFUTED.
+
+**000173 -- fix-forward #2 on PR #119. The cross-clock assertion repaired at the right layer.** It
+settled from the documents that no internal-consistency guarantee exists and that the record is a
+TEST-HARNESS construct with zero product consumers, so the defect was in the test rather than in the
+product, and it was fixed there. It corrected the story going in: the sub-cap rate is a property of
+the WAIT SHAPE, not of the host, at 16.7% on BOTH hosts -- so the pwsh legs had been passing on luck.
+Its leg 5 corrected its OWN inbox: a one-sided cross-clock bound is not unsound at any width, and the
+discriminator is MARGIN, not shape.
+
+**000174 -- release prep for v1.29.0 (MINOR), and a corrected ritual. CLOSED; released.** The cut
+landed in ONE commit -- CHANGELOG first, lockstep bump second -- so the 000168 window has no commit
+to bisect into, and the `[Unreleased]` body moved byte-identical (2 insertions, 0 deletions, same
+SHA-256, same 9907 bytes). Its leg 1 CORRECTED ITS OWN INBOX on the release ritual itself: the inbox
+instructed a hand-cut tag in three places and `docs/RELEASING.md` forbids exactly that, so following
+the instruction would have made Gate 2 refuse the run AND produced an unsigned, unattested tag. The
+shipped artifacts settled it -- 21 of 22 annotated tags are cut by `github-actions[bot]` and gitsign.
+The pipeline cut v1.29.0 from PR #120 the same day.
 
 ### 000159 -- legs 1a / 1b / 2 RELEASED in v1.27.2; leg 3 a recorded NO-BUILD
 
@@ -1756,6 +1823,18 @@ The correction to the review is that this is a **narrow persistence gap, not an 
 measurement** -- and, per the measure-first item above, one of the four shipped columns is empty
 for a completely different reason.
 
+**SHIPPED in v1.29.0** (annotated by dispatch 000195 leg A; the release id is DERIVED from the
+CHANGELOG rather than asserted). The `## [1.29.0] - 2026-08-01` entry's "### Added" section carries
+"**A per-rule lifecycle log, `logs/lifecycle-<stamp>.jsonl`** -- one record per distinct rule per
+turn, carrying the cleared / still-present counts and the shape hashes behind them", and with it
+"**`fixed_next_turn_rate` and `persistence_rate` in `scripts/rule-efficacy-ledger.ps1`**", both
+derived from persisted data only. So the gap named above is CLOSED: the signal is now persisted AND
+rule-keyed, and the two deliberately-absent columns are real. The log is a SIBLING of the capture
+log, so `dogfood/diagnostics.jsonl` keeps its exact record shape and both shipped readers keep
+reading historical logs unchanged. The three-way rendering the entry specifies -- `(absent)` when no
+lifecycle log exists at all, `(no-events)` when a log exists but a rule has no events, and genuine
+zeros as zeros -- is what keeps the closed gap from re-opening as a silent one.
+
 **(c) Per-profile telemetry is not a new recommendation.** Round 2's register already carried it
 under two tokens, `review-measure-first: per-profile-latency` (P8) and
 `review-measure-first: per-profile-context-volume` (P7). Round 3 restating it is the second
@@ -1855,3 +1934,11 @@ PATCH.** `dogfood/diagnostics.jsonl` is read by two shipped consumers,
 **consumer contract** even though no user hand-edits it, and the 1.x semver freeze is a stated
 trust commitment. The ruling is carried into the dispatch-B charter as **pre-made**, not as an open
 question. This train did not build the persistence change.
+
+**The ruling was then HONOURED by the build that shipped it** (annotated by dispatch 000195 leg A).
+000171 built the persistence change and the v1.29.0 CHANGELOG entry classifies itself "MINOR rather
+than PATCH", giving the same reason this ruling gave -- two shipped consumers, a consumer contract,
+the 1.x semver freeze -- and recording that no knob was added, removed, renamed, or re-defaulted.
+The pipeline cut it as **v1.29.0** on 2026-08-01. So this item is closed as ruled-and-followed
+rather than merely ruled: the classification a human made before execution is the classification the
+release carries.
