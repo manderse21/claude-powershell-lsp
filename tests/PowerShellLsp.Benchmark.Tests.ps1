@@ -437,3 +437,190 @@ Describe 'D4 -- the quiescence gate excludes its own apparatus DYNAMICALLY (disp
             'already establish that convention, and the probe follows it')
     }
 }
+
+Describe 'E1 -- EVERY documented probe parameter is smoke-run WITH that parameter (dispatch 000197)' {
+    # THE DEFECT THIS CLOSES, in one sentence: Invoke-QuiescenceProbe.ps1 assigned $bootMap only
+    # inside the branch that DEFAULTS -AgentRootPid, while the ancestry-chain walk read it on every
+    # path, so under the Set-StrictMode -Version Latest the probe sets for itself, BOTH documented
+    # explicit forms -- -AgentRootPid <pid> and the documented -AgentRootPid 0 -- died with
+    # "The variable '$bootMap' cannot be retrieved because it has not been set" BEFORE taking a
+    # single sample. Dispatch 000195 measured it; the gate had only ever been run the one way that
+    # happened to work, and that way roots the exclusion at the launching shell instead of the
+    # agent session.
+    #
+    # THE CLASS, not the instance: an instrument's documented parameter must be SMOKE-RUN WITH THAT
+    # PARAMETER. So this block does not hand-list the forms -- it ENUMERATES them from the probe's
+    # own param() block and its own comment-based help, requires the two to agree, and runs one
+    # invocation per documented parameter. A parameter added to the probe tomorrow and not smoke-run
+    # makes this block RED.
+
+    BeforeAll {
+        $script:E1_Probe = Join-Path $PSScriptRoot 'bench/Invoke-QuiescenceProbe.ps1'
+        $script:E1_Src = Get-Content -LiteralPath $script:E1_Probe -Raw
+
+        $e1Tokens = $null; $e1Errors = $null
+        $script:E1_Ast = [System.Management.Automation.Language.Parser]::ParseInput(
+            $script:E1_Src, [ref]$e1Tokens, [ref]$e1Errors)
+        $script:E1_ParseErrors = @($e1Errors)
+
+        # ENUMERATED, not hand-listed: the param() block's own parameter names.
+        $script:E1_ParamNames = @($script:E1_Ast.ParamBlock.Parameters |
+                ForEach-Object { [string]$_.Name.VariablePath.UserPath } | Sort-Object)
+
+        # ENUMERATED, not hand-listed: the comment-based help's own .PARAMETER entries.
+        $script:E1_HelpNames = @([regex]::Matches($script:E1_Src, '(?m)^\s*\.PARAMETER\s+(\S+)\s*$') |
+                ForEach-Object { [string]$_.Groups[1].Value } | Sort-Object)
+
+        # The VALUE each documented parameter is smoke-run WITH. Only the values live here; the
+        # NAMES come from the script above. A documented parameter with no entry FAILS the test
+        # below rather than being silently skipped -- that refusal is the class-closing part.
+        # Each value is deliberately DIFFERENT from the short-run base below, so that the form for
+        # a parameter is distinguishable from the default form rather than collapsing onto it --
+        # a form identical to the base does not exercise its parameter at all.
+        $script:E1_Values = @{
+            AgentRootPid = @(0, [int]$PID)   # both documented forms: the documented 0, and a real pid
+            Samples      = @(3)
+            IntervalMs   = @(150)
+            Label        = @('E1')
+        }
+
+        # Short-run base so the enumeration is cheap; overridden per-form when the parameter under
+        # test IS one of these.
+        $script:E1_Base = [ordered]@{ Samples = 2; IntervalMs = 100 }
+
+        function script:Invoke-E1Probe {
+            param([System.Collections.IDictionary] $Bound)
+            $argList = @()
+            foreach ($k in @($Bound.Keys)) { $argList += ('-' + [string]$k); $argList += $Bound[$k] }
+            $raw = (& pwsh -NoLogo -NoProfile -File $script:E1_Probe @argList 2>&1 |
+                    Out-String -Width 500)
+            $code = $LASTEXITCODE
+            # NORMALIZE before matching: an un-normalized needle is defeated by the column padding
+            # in the probe's own sample lines and by any host-width wrapping in the captured text.
+            $norm = ([regex]::Replace([string]$raw, '\s+', ' ')).Trim()
+            return [pscustomobject]@{
+                Args     = ($argList -join ' ')
+                ExitCode = $code
+                Raw      = [string]$raw
+                Norm     = $norm
+            }
+        }
+    }
+
+    It 'the probe parses, and its parameter list is non-empty (the enumeration floor)' {
+        # FLOOR. Every assertion below is vacuous over an empty enumeration: "every documented
+        # parameter was smoke-run" is trivially true when zero are documented. Fail loud instead.
+        $script:E1_ParseErrors.Count | Should -Be 0 -Because 'an unparseable probe enumerates nothing'
+        $script:E1_ParamNames.Count | Should -BeGreaterOrEqual 2 -Because (
+            'the charter floor: at least two documented parameter forms must be enumerated and run')
+        $script:E1_HelpNames.Count | Should -BeGreaterOrEqual 2 -Because (
+            'the help text must document at least as many forms as the floor requires')
+    }
+
+    It 'the param() block and the comment-based help document THE SAME parameters' {
+        # Both directions, non-vacuously (the floor above guarantees the sets are not empty). A
+        # parameter in param() but not in help is an UNDOCUMENTED form that this block would then
+        # never enumerate; one in help but not in param() is a form that cannot be passed at all.
+        foreach ($p in $script:E1_ParamNames) {
+            $script:E1_HelpNames | Should -Contain $p -Because (
+                "parameter -$p exists but is not documented, so it would escape the smoke-run enumeration")
+        }
+        foreach ($h in $script:E1_HelpNames) {
+            $script:E1_ParamNames | Should -Contain $h -Because (
+                "help documents -$h but the param() block does not declare it")
+        }
+    }
+
+    It 'the probe still sets Set-StrictMode -Version Latest (without it this whole block is vacuous)' {
+        # NON-VACUITY GUARD. The regression being guarded is a STRICTMODE-ONLY failure: with strict
+        # mode dropped, an unset $bootMap is silently $null, .ContainsKey() on it throws nothing
+        # useful, and every execution assertion below would pass against the very defect it exists
+        # to catch. So the strict-mode line is itself an asserted precondition.
+        $norm = ([regex]::Replace($script:E1_Src, '\s+', ' '))
+        $norm | Should -Match 'Set-StrictMode -Version Latest'
+    }
+
+    It 'every documented parameter has a smoke-run value (a new parameter must be run, not skipped)' {
+        # THE CLASS-CLOSING REFUSAL. Adding a parameter to the probe without adding it here makes
+        # this test RED, which is what stops the next parameter from shipping un-smoke-run.
+        foreach ($p in $script:E1_HelpNames) {
+            $script:E1_Values.ContainsKey($p) | Should -BeTrue -Because (
+                "-$p is documented but has no smoke-run value, so it would ship without ever being " +
+                'executed with that parameter -- add it to $script:E1_Values')
+        }
+    }
+
+    It 'STRUCTURAL: $bootMap is assigned unconditionally, not inside a branch' {
+        # The fix itself, guarded structurally rather than by comment. The pre-fix code assigned
+        # $bootMap inside the -AgentRootPid-defaulting if-block; the chain walk reads it on every
+        # path. This is RED against that code.
+        $assigns = @($script:E1_Ast.FindAll({
+                    param($n)
+                    $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $n.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $n.Left.VariablePath.UserPath -eq 'bootMap'
+                }, $true))
+        $assigns.Count | Should -BeGreaterThan 0 -Because 'the probe must still resolve a boot map'
+        foreach ($a in $assigns) {
+            $parent = $a.Parent
+            $nested = $false
+            while ($null -ne $parent) {
+                if ($parent -is [System.Management.Automation.Language.IfStatementAst]) { $nested = $true; break }
+                $parent = $parent.Parent
+            }
+            $nested | Should -BeFalse -Because (
+                'an assignment reached only on one path cannot satisfy a read taken on every path')
+        }
+    }
+
+    It 'EVERY enumerated documented form reaches sampling under strict mode' {
+        # THE EXECUTION PROOF. One real probe run per documented parameter (plus the default form),
+        # each asserting two things: no variable-retrieval throw, and sampling actually REACHED.
+        # Exit code alone cannot carry this -- the pre-fix crash and a legitimate FAIL verdict both
+        # exit 1, so "reached sampling" is asserted from the probe's own sample line.
+        $forms = @()
+
+        # The DEFAULT form: -AgentRootPid omitted entirely.
+        $forms += , ([ordered]@{ Samples = 2; IntervalMs = 100 })
+
+        # One form per documented parameter, per documented value.
+        foreach ($p in $script:E1_HelpNames) {
+            foreach ($v in @($script:E1_Values[$p])) {
+                $bound = [ordered]@{}
+                foreach ($k in @($script:E1_Base.Keys)) { $bound[$k] = $script:E1_Base[$k] }
+                $bound[$p] = $v
+                $forms += , $bound
+            }
+        }
+
+        # FLOOR on what actually ran, not on what was planned.
+        $forms.Count | Should -BeGreaterOrEqual 2 -Because 'the charter floor is at least two executed forms'
+        $forms.Count | Should -BeGreaterOrEqual $script:E1_HelpNames.Count -Because (
+            'each documented parameter contributes at least one executed form')
+
+        # DISTINCTNESS FLOOR. Counting forms is not the same as counting DIFFERENT forms: a value
+        # equal to the base collapses that parameter's form onto the default one, and the suite
+        # would then report N runs while actually exercising fewer than N invocations.
+        $rendered = @($forms | ForEach-Object {
+                $b = $_
+                (@(@($b.Keys) | ForEach-Object { ('-' + [string]$_ + ' ' + [string]$b[$_]) }) -join ' ')
+            })
+        @($rendered | Sort-Object -Unique).Count | Should -Be $forms.Count -Because (
+            'every enumerated form must be a DISTINCT invocation, not a duplicate of the base form')
+
+        $ran = 0
+        foreach ($f in $forms) {
+            $r = Invoke-E1Probe -Bound $f
+            $ran++
+            Write-Host ('    [E1] ' + $r.Args + '  -> exit ' + $r.ExitCode)
+
+            $r.Norm | Should -Not -Match 'cannot be retrieved because it has not been set' -Because (
+                'form "' + $r.Args + '" must not die on an unset variable under strict mode')
+            $r.Norm | Should -Match 'sample 1 foreign' -Because (
+                'form "' + $r.Args + '" must actually REACH sampling, not merely exit')
+            $r.ExitCode | Should -BeIn @(0, 1) -Because (
+                'form "' + $r.Args + '" must produce a PASS or FAIL verdict, not a crash or a no-sample exit')
+        }
+        $ran | Should -Be $forms.Count
+    }
+}

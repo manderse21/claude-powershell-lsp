@@ -57,11 +57,26 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'Quiescence.Common.ps1')
 
+# THE BOOT MAP IS RESOLVED UNCONDITIONALLY, because the ancestry-chain walk below reads it on
+# EVERY path while the defaulting branch that used to assign it runs on ONE. Under the
+# Set-StrictMode -Version Latest this script sets, both documented explicit forms --
+# -AgentRootPid <pid> and the documented -AgentRootPid 0 -- therefore died with "The variable
+# '$bootMap' cannot be retrieved because it has not been set" BEFORE taking a single sample, so
+# the only invocation that ran was the default one, whose fallback root is the launching shell
+# rather than the agent session (see the chain note below). Dispatch 000195 measured that; 000197
+# repairs it.
+#
+# This does NOT move what the gate measures. The map is used for exactly two things -- picking the
+# default ROOT pid, and printing the auditable ancestry chain -- and neither feeds scoring:
+# Measure-QuiescenceSample builds its OWN fresh map per sample. On the default path the same
+# function is called the same number of times (once) for the same value, so that path is
+# unchanged; the explicit paths go from crashing to working.
+$bootMap = Get-ProcessParentMap
+
 # Default the agent root to this process's parent: when a probe is launched BY the agent, the
 # agent is the parent, and its whole tree is apparatus. Resolved once here only to pick the ROOT;
 # the tree BELOW that root is re-resolved per sample, which is the part that matters.
 if ($AgentRootPid -lt 0) {
-    $bootMap = Get-ProcessParentMap
     $AgentRootPid = if ($bootMap.ContainsKey([int]$PID)) { [int]$bootMap[[int]$PID] } else { 0 }
 }
 
