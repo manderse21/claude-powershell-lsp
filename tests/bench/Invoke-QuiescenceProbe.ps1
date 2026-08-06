@@ -36,20 +36,53 @@
     A name for this measurement point (e.g. P0, 'after strict'), echoed into the output so a
     series of probes is readable as a series.
 
+.PARAMETER BusyProbeCommand
+    A caller-supplied command line, run BEFORE any sampling, that answers one question: is this
+    host busy with work the probe must not measure across? The contract is deliberately minimal,
+    so the probe stays generic and this script never learns anything about the caller's world:
+
+        QUIET -- exit code 0 AND no output.
+        BUSY  -- a non-zero exit code, OR one or more busy-signal lines of output.
+
+    On BUSY the probe REFUSES to sample, names the refusal, and exits 3. On QUIET it samples as
+    usual. EITHER WAY the command and its raw output are recorded in the report beside the
+    samples, so a reader can audit what 'quiet' actually meant for a given run rather than
+    taking the word 'quiet' on trust.
+
+    FAIL-CLOSED: a pre-flight that cannot be run at all (an unparseable command line, a missing
+    executable) counts as BUSY. A quiescence guard that silently permits sampling when it breaks
+    is worse than no guard, because it reports as though it checked.
+
+    When this parameter is absent, no pre-flight runs and the report carries no pre-flight
+    section -- behavior is exactly what it was before the parameter existed.
+
 .EXAMPLE
     pwsh -NoProfile -File tests/bench/Invoke-QuiescenceProbe.ps1 -Label P0
+
+.EXAMPLE
+    # LOCAL EXAMPLE (Mike Andersen's strategic-dispatch hub) -- shown here rather than built in,
+    # because this script is public and must not depend on any particular caller's tooling.
+    # `dispatch claims --live` prints 'no claims match.' when the registry is empty, so the
+    # example filters that line out to meet the no-output-means-quiet contract:
+    #
+    #   -BusyProbeCommand "@(dispatch claims --live) -notmatch 'no claims match' -notmatch '^\s*$'"
+    #
+    # Any equivalent works: the probe only reads the exit code and whether anything was emitted.
 
 .NOTES
     Instrument, not a test: Pester discovers *.Tests.ps1 only, matching the convention already
     used by Invoke-LatencyBench.ps1 in this directory. Its behavior is tested from
     tests/PowerShellLsp.Benchmark.Tests.ps1. ASCII-only.
+
+    EXIT CODES: 0 = PASS, 1 = FAIL (verdict), 2 = no samples taken, 3 = refused, host BUSY.
 #>
 [CmdletBinding()]
 param(
     [int] $AgentRootPid = -1,
     [int] $Samples = 30,
     [int] $IntervalMs = 1000,
-    [string] $Label = ''
+    [string] $Label = '',
+    [string] $BusyProbeCommand = ''
 )
 
 Set-StrictMode -Version Latest
@@ -103,6 +136,59 @@ for ($d = 0; $d -lt 24; $d++) {
     $walk = $next
 }
 
+# THE QUIET PRE-FLIGHT, run BEFORE any sampling.
+#
+# Three trains in a row measured this host while it was busy and published, or nearly published,
+# a latency taken under load. The rail that prevents it was written into charter prose each time,
+# and each time the next charter did not read it. So it lives in the INSTRUMENT now: a caller
+# hands the probe a way to ask "is anything else running?", and the probe refuses to sample when
+# the answer is yes.
+#
+# The probe stays generic on purpose. It does not know what a claim, a runner, or a dispatch is;
+# it knows an exit code and whether anything was emitted. The caller's specific busy check is the
+# caller's business and lives in the comment-based help above as a local example only -- this
+# script is public and must carry no dependency on any one caller's tooling.
+$preflightRan = $false
+$preflightBusy = $false
+$preflightExit = 0
+$preflightOut = ''
+$preflightError = ''
+
+if (-not [string]::IsNullOrWhiteSpace($BusyProbeCommand)) {
+    $preflightRan = $true
+    try {
+        # PARSE FIRST, so a command line that cannot possibly run is refused without spawning
+        # anything. The scriptblock is built for validation only and is deliberately NOT invoked
+        # here -- see below.
+        $null = [scriptblock]::Create($BusyProbeCommand)
+
+        # RUN IT IN A CHILD PROCESS, not in this one. A busy probe invoked in-process can call
+        # `exit`, which terminates THIS script and makes the probe report the busy check's exit
+        # code as its own -- the gate would then silently answer with something other than its own
+        # verdict. A child process bounds the blast radius to an exit code and two streams, which
+        # is exactly the contract the help text states.
+        $hostExe = try { (Get-Process -Id $PID).Path } catch { '' }
+        if ([string]::IsNullOrWhiteSpace($hostExe)) { $hostExe = 'pwsh' }
+
+        # EAP pinned to Continue for the call, matching Get-ProcessParentMap's handling of the same
+        # hazard: a native command writing to stderr under -ErrorActionPreference Stop is a
+        # terminating RemoteException on Windows PowerShell 5.1, which would misreport a merely
+        # chatty busy probe as a broken one.
+        $eap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $global:LASTEXITCODE = 0
+        $preflightOut = (& $hostExe -NoLogo -NoProfile -Command $BusyProbeCommand 2>&1 |
+                Out-String -Width 500)
+        $preflightExit = [int]$global:LASTEXITCODE
+        $ErrorActionPreference = $eap
+    } catch {
+        # FAIL-CLOSED. A pre-flight that could not run has NOT established quiet.
+        $preflightError = [string]$_.Exception.Message
+        $preflightExit = -1
+    }
+    $preflightBusy = ($preflightExit -ne 0) -or (-not [string]::IsNullOrWhiteSpace($preflightOut))
+}
+
 $threshold = Get-QuiescenceThresholdCores
 $cores = [int][System.Environment]::ProcessorCount
 
@@ -117,6 +203,43 @@ Write-Host ('ancestry chain   : ' + ($chain -join '  <-  '))
 Write-Host '                   ^ if the agent session is HIGHER in this chain than the agent root'
 Write-Host '                     above, re-run with -AgentRootPid <that pid>; otherwise the agent''s'
 Write-Host '                     sibling processes will be counted as FOREIGN load.'
+
+# THE PRE-FLIGHT RECORD, printed on BOTH paths. A gate that reports "quiet" without showing what
+# it asked, and what came back, is asserting quiet rather than evidencing it.
+if ($preflightRan) {
+    Write-Host ''
+    Write-Host '---------------- QUIET PRE-FLIGHT ----------------'
+    Write-Host ('  busy probe      : ' + $BusyProbeCommand)
+    Write-Host ('  exit code       : ' + $preflightExit)
+    if (-not [string]::IsNullOrWhiteSpace($preflightError)) {
+        Write-Host ('  probe error     : ' + $preflightError)
+        Write-Host '  (a pre-flight that cannot run counts as BUSY -- fail-closed)'
+    }
+    if ([string]::IsNullOrWhiteSpace($preflightOut)) {
+        Write-Host '  probe output    : (none)'
+    } else {
+        Write-Host '  probe output    :'
+        foreach ($line in @(($preflightOut -split "`r?`n"))) {
+            if (-not [string]::IsNullOrWhiteSpace($line)) { Write-Host ('    | ' + $line.TrimEnd()) }
+        }
+    }
+    Write-Host ('  verdict         : ' + $(if ($preflightBusy) { 'BUSY' } else { 'QUIET' }))
+} else {
+    Write-Host ''
+    Write-Host '  (no busy probe supplied -- pass -BusyProbeCommand to refuse sampling on a busy host)'
+}
+
+# THE REFUSAL. Before a single sample, because a sample taken across other work is the wrong
+# number this whole instrument exists to stop being published.
+if ($preflightBusy) {
+    Write-Host ''
+    Write-Host '---------------- REFUSED: HOST BUSY ----------------'
+    Write-Host '  The busy probe reported activity, so NO SAMPLES WERE TAKEN and there is no'
+    Write-Host '  verdict. This is not a FAIL and it is not a PASS -- the gate did not run.'
+    Write-Host '  Quiesce the host and re-probe.'
+    exit 3
+}
+
 Write-Host ''
 
 $foreign = New-Object System.Collections.Generic.List[double]
