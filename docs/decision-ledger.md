@@ -6,29 +6,40 @@ public view -- what is next, what is blocked, what is deferred -- is [ROADMAP.md
 which links here for the reasoning behind each line. (Split out of `ROADMAP-powershell-lsp.md` by
 dispatch 000166 leg B6b; a pointer stub remains at the old path so prior links resolve.)
 
-Status as of 2026-08-05. Plugin's current release: **v1.29.0**, GPL-3.0-or-later. Every fact in this
-paragraph was DERIVED live at run time by dispatch 000195 leg A -- never asserted from the charter
-that scheduled the true-up, because that charter's own version claim was itself a candidate for
-staleness. The v1.29.0 version is TAGGED, gitsign-signed, and RELEASED: an annotated tag v1.29.0
-whose object carries a `-----BEGIN SIGNED MESSAGE-----` block (`git cat-file -t v1.29.0` returns
-**tag**, not commit) sits at commit **1ed438fc73e2b7556146a52551297b94b88fb5a6** on origin, tagged by
-`github-actions[bot]` from the release runner (tagger time **2026-08-01T21:00:09Z**), and the
-v1.29.0 GitHub Release is published as the current **Latest** (**2026-08-01T21:00:13Z** UTC; `gh
-release view` returns tagName v1.29.0, isDraft=false, isPrerelease=false, name "powershell-lsp
-v1.29.0", and `gh release list` badges v1.29.0 Latest with every earlier tag unbadged). The tagged
-commit is the **PR #120** merge, "release: prepare v1.29.0 (MINOR) per-rule lifecycle persistence
-(000174)".
+Status as of 2026-08-07. Plugin's current release: **v1.29.0**, GPL-3.0-or-later. Every fact in this
+paragraph was DERIVED live at run time by dispatch 000201 leg 1, each with its deriving command
+named inline -- re-run rather than carried across from the header this pass replaces, on the
+standing reason 000195 leg A gave: a header's own version claim is the fact likeliest to have gone
+stale since it was written, so it is the one that must never be copied. The v1.29.0 version is
+TAGGED, gitsign-signed, and RELEASED: an annotated tag v1.29.0 whose object carries a
+`-----BEGIN SIGNED MESSAGE-----` block (`git cat-file -t v1.29.0` returns **tag**, not commit, and
+`git cat-file -p v1.29.0` shows the block) sits at commit
+**1ed438fc73e2b7556146a52551297b94b88fb5a6** on origin, tagged by `github-actions[bot]` from the
+release runner (`git for-each-ref refs/tags/v1.29.0` returns taggername `github-actions[bot]` and
+taggerdate **2026-08-01T21:00:09Z**), and the v1.29.0 GitHub Release is published as the current
+**Latest** (`gh release view v1.29.0` returns tagName v1.29.0, isDraft=false, isPrerelease=false,
+name "powershell-lsp v1.29.0", author `github-actions[bot]`, publishedAt
+**2026-08-01T21:00:13Z**; `gh release list` badges v1.29.0 Latest with every earlier tag unbadged).
+The tagged commit is the **PR #120** merge, `git log -1 --format=%s 1ed438fc` reading "release:
+prepare v1.29.0 (MINOR) per-rule lifecycle persistence (000174) (#120)".
 
-**Main is NOT sitting on the tagged commit, and that is the shape difference from the v1.28.1 header
-this one replaces.** `git describe --tags origin/main` reads **`v1.29.0-30-g7c2f1fa`**, so the tip
-**7c2f1fa** is a DESCENDANT of the tag by **30** commits (`git rev-list --count v1.29.0..origin/main`
-returns **30**) -- where at v1.28.1 the same command read a plain `v1.28.1` with no distance. Those 30
-commits are post-release work that has not been cut, so the ledger's "released" claim and its "on
-main" claim are no longer the same claim and are stated separately here. Both manifests PARSE to
-1.29.0 **at the tag** (`plugin.json` `version` 1.29.0, `marketplace.json` `metadata.version` 1.29.0,
-lockstep true) **and still read 1.29.0 at the origin/main tip**, so the 30 commits carry no version
-move. The CHANGELOG's newest dated heading is `## [1.29.0] - 2026-08-01`, whose date EQUALS the
-publish day. The old publish gap (the registry once served a stale 1.3.0) stays CLOSED. The v1.28.1
+**Main is NOT sitting on the tagged commit, and it has moved a further 15 commits since this header
+was last trued.** `git describe --tags origin/main` reads **`v1.29.0-45-g384e4fa`**, so the tip
+**384e4fa1ffa64e82d8e0297300e02061c7346b49** is a DESCENDANT of the tag by **45** commits
+(`git rev-list --count v1.29.0..origin/main` returns **45**), where the header this pass replaces
+read `v1.29.0-30-g7c2f1fa` at 30. **That 15 is DERIVED, not obtained by subtracting the old
+number:** `git rev-list --count 7c2f1fa..origin/main` returns **15** on its own, which is the check
+that would have caught a stale predecessor figure rather than propagating it. Those 45 commits are
+post-release work that has not been cut, so the ledger's "released" claim and its "on main" claim
+are not the same claim and are stated separately here. Both manifests PARSE to 1.29.0 **at the tag**
+and **still read 1.29.0 at the origin/main tip** -- `git show v1.29.0:.claude-plugin/plugin.json`
+and `git show origin/main:.claude-plugin/plugin.json` both give `version` 1.29.0, and the same two
+reads of `.claude-plugin/marketplace.json` both give `metadata.version` 1.29.0, lockstep true at
+each ref -- so the 45 commits carry no version move. The CHANGELOG's newest dated heading is
+`## [1.29.0] - 2026-08-01` (`git show origin/main:CHANGELOG.md`), whose date EQUALS the publish day,
+and `## [Unreleased]` stands immediately above it holding **nothing** -- deliberately, per the
+convention leg 4 of this pass derived and the 000197/000200 disposition below records. The old
+publish gap (the registry once served a stale 1.3.0) stays CLOSED. The v1.28.1
 and v1.28.0 verification facts are not restated here: they live in this document's v1.28.1 and
 v1.28.0 release-table rows in Section 2, which is where the header's predecessor facts get relocated
 (the convention 000161 leg 2 established, and the 000123 lesson against carrying superseded version
@@ -418,6 +429,215 @@ and `windows-powershell`, the leg that had been red. `sarif-upload` is **not** a
 it is the sole job of a separate workflow (`.github/workflows/powershell-lsp-code-scanning.yml`) that
 does not fire on the pull-request event, and it ran green on the merge commit's own push, alongside a
 second green four-leg CI run (runs **30186769853** and **30186769851**, both on `ea3434db`).
+
+### 000197 and 000200 -- dispositions
+
+One entry each, sourced by dispatch 000201 leg 2 from the outboxes in the strategic-dispatch hub and
+cross-checked against the merged diffs on `origin/main`; 000197 runs to several paragraphs because
+it carries six legs. Together they are the whole of PR **#130**, the no-version-bump train that
+landed between the v1.29.0 true-up and this pass. The merge facts were read live rather than
+transcribed, per rule 000081: `gh pr view 130` returns state **MERGED**, mergedAt
+**2026-08-07T01:39:43Z**, head **41eaac6b0689ef73958d61941aafe5b7eb3d5e7b** and merge commit
+**384e4fa1ffa64e82d8e0297300e02061c7346b49**, which is `origin/main`'s current tip. The whole arc is
+`git diff --stat 9522e4d 384e4fa`: **8 files changed, 1329 insertions(+), 21 deletions(-)** --
+`CHANGELOG.md` deliberately not among them, for the reason leg 4 of this pass derived and the close
+of this section records.
+
+**The held PR this arc opened is NOT the one that merged, and that is recorded rather than smoothed
+over.** 000197's outbox names PR **#129** on branch `dispatch/000197-lege-recharter`; `gh pr view
+129` returns state **CLOSED** with `mergeCommit` **null**, so it never merged. The work landed from
+a re-cut branch, `dispatch/000197-lege-recharter-b`, as #130. Main carries the commits that bracket
+the re-cut -- `e3b5111` "retrigger PR CI", `c1d9d26` "bisect: temporarily revert release.yml to main
+to test CI triggering", `8684744` reverting that bisect, then `1307111` and `b1987a1` "retrigger
+after Actions incident" -- so the branch change was a CI-triggering incident worked around in the
+open, with the bisect probe reverted rather than left in the tree. **Two further dispatches sit in
+this arc and are hub-side only, cross-referenced here by id alone because neither moved anything in
+this repository: 000198** (the hub-only re-mint of 000195 legs G/H/I) **and 000199** (the hub
+doc-set trim merge train).
+
+**000197 -- the Leg-E re-charter. Legs 1, 2, 5 and 6 LANDED; legs 3 and 4 a NAMED BLOCK, the third
+consecutive train to be stopped by the quiescence gate.** **Leg 1** hoisted the quiescence probe's
+`$bootMap` assignment out of the branch that DEFAULTS `-AgentRootPid`. The ancestry-chain walk read
+that variable on every path, so under the `Set-StrictMode -Version Latest` the probe sets for
+itself, **both** documented explicit forms died on "The variable '$bootMap' cannot be retrieved
+because it has not been set" before taking a single sample -- the instrument's documented interface
+was unusable while its default path worked. The hoist is semantically neutral by construction rather
+than by assertion: `Measure-QuiescenceSample` builds its own fresh parent map per sample, so
+`$bootMap` never reaches scoring at all; it only picks the root pid and prints the auditable chain.
+The class-closing regression test does not hand-list forms. It enumerates parameter names from the
+probe's own `param()` block by AST **and** the `.PARAMETER` entries of its comment-based help,
+requires the two sets to agree **in both directions**, requires every documented parameter to carry
+a smoke-run value (a documented parameter with no value is a RED test, not a skip), and executes one
+probe per documented parameter -- **7 distinct invocations**, asserted distinct so a value equal to
+the base cannot collapse a form onto the default one. A separate assertion pins that the probe still
+sets `Set-StrictMode -Version Latest`, without which the entire block would be vacuous, since an
+unset variable would silently read `$null` and every execution assertion would pass against the very
+defect it guards. Its RED control is **per-property**: against the pre-fix probe the two
+fix-sensitive tests fail while the four precondition/floor tests correctly stay green (4 passed, 2
+failed). The class-closer then proved itself immediately -- adding `-BusyProbeCommand` in leg 2
+turned it RED until that new parameter was given a smoke-run value. **One deviation is recorded
+rather than smoothed over:** the charter said to enumerate the probe's documented parameter SETS
+with a floor of `>= 2`, but the probe declares no PowerShell parameter sets at all -- every
+parameter sits in `__AllParameterSets` -- so a literal reading enumerates exactly 1 and the floor
+could never be met. Documented parameter FORMS were enumerated instead, which closes the same class
+non-vacuously and satisfies a real floor.
+
+**Leg 2** put the quiet pre-flight in the INSTRUMENT rather than in the charter that drives it, as a
+new optional `-BusyProbeCommand`. The contract: **quiet** is exit 0 *and* no output; **busy** is a
+non-zero exit code OR any output. On busy the probe refuses with exit **3**, names the refusal, and
+takes no samples; either way the command and its raw output are recorded beside the samples, and
+absent the parameter the behaviour is what it was. Two findings are worth keeping, both caught by
+the tests rather than by review. **The busy probe must run in a CHILD process:** the first
+implementation invoked it in-process via `[scriptblock]::Create`, and the unit test "BUSY by EXIT
+CODE alone" supplied `exit 7`, whereupon the probe exited **7** instead of 3 -- an in-process `exit`
+terminates the probe and makes it report the busy check's exit code as its own verdict. The command
+is now parse-validated in-process, so an unrunnable command is refused without spawning anything,
+and executed in a child. **And the guard is fail-closed:** a pre-flight that cannot run counts as
+BUSY, because a guard that silently permits sampling when it breaks is worse than no guard -- the
+report then claims a check that never happened. Hub-agnosticism is asserted rather than trusted: a
+scan over every `.ps1` in `tests/bench/` with the comment-help block and comment lines stripped
+requires **zero** dispatch-CLI invocations, hub repo names or local paths in executable code, and it
+was **mutant-RED-proven** by injecting a real `dispatch claims --live` call and confirming exactly
+one anchor selected. The needle deliberately requires a subcommand word so the repo's many
+legitimate `dispatch = '000127'` provenance fields are not false positives, and a companion test
+asserts the hub example IS present in comment-help, so "zero references" cannot be satisfied by
+never documenting the local usage.
+
+**Leg 3 ran Gate A v2 exactly as pre-committed and it FAILED, so leg 4 was never attempted.** The
+protocol was byte-identical to the pre-commitment -- 30 samples at 1000 ms, threshold 0.15 cores
+strictly under, agent tree and probe tree excluded and re-resolved per sample -- and the verdict was
+a foreign mean of **0.2219 cores** against that 0.15 bar, foreign max **2.6971**, with the agent's
+own **0.3403 cores** held out of the figures and 57 agent pids excluded per sample. **This is a
+different FAIL from 000170's and 000171's, and the difference is the whole point:** those failed
+partly on their own apparatus, whereas here the exclusion is demonstrably correct and the load is
+real foreign desktop software -- chrome 0.8477, AMDRSServ 0.6165, ms-teams 0.3082, explorer 0.2620
+and LogiOverlay 0.1695 cores in the final-sample table. Samples 1-22 were largely quiet and the
+spike over 23-30 carried the mean over the bar. The instrument is finally measuring what it claims
+to measure; what it measured is a workstation running Chrome, Teams and the AMD Radeon service. **No
+relaxation was applied or considered.** Leg 4 was pre-ruled blocked on exactly this outcome, so
+`docs/benchmarks.md` is untouched, no findings fixture was authored, and the analyzer-clean
+`bench-fixture.ps1` was never opened -- publishing a millisecond figure measured under 0.2219 cores
+of foreign load is precisely what the gate exists to prevent. A custom_check asserted both forbidden
+paths absent from the diff, floored on the total changed-file count so an empty or wrong ref could
+not fake the assertion.
+
+**Leg 5 upgraded this document's `userConfig` enum sentence from OBSERVATION to EXPLANATION.** The
+v1.28.1 row had recorded that no knob in the manifest declares a `values` or enum field; leg 5
+established that none **CAN**. Re-derived at write time from the installed binary -- and the
+re-derivation was substantive rather than ceremonial, because Claude Code had moved to **2.1.223**
+where 000195 leg F read **2.1.221**, with two `.describe()` strings differing between the builds and
+the load-bearing shape identical. The shipped `userConfig` option schema is `.strict()` over exactly
+**nine** top-level keys (`type`, `title`, `description`, `required`, `default`, `multiple`,
+`sensitive`, `min`, `max`) with `type` a closed five-primitive enum and the anchor **unique** in the
+binary, so a `values` field is REJECTED rather than merely absent. The ledger diff was exactly
+**two hunks** -- the Section 9 front-door paragraph and the v1.28.1 row -- with no header re-truing
+and no other content moved. It also authored `docs/upstream/claude-code-userconfig-enum.md` as a
+POST-READY DRAFT naming two concrete asks (an optional `values` field on `string`, or a sixth `enum`
+type) with a compatibility note that `.strict()` makes the field a hard error on older clients. Its
+header states plainly that filing is Mike Andersen's gate; **nothing was posted.**
+
+**Leg 6 made the dry-run pair STRUCTURAL, closing the gap v1.29.0 had proved by shipping with no
+rehearsal at all.** The discriminability problem was solved at the run object rather than in its
+logs: `dry_run` is an input and inputs do not appear on a run, which is why 000161 and 000169 could
+only recover it by step forensics, so the workflow's `run-name` now encodes it and every run carries
+`[DRY-RUN]` or `[PRODUCING]` and `target=<commit-or-HEAD>` in its own name. **Gate 6** runs only
+when `!inputs.dry_run` and refuses unless a SUCCESSFUL `dry_run=true` run exists for the **same
+resolved target commit** within **3 days** -- the window bounding drift in the external state a
+rehearsal validated but the commit does not pin (Gate 5 reads `origin/main`'s published manifest,
+Gate 4 reads CI runs), with commit identity the primary guard and the window explicitly not the main
+protection. `skip_dry_check` (boolean, default false) is the recorded bypass: when true the gate
+logs `SKIPPED-BY-INPUT` as both a workflow warning and a banner, and passes -- so skipping the
+rehearsal is a run parameter visible forever rather than an undetectable omission. The decision
+logic was factored into `release/Test-DryRunPair.ps1` and unit-tested with **14** tests covering
+every refuse path, then retroactively validated against real release history rather than fixtures:
+the v1.28.1 producing run PASSES (through the pre-marker legacy fallback, since those runs carry the
+bare title `powershell-lsp release`) and the v1.29.0 producing run is REFUSED. That second result
+also CONFIRMED from GitHub, rather than inherited from the charter, that v1.29.0 shipped with no dry
+run. **The live proof is PENDING BY CONSTRUCTION and is stated exactly that way:** Gate 6 has never
+executed on a GitHub runner and first will on the next real cut; this train triggered no release
+workflow run at all, asserted by a custom_check. **A second deviation is recorded here too:** leg 6
+also edited the workflow's own header comment, which the charter did not name, because that
+enumeration read "(1)..(4)" and had ALREADY drifted -- Gate 5 shipped with dispatch 000076 without
+extending it, so the file described four gates while running five. A test now anchors the prose
+enumeration to the actual gate steps and fails if they diverge. **No version bump** (the 000159 leg
+1b shape: CI plus docs). Verification: `tests/PowerShellLsp.Release.Tests.ps1` in full at **64
+passed, 0 failed**, including all 40 pre-existing tests, and the `D4`/`E1`/`E2` benchmark blocks at
+**21 passed, 0 failed**, both filtered runs carrying an executed-count floor so a zero-selection run
+exits 3 rather than reporting success. The full ~1029-test suite was deliberately NOT run locally --
+the host was under the load leg 3 had just measured -- and was left to CI on all four legs.
+
+**000200 -- fix-forward on PR #130. The eleven `windows-powershell` failures were TWO independent
+5.1 divergences, not one; both fixed at their own layers, and the arithmetic closes exactly.** The
+reproduction came first and came through the repo's OWN entry point, which is what made it faithful:
+`tests/run-tests.ps1` under `5.1.26100.8875` with Pester 5.7.1 reproduced **3 passed / 11 failed**,
+an exact match for the CI job. **Divergence A (10 of the 11) is that Windows PowerShell 5.1's
+`ConvertFrom-Json` does not enumerate a top-level JSON array.** At `release/Test-DryRunPair.ps1:125`
+the idiom was `$runs = @(ConvertFrom-Json $rawJson)`; instrumented side by side on the same input,
+`@(ConvertFrom-Json '[{a},{b}]')` gives Count **1** on 5.1 against 2 on pwsh 7.6.3, and the type of
+element `[0]` is **`System.Object[]`** rather than `PSCustomObject`. 5.1 writes the deserialized
+array to the pipeline as ONE item, so `@(...)` wraps the whole run list in a 1-element array; every
+downstream lookup then runs against an `Object[]`, and because the accessor guards with
+`PSObject.Properties.Name -contains`, the missing `id` and `conclusion` came back `$null` instead of
+throwing -- which is exactly why the defect presented as *empty strings* rather than an error, and
+why every single fixture emitted the same `conclusion= (a failed rehearsal is not a rehearsal)`.
+That also explains the two cases that "passed": both passed **vacuously**, one asserting the very
+message the bug emits for everything and the other asserting only exit code 1. The fix is assign
+first, wrap second, guard `$null` -- and the guard is load-bearing on **7**, not on 5.1, because
+there `'[]'` yields nothing and `@($null)` would manufacture one phantom run; verified for N = 0, 1,
+2, 3 on both hosts. **Divergence B (the 11th) has nothing to do with JSON ingestion:** the case
+"SAFE-FAILS on an empty or missing runs file" exercises two `throw`s whose text arrives on stderr
+and is captured with `2>&1`, and under the `$ErrorActionPreference = 'Stop'` that
+`tests/run-tests.ps1` sets, 5.1 promotes that redirected native stderr line to a **terminating**
+error where pwsh 7 does not. It was fixed at the TEST layer with a save/neutralize/restore of EAP in
+a `try/finally`, matching the idiom `tests/PowerShellLsp.SarifScan.Tests.ps1:673-676` already
+documented and applied -- so leg 6's new test had simply not inherited it. **The strongest single
+piece of evidence is the arithmetic, and it is recorded as a count rather than a conclusion:** the
+`windows-powershell` leg went **1676 passed / 11 failed / 3 skipped** (run 31131137394) to **1687
+passed / 0 failed / 3 skipped** (run 31134173407), and `1676 + 11 = 1687` -- precisely the eleven
+originally-failing cases flipped to green with the passed count moving by exactly that amount, so
+nothing else in the suite was silently skipped, renamed or disturbed. All four legs are green on
+that run, headSha-matched to `41eaac6b0689ef73958d61941aafe5b7eb3d5e7b` per rule 000081, and a
+separate check confirmed all 30 `Should` assertions in the target Describe are byte-identical before
+and after, so the green was earned by the fix rather than by weakening the test. **Three deviations
+are recorded.** The inbox chartered ONE defect and STEP 3 anticipated one mechanism; two were found,
+with different mechanisms and different correct layers, and fixing only the named signature would
+have left CI red. The inbox stated the Describe holds 13 cases (11 failing, 2 passing) and it holds
+**14** (11 failing, 3 passing) -- the third passer being "is ASCII-only", which byte-scans the file
+and never exercises the decision path, so it could not have failed; recorded because the count feeds
+the assertions-unchanged claim, which is therefore asserted over all 30 `Should` lines rather than
+over a case count. And the scan for the same `ConvertFrom-Json` trap elsewhere in `release/`,
+`scripts/` and `tests/` found nothing affected and **fixed nothing** -- `audit-release-bodies.ps1`
+and the JSONL readers either parse one object per line or have an intervening pipeline stage that
+enumerates -- recorded so the negative result is not re-derived next train. **The residual this
+dispatch flagged is the reason leg 3 of dispatch 000201 exists:** `Test-DryRunPair.ps1` was
+defective under 5.1 in the SHIPPED gate and not merely under test, since fed a real `gh run list
+--json` array it would have rejected every genuine rehearsal. It survived only because the
+production gate step happens to run the script under `pwsh`. Of its two rule candidates, the
+stderr-promotion one is the confirmed **second** observation and the one that earned promotion; the
+`ConvertFrom-Json` one is a **first** observation in this repository, derived rather than assumed by
+the scan that found no other affected call site.
+
+**Leg 4 of dispatch 000201 changed `CHANGELOG.md` NOTHING, and the convention is DERIVED rather than
+assumed.** Two hypotheses were tested against this repository's own git history. The first --
+that `[Unreleased]` is authored at release-prep time by `scripts/bump-version.ps1` -- is FALSIFIED:
+the string "changelog" appears nowhere in that script, whose only write targets are
+`.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`. The second -- that
+`[Unreleased]` is populated per-merge and re-headed at the cut -- is CONFIRMED: at commit `d9e8889`
+(000153 legs 3+5) it carries a full PATCH entry ending "both manifests stay lockstep at 1.27.0 and a
+future cut classifies this entry", and at `06fec64` (000154, the very next commit to touch the file)
+that same entry sits under `## [1.27.1] - 2026-07-25` with `[Unreleased]` emptied; two merge commits
+`4f17c43` and `82cee3b` are named "stack CHANGELOG Unreleased entries" outright. **But the per-merge
+rule is scoped by what the file says it records** -- `CHANGELOG.md` line 3: "All notable changes to
+the `powershell-lsp` plugin are documented here" -- and every no-version-bump train in this
+document's own record wrote NO entry: `git log --all -- CHANGELOG.md` returns no commit from 000120,
+000156, 000157 or 000159 legs 1a/1b. (The one commit whose message names 000157, `4690cdb`, is
+000158 correcting the already-released `[1.27.1]` clause at 3 insertions / 3 deletions, not an
+`[Unreleased]` entry.) The 000197/000200 arc is exactly that shape -- a release workflow, release
+tooling, repository docs and tests, with no plugin behaviour among its 8 files, and 000197's own
+outbox classifying it "No version bump (000159 leg 1b: CI + docs)" -- so an entry would have been
+the departure from the convention, not the observance of it. `[Unreleased]` is therefore empty at
+`origin/main` on purpose, and this paragraph is the record that the question was asked and answered
+rather than skipped.
 
 ### 000169 through 000174 -- dispositions
 
