@@ -31,6 +31,120 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.29.1] - 2026-08-07
+PATCH: **the native-serve pump survives a dead peer, and the reporting scripts stop claiming more
+than they measured.** No knob is added, removed, renamed, or re-defaulted -- both
+`.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` were byte-identical to v1.29.0
+before this bump, `CONTRACT.md` is untouched, `rulesets/base.psd1` is unchanged, and the three
+plugin commands are unchanged. Everything here is a bug fix, internal hardening, release tooling,
+or a documentation correction -- this changelog's own PATCH definition.
+
+### Fixed
+
+- **The native-serve pump no longer dies when its peer does.** Every frame the shim writes lands on
+  a pipe owned by another process, and an unhandled write failure propagated past the closing
+  `[System.Environment]::Exit` -- the call that exists precisely to avoid a graceful runspace
+  shutdown that waits on a background reader blocked in a synchronous read. One write failure
+  became a process that never exited at all. `Write-ServeFrameGuarded` now absorbs `IOException`
+  and `ObjectDisposedException` and only those two, because a guard that swallowed everything
+  would launder a real defect into a quiet shutdown. A dead peer rejoins the pump's existing
+  shutdown condition rather than inventing a new one, so the clean (0) and PSES-died (1) exit
+  codes are unchanged; a genuine defect now exits 2 with its text in the side-channel log instead
+  of hanging. Measured rather than assumed: the load-bearing path is the write to the PSES child's
+  stdin, an ordinary pipe `FileStream` that throws, while a write to the client's stdout cannot
+  throw at all -- .NET's console stream treats a broken pipe as success. That one is guarded
+  anyway, as defence in depth. Reaches the `nativeServe` shim only, which stays off by default.
+
+- **The efficacy ledger can no longer report "never captured" when it only knows "not found where I
+  looked".** `Get-PluginDataRoot` substitutes a temp fallback silently, so a reader that searched
+  the substitute published a claim about the WORLD on evidence about the READER.
+  `Get-LifecycleRates` gains a fourth rendering, `unresolvable`, reached when nothing was found AND
+  the search ran under a fallback root. The three existing renderings are unchanged, and `absent`
+  now carries its documented meaning honestly, because it is reachable only when the reader knows
+  which directory it was supposed to search. The readout prints the search root and its provenance
+  on every run -- especially the runs that find nothing.
+
+- **`show-stats.ps1` had the same shape, and it is proven rather than inferred.** With a real
+  `stats.jsonl` under the plugin data root, a bare-shell run printed "no telemetry recorded yet".
+  It now reports that it cannot determine, and names the root it searched.
+
+- **Surface attribution reports an UNATTRIBUTABLE bucket instead of a zero that could not be
+  entered.** `Get-SurfaceAttribution` short-circuited owned finders and parser diagnostics into
+  in-current-surface, which also skipped the removed-rule and unknown-partition tests -- so the
+  reported zero was never a measurement, it was a category that could not be entered. Gross, net
+  and unattributable are emitted as three numbers, with `gross = net + unattributable` exactly.
+  Nothing about what is written per capture record changes: `dogfood/diagnostics.jsonl` keeps its
+  exact shape, so both shipped readers keep reading historical logs unchanged.
+
+- **The benchmark quiescence probe works in both of its documented explicit forms.** The
+  ancestry-chain walk read `$bootMap` on every path while the assignment sat inside the branch that
+  DEFAULTS `-AgentRootPid`, so under the `Set-StrictMode -Version Latest` the probe sets for itself
+  both explicit forms died on a variable that could not be retrieved. The probe also refuses to
+  sample while a caller-supplied busy probe reports activity.
+
+- **The dry-run-pair gate ingests `gh run list --json` correctly under Windows PowerShell 5.1.** Fed
+  a real JSON array it would have rejected every genuine rehearsal; it survived only because the
+  production gate step happens to run the script under `pwsh`.
+
+### Added
+
+- **Gate 6 -- a producing release run must be PAIRED with a successful dry run on the same commit.**
+  The decision ledger records that the v1.29.0 cycle ran a single producing run with no separate
+  dry run, departing from the shape its four predecessors established, so the judgement step the
+  pair exists to create did not happen. `skip_dry_check` is an emergency bypass that exists so
+  skipping the rehearsal is a RECORDED run parameter rather than an undetectable omission.
+
+- **`scripts/audit-release-bodies.ps1`, the release-body divergence sweep.** It reads every
+  published release body and compares it, whitespace-normalized, against what the extractor the
+  pipeline itself uses would produce from today's CHANGELOG. Divergences that are permanent by
+  construction -- a body that has had a correction appended can never compare equal again -- live in
+  `release/release-body-divergences.psd1` and report ACKNOWLEDGED with their reason printed in full
+  rather than merely going quiet. Each row pins the SHA-256 of the body it acknowledges, so
+  applying a correction retires the row and forces a fresh look, and an acknowledgement that has
+  stopped describing anything reports STALE-ACK and fails.
+
+- **`tests/doc-claims.psd1`, a registry binding published numbers to the thing they count.** Each
+  row is a document location, a derivation that computes the true value from disk, and equality
+  between them; CI derives every value on every run and fails when a document disagrees with what
+  it describes. It ships with five rows, all on README corpus figures. Only mechanically derivable
+  claims belong in it -- roadmap currency is deliberately excluded and stays a human gate, because
+  a check that cannot adjudicate its subject should not pretend to.
+
+- **A shared data-root provenance seam in `scripts/lib/lsp-common.ps1`.**
+  `Get-PluginDataRootResolution` returns the root together with how it resolved, and
+  `Test-PluginDataRootKnown` is derived from it rather than re-implemented, so the two cannot
+  disagree. `Get-PluginDataRoot` is deliberately unchanged -- same signature, same return value,
+  fallback intact -- because the fix is to make resolution LEGIBLE, not strict. `doctor.ps1` now
+  delegates to the shared predicate instead of keeping a private second copy.
+
+- **Two human release gates in `docs/RELEASING.md`.** A roadmap-advanced gate before a tag: nothing
+  this release ships may still sit under "What is next", and a design question this release
+  resolved is rewritten as the next unresolved one rather than deleted or left standing. And a
+  pre-publish requirement that an already-published release body still AGREES with its CHANGELOG
+  entry. The runbook records why neither is machine enforced.
+
+### Notes
+
+- **Documentation corrections across the README, the roadmap, the benchmarks page and the decision
+  ledger.** The README's corpus denominators are trued to the scored sets and its corpus guard is
+  stated as the floor it is; the roadmap's shipped opener is retired and its catalog line defused;
+  the benchmarks page supersedes its warm figure, drops the cold-start claim, and stamps the build
+  it was measured on. A dated correction is appended beneath the v1.29.0 entry for a corpus
+  transition `main` never made -- appended rather than rewritten, which is how this project corrects
+  already-shipped text.
+
+- **The attribution measurement is stamped rather than carried forward as a standing figure.**
+  Dispatch 000185 measured 65 `ManifestConsistency` occurrences moving out of in-current-surface on
+  the live corpus at the time of that change. It is recorded here as a measurement with its origin,
+  not as a current count -- which is the lesson of the correction above.
+
+- **The `userConfig` enum verdict is REJECTS, not merely absent**, recorded in
+  `docs/upstream/claude-code-userconfig-enum.md`.
+
+- **The serve-shim fault injection was INERT on `windows-powershell`** -- no BOM reached the wire --
+  so the acceptance figures were re-measured against the shipped injection rather than left
+  standing on a control that could not have failed.
+
 ## [1.29.0] - 2026-08-01
 MINOR: **the closed-loop signal is now persisted per rule, in a sibling log.** The
 cleared / still-present signal has always been *computed* (`Get-FindingLifecycleDiff`) and
