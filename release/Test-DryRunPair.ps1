@@ -122,7 +122,19 @@ $rawJson = Get-Content -LiteralPath $RunsJsonPath -Raw
 if ([string]::IsNullOrWhiteSpace($rawJson)) {
     throw "runs JSON at '$RunsJsonPath' is empty -- refusing (cannot distinguish 'no runs' from 'no data')."
 }
-$runs = @(ConvertFrom-Json $rawJson)
+# THE 5.1 INGESTION TRAP. Windows PowerShell 5.1's ConvertFrom-Json does NOT enumerate a top-level
+# JSON array -- it emits the whole object[] as ONE pipeline item -- so `@(ConvertFrom-Json ...)`
+# wraps the entire run list in a 1-element array. Every field lookup below then runs against an
+# object[], whose PSObject properties are Count/Length/Rank/..., so `id` and `conclusion` both read
+# EMPTY and every run is rejected as a failed rehearsal regardless of its content. PowerShell 6+
+# enumerates the array, which is why the pwsh legs never saw this.
+# Assigning FIRST and wrapping second is correct on both hosts: the assignment collects 5.1's single
+# array (becoming that array) and 7's N items alike, and @() re-normalizes a lone object to an array.
+# The $null guard keeps a genuinely empty list empty on 7, where '[]' yields nothing and @($null)
+# would otherwise manufacture one phantom run.
+$parsed = ConvertFrom-Json $rawJson
+$runs = @()
+if ($null -ne $parsed) { $runs = @($parsed) }
 
 $now = if ([string]::IsNullOrWhiteSpace($NowUtc)) { [datetime]::UtcNow } else { ConvertTo-Utc $NowUtc }
 $cutoff = $now.AddDays(-[double]$WindowDays)
