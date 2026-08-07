@@ -333,3 +333,311 @@ Describe 'Release workflow signing -- keyless gitsign-signed tags (dispatch 0000
         $script:WfText | Should -Match 'Cut and push the gitsign-signed tag'
     }
 }
+
+Describe 'Test-DryRunPair.ps1 -- the dry-run-pair decision (dispatch 000197 leg 6)' {
+    # WHAT THIS GUARDS. docs/RELEASING.md always described the release as a PAIR -- rehearse with
+    # dry_run=true, then cut -- and nothing refused a producing run that skipped the rehearsal.
+    # v1.29.0 shipped with no dry run at all and only a later true-up dispatch noticed. Gate 6
+    # makes the pair structural; this block proves the DECISION half of it against synthetic run
+    # sets, with no network, so every refuse path is exercised without cutting a release.
+    #
+    # The live half -- the gate actually running on a GitHub runner -- is PENDING BY CONSTRUCTION:
+    # it first exercises on the next real cut, and this train deliberately triggered no release run.
+
+    BeforeAll {
+        $script:PairScript = Join-Path $script:ReleaseDir 'Test-DryRunPair.ps1'
+        $script:PairWf = Join-Path $script:PluginRoot '.github/workflows/powershell-lsp-release.yml'
+        $script:PairWfText = [System.IO.File]::ReadAllText($script:PairWf)
+        $script:TargetSha = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
+        $script:OtherSha = '00112233445566778899aabbccddeeff00112233'
+        $script:NowIso = '2026-08-06T12:00:00Z'
+
+        # The host that runs the script under test. Using the CURRENT host means the 5.1 CI leg
+        # exercises the script under 5.1 (it is #Requires -Version 5.1) rather than silently
+        # testing pwsh twice. Spawning rather than dot-sourcing is required: the script signals
+        # its verdict with `exit`, which would terminate the test host.
+        $script:PairHost = try { (Get-Process -Id $PID).Path } catch { '' }
+        if ([string]::IsNullOrWhiteSpace($script:PairHost)) { $script:PairHost = 'pwsh' }
+
+        function script:Invoke-Pair {
+            param([object[]] $Runs, [string] $Target = $script:TargetSha, [int] $WindowDays = 3)
+            $path = Join-Path $TestDrive ('runs-' + [guid]::NewGuid().ToString('N') + '.json')
+            # Built by hand rather than with ConvertTo-Json -AsArray: -AsArray is PowerShell 6+ and
+            # this suite runs on the windows-powershell 5.1 leg too. This form also yields a real
+            # '[]' for the empty case, where an empty pipeline would have written no file at all.
+            $json = '[' + ((@($Runs) | ForEach-Object { $_ | ConvertTo-Json -Depth 6 -Compress }) -join ',') + ']'
+            [System.IO.File]::WriteAllText($path, $json)
+            $out = (& $script:PairHost -NoLogo -NoProfile -File $script:PairScript `
+                    -RunsJsonPath $path -TargetCommit $Target -WindowDays $WindowDays `
+                    -NowUtc $script:NowIso 2>&1 | Out-String -Width 500)
+            return [pscustomobject]@{
+                ExitCode = $LASTEXITCODE
+                Out      = $out
+                Norm     = ([regex]::Replace([string]$out, '\s+', ' ')).Trim()
+            }
+        }
+
+        function script:New-Run {
+            param(
+                [string] $Id = '1001',
+                [string] $Title = '',
+                [string] $HeadSha = $script:TargetSha,
+                [string] $Conclusion = 'success',
+                [string] $CreatedAt = '2026-08-06T09:00:00Z'
+            )
+            return [ordered]@{
+                id            = $Id
+                display_title = $Title
+                head_sha      = $HeadSha
+                conclusion    = $Conclusion
+                created_at    = $CreatedAt
+                status        = 'completed'
+            }
+        }
+    }
+
+    It 'PASSES when a successful marked DRY RUN targets the same commit inside the window' {
+        $r = Invoke-Pair -Runs @(
+            (New-Run -Id '1001' -Title ('powershell-lsp release 1.30.0 [DRY-RUN] target=' + $script:TargetSha))
+        )
+        $r.ExitCode | Should -Be 0
+        $r.Norm | Should -Match 'the dry-run pair is satisfied'
+        $r.Norm | Should -Match 'MATCHED a successful dry run'
+    }
+
+    It 'REFUSES when the only runs are PRODUCING runs (the v1.29.0 shape)' {
+        $r = Invoke-Pair -Runs @(
+            (New-Run -Id '1001' -Title ('powershell-lsp release 1.30.0 [PRODUCING] target=' + $script:TargetSha))
+        )
+        $r.ExitCode | Should -Be 1
+        $r.Norm | Should -Match 'was a PRODUCING run, not a dry run'
+        $r.Norm | Should -Match 'refusing to produce a release that was never rehearsed'
+    }
+
+    It 'REFUSES a dry run aimed at a DIFFERENT commit -- commit identity is the primary guard' {
+        $r = Invoke-Pair -Runs @(
+            (New-Run -Id '1001' -HeadSha $script:OtherSha `
+                    -Title ('powershell-lsp release 1.30.0 [DRY-RUN] target=' + $script:OtherSha))
+        )
+        $r.ExitCode | Should -Be 1
+        $r.Norm | Should -Match 'dry run targeted .* not '
+    }
+
+    It 'REFUSES a dry run older than the window' {
+        $r = Invoke-Pair -Runs @(
+            (New-Run -Id '1001' -CreatedAt '2026-07-20T09:00:00Z' `
+                    -Title ('powershell-lsp release 1.30.0 [DRY-RUN] target=' + $script:TargetSha))
+        )
+        $r.ExitCode | Should -Be 1
+        $r.Norm | Should -Match 'OUTSIDE the 3-day window'
+    }
+
+    It 'REFUSES a FAILED dry run -- a failed rehearsal is not a rehearsal' {
+        $r = Invoke-Pair -Runs @(
+            (New-Run -Id '1001' -Conclusion 'failure' `
+                    -Title ('powershell-lsp release 1.30.0 [DRY-RUN] target=' + $script:TargetSha))
+        )
+        $r.ExitCode | Should -Be 1
+        $r.Norm | Should -Match 'a failed rehearsal is not a rehearsal'
+    }
+
+    It 'REFUSES an UNMARKED run with no legacy verdict -- an unproven rehearsal is not a rehearsal' {
+        # The pre-change-history case with no step evidence: it must NOT be assumed to be a dry run.
+        $r = Invoke-Pair -Runs @((New-Run -Id '1001' -Title 'powershell-lsp release'))
+        $r.ExitCode | Should -Be 1
+        $r.Norm | Should -Match 'NOT DISCRIMINABLE'
+    }
+
+    It 'LEGACY FALLBACK: an unmarked run classified by step inspection as a dry run PASSES' {
+        # The 000169 method: the caller determined dry-ness from the "Dry-run summary" step
+        # conclusion and passed the verdict in. This is how pre-marker history stays usable.
+        $run = New-Run -Id '1001' -Title 'powershell-lsp release'
+        $run['legacyIsDryRun'] = $true
+        $r = Invoke-Pair -Runs @($run)
+        $r.ExitCode | Should -Be 0
+        $r.Norm | Should -Match 'the dry-run pair is satisfied'
+    }
+
+    It 'LEGACY FALLBACK: an unmarked run classified as PRODUCING is refused' {
+        $run = New-Run -Id '1001' -Title 'powershell-lsp release'
+        $run['legacyIsDryRun'] = $false
+        $r = Invoke-Pair -Runs @($run)
+        $r.ExitCode | Should -Be 1
+        $r.Norm | Should -Match 'was a PRODUCING run, not a dry run'
+    }
+
+    It 'target=HEAD (a blank commit input) matches on the run head_sha instead' {
+        $r = Invoke-Pair -Runs @(
+            (New-Run -Id '1001' -HeadSha $script:TargetSha -Title 'powershell-lsp release 1.30.0 [DRY-RUN] target=HEAD')
+        )
+        $r.ExitCode | Should -Be 0
+        $r.Norm | Should -Match 'the dry-run pair is satisfied'
+    }
+
+    It 'target=HEAD does NOT match when the run head_sha is a different commit' {
+        # The control for the test above: the HEAD path must still be commit-checked, not a wildcard.
+        $r = Invoke-Pair -Runs @(
+            (New-Run -Id '1001' -HeadSha $script:OtherSha -Title 'powershell-lsp release 1.30.0 [DRY-RUN] target=HEAD')
+        )
+        $r.ExitCode | Should -Be 1
+    }
+
+    It 'picks the matching dry run out of a MIXED set (not merely the newest run)' {
+        $r = Invoke-Pair -Runs @(
+            (New-Run -Id '1003' -Title ('powershell-lsp release 1.30.0 [PRODUCING] target=' + $script:TargetSha)),
+            (New-Run -Id '1002' -HeadSha $script:OtherSha `
+                    -Title ('powershell-lsp release 1.30.0 [DRY-RUN] target=' + $script:OtherSha)),
+            (New-Run -Id '1001' -Title ('powershell-lsp release 1.30.0 [DRY-RUN] target=' + $script:TargetSha))
+        )
+        $r.ExitCode | Should -Be 0
+        $r.Norm | Should -Match 'run id : 1001'
+    }
+
+    It 'SAFE-FAILS on an empty or missing runs file -- refuse, never pass' {
+        # "No data" must never read as "no problem".
+        # Both refusals below are `throw`s, so their text arrives on STDERR. $ErrorActionPreference is
+        # neutralized around the two native calls because Windows PowerShell 5.1 promotes a redirected
+        # native stderr line to a TERMINATING error under 'Stop' (pwsh 7 does not), and tests/run-tests.ps1
+        # -- the runner CI uses -- sets 'Stop'. Same reason as the SarifScan diag-line test. The captured
+        # text and both assertions are unchanged; only the capture is made host-independent.
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $empty = Join-Path $TestDrive 'empty.json'
+            [System.IO.File]::WriteAllText($empty, '')
+            $out = (& $script:PairHost -NoLogo -NoProfile -File $script:PairScript -RunsJsonPath $empty `
+                    -TargetCommit $script:TargetSha 2>&1 | Out-String -Width 500)
+            $LASTEXITCODE | Should -Not -Be 0
+            $out | Should -Match 'is empty'
+
+            $missing = Join-Path $TestDrive 'does-not-exist.json'
+            $out2 = (& $script:PairHost -NoLogo -NoProfile -File $script:PairScript -RunsJsonPath $missing `
+                    -TargetCommit $script:TargetSha 2>&1 | Out-String -Width 500)
+            $LASTEXITCODE | Should -Not -Be 0
+            $out2 | Should -Match 'not found'
+        } finally {
+            $ErrorActionPreference = $prevEap
+        }
+    }
+
+    It 'REFUSES an empty run list, and says so rather than passing vacuously' {
+        $r = Invoke-Pair -Runs @()
+        $r.ExitCode | Should -Be 1
+        $r.Norm | Should -Match 'no candidate runs at all'
+    }
+
+    It 'is ASCII-only (PS 5.1 em-dash trap)' {
+        $bytes = [System.IO.File]::ReadAllBytes($script:PairScript)
+        @($bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
+    }
+}
+
+Describe 'Release workflow Gate 6 -- the dry-run pair is STRUCTURAL (dispatch 000197 leg 6)' {
+    BeforeAll {
+        $script:G6Wf = Join-Path $script:PluginRoot '.github/workflows/powershell-lsp-release.yml'
+        $script:G6Text = [System.IO.File]::ReadAllText($script:G6Wf)
+        $script:G6Pair = Join-Path $script:ReleaseDir 'Test-DryRunPair.ps1'
+        $script:G6PairText = [System.IO.File]::ReadAllText($script:G6Pair)
+    }
+
+    It 'the run-name encodes dry_run STRUCTURALLY, plus the version and the target commit' {
+        # This is the whole mechanism: dry_run is an INPUT and inputs do not appear on a run object,
+        # which is why 000161 and 000169 could only recover it from run STEPS. GitHub documents the
+        # `inputs` context as available to run-name, so encoding it there makes it a property of the
+        # run itself.
+        $script:G6Text | Should -Match '(?m)^run-name:'
+        $script:G6Text | Should -Match "inputs\.dry_run && '\[DRY-RUN\]' \|\| '\[PRODUCING\]'"
+        $script:G6Text | Should -Match "target=\$\{\{ inputs\.commit \|\| 'HEAD' \}\}"
+    }
+
+    It 'the workflow run-name markers and the script markers AGREE (they cannot drift silently)' {
+        # The cross-file contract. If either side is renamed alone, the gate silently stops
+        # recognizing its own dry runs -- which would fail OPEN on the legacy path or refuse every
+        # release. Assert both literals in both files.
+        foreach ($marker in @('\[DRY-RUN\]', '\[PRODUCING\]')) {
+            $script:G6Text | Should -Match $marker
+            $script:G6PairText | Should -Match $marker
+        }
+        $script:G6PairText | Should -Match "DryRunMarker = '\[DRY-RUN\]'"
+        $script:G6PairText | Should -Match "ProducingMarker = '\[PRODUCING\]'"
+    }
+
+    It 'Gate 6 exists, runs ONLY on producing runs, and delegates to the tested script' {
+        $script:G6Text | Should -Match 'Gate 6 --'
+        $script:G6Text | Should -Match 'release/Test-DryRunPair\.ps1'
+        # The gate step is if-guarded on !inputs.dry_run: a rehearsal must not demand a rehearsal.
+        $gateIdx = $script:G6Text.IndexOf('Gate 6 --')
+        $gateIdx | Should -BeGreaterThan 0
+        $window = $script:G6Text.Substring($gateIdx, [Math]::Min(400, $script:G6Text.Length - $gateIdx))
+        $window | Should -Match 'if: \$\{\{ !inputs\.dry_run \}\}'
+    }
+
+    It 'the recency window is named, bounded to the chartered 1-7 days, and justified in the echo' {
+        $script:G6Text | Should -Match 'WINDOW_DAYS=\d+'
+        $w = [int]([regex]::Match($script:G6Text, 'WINDOW_DAYS=(\d+)').Groups[1].Value)
+        $w | Should -BeGreaterOrEqual 1
+        $w | Should -BeLessOrEqual 7
+        # The justification must be IN the gate, not only in a commit message.
+        $script:G6Text | Should -Match 'COMMIT IDENTITY'
+    }
+
+    It 'skip_dry_check is a declared boolean input defaulting to FALSE' {
+        $script:G6Text | Should -Match '(?m)^\s+skip_dry_check:'
+        $idx = $script:G6Text.IndexOf('skip_dry_check:')
+        $block = $script:G6Text.Substring($idx, [Math]::Min(400, $script:G6Text.Length - $idx))
+        $block | Should -Match 'type: boolean'
+        $block | Should -Match 'default: false'
+        $block | Should -Match 'RECORDED run parameter'
+    }
+
+    It 'the skip path is LOUD and passes; it never silently disables the gate' {
+        $script:G6Text | Should -Match 'SKIPPED-BY-INPUT'
+        $script:G6Text | Should -Match '::warning::Gate 6 SKIPPED-BY-INPUT'
+        $script:G6Text | Should -Match 'GATE 6 SKIPPED BY INPUT'
+    }
+
+    It 'the legacy fallback selects the REAL Dry-run summary step name, byte-for-byte' {
+        # The pre-change-history path (000169's method) matches a step by exact name. If that step
+        # is ever renamed, this coupling fails here rather than silently classifying every legacy
+        # run as UNKNOWN.
+        $stepName = 'Dry-run summary (no tag cut, no release created)'
+        $script:G6Text | Should -Match ([regex]::Escape('- name: ' + $stepName))
+        $script:G6Text | Should -Match ([regex]::Escape('select(.name == "' + $stepName + '")'))
+    }
+
+    It 'the legacy inspection cap is ANNOUNCED when it truncates (no silent cap)' {
+        $script:G6Text | Should -Match 'LEGACY_CAP=\d+'
+        $script:G6Text | Should -Match 'exceed the inspection cap'
+    }
+
+    It 'all SIX gates are present -- Gate 6 is added, none of 1-5 removed' {
+        foreach ($g in 1..6) {
+            $script:G6Text | Should -Match ('Gate {0} --' -f $g)
+        }
+    }
+
+    It 'the header enumeration counts the SAME number of gates as there are gate steps' {
+        # ANCHORED to the sentence that claims to BE the enumeration, not to the file at large.
+        # This header drifted once already: gate 5 shipped with 000076 and the "(1)..(4)" list was
+        # never extended, so the file described four gates while running five. Counting both sides
+        # is what stops that recurring silently.
+        $steps = @([regex]::Matches($script:G6Text, '(?m)^\s+- name: "Gate (\d) --')) |
+            ForEach-Object { [int]$_.Groups[1].Value }
+        $steps.Count | Should -BeGreaterOrEqual 6 -Because 'a zero/short match here would make this test vacuous'
+
+        $hdr = [regex]::Match($script:G6Text, '(?s)it refuses to tag unless the target commit is.*?`git tag` is in the loop')
+        $hdr.Success | Should -BeTrue -Because 'the header enumeration sentence must still be findable'
+        $enumerated = @([regex]::Matches($hdr.Value, '\((\d)\)')) | ForEach-Object { [int]$_.Groups[1].Value }
+
+        ($enumerated | Sort-Object -Unique) | Should -Be ($steps | Sort-Object -Unique) -Because (
+            'the prose enumeration and the actual gate steps must name the same gates -- a header ' +
+            'that undercounts is exactly the doc-vs-enforcement drift Gate 6 exists to end')
+    }
+
+    It 'the release still never auto-triggers, and still indents with spaces only' {
+        # Gate 6 must not have introduced a trigger or a tab.
+        $script:G6Text | Should -Match '(?m)^\s+workflow_dispatch:'
+        @(($script:G6Text -split "\r?\n") | Where-Object { $_ -match '^\s*push:\s*$' }).Count | Should -Be 0
+        $script:G6Text | Should -Not -Match "`t"
+    }
+}

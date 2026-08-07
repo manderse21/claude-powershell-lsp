@@ -437,3 +437,342 @@ Describe 'D4 -- the quiescence gate excludes its own apparatus DYNAMICALLY (disp
             'already establish that convention, and the probe follows it')
     }
 }
+
+Describe 'E1 -- EVERY documented probe parameter is smoke-run WITH that parameter (dispatch 000197)' {
+    # THE DEFECT THIS CLOSES, in one sentence: Invoke-QuiescenceProbe.ps1 assigned $bootMap only
+    # inside the branch that DEFAULTS -AgentRootPid, while the ancestry-chain walk read it on every
+    # path, so under the Set-StrictMode -Version Latest the probe sets for itself, BOTH documented
+    # explicit forms -- -AgentRootPid <pid> and the documented -AgentRootPid 0 -- died with
+    # "The variable '$bootMap' cannot be retrieved because it has not been set" BEFORE taking a
+    # single sample. Dispatch 000195 measured it; the gate had only ever been run the one way that
+    # happened to work, and that way roots the exclusion at the launching shell instead of the
+    # agent session.
+    #
+    # THE CLASS, not the instance: an instrument's documented parameter must be SMOKE-RUN WITH THAT
+    # PARAMETER. So this block does not hand-list the forms -- it ENUMERATES them from the probe's
+    # own param() block and its own comment-based help, requires the two to agree, and runs one
+    # invocation per documented parameter. A parameter added to the probe tomorrow and not smoke-run
+    # makes this block RED.
+
+    BeforeAll {
+        $script:E1_Probe = Join-Path $PSScriptRoot 'bench/Invoke-QuiescenceProbe.ps1'
+        $script:E1_Src = Get-Content -LiteralPath $script:E1_Probe -Raw
+
+        $e1Tokens = $null; $e1Errors = $null
+        $script:E1_Ast = [System.Management.Automation.Language.Parser]::ParseInput(
+            $script:E1_Src, [ref]$e1Tokens, [ref]$e1Errors)
+        $script:E1_ParseErrors = @($e1Errors)
+
+        # ENUMERATED, not hand-listed: the param() block's own parameter names.
+        $script:E1_ParamNames = @($script:E1_Ast.ParamBlock.Parameters |
+                ForEach-Object { [string]$_.Name.VariablePath.UserPath } | Sort-Object)
+
+        # ENUMERATED, not hand-listed: the comment-based help's own .PARAMETER entries.
+        $script:E1_HelpNames = @([regex]::Matches($script:E1_Src, '(?m)^\s*\.PARAMETER\s+(\S+)\s*$') |
+                ForEach-Object { [string]$_.Groups[1].Value } | Sort-Object)
+
+        # The VALUE each documented parameter is smoke-run WITH. Only the values live here; the
+        # NAMES come from the script above. A documented parameter with no entry FAILS the test
+        # below rather than being silently skipped -- that refusal is the class-closing part.
+        # Each value is deliberately DIFFERENT from the short-run base below, so that the form for
+        # a parameter is distinguishable from the default form rather than collapsing onto it --
+        # a form identical to the base does not exercise its parameter at all.
+        $script:E1_Values = @{
+            AgentRootPid = @(0, [int]$PID)   # both documented forms: the documented 0, and a real pid
+            Samples      = @(3)
+            IntervalMs   = @(150)
+            Label        = @('E1')
+            # A QUIET busy probe on purpose: this block asserts that every documented form reaches
+            # SAMPLING, and a busy one would (correctly) refuse to sample. The refusal path is
+            # E2's subject, not this one's.
+            BusyProbeCommand = @('$null = 1')
+        }
+
+        # Short-run base so the enumeration is cheap; overridden per-form when the parameter under
+        # test IS one of these.
+        $script:E1_Base = [ordered]@{ Samples = 2; IntervalMs = 100 }
+
+        function script:Invoke-E1Probe {
+            param([System.Collections.IDictionary] $Bound)
+            $argList = @()
+            foreach ($k in @($Bound.Keys)) { $argList += ('-' + [string]$k); $argList += $Bound[$k] }
+            $raw = (& pwsh -NoLogo -NoProfile -File $script:E1_Probe @argList 2>&1 |
+                    Out-String -Width 500)
+            $code = $LASTEXITCODE
+            # NORMALIZE before matching: an un-normalized needle is defeated by the column padding
+            # in the probe's own sample lines and by any host-width wrapping in the captured text.
+            $norm = ([regex]::Replace([string]$raw, '\s+', ' ')).Trim()
+            return [pscustomobject]@{
+                Args     = ($argList -join ' ')
+                ExitCode = $code
+                Raw      = [string]$raw
+                Norm     = $norm
+            }
+        }
+    }
+
+    It 'the probe parses, and its parameter list is non-empty (the enumeration floor)' {
+        # FLOOR. Every assertion below is vacuous over an empty enumeration: "every documented
+        # parameter was smoke-run" is trivially true when zero are documented. Fail loud instead.
+        $script:E1_ParseErrors.Count | Should -Be 0 -Because 'an unparseable probe enumerates nothing'
+        $script:E1_ParamNames.Count | Should -BeGreaterOrEqual 2 -Because (
+            'the charter floor: at least two documented parameter forms must be enumerated and run')
+        $script:E1_HelpNames.Count | Should -BeGreaterOrEqual 2 -Because (
+            'the help text must document at least as many forms as the floor requires')
+    }
+
+    It 'the param() block and the comment-based help document THE SAME parameters' {
+        # Both directions, non-vacuously (the floor above guarantees the sets are not empty). A
+        # parameter in param() but not in help is an UNDOCUMENTED form that this block would then
+        # never enumerate; one in help but not in param() is a form that cannot be passed at all.
+        foreach ($p in $script:E1_ParamNames) {
+            $script:E1_HelpNames | Should -Contain $p -Because (
+                "parameter -$p exists but is not documented, so it would escape the smoke-run enumeration")
+        }
+        foreach ($h in $script:E1_HelpNames) {
+            $script:E1_ParamNames | Should -Contain $h -Because (
+                "help documents -$h but the param() block does not declare it")
+        }
+    }
+
+    It 'the probe still sets Set-StrictMode -Version Latest (without it this whole block is vacuous)' {
+        # NON-VACUITY GUARD. The regression being guarded is a STRICTMODE-ONLY failure: with strict
+        # mode dropped, an unset $bootMap is silently $null, .ContainsKey() on it throws nothing
+        # useful, and every execution assertion below would pass against the very defect it exists
+        # to catch. So the strict-mode line is itself an asserted precondition.
+        $norm = ([regex]::Replace($script:E1_Src, '\s+', ' '))
+        $norm | Should -Match 'Set-StrictMode -Version Latest'
+    }
+
+    It 'every documented parameter has a smoke-run value (a new parameter must be run, not skipped)' {
+        # THE CLASS-CLOSING REFUSAL. Adding a parameter to the probe without adding it here makes
+        # this test RED, which is what stops the next parameter from shipping un-smoke-run.
+        foreach ($p in $script:E1_HelpNames) {
+            $script:E1_Values.ContainsKey($p) | Should -BeTrue -Because (
+                "-$p is documented but has no smoke-run value, so it would ship without ever being " +
+                'executed with that parameter -- add it to $script:E1_Values')
+        }
+    }
+
+    It 'STRUCTURAL: $bootMap is assigned unconditionally, not inside a branch' {
+        # The fix itself, guarded structurally rather than by comment. The pre-fix code assigned
+        # $bootMap inside the -AgentRootPid-defaulting if-block; the chain walk reads it on every
+        # path. This is RED against that code.
+        $assigns = @($script:E1_Ast.FindAll({
+                    param($n)
+                    $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $n.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $n.Left.VariablePath.UserPath -eq 'bootMap'
+                }, $true))
+        $assigns.Count | Should -BeGreaterThan 0 -Because 'the probe must still resolve a boot map'
+        foreach ($a in $assigns) {
+            $parent = $a.Parent
+            $nested = $false
+            while ($null -ne $parent) {
+                if ($parent -is [System.Management.Automation.Language.IfStatementAst]) { $nested = $true; break }
+                $parent = $parent.Parent
+            }
+            $nested | Should -BeFalse -Because (
+                'an assignment reached only on one path cannot satisfy a read taken on every path')
+        }
+    }
+
+    It 'EVERY enumerated documented form reaches sampling under strict mode' {
+        # THE EXECUTION PROOF. One real probe run per documented parameter (plus the default form),
+        # each asserting two things: no variable-retrieval throw, and sampling actually REACHED.
+        # Exit code alone cannot carry this -- the pre-fix crash and a legitimate FAIL verdict both
+        # exit 1, so "reached sampling" is asserted from the probe's own sample line.
+        $forms = @()
+
+        # The DEFAULT form: -AgentRootPid omitted entirely.
+        $forms += , ([ordered]@{ Samples = 2; IntervalMs = 100 })
+
+        # One form per documented parameter, per documented value.
+        foreach ($p in $script:E1_HelpNames) {
+            foreach ($v in @($script:E1_Values[$p])) {
+                $bound = [ordered]@{}
+                foreach ($k in @($script:E1_Base.Keys)) { $bound[$k] = $script:E1_Base[$k] }
+                $bound[$p] = $v
+                $forms += , $bound
+            }
+        }
+
+        # FLOOR on what actually ran, not on what was planned.
+        $forms.Count | Should -BeGreaterOrEqual 2 -Because 'the charter floor is at least two executed forms'
+        $forms.Count | Should -BeGreaterOrEqual $script:E1_HelpNames.Count -Because (
+            'each documented parameter contributes at least one executed form')
+
+        # DISTINCTNESS FLOOR. Counting forms is not the same as counting DIFFERENT forms: a value
+        # equal to the base collapses that parameter's form onto the default one, and the suite
+        # would then report N runs while actually exercising fewer than N invocations.
+        $rendered = @($forms | ForEach-Object {
+                $b = $_
+                (@(@($b.Keys) | ForEach-Object { ('-' + [string]$_ + ' ' + [string]$b[$_]) }) -join ' ')
+            })
+        @($rendered | Sort-Object -Unique).Count | Should -Be $forms.Count -Because (
+            'every enumerated form must be a DISTINCT invocation, not a duplicate of the base form')
+
+        $ran = 0
+        foreach ($f in $forms) {
+            $r = Invoke-E1Probe -Bound $f
+            $ran++
+            Write-Host ('    [E1] ' + $r.Args + '  -> exit ' + $r.ExitCode)
+
+            $r.Norm | Should -Not -Match 'cannot be retrieved because it has not been set' -Because (
+                'form "' + $r.Args + '" must not die on an unset variable under strict mode')
+            $r.Norm | Should -Match 'sample 1 foreign' -Because (
+                'form "' + $r.Args + '" must actually REACH sampling, not merely exit')
+            $r.ExitCode | Should -BeIn @(0, 1) -Because (
+                'form "' + $r.Args + '" must produce a PASS or FAIL verdict, not a crash or a no-sample exit')
+        }
+        $ran | Should -Be $forms.Count
+    }
+}
+
+Describe 'E2 -- the probe REFUSES to sample while a caller-supplied busy probe reports activity (dispatch 000197)' {
+    # WHY THIS IS IN THE INSTRUMENT AND NOT IN A CHARTER. Three trains in a row measured this host
+    # under load. Each time the rail -- "only probe at a quiet window" -- was written into charter
+    # prose, and each time the next charter did not read it. Prose does not enforce; a refusal
+    # does. So the probe now takes a caller-supplied busy check, runs it FIRST, and refuses to
+    # sample when it reports activity.
+    #
+    # THE PROBE STAYS HUB-AGNOSTIC. It is public GPLv3 and must not learn what a claim or a
+    # dispatch is: it reads an exit code and whether anything was emitted, and nothing else. The
+    # caller's specific busy check lives in comment-based help as a local EXAMPLE. The last test
+    # in this block asserts that separation from the source rather than trusting it.
+
+    BeforeAll {
+        $script:E2_Probe = Join-Path $PSScriptRoot 'bench/Invoke-QuiescenceProbe.ps1'
+        $script:E2_BenchDir = Join-Path $PSScriptRoot 'bench'
+
+        function script:Invoke-E2Probe {
+            param([string[]] $ExtraArgs)
+            $argList = @('-AgentRootPid', 0, '-Samples', 2, '-IntervalMs', 100) + @($ExtraArgs)
+            $raw = (& pwsh -NoLogo -NoProfile -File $script:E2_Probe @argList 2>&1 | Out-String -Width 500)
+            $code = $LASTEXITCODE
+            return [pscustomobject]@{
+                ExitCode = $code
+                Raw      = [string]$raw
+                Norm     = ([regex]::Replace([string]$raw, '\s+', ' ')).Trim()
+            }
+        }
+    }
+
+    It 'BUSY: a probe that reports activity REFUSES the run, exits 3, and takes NO samples' {
+        $r = Invoke-E2Probe -ExtraArgs @('-Label', 'E2BUSY', '-BusyProbeCommand',
+            "Write-Output 'runner-alpha active'; Write-Output 'runner-beta active'")
+        Write-Host ('    [E2] busy -> exit ' + $r.ExitCode)
+
+        $r.ExitCode | Should -Be 3 -Because 'a busy host must be refused with its own distinct exit code'
+        $r.Norm | Should -Match 'REFUSED: HOST BUSY' -Because 'the refusal must be NAMED in the output'
+        $r.Norm | Should -Match 'verdict : BUSY'
+        # THE REFUSAL MUST BE REAL. An exit code alone would still be satisfied by a probe that
+        # sampled first and refused afterwards, which is the thing being prevented.
+        $r.Norm | Should -Not -Match 'sample 1 foreign' -Because (
+            'refusing means NOT sampling -- a sample taken across other work is the wrong number')
+        $r.Norm | Should -Not -Match 'VERDICT: PASS'
+        $r.Norm | Should -Not -Match 'VERDICT: FAIL'
+    }
+
+    It 'BUSY: the busy probe RAW OUTPUT is recorded in the report' {
+        # The recording half. A gate that reports 'busy' without showing what came back is
+        # asserting a verdict rather than evidencing one.
+        $r = Invoke-E2Probe -ExtraArgs @('-Label', 'E2REC', '-BusyProbeCommand',
+            "Write-Output 'runner-alpha active'; Write-Output 'runner-beta active'")
+        $r.Norm | Should -Match 'QUIET PRE-FLIGHT'
+        $r.Norm | Should -Match 'runner-alpha active' -Because 'the raw busy-probe output is evidence'
+        $r.Norm | Should -Match 'runner-beta active' -Because 'every line of it, not just the first'
+    }
+
+    It 'QUIET: a silent, zero-exit probe lets sampling proceed, and is STILL recorded' {
+        $r = Invoke-E2Probe -ExtraArgs @('-Label', 'E2QUIET', '-BusyProbeCommand', '$null = 1')
+        Write-Host ('    [E2] quiet -> exit ' + $r.ExitCode)
+
+        $r.ExitCode | Should -BeIn @(0, 1) -Because 'a quiet host produces a real PASS/FAIL verdict'
+        $r.Norm | Should -Match 'QUIET PRE-FLIGHT' -Because 'recorded on BOTH paths, not only on refusal'
+        $r.Norm | Should -Match 'verdict : QUIET'
+        $r.Norm | Should -Match 'probe output : \(none\)' -Because (
+            'no output is itself the evidence that the host reported quiet')
+        $r.Norm | Should -Match 'sample 1 foreign' -Because 'sampling must actually proceed'
+        $r.Norm | Should -Not -Match 'REFUSED: HOST BUSY'
+    }
+
+    It 'BUSY by EXIT CODE alone, with no output at all' {
+        # The other half of the contract: a non-zero exit is busy even when nothing was printed.
+        # Without this, a busy check that signals only through its exit code would be read as quiet.
+        $r = Invoke-E2Probe -ExtraArgs @('-Label', 'E2CODE', '-BusyProbeCommand', 'exit 7')
+        $r.ExitCode | Should -Be 3
+        $r.Norm | Should -Match 'exit code : 7' -Because 'the busy probe exit code is recorded verbatim'
+        $r.Norm | Should -Not -Match 'sample 1 foreign'
+    }
+
+    It 'FAIL-CLOSED: a pre-flight that cannot run at all counts as BUSY' {
+        # A quiescence guard that silently permits sampling when it breaks is worse than no guard,
+        # because the report then claims a check that never happened.
+        $r = Invoke-E2Probe -ExtraArgs @('-Label', 'E2BROKEN', '-BusyProbeCommand', 'this is ( not valid powershell')
+        $r.ExitCode | Should -Be 3 -Because 'an unrunnable pre-flight has NOT established quiet'
+        $r.Norm | Should -Match 'probe error' -Because 'the failure reason is recorded, not swallowed'
+        $r.Norm | Should -Match 'fail-closed'
+        $r.Norm | Should -Not -Match 'sample 1 foreign'
+    }
+
+    It 'ABSENT: with no busy probe supplied, behavior is what it was before the parameter existed' {
+        $r = Invoke-E2Probe -ExtraArgs @('-Label', 'E2NONE')
+        Write-Host ('    [E2] absent -> exit ' + $r.ExitCode)
+
+        $r.ExitCode | Should -BeIn @(0, 1)
+        $r.Norm | Should -Not -Match 'QUIET PRE-FLIGHT' -Because (
+            'no pre-flight section is emitted when no pre-flight was asked for')
+        $r.Norm | Should -Not -Match 'REFUSED: HOST BUSY'
+        $r.Norm | Should -Match 'sample 1 foreign' -Because 'the existing invocation still samples'
+        $r.Norm | Should -Match 'VERDICT:' -Because 'and still reports a verdict'
+    }
+
+    It 'the probe source is HUB-AGNOSTIC: no caller-specific tooling or path in executable code' {
+        # SCOPE, stated so the assertion is readable rather than merely green: every .ps1 under
+        # tests/bench/ -- the instrument directory this leg writes to -- with comment lines and the
+        # comment-based help block REMOVED, because the hub example is documentation and belongs
+        # exactly there. This block scans the instruments, never itself, so it cannot match its own
+        # needles.
+        $files = @(Get-ChildItem -LiteralPath $script:E2_BenchDir -Filter '*.ps1' -File)
+        $files.Count | Should -BeGreaterThan 0 -Because 'a scan over zero files proves nothing'
+
+        # The CLI needle requires a SUBCOMMAND WORD after the tool name, so it catches an actual
+        # invocation and not the many legitimate places this repo records a dispatch NUMBER --
+        # Invoke-LatencyBench.ps1's result schema has a `dispatch = '000127'` field, which is
+        # provenance metadata, not a dependency on anyone's tooling.
+        $forbidden = @(
+            @{ Name = 'the dispatch CLI'; Pattern = '\bdispatch\s+(?!=)[a-z][a-z-]*\b' },
+            @{ Name = 'the hub repo name'; Pattern = 'strategic-dispatch' },
+            @{ Name = 'a Mike-local path'; Pattern = '(?i)[a-z]:\\users\\' },
+            @{ Name = 'the nortam tree'; Pattern = '(?i)projects[\\/]work[\\/]nortam' }
+        )
+
+        $scanned = 0
+        foreach ($f in $files) {
+            $src = Get-Content -LiteralPath $f.FullName -Raw
+            # Strip the comment-based help block, then every remaining comment line.
+            $code = [regex]::Replace($src, '(?s)<#.*?#>', '')
+            $code = (@($code -split "`r?`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n")
+            $scanned++
+            foreach ($rule in $forbidden) {
+                @([regex]::Matches($code, $rule.Pattern)).Count | Should -Be 0 -Because (
+                    $f.Name + ' must not reference ' + $rule.Name + ' in executable code -- the plugin ' +
+                    'is public and stays independent of any one caller''s tooling')
+            }
+        }
+        $scanned | Should -Be $files.Count
+    }
+
+    It 'the hub-specific busy probe IS documented, as a comment-help EXAMPLE' {
+        # The other side of the same rule, so "zero references" cannot be satisfied by simply
+        # never documenting the local usage. The example must exist where examples belong.
+        $src = Get-Content -LiteralPath $script:E2_Probe -Raw
+        $help = [regex]::Match($src, '(?s)<#.*?#>').Value
+        $help | Should -Not -BeNullOrEmpty
+        $helpNorm = ([regex]::Replace($help, '\s+', ' '))
+        $helpNorm | Should -Match 'BusyProbeCommand' -Because 'the parameter must be documented'
+        $helpNorm | Should -Match 'claims --live' -Because (
+            'the local hub example belongs in the help text -- documented, not hard-coded')
+    }
+}

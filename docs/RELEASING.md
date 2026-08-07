@@ -163,12 +163,14 @@ release. The exact steps and the exact checks follow below.
    The pipeline validates every precondition (next section) and, only if all pass, cuts and
    pushes the tag on the validated commit and publishes the GitHub Release.
 
-> **Tip -- rehearse first.** Add `-f dry_run=true` (or check **dry_run** in the UI) to run
-> every check and STOP without tagging or releasing. See [Rehearse with a dry run](#rehearse-with-a-dry-run).
+> **Required -- rehearse first.** Run the workflow once with `-f dry_run=true` (or check
+> **dry_run** in the UI) on this exact commit BEFORE the producing run. This is no longer a
+> suggestion: **Gate 6 refuses a producing run that has no successful dry run on the same commit
+> within 3 days.** See [Rehearse with a dry run](#rehearse-with-a-dry-run).
 
 ## What the pipeline validates (the gates)
 
-The workflow runs five gates before it will tag anything. Each gate that fails stops the run
+The workflow runs six gates before it will tag anything. Each gate that fails stops the run
 with a clear error and **tags nothing** -- the safe direction is always to refuse.
 
 - **Gate 1 -- merged to main.** The target commit must be an ancestor of (or equal to)
@@ -198,10 +200,37 @@ with a clear error and **tags nothing** -- the safe direction is always to refus
   that would leave the two diverged. It is the divergence guard added by dispatch 000076, after the
   registry silently served a stale `1.3.0` while the tree was already at `1.18.x` -- that class of
   drift is a structural refusal here rather than a surprise discovered weeks later.
+- **Gate 6 -- the dry run actually happened, on this commit.** A producing run
+  (`dry_run=false`) is refused unless a **successful `dry_run=true` run of this workflow exists
+  for the SAME resolved target commit, within the last 3 days.** The rehearsal is no longer a
+  tip in this document -- it is **required and enforced**. This gate runs only on producing runs
+  (a rehearsal does not demand a rehearsal), and its decision logic lives in
+  [`release/Test-DryRunPair.ps1`](../release/Test-DryRunPair.ps1), which is unit-tested against
+  synthetic run sets in `tests/PowerShellLsp.Release.Tests.ps1`.
 
-Because the tag is cut by the pipeline only after all five gates pass -- never by a
-hand-typed `git tag` -- a tag on an unmerged, red, wrong-version, wrong-commit, or
-behind-the-published-tip release is structurally impossible.
+  **How a dry run is identified.** `dry_run` is a workflow input, and inputs do not appear on a
+  workflow-run object -- which is why past dispatches could only recover "which run was the dry
+  run?" from run steps. The workflow's `run-name` now encodes it, so every run carries
+  `[DRY-RUN]` or `[PRODUCING]` and `target=<commit-or-HEAD>` in its own name. For runs created
+  before that marker shipped, the gate falls back to step-conclusion inspection (a dry run's
+  "Dry-run summary" step concluded `success`). A run that can be classified **neither** way is
+  treated as UNKNOWN and never satisfies the gate.
+
+  **Why 3 days.** The primary guard is commit identity -- the rehearsal must have run against the
+  exact commit being tagged. The window bounds drift in the external state a rehearsal checked but
+  the commit does not pin (Gate 5 reads `origin/main`'s published manifest; Gate 4 reads CI runs).
+  Three days spans a rehearse-Friday / cut-Monday pattern without letting a release lean on a
+  week-old view of `main`.
+
+  **The recorded exception.** `skip_dry_check=true` bypasses this gate. It exists so that skipping
+  the rehearsal is a **recorded run parameter**, visible on the run forever, rather than an
+  omission nothing can detect afterwards. When set, the gate logs `SKIPPED-BY-INPUT` loudly (as a
+  workflow warning and a banner in the step log) and passes. Use it for a genuine emergency; the
+  record is the point.
+
+Because the tag is cut by the pipeline only after all six gates pass -- never by a
+hand-typed `git tag` -- a tag on an unmerged, red, wrong-version, wrong-commit,
+behind-the-published-tip, or **unrehearsed** release is structurally impossible.
 
 > **If the CI matrix changes legs,** update the `REQUIRED_LEGS` list in the release workflow
 > to match `powershell-lsp-ci.yml`'s `matrix.label` set. A leg that is required but missing
@@ -242,9 +271,25 @@ creates no release:
 gh workflow run "powershell-lsp release" -f version=1.13.0 -f dry_run=true
 ```
 
-This is the safest way to confirm a commit is releasable. Once the version is merged and the
-main CI is green, a dry run exercises Gates 1 through 4 end to end; when it reports success,
-the same trigger with `dry_run=false` will publish.
+**The dry run is a required step of every release, not an optional safety check.** Gate 6
+refuses a producing run unless a successful `dry_run=true` run exists for the same resolved
+target commit within the last 3 days. Before that gate existed the pair was described here and
+enforced nowhere, and v1.29.0 duly shipped with no dry run at all -- caught only afterwards, by a
+true-up dispatch.
+
+Once the version is merged and the main CI is green, a dry run exercises Gates 1 through 5 end to
+end (Gate 6 is skipped on a rehearsal -- a dry run does not require a prior dry run). When it
+reports success, re-run the SAME version and commit with `dry_run=false` to publish.
+
+Two things to keep in mind:
+
+- **Rehearse the commit you intend to tag.** The gate matches on the resolved target commit, so a
+  dry run against an earlier commit does not license a producing run against a newer one. If `main`
+  moves after your rehearsal and you leave **commit** blank, the producing run resolves to the new
+  tip and the gate will refuse -- rehearse again, or pin **commit** explicitly in both runs.
+- **The bypass is recorded, not hidden.** If you genuinely must release without a rehearsal, pass
+  `-f skip_dry_check=true`. The gate then logs `SKIPPED-BY-INPUT` loudly and passes, and the
+  bypass is visible on the run's own parameters forever.
 
 ## Verifying a release
 
