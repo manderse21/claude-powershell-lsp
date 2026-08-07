@@ -495,18 +495,29 @@ Describe 'Test-DryRunPair.ps1 -- the dry-run-pair decision (dispatch 000197 leg 
 
     It 'SAFE-FAILS on an empty or missing runs file -- refuse, never pass' {
         # "No data" must never read as "no problem".
-        $empty = Join-Path $TestDrive 'empty.json'
-        [System.IO.File]::WriteAllText($empty, '')
-        $out = (& $script:PairHost -NoLogo -NoProfile -File $script:PairScript -RunsJsonPath $empty `
-                -TargetCommit $script:TargetSha 2>&1 | Out-String -Width 500)
-        $LASTEXITCODE | Should -Not -Be 0
-        $out | Should -Match 'is empty'
+        # Both refusals below are `throw`s, so their text arrives on STDERR. $ErrorActionPreference is
+        # neutralized around the two native calls because Windows PowerShell 5.1 promotes a redirected
+        # native stderr line to a TERMINATING error under 'Stop' (pwsh 7 does not), and tests/run-tests.ps1
+        # -- the runner CI uses -- sets 'Stop'. Same reason as the SarifScan diag-line test. The captured
+        # text and both assertions are unchanged; only the capture is made host-independent.
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $empty = Join-Path $TestDrive 'empty.json'
+            [System.IO.File]::WriteAllText($empty, '')
+            $out = (& $script:PairHost -NoLogo -NoProfile -File $script:PairScript -RunsJsonPath $empty `
+                    -TargetCommit $script:TargetSha 2>&1 | Out-String -Width 500)
+            $LASTEXITCODE | Should -Not -Be 0
+            $out | Should -Match 'is empty'
 
-        $missing = Join-Path $TestDrive 'does-not-exist.json'
-        $out2 = (& $script:PairHost -NoLogo -NoProfile -File $script:PairScript -RunsJsonPath $missing `
-                -TargetCommit $script:TargetSha 2>&1 | Out-String -Width 500)
-        $LASTEXITCODE | Should -Not -Be 0
-        $out2 | Should -Match 'not found'
+            $missing = Join-Path $TestDrive 'does-not-exist.json'
+            $out2 = (& $script:PairHost -NoLogo -NoProfile -File $script:PairScript -RunsJsonPath $missing `
+                    -TargetCommit $script:TargetSha 2>&1 | Out-String -Width 500)
+            $LASTEXITCODE | Should -Not -Be 0
+            $out2 | Should -Match 'not found'
+        } finally {
+            $ErrorActionPreference = $prevEap
+        }
     }
 
     It 'REFUSES an empty run list, and says so rather than passing vacuously' {
