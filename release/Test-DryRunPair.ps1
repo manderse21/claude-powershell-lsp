@@ -49,6 +49,15 @@
 
 .NOTES
     ASCII-only. Exit 0 = a matching dry run was found; exit 1 = refuse.
+
+    THE HOST THIS RUNS UNDER, and why the #Requires above still matters. In the pipeline this
+    script executes ONLY under pwsh: Gate 6 is a `shell: bash` step on a `runs-on: ubuntu-24.04`
+    job that invokes it as `pwsh -NoProfile -File ./release/Test-DryRunPair.ps1`, so the
+    `#Requires -Version 5.1` at the top of this file is never exercised there. That declaration is
+    a real claim nonetheless -- this script is dual-host correct as of dispatch 000200, which found
+    and fixed a Windows PowerShell 5.1 defect that would have made the shipped gate refuse every
+    genuine rehearsal had it ever run under 5.1. Keep edits 5.1-clean: the only thing enforcing
+    that is the test suite's `windows-powershell` leg, which has now demonstrably caught one.
 #>
 [CmdletBinding()]
 param(
