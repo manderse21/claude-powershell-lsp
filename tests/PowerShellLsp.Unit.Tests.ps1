@@ -3178,6 +3178,126 @@ Describe 'Preflight doctor -- active ruleset surface (item 6, dispatch 000166)' 
     }
 }
 
+Describe 'Preflight doctor -- org policy exclusions (000203 survey C2, failure class F12)' {
+    BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
+
+    It 'is UNKNOWN, never fail, when the knob values could not be resolved' {
+        $r = Test-DoctorOrgPolicy -Determinable $false -Reason 'no plugin root.'
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match 'no plugin root'
+    }
+    It 'PASSES and says the knob is unset, naming it an opt-in rather than a fault' {
+        $r = Test-DoctorOrgPolicy -Determinable $true -KnobSet $false
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'orgPolicy is not set'
+        $r.Detail | Should -Match 'opt-in'
+    }
+    It 'PASSES and names the path AND the count when the policy is enforcing' {
+        $r = Test-DoctorOrgPolicy -Determinable $true -KnobSet $true `
+            -PolicyPath 'C:\org\policy.psd1' -ExcludeCount 3
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match ([regex]::Escape('C:\org\policy.psd1'))
+        $r.Detail | Should -Match 'enforcing 3 excluded rules'
+    }
+    It 'pluralizes a single excluded rule correctly' {
+        # Not cosmetic: the count is the whole payload of this line, so "1 excluded rules"
+        # is the kind of wrongness that makes a reader doubt the number itself.
+        $r = Test-DoctorOrgPolicy -Determinable $true -KnobSet $true -PolicyPath 'p' -ExcludeCount 1
+        $r.Detail | Should -Match 'enforcing 1 excluded rule\.'
+    }
+    It 'PASSES and calls a zero-exclusion policy a valid no-op, NOT a degrade' {
+        # The distinction this check exists to make. Import-OrgPolicyExcludes returns @() for a
+        # readable policy declaring nothing AND for every failure; only the warning separates
+        # them, so a check that read the count alone would report a broken policy as a clean one.
+        $r = Test-DoctorOrgPolicy -Determinable $true -KnobSet $true `
+            -PolicyPath 'C:\org\empty.psd1' -ExcludeCount 0
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'valid no-op policy, not a degrade'
+        $r.Detail | Should -Not -Match 'NOT being applied'
+    }
+    It 'is UNKNOWN and quotes the degrade reason VERBATIM when the policy did not apply' {
+        # F12 itself: the exclusions stopped applying and the only record was the client log.
+        $reason = 'orgPolicy file not found; no org exclusions applied: C:\org\gone.psd1'
+        $r = Test-DoctorOrgPolicy -Determinable $true -KnobSet $true `
+            -PolicyPath 'C:\org\gone.psd1' -ExcludeCount 0 -DegradeReason $reason
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match ([regex]::Escape($reason))
+        $r.Detail | Should -Match 'NOT being applied'
+        $r.Remediation | Should -Not -BeNullOrEmpty
+    }
+    It 'reports a degrade as a degrade even when rule codes were read before it' {
+        # The reader can set a warning and still return codes; the warning WINS, because a
+        # partially-applied policy is not an applied policy.
+        $r = Test-DoctorOrgPolicy -Determinable $true -KnobSet $true -PolicyPath 'p' `
+            -ExcludeCount 2 `
+            -DegradeReason 'orgPolicy could not be read; no org exclusions applied: boom'
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match 'boom'
+    }
+    It 'NEVER returns fail on any input shape (fail-open is the design, not a fault)' {
+        foreach ($n in @(0, 1, 5)) {
+            foreach ($d in @('', 'some degrade reason')) {
+                (Test-DoctorOrgPolicy -Determinable $true -KnobSet $true -PolicyPath 'p' `
+                        -ExcludeCount $n -DegradeReason $d).Status | Should -Not -Be 'fail'
+            }
+        }
+        (Test-DoctorOrgPolicy -Determinable $true -KnobSet $false).Status | Should -Not -Be 'fail'
+        (Test-DoctorOrgPolicy -Determinable $false).Status | Should -Not -Be 'fail'
+    }
+}
+
+Describe 'Preflight doctor -- org policy observation reads through the SHIPPED reader' {
+    # The observation half. It is testable without a session because the knob is read from the
+    # environment and the reader is a pure file read -- so both directions are reachable here:
+    # a real policy file that parses, and a missing one that degrades.
+    BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
+
+    AfterEach {
+        Remove-Item Env:\CLAUDE_PLUGIN_OPTION_ORGPOLICY -ErrorAction SilentlyContinue
+    }
+
+    It 'reports KnobSet=false with no degrade when orgPolicy is unset' {
+        Remove-Item Env:\CLAUDE_PLUGIN_OPTION_ORGPOLICY -ErrorAction SilentlyContinue
+        $o = Get-DoctorOrgPolicyObservation
+        $o.Determinable | Should -BeTrue
+        $o.KnobSet | Should -BeFalse
+        $o.DegradeReason | Should -BeNullOrEmpty
+    }
+    It 'lifts the real ExcludeRules count out of a real .psd1' {
+        $f = Join-Path $TestDrive 'org-policy.psd1'
+        Set-Content -LiteralPath $f -Encoding ascii `
+            -Value "@{ ExcludeRules = @('PSAvoidUsingWriteHost','PSUseApprovedVerbs') }"
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $f
+        $o = Get-DoctorOrgPolicyObservation
+        $o.KnobSet | Should -BeTrue
+        $o.ExcludeCount | Should -Be 2
+        $o.DegradeReason | Should -BeNullOrEmpty
+    }
+    It 'counts a ONE-rule policy as 1, not as $null (the 5.1 scalar .Count trap)' {
+        # Windows PowerShell 5.1 unrolls a one-element return to a scalar, whose .Count is
+        # $null -- which would silently report a one-rule policy as an empty one.
+        $f = Join-Path $TestDrive 'org-policy-one.psd1'
+        Set-Content -LiteralPath $f -Encoding ascii `
+            -Value "@{ ExcludeRules = @('PSAvoidUsingWriteHost') }"
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $f
+        $o = Get-DoctorOrgPolicyObservation
+        $o.ExcludeCount | Should -Be 1
+    }
+    It 'surfaces the shipped reader OWN degrade text for a missing file' {
+        $missing = Join-Path $TestDrive 'no-such-policy.psd1'
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $missing
+        $o = Get-DoctorOrgPolicyObservation
+        $o.KnobSet | Should -BeTrue
+        $o.DegradeReason | Should -Match 'orgPolicy file not found'
+        $o.ExcludeCount | Should -Be 0
+    }
+    It 'surfaces the shipped reader degrade text for a RELATIVE path' {
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = 'relative\policy.psd1'
+        $o = Get-DoctorOrgPolicyObservation
+        $o.DegradeReason | Should -Match 'not absolute'
+    }
+}
+
 Describe 'Preflight doctor -- test diagnostic observed end-to-end (item 8, dispatch 000166)' {
     BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
 

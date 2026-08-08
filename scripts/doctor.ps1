@@ -399,6 +399,86 @@ function Test-DoctorRuleset {
             -Detail ('ruleset = "' + $RulesetKnob + '" -- PowerShell Editor Services'' own built-in no-settings rule set is active for ' + $where + ' (about 15 rules; narrower than the PSScriptAnalyzer CLI default -- PSAvoidUsingWriteHost is NOT among them). Set ruleset = "base", or add a repo-local PSScriptAnalyzerSettings.psd1, to broaden it; see docs/configuration.md#ruleset.'))
 }
 
+function Test-DoctorOrgPolicy {
+    # Check: is the `orgPolicy` exclusion layer applying, and if not, WHY (dispatch 000203
+    # survey candidate C2, failure class F12)?
+    #
+    # The gap this closes: check 7 above models the SETTINGS-RESOLVER chain -- override,
+    # repo-local, plugin-base, pses-default. `orgPolicy` is applied at a different seam
+    # entirely (lsp-client.ps1:81), AFTER analysis, by dropping org-excluded rule codes from
+    # what the user is shown. Its three degrade reasons -- a relative path, a missing file,
+    # an unparseable file -- are routed to Write-CLog, the client log. Not to the user's turn,
+    # and, until this check, not to any doctor check either. So an org whose exclusions have
+    # silently stopped applying looked exactly like an org whose exclusions were applying.
+    #
+    # REPORT-ONLY and NEVER 'fail'. Fail-open is the DESIGNED behavior (dispatch 000135,
+    # decision 1): an org policy that cannot be read must never break the user's edit. The
+    # defect this surfaces is that the degrade is INVISIBLE, not that it happens -- so moving
+    # the doctor's exit code would be reporting a correct behavior as a fault.
+    #
+    #   knob values not resolvable (outside a session)  -> UNKNOWN
+    #   `orgPolicy` not set                             -> PASS (the default; no org layer)
+    #   set and read, N >= 0 exclusions declared        -> PASS, naming the path and the count
+    #   set but DEGRADED                                -> UNKNOWN, quoting the exact reason
+    #
+    # UNKNOWN (not PASS) for a degrade mirrors check 7's `unresolved-base` case, which is the
+    # same shape: a layer was ASKED for and silently did not apply. A PASS there would be
+    # indistinguishable from an org that genuinely declares no exclusions, which is the one
+    # confusion this check exists to remove.
+    #
+    #   $Determinable   : the knob values resolved.
+    #   $Reason         : when not determinable, the honest why.
+    #   $KnobSet        : `orgPolicy` carries a non-blank value.
+    #   $PolicyPath     : the knob value as the client passes it to Import-OrgPolicyExcludes.
+    #   $ExcludeCount   : how many rule codes the shipped reader lifted out of it.
+    #   $DegradeReason  : the reader's own warning text, verbatim, or '' when it did not degrade.
+    param(
+        [bool] $Determinable,
+        [string] $Reason = '',
+        [bool] $KnobSet = $false,
+        [string] $PolicyPath = '',
+        [int] $ExcludeCount = 0,
+        [string] $DegradeReason = ''
+    )
+    $component = 'Org policy exclusions'
+    if (-not $Determinable) {
+        $why = if ([string]::IsNullOrWhiteSpace($Reason)) {
+            'the plugin knob values could not be resolved in this context.'
+        } else { $Reason }
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('not determined -- ' + $why) `
+                -Remediation ('Run the doctor from inside an enabled Claude Code session so the ' +
+                    'knob values resolve.'))
+    }
+    if (-not $KnobSet) {
+        return (New-DoctorResult -Status pass -Component $component `
+                -Detail ('orgPolicy is not set -- no org-wide rule exclusions are applied, and ' +
+                    'every rule the active ruleset surface enables is shown. This is the ' +
+                    'default; the knob is an enterprise opt-in.'))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($DegradeReason)) {
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('orgPolicy is SET but its exclusions are NOT being applied -- the ' +
+                    'shipped reader degraded, fail-open, with: "' + $DegradeReason + '". ' +
+                    'Diagnostics are never blocked by this (that is the designed behavior), ' +
+                    'but rules your organization excluded are being shown as if there were ' +
+                    'no policy.') `
+                -Remediation ('Point orgPolicy at an ABSOLUTE path to a readable .psd1 that ' +
+                    'declares an ExcludeRules array; see docs/configuration.md#orgpolicy.'))
+    }
+    if ($ExcludeCount -eq 0) {
+        return (New-DoctorResult -Status pass -Component $component `
+                -Detail ('orgPolicy = ' + $PolicyPath + ' -- read successfully, and it declares ' +
+                    'NO excluded rules. This is a valid no-op policy, not a degrade: nothing is ' +
+                    'being filtered out of your diagnostics.'))
+    }
+    $plural = if ($ExcludeCount -eq 1) { 'rule' } else { 'rules' }
+    return (New-DoctorResult -Status pass -Component $component `
+            -Detail ('orgPolicy = ' + $PolicyPath + ' -- read successfully, enforcing ' +
+                $ExcludeCount + ' excluded ' + $plural + '. Those rule codes are dropped from ' +
+                'what you are shown, on top of whatever the active ruleset surface enables.'))
+}
+
 function Test-DoctorTestDiagnostic {
     # Check: is a REAL diagnostic observed end-to-end (dispatch 000166 B9, checklist item 8)?
     #
@@ -784,6 +864,43 @@ function Get-DoctorRulesetObservation {
     }
 }
 
+function Get-DoctorOrgPolicyObservation {
+    # Resolve the org-policy observation the pure Test-DoctorOrgPolicy decides on (C2 / F12).
+    #
+    # It calls the SHIPPED reader -- Import-OrgPolicyExcludes, in lib/lsp-common.ps1, which
+    # doctor.ps1 already dot-sources -- with the knob value read exactly as lsp-client.ps1
+    # reads it. That is deliberate and load-bearing: a second implementation of "is this
+    # policy applying" could disagree with the one that really filters the user's
+    # diagnostics, and would then report confidently while being wrong. Every verdict here,
+    # including every degrade reason quoted to the user, is the client's own verdict.
+    #
+    # This is the ONE doctor check that reads a user-named file. The crossing is the reader's
+    # own recorded contract, not a new decision: Import-OrgPolicyExcludes parses through
+    # Import-PowerShellDataFile, PowerShell's RESTRICTED language mode -- data only, no
+    # command invocation, no expressions -- which is why the client may read THIS .psd1 where
+    # Resolve-PssaSettingsPath deliberately does not (that path hands its file to PSES to
+    # consume as full settings). Read-only; nothing is created, and the reader never throws
+    # out (it catches internally and fails open to @()).
+    $warning = ''
+    try {
+        $knob = [string](Get-PluginOption 'orgPolicy' '')
+        if ([string]::IsNullOrWhiteSpace($knob)) {
+            return @{ Determinable = $true; Reason = ''; KnobSet = $false; PolicyPath = '';
+                ExcludeCount = 0; DegradeReason = '' }
+        }
+        # @() around the call, not just inside the reader: PowerShell unrolls a one-element
+        # return to a scalar on assignment, and a scalar's .Count is $null on Windows
+        # PowerShell 5.1 -- which would silently report a one-rule policy as no policy.
+        $codes = @(Import-OrgPolicyExcludes -Path $knob -WarningOut ([ref]$warning))
+        return @{ Determinable = $true; Reason = ''; KnobSet = $true; PolicyPath = $knob;
+            ExcludeCount = $codes.Count; DegradeReason = [string]$warning }
+    } catch {
+        return @{ Determinable = $false; KnobSet = $false; PolicyPath = ''; ExcludeCount = 0;
+            DegradeReason = ''
+            Reason = ('the shipped org-policy reader threw: ' + $_.Exception.Message) }
+    }
+}
+
 # The synthetic probe used by the end-to-end check (item 8). An unapproved verb trips
 # PSUseApprovedVerbs, which is in PSES's BUILT-IN no-settings set -- so the probe works on the
 # shipped default configuration, not only under ruleset=base. It is the README's own example.
@@ -1056,7 +1173,19 @@ function Invoke-Doctor {
     $results += (Test-DoctorRuleset -Determinable $rsObs.Determinable -Reason $rsObs.Reason `
             -RulesetKnob $rsObs.RulesetKnob -ResolvedPath $rsObs.ResolvedPath -Source $rsObs.Source -ProbeDir $rsObs.ProbeDir)
 
-    # 8) test diagnostic observed end-to-end (dispatch 000166 B9, checklist item 8). The only check
+    # 8) org policy exclusions (dispatch 000203 survey candidate C2, failure class F12). Sits
+    # directly after check 7 because the two together are the whole answer to "which rules
+    # actually reach me": check 7 reports the rule surface that gets ENABLED, this reports the
+    # org layer that then SUBTRACTS from it at a different seam (lsp-client.ps1). They are kept
+    # as two checks, not folded into one, because they are two seams -- merging them would make
+    # a settings-resolution answer and a post-analysis-filter answer share one status word.
+    # Report-only; never fails (fail-open is the design, dispatch 000135 decision 1).
+    $opObs = Get-DoctorOrgPolicyObservation
+    $results += (Test-DoctorOrgPolicy -Determinable $opObs.Determinable -Reason $opObs.Reason `
+            -KnobSet $opObs.KnobSet -PolicyPath $opObs.PolicyPath `
+            -ExcludeCount $opObs.ExcludeCount -DegradeReason $opObs.DegradeReason)
+
+    # 9) test diagnostic observed end-to-end (dispatch 000166 B9, checklist item 8). The only check
     # that asserts the PRODUCT works rather than that its parts are installed: the daemon's 'ping'
     # answers without touching PSES, so a daemon can be alive, pinging, and analyzing nothing. Per
     # OQ5 this starts no daemon, writes nothing in the repository, and leaves no file behind. It
@@ -1066,14 +1195,14 @@ function Invoke-Doctor {
             -Responded $tdObs.Responded -Status $tdObs.Status -ExpectedRule $script:DoctorProbeRuleId `
             -RuleIds @($tdObs.RuleIds) -ElapsedMs $tdObs.ElapsedMs)
 
-    # 9) native-serve STATUS (dispatch 000166 B9, the item-7 promotion). Answers "is navigation on
+    # 10) native-serve STATUS (dispatch 000166 B9, the item-7 promotion). Answers "is navigation on
     # for me, and if not why" as a DEFAULT check by reading the effective knob value -- it spawns
     # nothing, so it costs nothing. The heavier removability PROBE below stays opt-in, unchanged.
     $nsStatus = Get-DoctorNativeServeStatusObservation -ScriptsDir $scriptsDir
     $results += (Test-DoctorNativeServeStatus -Determinable $nsStatus.Determinable -Reason $nsStatus.Reason `
             -Value $nsStatus.Value -ShimPresent $nsStatus.ShimPresent -Probed ([bool]$ProbeNativeServe))
 
-    # 10) native-serve removability (dispatch 000104, the 000103 OQ4). Still OPT-IN via
+    # 11) native-serve removability (dispatch 000104, the 000103 OQ4). Still OPT-IN via
     # -ProbeNativeServe: it launches PSES via the DIRECT launcher and inspects the init handshake,
     # which costs a PSES cold-start plus a bounded init wait -- too heavy for every doctor run, so
     # this check appears ONLY when requested. The item-7 promotion above deliberately did NOT make
