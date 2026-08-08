@@ -2274,3 +2274,85 @@ the 1.x semver freeze -- and recording that no knob was added, removed, renamed,
 The pipeline cut it as **v1.29.0** on 2026-08-01. So this item is closed as ruled-and-followed
 rather than merely ruled: the classification a human made before execution is the classification the
 release carries.
+
+## The Arc A provenance ruling: never destructively filter, and fix the clearance gap FORWARD
+
+Dispatch 000209. Two halves of one question -- "the union read includes rules that no longer ship,
+and the clearance columns cannot say which release produced them" -- ruled together, because the
+tempting fix for the second half is the thing the first half forbids.
+
+### Half one: the union read NEVER filters. Closed as a ruling, not deferred.
+
+`scripts/rule-efficacy-ledger.ps1` unions every per-version capture log it discovers, so that a
+plugin upgrade does not reset the denominator. The consequence is that the union permanently
+includes occurrences from rules that have since left the surface, and the standing open question
+was whether it should ever filter them out.
+
+**It should not, and this closes the question.** A retroactive filter would move figures that have
+already been published -- the cardinal metrics anti-pattern, and the one an efficacy ledger exists
+to refuse. The need a filter was reaching for is already met without mutation: the ledger prints
+**both denominators side by side** (gross and current-rule-surface), names the out-of-surface rules,
+and prints the unattributable remainder beside them rather than folding it into either side. A
+reader who wants the filtered view can compute it from what is printed; a reader handed only the
+filtered view can never recover what was dropped. The dual view is the scalable answer.
+
+This is now enforced, not merely intended. `Read-LifecycleLog` tallies version provenance
+**alongside** the counts and never selects on it, and
+`tests/PowerShellLsp.RuleLedger.Tests.ps1` pins it in both directions: a golden comparison against
+the pre-000209 rendering of the same fixture (the only delta is the added block -- every prior line
+and figure is byte-identical), plus a RED control asserting that a mixed old/new log still reports
+`n=9` and not the `5` a stamped-records-only filter would produce.
+
+### Half two: the clearance-columns provenance gap, resolved FORWARD
+
+`fired_count` and `distinct_shapes` are version-attributable because the capture log's
+marketplace-cache **path** carries the plugin version, and a committed surface history maps a
+version to the rule surface that shipped with it. The sibling lifecycle log (dispatch 000171 leg 2)
+that feeds `fixed_next_turn_rate` and `persistence_rate` had neither: no version field, and a flat
+stamped rolling family under `Get-LogDir` for a path. Its history was therefore not merely
+unfiltered but **unrecoverable**.
+
+**You cannot recover an un-instrumented past. You can stop the bleed and say where the knowable part
+starts.** Two changes, both forward-only:
+
+- **In-record provenance at emit.** `New-LifecycleLedgerRecords` (`scripts/lib/lsp-common.ps1`)
+  stamps `pluginVersion` from `Get-PluginVersion` at emit time. In-record rather than in-path is the
+  design: a field survives a file move, a rotation, and the reader's union, none of which a path
+  segment survives. It is one additive field on a telemetry record, resolved after the
+  zero-event early return so a clean turn still costs no manifest read, and fail-open like every
+  other step on that path.
+- **A printed provenance floor.** `Get-LifecycleProvenanceFloor` names the earliest
+  version-attributable point; records below it are labelled a bounded, known gap. The floor is an
+  **honesty marker, not a filter**: pre-floor records are still counted in every rate and simply
+  never attributed to a version. No figure in the ledger is derived from the floor.
+
+**No historical record was rewritten, and none may be.** Back-filling a version onto a record
+emitted before the stamp existed would be inventing provenance -- a worse defect than the gap,
+because it would be invisible.
+
+### Three sub-rulings, derived from disk rather than assumed
+
+- **The emit site is `New-LifecycleLedgerRecords` in `scripts/lib/lsp-common.ps1`, not the daemon.**
+  `scripts/pses-daemon.ps1` only *calls* it. Stamping in the record builder means the daemon call
+  site needs no change at all, so the persisted-format change touches exactly one write path.
+- **The reader's cache-dir version derivation is NOT reused, and the reason is the sort direction.**
+  `ConvertTo-CacheVersionKey` (`scripts/lib/dogfood-reader.psm1`) maps an unparseable name to
+  `0.0.0` so any real version *outranks* it. That is correct for picking a **maximum** -- the
+  current cache dir -- and inverts for picking a **minimum**: junk would become the floor of every
+  ledger that saw it. The lifecycle path is not version-partitioned in the first place, so there is
+  no directory name to parse; the in-record stamp is the sole source and the floor derives from the
+  earliest stamped record. Same `[System.Version]::TryParse` primitive, opposite tie-handling,
+  written out rather than imported so the wrong default cannot arrive silently.
+- **`0.0.0-unknown` is not a version.** It is `Get-PluginVersion`'s own sentinel for "the manifest
+  would not resolve", and it is stamped honestly, so it must be read honestly: a record carrying it
+  counts as **pre-floor**, not as a release. Treating it as attributable would attribute real
+  clearance data to a version that never shipped.
+
+### The floor line always prints; the gap caveat prints only when there is a gap
+
+The positive fact -- where version-attributable knowledge begins -- prints on every run that read a
+lifecycle record, because a reader who cannot see it has to re-derive it. The **bounded-gap caveat**
+prints only when a pre-floor record actually exists. Once the rolling family ages past the
+un-instrumented window there is no gap, and a ledger that kept reciting an empty caveat would train
+its reader to skip the section that will matter again after the next format change. An
+all-attributable ledger reads clean; a gap is never silent.
