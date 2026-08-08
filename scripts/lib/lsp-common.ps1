@@ -953,11 +953,29 @@ function New-LifecycleLedgerRecords {
     #
     # Returns @() when the turn produced no lifecycle event at all -- a clean edit costs zero bytes
     # rather than an empty record.
+    #
+    # IN-RECORD VERSION PROVENANCE (dispatch 000209). Every record carries `pluginVersion`, stamped
+    # HERE, at emit time, from Get-PluginVersion. In-record rather than in-path is the design: the
+    # capture log is version-attributable only because its marketplace-cache PATH carries the
+    # version, but this sibling lands in a flat, stamped rolling family under Get-LogDir, so a path
+    # carries no version to read. A field survives a file move, a rotation, and the reader's union.
+    #
+    # FORWARD-ONLY, ALWAYS. This stamps what is written from now on. It does NOT and MUST NOT
+    # rewrite a historical record: the un-instrumented past is not recoverable, and a reader that
+    # back-filled it would be inventing provenance. The reader labels that window as a bounded gap
+    # instead (Get-LifecycleProvenanceFloor, scripts/rule-efficacy-ledger.ps1).
+    #
+    # -PluginVersion is a TEST SEAM, not a knob: no userConfig, no caller passes it in production.
+    # Empty (the default, and what the daemon call site passes by omission) resolves Get-PluginVersion
+    # at emit time. Get-PluginVersion never throws and returns its own '0.0.0-unknown' sentinel on a
+    # resolution failure, so the field is ALWAYS present and never fabricated -- and the reader
+    # treats that sentinel as NOT version-attributable rather than as a version.
     param(
         [object]$LedgerKeys,
         [string]$File,
         [string]$Timestamp,
-        [bool]$ScopeApplied
+        [bool]$ScopeApplied,
+        [string]$PluginVersion = ''
     )
     $out = New-Object System.Collections.ArrayList
     if ($null -eq $LedgerKeys) { return @($out.ToArray()) }
@@ -966,6 +984,15 @@ function New-LifecycleLedgerRecords {
     try { $cleared = @($LedgerKeys['cleared'] | Where-Object { $null -ne $_ }) } catch { $cleared = @() }
     try { $still = @($LedgerKeys['stillPresent'] | Where-Object { $null -ne $_ }) } catch { $still = @() }
     if ($cleared.Count -eq 0 -and $still.Count -eq 0) { return @($out.ToArray()) }
+
+    # Resolved ONCE per turn, after the zero-event early return, so a clean turn costs no manifest
+    # read at all. Get-PluginVersion is itself per-process cached and never throws; the try is the
+    # same fail-open belt this whole path wears -- a telemetry field must never break an emit.
+    $ver = [string]$PluginVersion
+    if ([string]::IsNullOrWhiteSpace($ver)) {
+        try { $ver = [string](Get-PluginVersion) } catch { $ver = '0.0.0-unknown' }
+    }
+    if ([string]::IsNullOrWhiteSpace($ver)) { $ver = '0.0.0-unknown' }
 
     # No nested helper function here, deliberately: a `function script:Foo` inside a dot-sourced
     # library defines itself in the CALLER's script scope, which is the same leak class G1 in
@@ -1002,6 +1029,7 @@ function New-LifecycleLedgerRecords {
         [void]$out.Add([ordered]@{
                 schema             = 'powershell-lsp-lifecycle/1'
                 ts                 = [string]$Timestamp
+                pluginVersion      = [string]$ver
                 file               = [string]$File
                 ruleId             = [string]$rid
                 cleared            = @($b.cleared).Count
