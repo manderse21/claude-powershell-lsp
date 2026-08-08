@@ -46,6 +46,12 @@ open work. What shipped and when is [CHANGELOG.md](./CHANGELOG.md); why is the
 
 - **Doctor and command surface.** Continuing to close the gap between "the plugin is installed"
   and "the user can prove it is working", through the preflight doctor and plugin commands.
+  Slice 2 (000208) closed the last two boundary-clean gaps the 000203 survey evidenced: the
+  `ps_host` child-host resolution check (fail-capable) and a report-only version header, taking the
+  default doctor to 11 checks. The lane stays open rather than moving to "Recently completed":
+  the survey's remaining candidate -- surfacing security-classifier verdicts -- is **declined
+  while the 000036 boundary stands**, and reopening that boundary is an attended ruling, not a
+  slice. See the [decision ledger](docs/decision-ledger.md).
 
 > **Plugin-catalog submission is not an item on this list.** It is maintainer-owned and is not
 > tracked on this page as an open action. It previously appeared under "What is next" as "the queued

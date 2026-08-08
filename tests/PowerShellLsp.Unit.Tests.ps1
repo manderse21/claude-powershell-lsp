@@ -3298,6 +3298,200 @@ Describe 'Preflight doctor -- org policy observation reads through the SHIPPED r
     }
 }
 
+Describe 'Preflight doctor -- PSES child host resolution (000203 survey F11, dispatch 000208)' {
+    BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
+
+    It 'is UNKNOWN, never fail, when the knob value could not be read' {
+        $r = Test-DoctorPsHost -Determinable $false -Reason 'no plugin root.'
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match 'no plugin root'
+    }
+    It 'is UNKNOWN at the default, deferring to the pwsh check rather than deciding it twice' {
+        # The contracted default branch: ps_host unset (or explicitly 'pwsh') has nothing of its
+        # own to say, and a second opinion about pwsh could disagree with check 1.
+        $r = Test-DoctorPsHost -Determinable $true -Value 'pwsh' -IsDefault $true -Found $true
+        $r.Status | Should -Be 'unknown'
+        $r.Detail | Should -Match 'at its default'
+        $r.Detail | Should -Match 'DISTINCT value from the hook interpreter'
+    }
+    It 'stays UNKNOWN at the default EVEN IF the executable did not resolve' {
+        # Guards the deferral itself: at the default this check must not start failing on
+        # pwsh's behalf, or a missing pwsh would be reported as two separate faults.
+        $r = Test-DoctorPsHost -Determinable $true -Value 'pwsh' -IsDefault $true -Found $false
+        $r.Status | Should -Be 'unknown'
+    }
+    It 'PASSES and names the resolved path when a non-default host resolves' {
+        $r = Test-DoctorPsHost -Determinable $true -Value 'powershell' -IsDefault $false `
+            -Found $true -ResolvedPath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+        $r.Status | Should -Be 'pass'
+        $r.Detail | Should -Match 'ps_host = "powershell" resolves on PATH'
+        $r.Detail | Should -Match ([regex]::Escape('C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'))
+    }
+    It 'FAILS -- the fail-capable branch -- when a non-default host does NOT resolve' {
+        # F11 itself. This is the one added check that can move the exit code, and it earns that
+        # because Resolve-PsHost SUBSTITUTES rather than errors: the detail must say so, or the
+        # user reads "not found" and assumes nothing is running.
+        $r = Test-DoctorPsHost -Determinable $true -Value 'pwsh-7-preview' -IsDefault $false -Found $false
+        $r.Status | Should -Be 'fail'
+        $r.Detail | Should -Match 'does NOT resolve on PATH'
+        $r.Detail | Should -Match 'falls back to pwsh'
+        $r.Remediation | Should -Not -BeNullOrEmpty
+    }
+    It 'the non-resolving NON-DEFAULT case is the ONLY fail across every input shape' {
+        # RED control for the fail-capable claim, in both directions at once: it pins that the
+        # FAIL branch really fails (a regression making it UNKNOWN drops the count to 0) AND
+        # that no other shape fails (a regression failing the default branch raises it to 2).
+        # A bare "it fails" assertion would survive the first of those; this does not.
+        $shapes = @(
+            @{ D = $false; V = '';        Def = $false; F = $false }
+            @{ D = $true;  V = 'pwsh';    Def = $true;  F = $true  }
+            @{ D = $true;  V = 'pwsh';    Def = $true;  F = $false }
+            @{ D = $true;  V = 'nope';    Def = $false; F = $true  }
+            @{ D = $true;  V = 'nope';    Def = $false; F = $false }   # <- the only fail
+        )
+        $statuses = @($shapes | ForEach-Object {
+                (Test-DoctorPsHost -Determinable $_.D -Value $_.V -IsDefault $_.Def -Found $_.F).Status
+            })
+        $statuses.Count | Should -Be 5                                   # vacuity floor
+        @($statuses | Where-Object { $_ -eq 'fail' }).Count | Should -Be 1
+        $statuses[-1] | Should -Be 'fail'
+    }
+    It 'runs as a DEFAULT check, not behind the opt-in probe switch' {
+        # The acceptance criterion is about the DEFAULT surface, so the dispatch site is pinned
+        # structurally: Test-DoctorPsHost must be invoked in Invoke-Doctor, and must not sit
+        # inside the `if ($ProbeNativeServe)` block that gates the opt-in probe.
+        $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'doctor.ps1') -Raw
+        $src | Should -Match '\$results \+= \(Test-DoctorPsHost '
+        $optIn = [regex]::Match($src, '(?s)if \(\$ProbeNativeServe\) \{(.*?)\n    \}')
+        $optIn.Success | Should -BeTrue                                  # vacuity floor
+        $optIn.Groups[1].Value | Should -Not -Match 'Test-DoctorPsHost'
+    }
+}
+
+Describe 'Preflight doctor -- ps_host observation reads the knob the SHIPPED consumers read' {
+    # The observation half, testable without a session because the knob comes from the
+    # environment and resolution is a Get-Command lookup -- so both directions are reachable.
+    BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
+
+    # Sweep by WILDCARD, not by one exact name -- the idiom the Get-PluginOption Describe above
+    # already uses, and it is load-bearing rather than stylistic here. Get-RawPluginOption
+    # normalizes casing and underscores away, so it matches CLAUDE_PLUGIN_OPTION_ps_host just as
+    # readily as ..._PS_HOST; but env names are case-SENSITIVE on the ubuntu-24.04 and macos-15
+    # CI legs, where removing one spelling would leave the other one live and silently break the
+    # "unset" precondition these tests depend on.
+    BeforeEach {
+        Get-ChildItem Env: | Where-Object { $_.Name -like 'CLAUDE_PLUGIN_OPTION_*' } |
+            ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) -ErrorAction SilentlyContinue }
+    }
+    AfterEach {
+        Get-ChildItem Env: | Where-Object { $_.Name -like 'CLAUDE_PLUGIN_OPTION_*' } |
+            ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) -ErrorAction SilentlyContinue }
+    }
+
+    It 'reports IsDefault when ps_host is unset' {
+        $o = Get-DoctorPsHostObservation
+        $o.Determinable | Should -BeTrue
+        $o.IsDefault | Should -BeTrue
+        $o.Value | Should -Be 'pwsh'
+    }
+    It 'treats an explicit "pwsh" as the default (same observable state)' {
+        $env:CLAUDE_PLUGIN_OPTION_PS_HOST = 'pwsh'
+        (Get-DoctorPsHostObservation).IsDefault | Should -BeTrue
+    }
+    It 'resolves a real non-default host and reports Found with its path' {
+        # The running host's own executable: guaranteed to exist on every leg, and a full path
+        # so it is never equal to the 'pwsh' default -- portable across Windows and Linux CI.
+        $exe = (Get-Process -Id $PID).Path
+        $exe | Should -Not -BeNullOrEmpty                                # vacuity floor
+        $env:CLAUDE_PLUGIN_OPTION_PS_HOST = $exe
+        $o = Get-DoctorPsHostObservation
+        $o.IsDefault | Should -BeFalse
+        $o.Found | Should -BeTrue
+        $o.ResolvedPath | Should -Not -BeNullOrEmpty
+    }
+    It 'reports Found=false for a non-default host that is not installed' {
+        $env:CLAUDE_PLUGIN_OPTION_PS_HOST = 'no-such-powershell-host-exe'
+        $o = Get-DoctorPsHostObservation
+        $o.Determinable | Should -BeTrue
+        $o.IsDefault | Should -BeFalse
+        $o.Found | Should -BeFalse
+    }
+    It 'drives the pure check to a real FAIL end to end (observation + decision)' {
+        # The two halves joined: a bogus knob value must reach a FAIL, which is what makes the
+        # check fail-CAPABLE in the shipped wiring rather than only in the pure function.
+        $env:CLAUDE_PLUGIN_OPTION_PS_HOST = 'no-such-powershell-host-exe'
+        $o = Get-DoctorPsHostObservation
+        $r = Test-DoctorPsHost -Determinable $o.Determinable -Reason $o.Reason -Value $o.Value `
+            -IsDefault $o.IsDefault -Found $o.Found -ResolvedPath $o.ResolvedPath
+        $r.Status | Should -Be 'fail'
+    }
+}
+
+Describe 'Preflight doctor -- plugin version report (dispatch 000208, report-only header)' {
+    # The version report is a HEADER LINE, not a check row (OQ3): a version is not a pass/fail
+    # result, the status vocabulary CONTRACT.md freezes has no word for "here is a fact", and a
+    # row would inflate the "of N checks" count with a non-check. These guards pin the three
+    # properties the acceptance criteria name: it calls the shipped Get-PluginVersion, it never
+    # fails, and it renders regardless of what the checks below it say.
+    BeforeAll {
+        . (Join-Path $script:ScriptsDir 'doctor.ps1')
+        $manifestPath = Join-Path $script:PluginRoot '.claude-plugin/plugin.json'
+        $script:DoctorManifestVersion = [string](((Get-Content -LiteralPath $manifestPath -Raw) | ConvertFrom-Json).version)
+        $script:AllUnknown = @(
+            (New-DoctorResult -Status unknown -Component 'Alpha check' -Detail 'a')
+            (New-DoctorResult -Status unknown -Component 'Beta check' -Detail 'b')
+        )
+    }
+    It 'the manifest version is non-empty (the guards below cannot pass vacuously)' {
+        $script:DoctorManifestVersion | Should -Not -BeNullOrEmpty
+    }
+    It 'the full report renders the version from Get-PluginVersion, not a literal' {
+        $out = Format-DoctorReport -Results $script:AllUnknown
+        $out | Should -Match ('version: ' + [regex]::Escape((Get-PluginVersion)))
+        (Get-PluginVersion) | Should -BeExactly $script:DoctorManifestVersion
+    }
+    It 'the compact status renders the same version, from the same source' {
+        (Format-DoctorSummary -Results $script:AllUnknown) |
+            Should -Match ('version: ' + [regex]::Escape((Get-PluginVersion)))
+    }
+    It 'renders even when EVERY check is UNKNOWN -- it is not gated on any check state' {
+        # The supportability property: "what version are you on?" must be answerable from a run
+        # in which nothing else could be determined, which is precisely the run a stranger sends.
+        foreach ($r in @($script:AllUnknown)) { $r.Status | Should -Be 'unknown' }   # vacuity floor
+        (Format-DoctorReport -Results $script:AllUnknown) | Should -Match 'version: '
+        (Format-DoctorSummary -Results $script:AllUnknown) | Should -Match 'version: '
+    }
+    It 'renders when every check FAILS, and adds no fail of its own' {
+        $allFail = @((New-DoctorResult -Status fail -Component 'Gamma check' -Detail 'g' -Remediation 'fix'))
+        $out = Format-DoctorReport -Results $allFail
+        $out | Should -Match 'version: '
+        # Report-only: the version contributes no result object, so the counts are the checks'
+        # counts alone and the exit-code input is untouched.
+        $out | Should -Match ([regex]::Escape('summary: 0 pass, 1 fail, 0 unknown (of 1 checks)'))
+    }
+    It 'is NOT a check row -- it never appears in the counts or the check total' {
+        # The discriminator between the two placements OQ3 asked about. Were the version a row,
+        # a one-check fixture would render "of 2 checks".
+        $one = @((New-DoctorResult -Status pass -Component 'Only check' -Detail 'd'))
+        foreach ($render in @((Format-DoctorReport -Results $one), (Format-DoctorSummary -Results $one))) {
+            $render | Should -Match ([regex]::Escape('(of 1 checks)'))
+            $render | Should -Not -Match 'PASS\s+version'
+        }
+        (Format-DoctorSummary -Results $one) | Should -Match 'status -- 1 checks'
+    }
+    It 'adds NO second version-derivation path -- doctor.ps1 parses no manifest of its own' {
+        # "Call the already-shipped Get-PluginVersion; do NOT add new version-derivation logic."
+        # A private re-read of plugin.json here could drift from the single source of truth.
+        $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'doctor.ps1') -Raw
+        $src | Should -Match '\(Get-PluginVersion\)'
+        @([regex]::Matches($src, "ConvertFrom-Json\).version")).Count | Should -Be 0
+    }
+    It 'the injected-version seam is honored (the renderers stay testable)' {
+        (Format-DoctorReport -Results $script:AllUnknown -Version '9.9.9-test') | Should -Match 'version: 9\.9\.9-test'
+        (Format-DoctorSummary -Results $script:AllUnknown -Version '9.9.9-test') | Should -Match 'version: 9\.9\.9-test'
+    }
+}
+
 Describe 'Preflight doctor -- test diagnostic observed end-to-end (item 8, dispatch 000166)' {
     BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
 

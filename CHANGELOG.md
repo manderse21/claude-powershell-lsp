@@ -31,6 +31,49 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+**Classifies MINOR (so the next cut is 1.30.0) -- derived, not asserted.** This changelog's own
+Versioning section calls MINOR "a new backward-compatible capability" and PATCH "bug fixes and
+internal hardening with no user-visible contract change". This adds a new check to a shipped
+user-facing command surface (`/powershell-lsp:doctor` and `/powershell-lsp:status`), so it is a
+capability, not hardening. The precedent in this file is unanimous across all four prior
+doctor-surface additions, and it is the *weakest* of them that settles the question: the
+native-serve removability probe shipped **MINOR** while being OPT-IN, never-`fail`, and explicitly
+leaving "the default doctor byte-for-byte at six checks". The other three -- the preflight doctor
+itself, the daemon/pipe-health check, and the v1.28.0 entry that took "the default doctor from 6
+checks to 9" -- were all MINOR too. A default, fail-capable check cannot classify below an opt-in
+one. **No knob is added, removed, renamed, or re-defaulted** (`.claude-plugin/plugin.json` is
+untouched, `userConfig` stays at 20), `CONTRACT.md` is untouched, and the frozen `pass`/`fail`/
+`unknown` status vocabulary is unchanged.
+
+### Added
+
+- **The doctor resolves the configured `ps_host` -- the PSES child host -- and can FAIL on it**
+  (survey class F11 from the 000203 doctor survey). Check 1 validates `pwsh`, the *hook
+  interpreter*. `ps_host` is a different value: it selects the executable that hosts PowerShell
+  Editor Services, and until now the doctor read it zero times. The reason this check is
+  fail-capable when most report-only additions are not is that the shipped resolver
+  **substitutes instead of erroring**: `Resolve-PsHost` tries the configured value, then `pwsh`,
+  then `powershell`, and returns the first that resolves. A `ps_host` naming something that is not
+  installed is therefore silently replaced -- all three consumers (`lsp-client.ps1`,
+  `pses-serve-shim.ps1`, `session-start.ps1`) read it that way -- so the user gets a working plugin
+  that is quietly ignoring their configuration, with nothing anywhere saying so. That is the
+  failure the check names. At the default (`ps_host` unset or `pwsh`) it reports **UNKNOWN**, not
+  PASS, deliberately: check 1 already decides whether `pwsh` is present, and a second
+  independently-derived opinion about the same executable could disagree with it and would
+  double-count in the summary. The default doctor goes from **10 checks to 11**; the opt-in
+  `-ProbeNativeServe` probe is unchanged.
+
+- **The doctor and `/status` state the plugin version, unconditionally.** `Get-PluginVersion` --
+  the single source of truth, read from the manifest -- already shipped in the very library
+  `doctor.ps1` dot-sources, and was never called from it. Every support interaction opens with
+  "what version are you on?", and a self-check that could not answer that was a supportability
+  gap. It renders as a **header line above the check table**, not as a check row: a version is not
+  a pass/fail result, the frozen status vocabulary has no word for a plain fact, and a row would
+  have inflated the "of N checks" count with a non-check. Being a header also makes it
+  unconditional -- it is there even when every check below it is UNKNOWN, which is exactly the run
+  a stranger pastes into a bug report. Report-only; it contributes no result object and cannot
+  move the exit code. No new version-derivation logic was added.
+
 ## [1.29.1] - 2026-08-07
 PATCH: **the native-serve pump survives a dead peer, and the reporting scripts stop claiming more
 than they measured.** No knob is added, removed, renamed, or re-defaulted -- both

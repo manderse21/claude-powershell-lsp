@@ -14,6 +14,10 @@ doctor, it is **report-only** and changes nothing.
 pwsh -NoLogo -NoProfile -File "$env:CLAUDE_PLUGIN_ROOT/scripts/doctor.ps1" -Summary
 ```
 
+The first line is followed by a `version:` header naming the installed plugin build. It always
+renders, it is not one of the checks, and it is the line to keep when the output is pasted into a
+bug report.
+
 Report the output as-is -- it is already a summary, so do not summarize it further. Add at most
 one sentence of interpretation:
 
