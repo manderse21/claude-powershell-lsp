@@ -20,6 +20,9 @@ pwsh -NoLogo -NoProfile -File "$env:CLAUDE_PLUGIN_ROOT/scripts/doctor.ps1"
 
 Then summarize for the user:
 
+- The report opens with a `version:` header line above the check table. It is always present, even
+  when every check is UNKNOWN, and it is not a check -- it carries no status and is not in the
+  counts. Include it whenever the user is reporting a problem or asking for support.
 - Lead with the summary line's counts.
 - If any check is **FAIL**, quote its component, its detail, and its `fix:` line. A FAIL is the
   only thing that sets a non-zero exit code.
