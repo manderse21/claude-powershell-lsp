@@ -120,6 +120,86 @@ function Test-DoctorPwsh {
             -Detail ('pwsh ' + $Version.ToString() + ' is present and satisfies the PowerShell 7+ requirement.'))
 }
 
+function Test-DoctorPsHost {
+    # Check: does the configured `ps_host` -- the PSES CHILD host -- actually resolve (dispatch
+    # 000203 survey failure class F11)?
+    #
+    # The gap this closes: check 1 validates `pwsh`, the HOOK INTERPRETER. `ps_host` is a
+    # DIFFERENT value. It selects the executable that hosts PowerShell Editor Services
+    # (docs/troubleshooting.md:24 states the distinction explicitly), and until this check the
+    # doctor read it zero times. Conflating the two is the mistake this check exists to prevent,
+    # so it names the child host in its own component line rather than folding into check 1.
+    #
+    # WHY IT IS FAIL-CAPABLE, when almost every other added check is not: the shipped resolver
+    # FALLS BACK. Resolve-PsHost (lib/lsp-common.ps1) tries the configured value, then 'pwsh',
+    # then 'powershell', and returns the first that resolves -- so a `ps_host` naming an
+    # executable that is not there does not error, it is silently REPLACED. All three shipped
+    # consumers read it that way (lsp-client.ps1:209, pses-serve-shim.ps1:85, and
+    # session-start.ps1:53 via $PreferredHost). The user gets a working plugin that is ignoring
+    # their configuration, with nothing anywhere saying so. That is a real, dated, silent
+    # failure of a deliberate setting, which is exactly the class that earns a FAIL.
+    #
+    #   knob value not resolvable (outside a session)  -> UNKNOWN
+    #   ps_host is unset / at its default ('pwsh')     -> UNKNOWN, deferring to check 1
+    #   set to a non-default value that RESOLVES       -> PASS, naming it
+    #   set to a non-default value that does NOT       -> FAIL (the silent-substitution case)
+    #
+    # The default branch is UNKNOWN rather than PASS on purpose. At the default this check has
+    # nothing of its OWN to report -- check 1 already decides whether `pwsh` is present, and a
+    # PASS here would be a second, independently-derived opinion about the same executable that
+    # could disagree with check 1 and would double-count in the summary counts.
+    #
+    #   $Determinable : the knob value could be read.
+    #   $Reason       : when not determinable, the honest why.
+    #   $Value        : the effective ps_host value.
+    #   $IsDefault    : that value is the shipped default ('pwsh') -- unset and explicitly-'pwsh'
+    #                   are the same observable state and are treated as one.
+    #   $Found        : the value resolved through Get-Command.
+    #   $ResolvedPath : what it resolved to (named in the PASS, so the answer is checkable).
+    param(
+        [bool] $Determinable,
+        [string] $Reason = '',
+        [string] $Value = '',
+        [bool] $IsDefault = $false,
+        [bool] $Found = $false,
+        [string] $ResolvedPath = ''
+    )
+    $component = 'PSES child host (ps_host)'
+    if (-not $Determinable) {
+        $why = if ([string]::IsNullOrWhiteSpace($Reason)) {
+            'the plugin knob values could not be resolved in this context.'
+        } else { $Reason }
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('not determined -- ' + $why) `
+                -Remediation ('Run the doctor from inside an enabled Claude Code session so the ' +
+                    'knob values resolve.'))
+    }
+    if ($IsDefault) {
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('ps_host is at its default ("' + $Value + '"), so this check defers to ' +
+                    'the PowerShell 7 (pwsh) host check above rather than deciding the same ' +
+                    'executable twice. It reports on its own only when ps_host names something ' +
+                    'else -- the PSES child host is a DISTINCT value from the hook interpreter.') `
+                -Remediation ('Nothing to do. Set ps_host only if PSES must run under a ' +
+                    'different host than pwsh; see docs/configuration.md#ps_host.'))
+    }
+    if ($Found) {
+        $where = if ([string]::IsNullOrWhiteSpace($ResolvedPath)) { '' } else { ' (' + $ResolvedPath + ')' }
+        return (New-DoctorResult -Status pass -Component $component `
+                -Detail ('ps_host = "' + $Value + '" resolves on PATH' + $where + ', so PSES will ' +
+                    'be hosted by the executable you configured. This is the PSES child host; the ' +
+                    'hook interpreter is checked separately above.'))
+    }
+    return (New-DoctorResult -Status fail -Component $component `
+            -Detail ('ps_host = "' + $Value + '" does NOT resolve on PATH, and this fails SILENTLY ' +
+                'rather than loudly: the shipped resolver falls back to pwsh, then powershell, so ' +
+                'PSES is hosted by whichever of those exists and your configured host is ignored ' +
+                'with no error anywhere. The plugin appears to work while disregarding the setting.') `
+            -Remediation ('Install "' + $Value + '" or put it on PATH, set ps_host to an ' +
+                'executable that exists ("pwsh" or "powershell"), or clear it to accept the ' +
+                'default; see docs/configuration.md#ps_host.'))
+}
+
 function Test-DoctorEnabled {
     # Check 2: the plugin is enabled. It ships disabled by default (defaultEnabled:false).
     # The only enablement signal the plugin can observe of ITSELF is its subprocess
@@ -901,6 +981,47 @@ function Get-DoctorOrgPolicyObservation {
     }
 }
 
+function Get-DoctorPsHostObservation {
+    # Resolve the ps_host observation the pure Test-DoctorPsHost decides on (F11).
+    #
+    # Two deliberate mirrorings, both for the same reason the org-policy observation calls the
+    # shipped reader -- a second implementation could disagree with the one that really runs:
+    #
+    #   1. The knob is read through Get-PluginOption with the SAME default the three shipped
+    #      consumers pass ('pwsh' -- lsp-client.ps1:209, pses-serve-shim.ps1:85,
+    #      session-start.ps1:53), so profile resolution and the env-name normalization apply
+    #      here exactly as they do on the live path.
+    #   2. Resolution uses a BARE Get-Command, with no -CommandType filter, because that is
+    #      literally what Resolve-PsHost does. Narrowing it to Application here would make the
+    #      doctor reject values the plugin itself would accept, which is a worse failure than
+    #      not checking: a confident, wrong FAIL.
+    #
+    # Read-only -- Get-Command is a lookup. Nothing is launched.
+    $default = 'pwsh'
+    try {
+        $value = [string](Get-PluginOption 'ps_host' $default)
+        # Unset and explicitly-'pwsh' are indistinguishable AFTER Get-PluginOption applies the
+        # default, and they are also the same state operationally, so they are not distinguished.
+        $isDefault = ($value -eq $default)
+        $found = $false
+        $resolved = ''
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            $cmd = Get-Command $value -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -ne $cmd) {
+                $found = $true
+                try { $resolved = [string]$cmd.Source } catch { $resolved = '' }
+                if ([string]::IsNullOrWhiteSpace($resolved)) { $resolved = [string]$cmd.Name }
+            }
+        }
+        return @{ Determinable = $true; Reason = ''; Value = $value; IsDefault = $isDefault
+            Found = $found; ResolvedPath = $resolved }
+    } catch {
+        return @{ Determinable = $false; Value = ''; IsDefault = $false; Found = $false
+            ResolvedPath = ''
+            Reason = ('the ps_host value could not be read: ' + $_.Exception.Message) }
+    }
+}
+
 # The synthetic probe used by the end-to-end check (item 8). An unapproved verb trips
 # PSUseApprovedVerbs, which is in PSES's BUILT-IN no-settings set -- so the probe works on the
 # shipped default configuration, not only under ruleset=base. It is the README's own example.
@@ -1202,7 +1323,21 @@ function Invoke-Doctor {
     $results += (Test-DoctorNativeServeStatus -Determinable $nsStatus.Determinable -Reason $nsStatus.Reason `
             -Value $nsStatus.Value -ShimPresent $nsStatus.ShimPresent -Probed ([bool]$ProbeNativeServe))
 
-    # 11) native-serve removability (dispatch 000104, the 000103 OQ4). Still OPT-IN via
+    # 11) PSES child host resolution (dispatch 000203 survey failure class F11). Appended to the
+    # END of the default surface rather than inserted beside check 1, deliberately: every check
+    # comment from 2 onward, and half a dozen prose cross-references inside them ("check 7
+    # above", "the runtime bookend to check 3", "checks 1-5"), are numbered, so inserting would
+    # have renumbered ten comments and silently falsified those references. The pwsh/ps_host
+    # contrast the reader needs is carried in this check's own component line and detail text,
+    # where it is actually read, instead of by adjacency in the table.
+    # Fail-capable -- the one added check here that can move the exit code, because the shipped
+    # resolver's fallback makes a bad value invisible rather than loud.
+    $phObs = Get-DoctorPsHostObservation
+    $results += (Test-DoctorPsHost -Determinable $phObs.Determinable -Reason $phObs.Reason `
+            -Value $phObs.Value -IsDefault $phObs.IsDefault -Found $phObs.Found `
+            -ResolvedPath $phObs.ResolvedPath)
+
+    # 12) native-serve removability (dispatch 000104, the 000103 OQ4). Still OPT-IN via
     # -ProbeNativeServe: it launches PSES via the DIRECT launcher and inspects the init handshake,
     # which costs a PSES cold-start plus a bounded init wait -- too heavy for every doctor run, so
     # this check appears ONLY when requested. The item-7 promotion above deliberately did NOT make
@@ -1222,9 +1357,22 @@ function Format-DoctorReport {
     # Render the ordered results as the user-facing fix-list. A single generic security
     # pointer is appended when ANY check did not pass -- the doctor does not probe security
     # controls, so it can only point, never attribute (dispatch 000036 boundary).
-    param([object[]] $Results)
+    #
+    # $Version renders as a HEADER LINE above the check table, not as a check row (dispatch
+    # 000208 OQ3). A version is not a pass/fail result: every row in the table wears a status
+    # token from a set CONTRACT.md freezes to pass/fail/unknown, so a version row would have to
+    # borrow one of those words to say something that is neither a health verdict nor a
+    # judgement -- and it would inflate the "of N checks" count with a non-check. As a header it
+    # is unconditional, which is the property that matters: a support interaction can start from
+    # a known build even when every check below is UNKNOWN.
+    #
+    # It is a PARAMETER with a shipped-source default rather than a direct call, so the renderer
+    # stays injectable for tests; blank means "ask the one source of truth".
+    param([object[]] $Results, [string] $Version = '')
+    if ([string]::IsNullOrWhiteSpace($Version)) { $Version = [string](Get-PluginVersion) }
     $lines = @()
     $lines += 'powershell-lsp doctor -- preflight self-check (report-only)'
+    $lines += ('  version: ' + $Version)
     $lines += ''
     foreach ($r in $Results) {
         $lines += ('  ' + ('{0,-7}' -f $r.Status.ToUpperInvariant()) + '  ' + $r.Component)
@@ -1255,9 +1403,14 @@ function Format-DoctorSummary {
     #
     # When something is not PASS the compact view would be a dead end, so it appends ONE pointer
     # at the full report rather than silently dropping the fix text.
-    param([object[]] $Results)
+    # The version header rides here too, for the same reason and from the same source as in
+    # Format-DoctorReport: /status is the surface a user is most likely to paste into a support
+    # thread, so it is the one that can least afford to omit which build produced it.
+    param([object[]] $Results, [string] $Version = '')
+    if ([string]::IsNullOrWhiteSpace($Version)) { $Version = [string](Get-PluginVersion) }
     $lines = @()
     $lines += 'powershell-lsp status -- ' + @($Results).Count + ' checks (report-only)'
+    $lines += ('  version: ' + $Version)
     $lines += ''
     foreach ($r in $Results) {
         $lines += ('  ' + ('{0,-7}' -f $r.Status.ToUpperInvariant()) + '  ' + $r.Component)

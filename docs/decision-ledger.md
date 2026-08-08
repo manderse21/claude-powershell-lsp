@@ -1911,6 +1911,25 @@ real usage, not machinery.
   `pses-default`, which `CONTRACT.md` records as a deliberate non-flip; and N1.1 in Section 4 already
   records that the idiom slices are guidance overrides on rules that ALREADY fire, explicitly not new
   rules. No decline premise was falsified by the survey, so none was reworded.
+- **Doctor slice 2 (dispatch 000208) shipped F11 and the version report -- and DECLINED F10 / C1,
+  which stays Mike-gated.** What shipped: the `ps_host` child-host resolution check (survey class
+  **F11**), fail-capable because `Resolve-PsHost` substitutes rather than errors, so a misconfigured
+  host is silently replaced; and a report-only plugin-version header calling the already-shipped
+  `Get-PluginVersion`. The default doctor surface went from **10 checks to 11** (derived from
+  `scripts/doctor.ps1`, not carried from the charter: the 000203 survey's "9 default checks" was
+  true when that survey ran and was superseded by slice 1's `orgPolicy` check in 000206). The
+  version line is a header, not a row, because the status vocabulary `CONTRACT.md` freezes has no
+  token for a plain fact.
+  **`review-declined: doctor-security-classifier (000036 boundary standing)`** -- survey class
+  **F10** / candidate **C1**, surfacing the security classifier's verdicts in the doctor, was NOT
+  built and is recorded here so it is not silently re-litigated. It contradicts the boundary
+  **dispatch 000036** recorded and `scripts/doctor.ps1` still states in its own header: *the doctor
+  points to a failing control, it does not probe or attribute security controls* -- so for an
+  indeterminate failure it emits one GENERIC pointer and does zero control-specific probing. The
+  000203 survey flags the contradiction itself. An enterprise-robust posture is a real argument for
+  moving that boundary, but moving a recorded design boundary is **a separate, explicitly attended
+  ruling by Mike Andersen**, not a line item inside a routine slice; 000208's `do_not` says so in
+  as many words. Until such a ruling exists, the 000036 boundary stands.
 
 ## 7. Operating posture (unchanged)
 
