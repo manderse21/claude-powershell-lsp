@@ -29,21 +29,41 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
-## [Unreleased]
+## [1.30.0] - 2026-08-09
+MINOR: **the doctor resolves the PowerShell host that actually serves PSES and can fail on it,
+the doctor and `/status` state the plugin version unconditionally, and every lifecycle record now
+carries the version that emitted it.** Three backward-compatible capability additions: two on the
+self-check surface a user reads when something is wrong, and one on the lifecycle log a reader
+consumes to attribute clearance data to a release.
 
-**Classifies MINOR (so the next cut is 1.30.0) -- derived, not asserted.** This changelog's own
-Versioning section calls MINOR "a new backward-compatible capability" and PATCH "bug fixes and
-internal hardening with no user-visible contract change". This adds a new check to a shipped
-user-facing command surface (`/powershell-lsp:doctor` and `/powershell-lsp:status`), so it is a
-capability, not hardening. The precedent in this file is unanimous across all four prior
-doctor-surface additions, and it is the *weakest* of them that settles the question: the
-native-serve removability probe shipped **MINOR** while being OPT-IN, never-`fail`, and explicitly
-leaving "the default doctor byte-for-byte at six checks". The other three -- the preflight doctor
-itself, the daemon/pipe-health check, and the v1.28.0 entry that took "the default doctor from 6
-checks to 9" -- were all MINOR too. A default, fail-capable check cannot classify below an opt-in
-one. **No knob is added, removed, renamed, or re-defaulted** (`.claude-plugin/plugin.json` is
-untouched, `userConfig` stays at 20), `CONTRACT.md` is untouched, and the frozen `pass`/`fail`/
-`unknown` status vocabulary is unchanged.
+Classified MINOR -- derived, not asserted, and the derivation covers all three entries below,
+not only the doctor ones. This changelog's own Versioning section calls MINOR "a new
+backward-compatible capability" and PATCH "bug fixes and internal hardening with no user-visible
+contract change".
+
+The two doctor entries add a new check and a new header line to a shipped user-facing command
+surface (`/powershell-lsp:doctor` and `/powershell-lsp:status`), so they are capability, not
+hardening. The precedent in this file is unanimous across all four prior doctor-surface
+additions, and it is the *weakest* of them that settles the question: the native-serve
+removability probe shipped **MINOR** while being OPT-IN, never-`fail`, and explicitly leaving
+"the default doctor byte-for-byte at six checks". The other three -- the preflight doctor itself,
+the daemon/pipe-health check, and the v1.28.0 entry that took "the default doctor from 6 checks
+to 9" -- were all MINOR too. A default, fail-capable check cannot classify below an opt-in one.
+
+The lifecycle-provenance entry classifies MINOR on the **v1.29.0 consumer-contract precedent** --
+the same neighbourhood, and the same reasoning. It adds a field to a persisted record format
+(`pluginVersion` in `logs/lifecycle-<stamp>.jsonl`) plus a readout over it (the clearance
+provenance floor in `scripts/rule-efficacy-ledger.ps1`). v1.29.0 classified that same lifecycle-log
+neighbourhood MINOR rather than PATCH because it is read by shipped consumers and is therefore a
+consumer contract even though no user hand-edits it, and because the 1.x semver freeze is a stated
+trust commitment. Backward compatibility here is explicit rather than assumed: `schema` stays
+`powershell-lsp-lifecycle/1`, the added field's absence is already tolerated by its only reader,
+nothing is filtered or rewritten, and no previously published figure changes value.
+
+**No knob is added, removed, renamed, or re-defaulted** by any of the three: `userConfig` stays at
+20 and `.claude-plugin/plugin.json` changes only its `version` field for this cut. `CONTRACT.md`
+and `rulesets/base.psd1` are untouched, and the frozen `pass`/`fail`/`unknown` status vocabulary is
+unchanged.
 
 ### Added
 
