@@ -240,8 +240,11 @@ function Resolve-PsHost {
 #   * formatOnEdit=apply -- appears in NO profile. `apply` is the one mode that writes a
 #     user's file, and it is deliberately doubly opt-in; `suggest` is as far as a preset goes.
 # timeoutMs is absent for a measured reason rather than a ruling: the warm-path p95 under
-# ruleset=base measured 3292 ms on the build host (n=20), leaving 34.2 pct headroom under the
+# ruleset=base measured 2337 ms on the build host (n=20), leaving 53.3 pct headroom under the
 # shipped 5000 ms, so per OQ2 the profiles keep 5000 and the cell is not a departure at all.
+# That figure is the 000207 per-profile sweep, taken under a passing quiescence gate and
+# recorded in docs/benchmarks.md -- which is the authority. Re-derive from that page rather
+# than trusting this line.
 # orgPolicy is absent because a profile cannot hardcode a site-specific path; `strict` names
 # it as the intended slot and the operator supplies the value.
 #
