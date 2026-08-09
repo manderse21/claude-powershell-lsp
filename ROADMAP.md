@@ -21,19 +21,26 @@ open work. What shipped and when is [CHANGELOG.md](./CHANGELOG.md); why is the
   per rule -- has been **adjudicated and built**: it is persisted, in a sibling log, and the derived
   clearance columns read from it. That question is settled, not open.
 
-  **The next unresolved question on this arc is whether the union read should filter.** The reader
-  unions every per-version capture log it discovers, deliberately, so that an upgrade does not
-  reset the denominator -- which means the union permanently includes occurrences produced by rules
-  that no longer ship. That much is now *visible*: the ledger reports both denominators side by
-  side, total and current-rule-surface, and names the out-of-surface rules. It **filters neither**,
-  on purpose, so that no previously published figure changes value. The open question is whether it
-  ever should, and what such a filter would cost in historical comparability.
+  **The union-filter question is now CLOSED: it never filters.** The reader unions every
+  per-version capture log it discovers, deliberately, so that an upgrade does not reset the
+  denominator -- which means the union permanently includes occurrences produced by rules that no
+  longer ship. That much is *visible*: the ledger reports both denominators side by side, total and
+  current-rule-surface, and names the out-of-surface rules. It **filters neither**, on purpose, so
+  that no previously published figure changes value. The question was whether it ever should; the
+  answer is no, and it is a ruling rather than a deferral. Retroactively filtering the union would
+  move figures that have already been published, which is the cardinal metrics anti-pattern -- and
+  the dual view without mutation already answers the need that a filter was reaching for.
 
-  The **clearance columns have no equivalent**, and that is the sharper half. The attribution above
+  The **clearance columns had no equivalent**, and that was the sharper half. The attribution above
   works because a committed surface history maps releases to the rule surface that shipped with
-  them. The sibling lifecycle log has no counterpart: its records carry no version field and its
-  path is not version-partitioned, so for those columns the provenance is not merely unfiltered but
-  unrecoverable. Recorded in the [decision ledger](docs/decision-ledger.md).
+  them; the sibling lifecycle log had no counterpart, so for those columns the provenance was not
+  merely unfiltered but unrecoverable. **Resolved forward, not retroactively:** each lifecycle
+  record now carries the plugin version stamped in-record at emit time, and the ledger prints a
+  **provenance floor** -- the earliest version-attributable point -- with anything below it labelled
+  a bounded, known gap rather than a silent one. Pre-instrumentation records are still *counted* in
+  every rate (the union stays non-filtering) and simply never *attributed* to a version. An
+  un-instrumented past cannot be recovered; it can be bounded and named, and now is. Recorded in the
+  [decision ledger](docs/decision-ledger.md).
 
 ## What is next
 

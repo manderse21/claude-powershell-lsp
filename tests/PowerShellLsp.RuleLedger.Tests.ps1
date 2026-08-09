@@ -853,3 +853,350 @@ Describe 'ND-B/ND-C -- owned finders are UNATTRIBUTABLE, reported as a third num
         [int]$a.Unattributable | Should -Be 1
     }
 }
+
+Describe '000209 -- lifecycle provenance: an in-record version stamp at emit, and a printed floor' {
+    # THE GAP THIS CLOSES. fired_count and distinct_shapes are version-attributable because the
+    # capture log's marketplace-cache PATH carries the plugin version. The SIBLING lifecycle log
+    # that feeds fixed_next_turn_rate and persistence_rate had no counterpart: no version field,
+    # and a flat stamped rolling family for a path, so the provenance of the clearance columns was
+    # not merely unfiltered but UNRECOVERABLE.
+    #
+    # THE FIX IS FORWARD-ONLY, IN TWO HALVES, AND THIS SUITE PINS BOTH:
+    #   1. EMIT  -- New-LifecycleLedgerRecords stamps `pluginVersion` from Get-PluginVersion.
+    #   2. READ  -- the ledger PRINTS the earliest version-attributable point and labels anything
+    #               below it a bounded, known gap.
+    #
+    # AND IT PINS WHAT MUST NOT MOVE. The union read stays NON-FILTERING: an unstamped record is
+    # still counted in every rate. Filtering the union to stamped records would silently restate
+    # fixed_next_turn_rate and persistence_rate for every rule with pre-000209 history -- the
+    # cardinal metrics anti-pattern this ruling exists to refuse. The golden Context below proves
+    # that by COMPARISON against the pre-change rendering, not by assertion.
+
+    BeforeAll {
+        function script:New-VersionedLifecycleLine {
+            # One lifecycle line. -Version $null OMITS the field entirely, which is exactly the
+            # shape every pre-000209 record on disk has -- not a blank field, an ABSENT one.
+            param([string] $RuleId, $Version, [int] $Cleared = 0, [int] $StillPresent = 0)
+            $o = [ordered]@{ schema = 'powershell-lsp-lifecycle/1'; ts = '2026-07-31T00:00:00.0000000-04:00' }
+            if ($null -ne $Version) { $o['pluginVersion'] = [string]$Version }
+            $o['file'] = 'C:\proj\alpha\a.ps1'
+            $o['ruleId'] = $RuleId
+            $o['cleared'] = $Cleared
+            $o['stillPresent'] = $StillPresent
+            $o['clearedHashes'] = @()
+            $o['stillPresentHashes'] = @()
+            $o['attemptsMax'] = 1
+            $o['downgraded'] = $false
+            $o['scopeApplied'] = $true
+            return ($o | ConvertTo-Json -Depth 5 -Compress)
+        }
+
+        function script:Read-LifecycleFixture {
+            # Write lines to a fresh lifecycle family and read them back through the SHIPPED reader.
+            param([string[]] $Lines)
+            $dir = Join-Path $TestDrive ('p209-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            Write-Utf8NoBom -Path (Join-Path $dir 'lifecycle-20260731-000000-000.jsonl') -Lines $Lines
+            $search = Resolve-LifecycleLogSearch -LifecyclePath $dir
+            return (Read-LifecycleLog -LogPaths @($search.Paths) -Search $search)
+        }
+    }
+
+    Context 'EMIT -- every new record carries a REAL plugin version, resolved at emit time' {
+        It 'emit-and-read-back: the record ON DISK carries exactly Get-PluginVersion' {
+            # The whole round trip through the shipped writer, not a shape assertion on an
+            # in-memory object: build records, append them as JSONL, read the file back, parse.
+            $p = Join-Path $TestDrive ('emit-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.jsonl')
+            $env:POWERSHELL_LSP_LIFECYCLE_LOG = $p
+            try {
+                $recs = @(New-LifecycleLedgerRecords -File 'f.ps1' -Timestamp 't' -ScopeApplied $true `
+                        -LedgerKeys @{ cleared = @([pscustomobject]@{ hash = 'h'; ruleId = 'PSUseApprovedVerbs' }); stillPresent = @() })
+                Add-LifecycleLedgerEntries -Records $recs -Stamp 's' | Should -BeTrue
+                $onDisk = @(Get-Content -LiteralPath $p | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                        ForEach-Object { $_ | ConvertFrom-Json })
+                $onDisk.Count | Should -Be 1
+                # The load-bearing assertion. Equality with Get-PluginVersion is what makes this a
+                # PROVENANCE stamp rather than a literal: a hardcoded version would pass a
+                # regex-shaped check and fail this one at the next release.
+                [string]$onDisk[0].pluginVersion | Should -BeExactly ([string](Get-PluginVersion))
+                [string]$onDisk[0].pluginVersion | Should -Not -BeNullOrEmpty
+            } finally { $env:POWERSHELL_LSP_LIFECYCLE_LOG = $null }
+        }
+
+        It 'RED control: a record MISSING the field fails the very assertion the emit path passes' {
+            # The pre-000209 record shape, fed to the same check. It must FAIL -- otherwise the
+            # assertion above is vacuous and would pass against the unfixed emit site.
+            $preFix = [ordered]@{ schema = 'powershell-lsp-lifecycle/1'; ts = 't'; ruleId = 'R'; cleared = 1; stillPresent = 0 }
+            $json = ($preFix | ConvertTo-Json -Depth 5 -Compress)
+            $json | Should -Not -Match 'pluginVersion'
+            $parsed = $json | ConvertFrom-Json
+            [string](Get-Prop $parsed 'pluginVersion') | Should -BeNullOrEmpty
+            [string](Get-Prop $parsed 'pluginVersion') | Should -Not -BeExactly ([string](Get-PluginVersion))
+        }
+
+        It 'the stamp resolves at EMIT time, and the default path cannot leave the field blank' {
+            # -PluginVersion is a test seam. Passing one is honored; passing NOTHING resolves the
+            # real version rather than leaving the field blank or inventing a placeholder.
+            $seam = @(New-LifecycleLedgerRecords -File 'f.ps1' -Timestamp 't' -ScopeApplied $true -PluginVersion '1.2.3' `
+                    -LedgerKeys @{ cleared = @([pscustomobject]@{ hash = 'h'; ruleId = 'R' }); stillPresent = @() })
+            [string]$seam[0].pluginVersion | Should -BeExactly '1.2.3'
+            $default = @(New-LifecycleLedgerRecords -File 'f.ps1' -Timestamp 't' -ScopeApplied $true `
+                    -LedgerKeys @{ cleared = @([pscustomobject]@{ hash = 'h'; ruleId = 'R' }); stillPresent = @() })
+            [string]$default[0].pluginVersion | Should -BeExactly ([string](Get-PluginVersion))
+        }
+
+        It 'a turn with NO lifecycle event still writes NOTHING -- the stamp adds no empty record' {
+            @(New-LifecycleLedgerRecords -LedgerKeys @{ cleared = @(); stillPresent = @() } `
+                    -File 'f.ps1' -Timestamp 't' -ScopeApplied $true).Count | Should -Be 0
+        }
+    }
+
+    Context 'FLOOR -- the EARLIEST version-attributable point, ordered semantically' {
+        It 'the floor is the MINIMUM attributable version, not the maximum' {
+            $f = Get-LifecycleProvenanceFloor -Versions @{ '1.29.1' = 7; '1.9.0' = 2; '1.10.0' = 5 } -PreFloor 0
+            [string]$f.State | Should -BeExactly 'floored'
+            [string]$f.Floor | Should -BeExactly '1.9.0'
+            [int]$f.Attributable | Should -Be 14
+        }
+
+        It 'RED control: taking the MAXIMUM would name a DIFFERENT version on this same fixture' {
+            # "Earliest version-attributable point" is a claim about where knowledge BEGINS. An
+            # implementation that reused the cache-dir selector (which picks the greatest, correctly,
+            # for its own purpose) would name 1.29.1 and disown every older stamped record. The two
+            # must differ on this fixture, or the min/max choice is untested.
+            $vers = @{ '1.29.1' = 7; '1.9.0' = 2; '1.10.0' = 5 }
+            $f = Get-LifecycleProvenanceFloor -Versions $vers -PreFloor 0
+            $max = @(@($vers.Keys) | Sort-Object { [System.Version](([string]$_ -split '-', 2)[0]) } -Descending)[0]
+            [string]$max | Should -BeExactly '1.29.1'
+            [string]$f.Floor | Should -Not -Be ([string]$max)
+        }
+
+        It 'RED control: LEXICAL ordering picks the WRONG floor -- 1.10.0 sorts before 1.9.0 as text' {
+            # The exact trap a string sort would spring. If the floor were lexical it would report
+            # 1.10.0, a version LATER than the true earliest.
+            $vers = @{ '1.9.0' = 1; '1.10.0' = 1 }
+            $lexical = @(@($vers.Keys) | Sort-Object)[0]
+            [string]$lexical | Should -BeExactly '1.10.0'
+            [string](Get-LifecycleProvenanceFloor -Versions $vers -PreFloor 0).Floor | Should -BeExactly '1.9.0'
+            [string](Get-LifecycleProvenanceFloor -Versions $vers -PreFloor 0).Floor | Should -Not -Be ([string]$lexical)
+        }
+
+        It 'the 0.0.0-unknown SENTINEL is not a version -- it is Get-PluginVersion saying it did not know' {
+            # Counting the sentinel would attribute real clearance data to a release that never
+            # existed, and 0.0.0 would become the floor of every ledger that ever saw one.
+            Test-LifecycleVersionAttributable -Version '0.0.0-unknown' | Should -BeFalse
+            Test-LifecycleVersionAttributable -Version '' | Should -BeFalse
+            Test-LifecycleVersionAttributable -Version 'not-a-version' | Should -BeFalse
+            Test-LifecycleVersionAttributable -Version '1.29.1' | Should -BeTrue
+            Test-LifecycleVersionAttributable -Version '1.30.0-rc1' | Should -BeTrue
+            $f = Get-LifecycleProvenanceFloor -Versions @{ '0.0.0-unknown' = 3; '1.29.0' = 1 } -PreFloor 0
+            [string]$f.Floor | Should -BeExactly '1.29.0'
+            [int]$f.Attributable | Should -Be 1
+        }
+
+        It 'gap-only and none are DISTINCT states -- no data at all is not the same claim as no provenance' {
+            [string](Get-LifecycleProvenanceFloor -Versions @{} -PreFloor 4).State | Should -BeExactly 'gap-only'
+            [string](Get-LifecycleProvenanceFloor -Versions @{} -PreFloor 0).State | Should -BeExactly 'none'
+            (Get-LifecycleProvenanceFloor -Versions @{} -PreFloor 4).Floor | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'BACKWARD COMPAT -- a MIXED old/new log reads without throwing and floors correctly' {
+        It 'a mixed log reads clean, floors at the earliest STAMPED version, and calls the rest a gap' {
+            $lines = @(
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version $null -Cleared 2 -StillPresent 1)
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version $null -Cleared 1 -StillPresent 0)
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version '1.29.0' -Cleared 3 -StillPresent 1)
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version '1.29.1' -Cleared 1 -StillPresent 0)
+            )
+            { $script:MixedLc = Read-LifecycleFixture -Lines $lines } | Should -Not -Throw
+            $lc = $script:MixedLc
+            [int]$lc.Records | Should -Be 4
+            [int]$lc.Skipped | Should -Be 0
+            [int]$lc.Attributable | Should -Be 2
+            [int]$lc.PreFloorRecords | Should -Be 2
+            # Attributable + PreFloor == Records, exactly. No record falls between the two buckets.
+            ([int]$lc.Attributable + [int]$lc.PreFloorRecords) | Should -Be ([int]$lc.Records)
+            $f = Get-LifecycleProvenanceFloor -Versions $lc.Versions -PreFloor ([int]$lc.PreFloorRecords)
+            [string]$f.Floor | Should -BeExactly '1.29.0'
+            [int]$f.PreFloor | Should -Be 2
+        }
+
+        It 'RED control: the OLD unstamped records are STILL COUNTED -- the union did not filter' {
+            # THE anti-pattern guard. Both fixtures carry the identical four events; only the
+            # stamping differs. A reader that dropped unstamped records would report n=5 on the
+            # mixed log instead of n=9, silently restating a published rate.
+            $mixed = Read-LifecycleFixture -Lines @(
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version $null -Cleared 2 -StillPresent 1)
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version $null -Cleared 1 -StillPresent 0)
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version '1.29.0' -Cleared 3 -StillPresent 1)
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version '1.29.1' -Cleared 1 -StillPresent 0)
+            )
+            $allStamped = Read-LifecycleFixture -Lines @(
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version '1.28.0' -Cleared 2 -StillPresent 1)
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version '1.28.0' -Cleared 1 -StillPresent 0)
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version '1.29.0' -Cleared 3 -StillPresent 1)
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version '1.29.1' -Cleared 1 -StillPresent 0)
+            )
+            # 7 cleared + 2 still-present = 9 events. Hand-counted, and IDENTICAL either way.
+            $mixedRate = Get-LifecycleRates -ByRule $mixed.ByRule -Present $true -RuleId 'PSUseApprovedVerbs'
+            $stampedRate = Get-LifecycleRates -ByRule $allStamped.ByRule -Present $true -RuleId 'PSUseApprovedVerbs'
+            [int]$mixedRate.events | Should -Be 9
+            [int]$stampedRate.events | Should -Be 9
+            [double]$mixedRate.fixed | Should -Be ([double]$stampedRate.fixed)
+            [double]$mixedRate.persistence | Should -Be ([double]$stampedRate.persistence)
+            # The filtered counterfactual, written down so the number this test forbids is explicit
+            # rather than merely implied.
+            [int]$mixedRate.events | Should -Not -Be 5
+        }
+
+        It 'an ALL-OLD log (nothing stamped anywhere) reads without throwing and reports gap-only' {
+            $lc = Read-LifecycleFixture -Lines @(
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version $null -Cleared 3 -StillPresent 1)
+            )
+            [int]$lc.Records | Should -Be 1
+            [int]$lc.PreFloorRecords | Should -Be 1
+            $f = Get-LifecycleProvenanceFloor -Versions $lc.Versions -PreFloor ([int]$lc.PreFloorRecords)
+            [string]$f.State | Should -BeExactly 'gap-only'
+            # ...and the rate is STILL derived from those unattributable records.
+            [int](Get-LifecycleRates -ByRule $lc.ByRule -Present $true -RuleId 'PSUseApprovedVerbs').events | Should -Be 4
+        }
+    }
+
+    Context 'NON-FILTERING -- proven by COMPARISON with the pre-000209 rendering, not by assertion' {
+        It 'GOLDEN: the pre-change readout is reproduced line-for-line; the ONLY delta is the added block' {
+            # The golden below was CAPTURED by running origin/main's rule-efficacy-ledger.ps1 over
+            # this exact fixture, then re-running the changed script over the same fixture. It is a
+            # before/after comparison on a fixture, which is what acceptance 3 asks for: an
+            # assertion that "nothing changed" would pass just as happily if everything had.
+            #
+            # Paths are normalised to FIXTURE and separators to '/', so the comparison is over the
+            # RENDERING and cannot be defeated by a temp directory name.
+            $golden = @'
+powershell-lsp per-rule diagnostic efficacy ledger (Arc A slice A1) -- facts only, no scores
+  discovery: FIXED FIXTURE
+  logs read: 1
+    FIXTURE/diagnostics.jsonl  (2 records)
+  annotations read: 0
+  lifecycle search root: FIXTURE/logs
+    resolved via: explicit:-LifecyclePath   data-root known: YES
+  lifecycle logs read: 1 (2 records)
+    FIXTURE/logs/lifecycle-20260731-000000-000.jsonl  (2 records)
+
+  REAL-SIGNAL LEDGER -- synthetic occurrences EXCLUDED. 2 occurrences / 2 shapes / 2 rules.
+  ruleId                                       fired_count  distinct_shapes source_split                                   verdict_distribution     fixed_next_turn_rate persistence_rate
+  PSAvoidUsingCmdletAliases                    1            1               canonical-checkout=0 other-genuine=1           (none)                   25 pct (n=4)         75 pct (n=4)
+  PSUseApprovedVerbs                           1            1               canonical-checkout=0 other-genuine=1           (none)                   75 pct (n=4)         25 pct (n=4)
+
+  SYNTHETIC (test-harness / Pester captures) -- reported separately, NEVER folded into the figures above: 0 occurrences / 0 shapes / 0 rules.
+'@
+            $root = Join-Path $TestDrive ('golden-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            $lcDir = Join-Path $root 'logs'
+            # The UNSTAMPED fixture -- exactly what the pre-000209 world wrote.
+            Write-Utf8NoBom -Path (Join-Path $lcDir 'lifecycle-20260731-000000-000.jsonl') -Lines @(
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version $null -Cleared 3 -StillPresent 1)
+                (New-VersionedLifecycleLine -RuleId 'PSAvoidUsingCmdletAliases' -Version $null -Cleared 1 -StillPresent 3)
+            )
+            $search = Resolve-LifecycleLogSearch -LifecyclePath $lcDir
+            $lifecycle = Read-LifecycleLog -LogPaths @($search.Paths) -Search $search
+            $occ = @(
+                [pscustomobject]@{ ruleId = 'PSUseApprovedVerbs'; bucket = 'other-genuine'; hash = 'c1' }
+                [pscustomobject]@{ ruleId = 'PSAvoidUsingCmdletAliases'; bucket = 'other-genuine'; hash = 'c2' }
+            )
+            $ledger = Get-RuleEfficacyLedger -Occurrences $occ -Annotations @{} -Lifecycle $lifecycle
+            # No MeasuredAtUtc property, so the vintage block does not render and the output is
+            # deterministic -- the golden pins the FACTS, not a clock.
+            $ledgerInput = [pscustomobject]@{ LogsRead = @([pscustomobject]@{ LogPath = 'FIXTURE/diagnostics.jsonl'; Records = 2 }) }
+            $rendered = Format-RuleEfficacyLedger -Ledger $ledger -Lifecycle $lifecycle -LedgerInput $ledgerInput `
+                -Sources ([pscustomobject]@{ Discovery = 'FIXED FIXTURE'; VersionDirs = @() }) -Attribution $null
+            $norm = (($rendered -replace [regex]::Escape($root), 'FIXTURE') -replace '\\', '/')
+
+            # Strip ONLY the added provenance block. Everything else must survive verbatim.
+            $newMarkers = @('clearance provenance floor:', 'version-attributable records:',
+                'versions present, earliest first:', 'record\(s\) carry no usable plugin version',
+                'stamp \(or the emit site could not resolve a version\)', 'is NOT recoverable',
+                'a KNOWN, BOUNDED gap:', 'never attributed to a version')
+            $kept = @(@($norm -split "`r?`n") | Where-Object {
+                    $line = $_
+                    -not (@($newMarkers | Where-Object { $line -match $_ }).Count -gt 0)
+                })
+            ($kept -join "`n") | Should -BeExactly (($golden -split "`r?`n") -join "`n")
+
+            # ...and the block really WAS added, so the strip above is not silently a no-op.
+            $norm | Should -Match 'clearance provenance floor:'
+            @($norm -split "`r?`n").Count | Should -BeGreaterThan @($kept).Count
+        }
+
+        It 'stamping moves NO rate: identical events render identical figures stamped or not' {
+            # The golden proves the pre-change LINES survive. This proves the NUMBERS do, on a
+            # fixture where the only variable is the presence of the field.
+            $unstamped = Read-LifecycleFixture -Lines @(
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version $null -Cleared 3 -StillPresent 1))
+            $stamped = Read-LifecycleFixture -Lines @(
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version '1.29.1' -Cleared 3 -StillPresent 1))
+            $a = Get-LifecycleRates -ByRule $unstamped.ByRule -Present $true -RuleId 'PSUseApprovedVerbs'
+            $b = Get-LifecycleRates -ByRule $stamped.ByRule -Present $true -RuleId 'PSUseApprovedVerbs'
+            [double]$a.fixed | Should -Be ([double]$b.fixed)
+            [double]$a.persistence | Should -Be ([double]$b.persistence)
+            [int]$a.events | Should -Be ([int]$b.events)
+            [int]$a.events | Should -Be 4
+        }
+    }
+
+    Context 'the bounded-gap caveat prints ONLY when a gap exists (open question 3)' {
+        BeforeAll {
+            function script:Get-LedgerReadout {
+                # Drive the SHIPPED entry point end to end -- this is what a user actually sees.
+                param([string[]] $LifecycleLines)
+                $dir = Join-Path $TestDrive ('q3-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+                $log = Join-Path $dir 'diagnostics.jsonl'
+                Write-Utf8NoBom -Path $log -Lines @((New-CaptureLine -RuleId 'PSUseApprovedVerbs' -File $script:FileOther -Hash 'c1'))
+                $lcDir = Join-Path $dir 'logs'
+                Write-Utf8NoBom -Path (Join-Path $lcDir 'lifecycle-20260731-000000-000.jsonl') -Lines $LifecycleLines
+                return ((& $script:HostExe -NoLogo -NoProfile -File $script:LedgerScript -Path $log -LifecyclePath $lcDir) -join "`n")
+            }
+        }
+
+        It 'an ALL-ATTRIBUTABLE ledger prints the floor and NO now-irrelevant caveat' {
+            # The chosen reading: a clean ledger reads clean. A caveat that recites an empty gap on
+            # every run trains its reader to skip the section that matters after the next change.
+            $out = Get-LedgerReadout -LifecycleLines @(
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version '1.29.0' -Cleared 3 -StillPresent 1)
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version '1.29.1' -Cleared 1 -StillPresent 0))
+            $out | Should -Match 'clearance provenance floor: v1\.29\.0'
+            $out | Should -Match 'pre-floor \(bounded gap\): 0'
+            $out | Should -Not -Match 'carry no usable plugin version'
+            $out | Should -Not -Match 'KNOWN, BOUNDED gap'
+        }
+
+        It 'a ledger WITH pre-floor records prints the caveat, naming how many' {
+            $out = Get-LedgerReadout -LifecycleLines @(
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version $null -Cleared 2 -StillPresent 1)
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version $null -Cleared 1 -StillPresent 0)
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version '1.29.0' -Cleared 3 -StillPresent 1))
+            $out | Should -Match 'clearance provenance floor: v1\.29\.0'
+            $out | Should -Match 'pre-floor \(bounded gap\): 2'
+            $out | Should -Match '2 record\(s\) carry no usable plugin version'
+            # The gap is LABELLED, and the records behind it are still COUNTED: 6 cleared + 2 still.
+            $out | Should -Match 'n=8'
+        }
+
+        It 'a log with NO attributable record at all still names the floor state honestly' {
+            $out = Get-LedgerReadout -LifecycleLines @(
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version $null -Cleared 3 -StillPresent 1))
+            $out | Should -Match 'clearance provenance floor: \(none -- no version-attributable record\)'
+            $out | Should -Match 'carry no usable plugin version'
+            # It must NOT invent a floor, and must NOT claim the data is attributable.
+            $out | Should -Not -Match 'clearance provenance floor: v'
+        }
+
+        It 'an ABSENT lifecycle log prints NO provenance block at all -- there is nothing to floor' {
+            $dir = Join-Path $TestDrive ('q3-abs-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            $log = Join-Path $dir 'diagnostics.jsonl'
+            Write-Utf8NoBom -Path $log -Lines @((New-CaptureLine -RuleId 'PSUseApprovedVerbs' -File $script:FileOther -Hash 'c1'))
+            $out = ((& $script:HostExe -NoLogo -NoProfile -File $script:LedgerScript -Path $log -LifecyclePath (Join-Path $dir 'nope')) -join "`n")
+            $out | Should -Match 'lifecycle logs read: NONE'
+            $out | Should -Not -Match 'clearance provenance floor'
+            $LASTEXITCODE | Should -Be 0
+        }
+    }
+}
