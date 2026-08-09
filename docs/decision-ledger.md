@@ -6,14 +6,16 @@ public view -- what is next, what is blocked, what is deferred -- is [ROADMAP.md
 which links here for the reasoning behind each line. (Split out of `ROADMAP-powershell-lsp.md` by
 dispatch 000166 leg B6b; a pointer stub remains at the old path so prior links resolve.)
 
-Status as of 2026-08-07. Plugin's current release: **v1.29.1**, GPL-3.0-or-later. Every fact in this
-paragraph was DERIVED live at run time by dispatch 000206 leg 3, each with its deriving command
+Status as of 2026-08-08. Plugin's current release: **v1.29.1**, GPL-3.0-or-later. Every fact in this
+paragraph was DERIVED live at run time by dispatch 000210 leg B, each with its deriving command
 named inline -- re-run rather than carried across from the header this pass replaces, on the
 standing reason 000195 leg A gave: a header's own version claim is the fact likeliest to have gone
-stale since it was written, so it is the one that must never be copied. The v1.29.1 version is
-TAGGED, gitsign-signed, and RELEASED: an annotated tag v1.29.1 whose object carries a
-`-----BEGIN SIGNED MESSAGE-----` block (`git cat-file -t v1.29.1` returns **tag**, not commit, and
-`git cat-file -p v1.29.1` shows the block) sits at commit
+stale since it was written, so it is the one that must never be copied. That rule earned its keep on
+this pass: every fact in THIS paragraph re-derived UNCHANGED from 000206 leg 3's reading, and the
+paragraph immediately below it did NOT -- which is recorded there rather than smoothed over. The
+v1.29.1 version is TAGGED, gitsign-signed, and RELEASED: an annotated tag v1.29.1 whose object
+carries a `-----BEGIN SIGNED MESSAGE-----` block (`git cat-file -t v1.29.1` returns **tag**, not
+commit, and `git cat-file -p v1.29.1` shows the block) sits at commit
 **6663dadff9c4dc15026230949187cf7ea044d4f9** on origin, tagged by `github-actions[bot]` from the
 release runner (`git for-each-ref refs/tags/v1.29.1` returns taggername `github-actions[bot]` and
 taggerdate **2026-08-07T22:59:24Z**), and the v1.29.1 GitHub Release is published as the current
@@ -23,26 +25,45 @@ tagName,isLatest` returns `isLatest=true` for v1.29.1 and `false` for v1.29.0, v
 v1.27.3). The tagged commit is the **PR #132** merge, `git log -1 --format=%s 6663dad` reading
 "Merge pull request #132 from manderse21/dispatch/powershell-lsp-000205-release-prep-vnext-...".
 
-**Main IS sitting on the tagged commit -- for the first time in this ledger's recent history.**
-`git describe --tags origin/main` reads **`v1.29.1`** with no commit-distance suffix at all, and
-`git rev-list --count v1.29.1..origin/main` returns **0**, so the tip and the tag are the same
-object: **6663dadff9c4dc15026230949187cf7ea044d4f9**. The header this pass replaces read
-`v1.29.0-45-g384e4fa` at 45 commits ahead, and **that 45 was retired by a cut, not by a rebase**:
-`git rev-list --count v1.29.0..v1.29.1` returns **50**, so the 45 uncut commits plus the five that
-landed after it are all now inside the released tag. This is the one state in which the ledger's
-"released" claim and its "on main" claim are the SAME claim, and it is stated explicitly because
-every recent predecessor of this paragraph had to state them separately. Both manifests PARSE to
-1.29.1 at the tag AND at the tip -- `git show v1.29.1:.claude-plugin/plugin.json` and
+**Main is 14 commits AHEAD of the tagged commit, and the paragraph this one replaces asserted the
+exact opposite.** Its predecessor read "Main IS sitting on the tagged commit -- for the first time in
+this ledger's recent history," which was true when 000206 leg 3 derived it on 2026-08-07 and false by
+the time 000210 leg B re-ran the same three commands on 2026-08-08. `git describe --tags origin/main`
+now reads **`v1.29.1-14-gfca450d`** -- with a commit-distance suffix, where the predecessor recorded
+none at all -- `git rev-list --count v1.29.1..origin/main` returns **14** where it recorded **0**, and
+the tip (**fca450dc226d2e3e402a35fb441370949ff2aaee**) is therefore a DIFFERENT object from the tag's
+commit (**6663dadff9c4dc15026230949187cf7ea044d4f9**), where the two were the same. This is the case
+the 000195 leg A rule exists for, caught by re-running rather than by reading.
+
+**The 14 are the 000206-through-000209 arc landing after the cut, and nothing about the RELEASE
+moved.** `git log --oneline v1.29.1..origin/main` lists them as four merged PRs -- **#133** (000206,
+the v1.29.1 ledger true-up and doctor slice 1), **#134** (000207, the quiescence gate and the
+per-profile sweep), **#135** (000208, the `ps_host` doctor check) and **#136** (000209, the Arc A
+lifecycle provenance stamp) -- so the drift is uncut commits on main, not a re-tag and not a
+republish. The ledger's "released" claim and its "on main" claim have therefore SEPARATED again,
+which is the ordinary state; the single-claim state the predecessor recorded lasted exactly one cut,
+and is noted here so a reader does not treat its disappearance as a regression. Both manifests still
+PARSE to 1.29.1 at the tag AND at the tip -- `git show v1.29.1:.claude-plugin/plugin.json` and
 `git show origin/main:.claude-plugin/plugin.json` both give `version` 1.29.1, and the same two reads
-of `.claude-plugin/marketplace.json` both give `metadata.version` 1.29.1, lockstep true at each ref.
-The `userConfig` knob count is **20** at the tag and `rulesets/base.psd1` carries **53** rules, both
-unchanged across the bump -- this was a PATCH and adds no knob. The CHANGELOG's newest dated heading
-is `## [1.29.1] - 2026-08-07` (`git show origin/main:CHANGELOG.md`), whose date EQUALS the publish
-day, and `## [Unreleased]` stands immediately above it holding **nothing** -- deliberately, per the
-convention 000201 leg 4 derived. The old publish gap (the registry once served a stale 1.3.0) stays
-CLOSED. The v1.29.0 and v1.28.x verification facts are not restated here: they live in this
-document's release-table rows in Section 2, which is where the header's predecessor facts get
-relocated (the convention 000161 leg 2 established, and the 000123 lesson against carrying
+of `.claude-plugin/marketplace.json` both give `metadata.version` 1.29.1, lockstep true at each ref --
+so the 14 commits carry no version bump. The `userConfig` knob count is **20** at the tag AND at the
+tip, and `rulesets/base.psd1` is byte-identical across the two refs at **53** rules, so the arc added
+no knob and no rule.
+
+The CHANGELOG's newest dated heading is `## [1.29.1] - 2026-08-07` (`git show origin/main:CHANGELOG.md`),
+whose date EQUALS the publish day, and `## [Unreleased]` stands immediately above it **no longer
+holding nothing**: it now carries the **two 000208 additions** -- the fail-capable `ps_host` doctor
+check and the unconditional plugin-version header on the doctor and `/status` -- beneath its own
+leading classification of **MINOR, so the next cut is 1.30.0**. Read live rather than inferred from
+the arc, `[Unreleased]` carries **no entry for 000209**: that dispatch's four commits touched
+`scripts/`, `tests/`, `ROADMAP.md` and this ledger but never `CHANGELOG.md`, and
+`git log --oneline v1.29.1..origin/main -- CHANGELOG.md` returns the single commit **7ac5560**
+("000208: changelog, ledger F10 exclusion, roadmap and command docs"). That absence is RECORDED, not
+repaired -- `CHANGELOG.md` is outside this pass's write surface, so whether the lifecycle stamp owes
+an entry is left to the dispatch that owns that file. The old publish gap (the registry once served a
+stale 1.3.0) stays CLOSED. The v1.29.0 and v1.28.x verification facts are not restated here: they
+live in this document's release-table rows in Section 2, which is where the header's predecessor
+facts get relocated (the convention 000161 leg 2 established, and the 000123 lesson against carrying
 superseded version claims forward).
 
 **The v1.29.1 release was verified end to end at the 000161 standard by dispatch 000206 leg 1, and
