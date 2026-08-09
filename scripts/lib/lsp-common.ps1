@@ -244,7 +244,7 @@ function Resolve-PsHost {
 # shipped 5000 ms, so per OQ2 the profiles keep 5000 and the cell is not a departure at all.
 # That figure is the 000207 per-profile sweep, taken under a passing quiescence gate and
 # recorded in docs/benchmarks.md -- which is the authority. Re-derive from that page rather
-# than trusting this line; it supersedes the v1.24.3-era 3292 ms / 34.2 pct this comment read.
+# than trusting this line.
 # orgPolicy is absent because a profile cannot hardcode a site-specific path; `strict` names
 # it as the intended slot and the operator supplies the value.
 #
