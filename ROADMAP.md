@@ -42,6 +42,23 @@ open work. What shipped and when is [CHANGELOG.md](./CHANGELOG.md); why is the
   un-instrumented past cannot be recovered; it can be bounded and named, and now is. Recorded in the
   [decision ledger](docs/decision-ledger.md).
 
+  **Both design questions that work carried are now adjudicated; neither is left standing as open.**
+
+  *Is the floor absolute, or relative to what the reader still holds?* It is
+  **retained-window-relative by design.** The floor names the earliest version-attributable release
+  among the records *currently retained*, and it RISES as the family rolls --
+  `logs/lifecycle-<stamp>.jsonl` is a stamped rolling family that `session-start.ps1`'s
+  `Invoke-LogSweep` trims to the `keepLastN` newest. That is the intended reading rather than a
+  defect: the ledger reports what it can still see, and a floor pinned to a release whose records
+  have aged out would claim knowledge the reader no longer holds. One **wording** follow-up is
+  carried and is deliberately not release-blocking -- the shipped caveat states the floor and the
+  bounded gap, but the printed text does not yet say *window-relative*; that meaning currently lives
+  only in a source comment, so a reader has to infer it.
+
+  *Do version and provenance belong in user-facing documentation?* **Yes** -- version plus provenance
+  is a supportability surface, not an internal diagnostic. It is scheduled as the next slice rather
+  than closed here; see "What is next".
+
 ## What is next
 
 - **Doctor and command surface.** Continuing to close the gap between "the plugin is installed"
@@ -52,6 +69,15 @@ open work. What shipped and when is [CHANGELOG.md](./CHANGELOG.md); why is the
   the survey's remaining candidate -- surfacing security-classifier verdicts -- is **declined
   while the 000036 boundary stands**, and reopening that boundary is an attended ruling, not a
   slice. See the [decision ledger](docs/decision-ledger.md).
+
+- **Surface the version stamp and the provenance floor where a user will actually read them.** The
+  adjudicated successor to Arc A's provenance work, and the doctor lane's next concrete slice.
+  Version and provenance are a supportability surface, so they belong in user-facing documentation
+  and not only in a reader-side ledger. Two places: the README's support / trust section, and a
+  doctor / `status` line -- so that "what version am I on, and how far back can that answer be
+  trusted?" is answerable without running the efficacy ledger. The in-record stamp and the floor
+  already ship; this item is the **surfacing**, and it carries the one wording follow-up noted
+  above (say *window-relative* in the printed caveat, not only in a source comment).
 
 > **Plugin-catalog submission is not an item on this list.** It is maintainer-owned and is not
 > tracked on this page as an open action. It previously appeared under "What is next" as "the queued
