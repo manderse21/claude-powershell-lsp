@@ -74,6 +74,27 @@ untouched, `userConfig` stays at 20), `CONTRACT.md` is untouched, and the frozen
   a stranger pastes into a bug report. Report-only; it contributes no result object and cannot
   move the exit code. No new version-derivation logic was added.
 
+- **Every lifecycle record now carries the plugin version that emitted it, and the efficacy ledger
+  prints a provenance floor over the clearance columns.** `logs/lifecycle-<stamp>.jsonl` gains one
+  field, `pluginVersion`, stamped in `New-LifecycleLedgerRecords` at emit time from
+  `Get-PluginVersion`. **In-record rather than in-path** is the design: that sibling log lands in a
+  flat rolling family whose filenames carry a timestamp and no version, so unlike the capture log
+  -- version-attributable only because its marketplace-cache path says so -- its path had nothing
+  to attribute a record to, and a field survives a file move, a rotation, and the reader's union.
+  `scripts/rule-efficacy-ledger.ps1` reads that field and prints a `clearance provenance floor`
+  naming the earliest version-attributable release, the attributable / pre-floor split, and the
+  versions present earliest first. The floor is the **minimum** -- where version-attributable
+  knowledge *begins* -- and `Get-PluginVersion`'s own `0.0.0-unknown` sentinel counts pre-floor
+  rather than becoming a version: a maximum would disown every older stamped record, and reading
+  the sentinel would attribute real clearance data to a release that never shipped. The
+  bounded-gap caveat prints only when a pre-floor record actually exists, so an all-attributable
+  ledger reads clean and a gap is never silent. **Forward-only, and nothing is filtered** -- no
+  historical record was rewritten, records below the floor are still *counted* in
+  `fixed_next_turn_rate` and `persistence_rate` and merely never attributed to a version, and no
+  previously published figure changes value. `schema` stays `powershell-lsp-lifecycle/1`: an added
+  field whose absence the only reader already tolerates, so a log mixing stamped and unstamped
+  records reads unchanged.
+
 ## [1.29.1] - 2026-08-07
 PATCH: **the native-serve pump survives a dead peer, and the reporting scripts stop claiming more
 than they measured.** No knob is added, removed, renamed, or re-defaulted -- both
