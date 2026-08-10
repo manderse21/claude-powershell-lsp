@@ -1214,6 +1214,128 @@ function Get-DoctorNativeServeObservation {
     }
 }
 
+function Get-DoctorProvenanceObservation {
+    # Resolve the CLEARANCE PROVENANCE FLOOR that the report-only header line states beside the
+    # version (dispatch 000216). The floor answers the second question every support interaction
+    # asks after "what version are you on?" -- "and how far back can that answer be trusted?"
+    #
+    # SURFACES, NEVER RE-DERIVES. The floor is computed by Get-LifecycleProvenanceFloor in
+    # scripts/rule-efficacy-ledger.ps1 and nowhere else. This asks that function, exactly as the
+    # version header asks Get-PluginVersion. A private re-implementation here could disagree with
+    # the ledger about the same log -- the drift the single-source rule exists to refuse -- and
+    # would also have to re-decide what counts as attributable, which is the ledger's ruling.
+    #
+    # THE DOT-SOURCE IS INSIDE THIS FUNCTION ON PURPOSE. The ledger carries a param() block of its
+    # own, and dot-sourcing a .ps1 runs that block in the CALLING scope (the 000156 lesson recorded
+    # in the ledger's own header). Loading it here confines its parameters and its function
+    # definitions to this function's scope, so doctor.ps1's script scope is untouched.
+    #
+    # FAIL-OPEN, ALWAYS. This is a readout over a telemetry log. Any failure to locate, load or
+    # read degrades to an UNDETERMINED observation the renderer states honestly -- never a throw,
+    # never a fabricated floor, and never a result object, a check row, or an exit-code input.
+    #
+    # -LifecyclePath is a TEST SEAM, not a knob: empty (the shipped call) lets the ledger resolve
+    # its own rolling family under Get-LogDir, carrying the search provenance with it.
+    param([string] $ScriptsDir = '', [string] $LifecyclePath = '')
+    $none = @{
+        Determinable = $false; Reason = ''; State = ''; Floor = ''
+        Attributable = 0; PreFloor = 0; Records = 0; Present = $false; RootKnown = $true
+    }
+    try {
+        $dir = $ScriptsDir
+        if ([string]::IsNullOrWhiteSpace($dir)) { $dir = $PSScriptRoot }
+        $ledgerScript = Join-Path $dir 'rule-efficacy-ledger.ps1'
+        if (-not (Test-Path -LiteralPath $ledgerScript -PathType Leaf)) {
+            $none.Reason = 'the efficacy ledger (scripts/rule-efficacy-ledger.ps1) is missing, so the floor cannot be asked for.'
+            return $none
+        }
+        # CAPTURED BEFORE THE DOT-SOURCE, and this is not defensive style -- it is required. The
+        # ledger's param() block declares a $LifecyclePath of its own, and dot-sourcing runs that
+        # block in THIS scope, so the line below resets the parameter to the ledger's '' default.
+        # Reading it afterwards would silently search the ledger's default family instead of the
+        # caller's, which is the same silent-wrong failure recorded in the ledger's own header
+        # (dispatch 000156) -- observed here, not inferred: the first build of this function read
+        # it after the load and every explicit path came back as the fallback-root rendering.
+        $wantedLifecyclePath = [string]$LifecyclePath
+        . $ledgerScript
+        # Resolved through the provenance-carrying seam (dispatch 000185, D1-B) so a NOT-FOUND
+        # result knows whether it searched the real data root or a silent temp substitute -- the
+        # difference between "nothing was ever captured" and "this reader could not find it".
+        $search = Resolve-LifecycleLogSearch -LifecyclePath $wantedLifecyclePath
+        $life = Read-LifecycleLog -LogPaths @($search.Paths) -Search $search
+        $floor = Get-LifecycleProvenanceFloor -Versions $life.Versions -PreFloor ([int]$life.PreFloorRecords)
+        return @{
+            Determinable = $true
+            Reason       = ''
+            State        = [string]$floor.State
+            Floor        = [string]$floor.Floor
+            Attributable = [int]$floor.Attributable
+            PreFloor     = [int]$floor.PreFloor
+            Records      = [int]$life.Records
+            Present      = [bool]$life.Present
+            RootKnown    = [bool]$life.RootKnown
+        }
+    } catch {
+        $none.Reason = ('the lifecycle provenance floor could not be read: ' + $_.Exception.Message)
+        return $none
+    }
+}
+
+function Format-DoctorProvenanceFloor {
+    # PURE. Render the floor observation as the VALUE half of the header line (the renderers
+    # prepend the label), so this is unit-testable without a lifecycle log (dispatch 000216).
+    #
+    # FIVE claims, five renderings, because they are five different things to be true:
+    #   floored                    -- a floor exists; name it, and say it is window-relative.
+    #   records, none attributable -- the whole retained window is the bounded gap.
+    #   a log exists, no records   -- captured nothing yet. NOT the same claim as no log at all.
+    #   no log, root KNOWN         -- '(absent)': nothing has been written. A claim about the world.
+    #   no log, root NOT known     -- the search ran under a substituted data root, so ABSENT and
+    #                                 NOT-FOUND cannot be told apart from this evidence. Saying
+    #                                 '(absent)' here would be the 000182 defect: a claim about the
+    #                                 world published on evidence about the reader.
+    #
+    # The floored rendering says RETAINED rather than "earliest ever", because the lifecycle family
+    # is a rolling window Invoke-LogSweep trims to keepLastN -- the floor RISES as records age out.
+    param(
+        [bool] $Determinable, [string] $Reason = '', [string] $State = '', [string] $Floor = '',
+        [int] $Attributable = 0, [int] $PreFloor = 0, [int] $Records = 0,
+        [bool] $Present = $false, [bool] $RootKnown = $true
+    )
+    if (-not $Determinable) {
+        $why = $Reason
+        if ([string]::IsNullOrWhiteSpace($why)) { $why = 'the lifecycle provenance floor could not be read.' }
+        return ('(undetermined) -- ' + $why)
+    }
+    if ($State -eq 'floored') {
+        return ('v' + $Floor + '  (earliest version-attributable release in the RETAINED lifecycle window; ' +
+            [string]$Attributable + ' attributable, ' + [string]$PreFloor + ' pre-floor)')
+    }
+    if ($State -eq 'gap-only') {
+        return ('(none) -- ' + [string]$Records + ' retained lifecycle record(s), none version-attributable.')
+    }
+    if (-not $Present) {
+        if (-not $RootKnown) {
+            return ('(undetermined) -- the lifecycle log was searched under a FALLBACK data root, so this run ' +
+                'cannot tell an uncaptured signal from one it failed to locate. Set CLAUDE_PLUGIN_DATA and re-run.')
+        }
+        return '(absent) -- no lifecycle log has been written yet.'
+    }
+    return '(absent) -- a lifecycle log exists but holds no record yet.'
+}
+
+function Get-DoctorProvenanceHeader {
+    # Observe then render, in one call, so the full report and the compact status share ONE wiring
+    # of the two halves rather than each repeating the parameter splat. Both surfaces state the
+    # same floor from the same source; a second copy of this three-line join is a second place for
+    # them to drift apart.
+    param([string] $ScriptsDir = '', [string] $LifecyclePath = '')
+    $o = Get-DoctorProvenanceObservation -ScriptsDir $ScriptsDir -LifecyclePath $LifecyclePath
+    return (Format-DoctorProvenanceFloor -Determinable $o.Determinable -Reason $o.Reason `
+            -State $o.State -Floor $o.Floor -Attributable $o.Attributable -PreFloor $o.PreFloor `
+            -Records $o.Records -Present $o.Present -RootKnown $o.RootKnown)
+}
+
 # ===========================================================================
 # Compose + render
 # ===========================================================================
@@ -1368,11 +1490,19 @@ function Format-DoctorReport {
     #
     # It is a PARAMETER with a shipped-source default rather than a direct call, so the renderer
     # stays injectable for tests; blank means "ask the one source of truth".
-    param([object[]] $Results, [string] $Version = '')
+    #
+    # $Provenance (dispatch 000216) rides beside it as a SECOND header line, under the same rule
+    # and for the same reason: the clearance provenance floor is a fact, not a verdict, so it is a
+    # header and never a row. It contributes no result object, so the "of N checks" count and the
+    # exit code are computed from exactly the same inputs as before this line existed. Same seam
+    # shape as $Version -- blank means "ask the one source of truth".
+    param([object[]] $Results, [string] $Version = '', [string] $Provenance = '')
     if ([string]::IsNullOrWhiteSpace($Version)) { $Version = [string](Get-PluginVersion) }
+    if ([string]::IsNullOrWhiteSpace($Provenance)) { $Provenance = Get-DoctorProvenanceHeader }
     $lines = @()
     $lines += 'powershell-lsp doctor -- preflight self-check (report-only)'
     $lines += ('  version: ' + $Version)
+    $lines += ('  provenance floor: ' + $Provenance)
     $lines += ''
     foreach ($r in $Results) {
         $lines += ('  ' + ('{0,-7}' -f $r.Status.ToUpperInvariant()) + '  ' + $r.Component)
@@ -1405,12 +1535,17 @@ function Format-DoctorSummary {
     # at the full report rather than silently dropping the fix text.
     # The version header rides here too, for the same reason and from the same source as in
     # Format-DoctorReport: /status is the surface a user is most likely to paste into a support
-    # thread, so it is the one that can least afford to omit which build produced it.
-    param([object[]] $Results, [string] $Version = '')
+    # thread, so it is the one that can least afford to omit which build produced it. The
+    # provenance floor (dispatch 000216) rides for exactly that reason as well -- the two facts
+    # are one answer, and splitting them across surfaces would make /status the surface that
+    # states a version it cannot date.
+    param([object[]] $Results, [string] $Version = '', [string] $Provenance = '')
     if ([string]::IsNullOrWhiteSpace($Version)) { $Version = [string](Get-PluginVersion) }
+    if ([string]::IsNullOrWhiteSpace($Provenance)) { $Provenance = Get-DoctorProvenanceHeader }
     $lines = @()
     $lines += 'powershell-lsp status -- ' + @($Results).Count + ' checks (report-only)'
     $lines += ('  version: ' + $Version)
+    $lines += ('  provenance floor: ' + $Provenance)
     $lines += ''
     foreach ($r in $Results) {
         $lines += ('  ' + ('{0,-7}' -f $r.Status.ToUpperInvariant()) + '  ' + $r.Component)
