@@ -3661,6 +3661,51 @@ Describe 'Preflight doctor -- clearance provenance floor readout (dispatch 00021
     }
 }
 
+Describe 'README documents the version + provenance-floor support answer (dispatch 000216)' {
+    # SINGLE-SOURCED BY CONSTRUCTION is the design claim; these give it teeth. The README does not
+    # restate a floor value that could go stale -- it points at the live readout -- so what must be
+    # guarded is that the doc and the runtime name the SAME sources and cover the SAME states.
+    #
+    # Keyed on NAMES and on renderings derived LIVE from the shipped formatter, never on prose: a
+    # test coupled to wording would break on a copy-edit and would still not notice a state the
+    # formatter can reach but the docs never mention (the 000110 lesson).
+    BeforeAll {
+        . (Join-Path $script:ScriptsDir 'doctor.ps1')
+        $script:ProvReadme = Get-Content -LiteralPath (Join-Path $script:PluginRoot 'README.md') -Raw
+        $script:ProvDoctorSrc = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'doctor.ps1') -Raw
+    }
+    It 'names the two single sources the readout reads -- doc and runtime cannot drift apart' {
+        foreach ($fn in @('Get-PluginVersion', 'Get-LifecycleProvenanceFloor')) {
+            $script:ProvReadme | Should -Match $fn
+            $script:ProvDoctorSrc | Should -Match $fn      # the paired half: the runtime really reads it
+        }
+    }
+    It 'documents every state token the SHIPPED formatter can render' {
+        # Ground truth from the formatter itself. A sixth state added without a doc line turns
+        # this RED, instead of shipping a rendering no reader has ever been told how to read.
+        $renderings = @(
+            (Format-DoctorProvenanceFloor -Determinable $false)
+            (Format-DoctorProvenanceFloor -Determinable $true -State 'gap-only' -Records 3 -Present $true)
+            (Format-DoctorProvenanceFloor -Determinable $true -State 'none' -Present $false -RootKnown $true)
+            (Format-DoctorProvenanceFloor -Determinable $true -State 'none' -Present $true)
+            (Format-DoctorProvenanceFloor -Determinable $true -State 'none' -Present $false -RootKnown $false)
+        )
+        @($renderings).Count | Should -Be 5
+        foreach ($r in $renderings) {
+            $token = ([regex]::Match($r, '^\((?<t>[a-z]+)\)')).Groups['t'].Value
+            $token | Should -Not -BeNullOrEmpty                       # vacuity floor
+            $script:ProvReadme | Should -Match ('`\(' + $token + '\)`')
+        }
+    }
+    It 'states the window-relative meaning and points at the live readout' {
+        $script:ProvReadme | Should -Match 'window-relative'
+        $script:ProvReadme | Should -Match 'keepLastN'
+        $script:ProvReadme | Should -Match 'still\s+\*\*retained\*\*|\*\*still\s+retained\*\*'
+        $script:ProvReadme | Should -Match '/powershell-lsp:status'
+        $script:ProvReadme | Should -Match '/powershell-lsp:doctor'
+    }
+}
+
 Describe 'Preflight doctor -- test diagnostic observed end-to-end (item 8, dispatch 000166)' {
     BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
 
