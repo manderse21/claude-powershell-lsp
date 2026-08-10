@@ -254,6 +254,11 @@ Describe 'G1 -- AST purity of every dot-sourced shared library (dispatch 000156)
         $names | Should -Contain 'lsp-scan-common.ps1'
         $names | Should -Contain 'security-classifier.ps1'
         $names | Should -Contain 'serve-shim-common.ps1'
+        # dispatch 000216. Named explicitly so the purity contract cannot quietly stop applying to
+        # it: this library exists BECAUSE the alternative -- dot-sourcing the param()-carrying
+        # efficacy ledger from doctor.ps1 to reach the provenance floor -- is the exact thing the
+        # invariant below refuses, and it refused it live.
+        $names | Should -Contain 'lifecycle-provenance.ps1'
     }
 
     It 'NO covered library carries a top-level param() block' {

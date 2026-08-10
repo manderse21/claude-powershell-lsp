@@ -3492,6 +3492,239 @@ Describe 'Preflight doctor -- plugin version report (dispatch 000208, report-onl
     }
 }
 
+Describe 'Preflight doctor -- clearance provenance floor readout (dispatch 000216, report-only header)' {
+    # The floor answers the question that follows "what version are you on?" -- "and how far back
+    # can that answer be trusted?" It rides as a SECOND header line under the same 000208 ruling
+    # the version line was placed by: a fact is not a pass/fail result, so it is never a check row
+    # and can never inflate the "of N checks" count or move the exit code.
+    #
+    # The load-bearing property these guards pin is SINGLE SOURCING: the value the doctor prints
+    # must be the value Get-LifecycleProvenanceFloor computes, asked live, over the same log --
+    # never a second attributability rule that could disagree with the efficacy ledger.
+    BeforeAll {
+        . (Join-Path $script:ScriptsDir 'doctor.ps1')
+        # The floor's own source, loaded separately HERE so the expectations below are derived
+        # from it rather than written as literals. It is the same library doctor.ps1 consults and
+        # the same one the efficacy ledger renders from, so a change to its ruling moves every
+        # side at once -- which is the property this Describe exists to pin.
+        . (Join-Path $script:ScriptsDir 'lib/lifecycle-provenance.ps1')
+
+        $script:ProvFloored = Join-Path $TestDrive 'prov-floored'
+        $script:ProvGapOnly = Join-Path $TestDrive 'prov-gap-only'
+        $script:ProvNoLog = Join-Path $TestDrive 'prov-no-log'
+        foreach ($d in @($script:ProvFloored, $script:ProvGapOnly, $script:ProvNoLog)) {
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+        }
+        # Two stamped releases plus one unstamped record: the floor must be the EARLIEST stamped
+        # one (1.9.0, which also outranks 1.10.0 lexically -- so a string sort would pick wrong)
+        # and the unstamped record must land pre-floor rather than becoming a version.
+        $lines = @(
+            ([ordered]@{ schema = 'powershell-lsp-lifecycle/1'; ruleId = 'PSAvoidUsingCmdletAliases'; cleared = 1; stillPresent = 0; pluginVersion = '1.10.0' } | ConvertTo-Json -Compress)
+            ([ordered]@{ schema = 'powershell-lsp-lifecycle/1'; ruleId = 'PSAvoidUsingCmdletAliases'; cleared = 0; stillPresent = 1; pluginVersion = '1.9.0' } | ConvertTo-Json -Compress)
+            ([ordered]@{ schema = 'powershell-lsp-lifecycle/1'; ruleId = 'PSUseApprovedVerbs'; cleared = 1; stillPresent = 0 } | ConvertTo-Json -Compress)
+        )
+        Set-Content -LiteralPath (Join-Path $script:ProvFloored 'lifecycle-20260801-120000-000.jsonl') -Value $lines -Encoding ascii
+        Set-Content -LiteralPath (Join-Path $script:ProvGapOnly 'lifecycle-20260801-120000-000.jsonl') `
+            -Value @(([ordered]@{ schema = 'powershell-lsp-lifecycle/1'; ruleId = 'PSUseApprovedVerbs'; cleared = 1; stillPresent = 0 } | ConvertTo-Json -Compress)) -Encoding ascii
+
+        # This block's own result fixtures -- deliberately not borrowed from the 000208 Describe
+        # above, so a filtered run of this Describe alone still has everything it needs.
+        $script:ProvOneCheck = @((New-DoctorResult -Status pass -Component 'Only check' -Detail 'd'))
+        $script:ProvAllUnknown = @(
+            (New-DoctorResult -Status unknown -Component 'Alpha check' -Detail 'a')
+            (New-DoctorResult -Status unknown -Component 'Beta check' -Detail 'b')
+        )
+    }
+
+    It 'the floored fixture really produces a floor (the guards below cannot pass vacuously)' {
+        $o = Get-DoctorProvenanceObservation -LifecyclePath $script:ProvFloored
+        $o.Determinable | Should -BeTrue
+        $o.State | Should -BeExactly 'floored'
+        $o.Floor | Should -Not -BeNullOrEmpty
+    }
+
+    It 'the printed floor IS Get-LifecycleProvenanceFloor''s answer, asked live -- not a second derivation' {
+        # Derived on both sides from the SAME fixture: the doctor through its own observation, the
+        # expectation straight from the ledger function. A private attributability rule in the
+        # doctor that ordered differently (or read the 0.0.0-unknown sentinel as a version) would
+        # turn this RED rather than quietly publishing a floor the efficacy ledger disagrees with.
+        $search = Resolve-LifecycleLogSearch -LifecyclePath $script:ProvFloored
+        $life = Read-LifecycleLog -LogPaths @($search.Paths) -Search $search
+        $expected = Get-LifecycleProvenanceFloor -Versions $life.Versions -PreFloor ([int]$life.PreFloorRecords)
+        [string]$expected.Floor | Should -BeExactly '1.9.0'      # semantic order, not lexical
+        (Get-DoctorProvenanceHeader -LifecyclePath $script:ProvFloored) |
+            Should -BeExactly ('v' + [string]$expected.Floor + '  (earliest version-attributable release in the ' +
+                'RETAINED lifecycle window; ' + [string]$expected.Attributable + ' attributable, ' +
+                [string]$expected.PreFloor + ' pre-floor)')
+    }
+
+    It 'states RETAINED -- the floor is window-relative, not a permanent fact' {
+        # The one semantic that makes the number safe to quote: the lifecycle family is swept to
+        # keepLastN, so the floor RISES as records age out. A readout that said "earliest" full
+        # stop would be read as history.
+        (Get-DoctorProvenanceHeader -LifecyclePath $script:ProvFloored) | Should -Match 'RETAINED'
+    }
+
+    It 'renders the honest (absent) state when NO lifecycle log exists' {
+        # An explicit -LifecyclePath is always a KNOWN root (the caller named the directory), so a
+        # miss there really is a miss -- which is what entitles this branch to the word.
+        $o = Get-DoctorProvenanceObservation -LifecyclePath $script:ProvNoLog
+        $o.Determinable | Should -BeTrue
+        $o.Present | Should -BeFalse
+        $o.RootKnown | Should -BeTrue
+        (Get-DoctorProvenanceHeader -LifecyclePath $script:ProvNoLog) |
+            Should -BeExactly '(absent) -- no lifecycle log has been written yet.'
+    }
+
+    It 'a log with records but NO attributable one is a different claim from no log at all' {
+        # Three distinct states must not render identically -- the same never-a-silent-skip rule
+        # the ledger applies to a zero-row ledger versus a ledger over nothing.
+        $gap = Get-DoctorProvenanceHeader -LifecyclePath $script:ProvGapOnly
+        $none = Get-DoctorProvenanceHeader -LifecyclePath $script:ProvNoLog
+        $floored = Get-DoctorProvenanceHeader -LifecyclePath $script:ProvFloored
+        $gap | Should -Match 'none version-attributable'
+        $gap | Should -Not -BeExactly $none
+        $gap | Should -Not -BeExactly $floored
+    }
+
+    It 'a FALLBACK data root never renders as (absent) -- that is a claim about the world' {
+        # The 000182 defect, guarded at this surface: 'absent' means nothing was ever captured. A
+        # search under a substituted root cannot support it, so this state says so instead.
+        $fallback = Format-DoctorProvenanceFloor -Determinable $true -State 'none' -Present $false -RootKnown $false
+        $fallback | Should -Not -Match 'absent'
+        $fallback | Should -Match 'FALLBACK data root'
+        # The paired control: the SAME state with a known root is exactly the one that may say it.
+        (Format-DoctorProvenanceFloor -Determinable $true -State 'none' -Present $false -RootKnown $true) |
+            Should -Match 'absent'
+    }
+
+    It 'is NOT a check row -- it never appears in the counts or the check total' {
+        # The discriminator the 000208 header ruling turns on, re-applied: were the floor a row, a
+        # one-check fixture would render "of 2 checks" and /status would say "2 checks".
+        foreach ($render in @((Format-DoctorReport -Results $script:ProvOneCheck),
+                (Format-DoctorSummary -Results $script:ProvOneCheck))) {
+            $render | Should -Match 'provenance floor: '
+            $render | Should -Match ([regex]::Escape('(of 1 checks)'))
+            $render | Should -Not -Match 'PASS\s+provenance'
+            $render | Should -Not -Match 'UNKNOWN\s+provenance'
+        }
+        (Format-DoctorSummary -Results $script:ProvOneCheck) | Should -Match 'status -- 1 checks'
+    }
+
+    It 'renders on BOTH surfaces even when every check is UNKNOWN, and adds no fail of its own' {
+        foreach ($r in @($script:ProvAllUnknown)) { $r.Status | Should -Be 'unknown' }   # vacuity floor
+        (Format-DoctorReport -Results $script:ProvAllUnknown) | Should -Match 'provenance floor: '
+        (Format-DoctorSummary -Results $script:ProvAllUnknown) | Should -Match 'provenance floor: '
+        $allFail = @((New-DoctorResult -Status fail -Component 'Gamma check' -Detail 'g' -Remediation 'fix'))
+        $out = Format-DoctorReport -Results $allFail
+        $out | Should -Match 'provenance floor: '
+        $out | Should -Match ([regex]::Escape('summary: 0 pass, 1 fail, 0 unknown (of 1 checks)'))
+    }
+
+    It 'the injected-provenance seam is honored (the renderers stay testable)' {
+        (Format-DoctorReport -Results $script:ProvAllUnknown -Provenance 'v9.9.9-injected') |
+            Should -Match 'provenance floor: v9\.9\.9-injected'
+        (Format-DoctorSummary -Results $script:ProvAllUnknown -Provenance 'v9.9.9-injected') |
+            Should -Match 'provenance floor: v9\.9\.9-injected'
+    }
+
+    It 'FAILS OPEN -- an unreachable library yields an honest line, never a throw' {
+        $missing = Join-Path $TestDrive 'no-scripts-dir-here'
+        { Get-DoctorProvenanceObservation -ScriptsDir $missing } | Should -Not -Throw
+        $o = Get-DoctorProvenanceObservation -ScriptsDir $missing
+        $o.Determinable | Should -BeFalse
+        (Get-DoctorProvenanceHeader -ScriptsDir $missing) | Should -Match 'undetermined'
+    }
+
+    It 'adds NO second attributability derivation -- the doctor calls the library, it does not re-rule' {
+        # The single-source guard, at the source level: the doctor must not grow its own opinion
+        # about what counts as a version. The paired control proves the strings are absent from
+        # doctor.ps1 because they live in the shared library, not because they exist nowhere.
+        $doctorSrc = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'doctor.ps1') -Raw
+        $libSrc = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'lib/lifecycle-provenance.ps1') -Raw
+        $doctorSrc | Should -Match 'Get-LifecycleProvenanceFloor'
+        @([regex]::Matches($doctorSrc, [regex]::Escape('0.0.0-unknown'))).Count | Should -Be 0
+        @([regex]::Matches($doctorSrc, [regex]::Escape('[System.Version]::TryParse'))).Count | Should -Be 0
+        @([regex]::Matches($libSrc, [regex]::Escape('0.0.0-unknown'))).Count | Should -BeGreaterThan 0
+        @([regex]::Matches($libSrc, [regex]::Escape('[System.Version]::TryParse'))).Count | Should -BeGreaterThan 0
+    }
+
+    It 'ONE definition serves both readers -- neither file carries a copy of the floor' {
+        # The point of the 000216 relocation, pinned. Reaching the floor by dot-sourcing the ledger
+        # is not merely untidy, it is forbidden: the ledger is an entry point with a param() block,
+        # and dot-sourcing a .ps1 runs that block in the caller's scope (hit live while building
+        # this, then refused structurally by the G1 purity guard). So the definition lives in the
+        # library and BOTH consumers ask it -- there is no second copy to drift.
+        $libSrc = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'lib/lifecycle-provenance.ps1') -Raw
+        @([regex]::Matches($libSrc, '(?m)^function Get-LifecycleProvenanceFloor\b')).Count | Should -Be 1
+        foreach ($consumer in @('doctor.ps1', 'rule-efficacy-ledger.ps1')) {
+            $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir $consumer) -Raw
+            $src | Should -Match ([regex]::Escape("lib/lifecycle-provenance.ps1"))   # it loads the library
+            @([regex]::Matches($src, '(?m)^function Get-LifecycleProvenanceFloor\b')).Count | Should -Be 0
+        }
+        # ...and the doctor never dot-sources the param()-carrying entry point to get there.
+        (Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'doctor.ps1') -Raw) |
+            Should -Not -Match ([regex]::Escape("rule-efficacy-ledger.ps1"))
+    }
+
+    It 'the -LifecyclePath seam is honored -- two fixtures give two answers' {
+        # Re-derived from the CURRENT free-pass risk (the earlier version of this guard pinned the
+        # dot-source clobber, whose premise the relocation removed). What can still go wrong is a
+        # readout that ignores the path it was handed and reports whatever the default family says
+        # -- which is exactly how the clobber presented. Two fixtures, two answers, so a readout
+        # that ignored its argument could not pass.
+        (Get-DoctorProvenanceHeader -LifecyclePath $script:ProvFloored) |
+            Should -Not -BeExactly (Get-DoctorProvenanceHeader -LifecyclePath $script:ProvNoLog)
+        (Get-DoctorProvenanceObservation -LifecyclePath $script:ProvFloored).State | Should -BeExactly 'floored'
+        (Get-DoctorProvenanceObservation -LifecyclePath $script:ProvNoLog).State | Should -BeExactly 'none'
+    }
+}
+
+Describe 'README documents the version + provenance-floor support answer (dispatch 000216)' {
+    # SINGLE-SOURCED BY CONSTRUCTION is the design claim; these give it teeth. The README does not
+    # restate a floor value that could go stale -- it points at the live readout -- so what must be
+    # guarded is that the doc and the runtime name the SAME sources and cover the SAME states.
+    #
+    # Keyed on NAMES and on renderings derived LIVE from the shipped formatter, never on prose: a
+    # test coupled to wording would break on a copy-edit and would still not notice a state the
+    # formatter can reach but the docs never mention (the 000110 lesson).
+    BeforeAll {
+        . (Join-Path $script:ScriptsDir 'doctor.ps1')
+        $script:ProvReadme = Get-Content -LiteralPath (Join-Path $script:PluginRoot 'README.md') -Raw
+        $script:ProvDoctorSrc = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'doctor.ps1') -Raw
+    }
+    It 'names the two single sources the readout reads -- doc and runtime cannot drift apart' {
+        foreach ($fn in @('Get-PluginVersion', 'Get-LifecycleProvenanceFloor')) {
+            $script:ProvReadme | Should -Match $fn
+            $script:ProvDoctorSrc | Should -Match $fn      # the paired half: the runtime really reads it
+        }
+    }
+    It 'documents every state token the SHIPPED formatter can render' {
+        # Ground truth from the formatter itself. A sixth state added without a doc line turns
+        # this RED, instead of shipping a rendering no reader has ever been told how to read.
+        $renderings = @(
+            (Format-DoctorProvenanceFloor -Determinable $false)
+            (Format-DoctorProvenanceFloor -Determinable $true -State 'gap-only' -Records 3 -Present $true)
+            (Format-DoctorProvenanceFloor -Determinable $true -State 'none' -Present $false -RootKnown $true)
+            (Format-DoctorProvenanceFloor -Determinable $true -State 'none' -Present $true)
+            (Format-DoctorProvenanceFloor -Determinable $true -State 'none' -Present $false -RootKnown $false)
+        )
+        @($renderings).Count | Should -Be 5
+        foreach ($r in $renderings) {
+            $token = ([regex]::Match($r, '^\((?<t>[a-z]+)\)')).Groups['t'].Value
+            $token | Should -Not -BeNullOrEmpty                       # vacuity floor
+            $script:ProvReadme | Should -Match ('`\(' + $token + '\)`')
+        }
+    }
+    It 'states the window-relative meaning and points at the live readout' {
+        $script:ProvReadme | Should -Match 'window-relative'
+        $script:ProvReadme | Should -Match 'keepLastN'
+        $script:ProvReadme | Should -Match 'still\s+\*\*retained\*\*|\*\*still\s+retained\*\*'
+        $script:ProvReadme | Should -Match '/powershell-lsp:status'
+        $script:ProvReadme | Should -Match '/powershell-lsp:doctor'
+    }
+}
+
 Describe 'Preflight doctor -- test diagnostic observed end-to-end (item 8, dispatch 000166)' {
     BeforeAll { . (Join-Path $script:ScriptsDir 'doctor.ps1') }
 

@@ -479,6 +479,40 @@ output) is in [SECURITY.md](./SECURITY.md#verifying-release-integrity), and exac
 provenance covers is in
 [docs/RELEASING.md](docs/RELEASING.md#provenance-what-it-covers-and-what-it-does-not).
 
+### What version am I on, and how far back is my data attributable?
+
+The two facts a support thread opens with, and both are printed by the commands you already run for
+health -- as **header lines above the check table**, so they are there even when every check below
+them is UNKNOWN:
+
+```
+powershell-lsp doctor -- preflight self-check (report-only)
+  version: 1.30.0
+  provenance floor: v1.29.0  (earliest version-attributable release in the RETAINED lifecycle window; 41 attributable, 12 pre-floor)
+```
+
+`/powershell-lsp:doctor` and `/powershell-lsp:status` print both lines, identically. Neither is a
+check: they contribute nothing to the `of N checks` count and cannot move the exit code.
+
+- **version** is the plugin manifest's version, read at run time -- not a build string and not a
+  guess. It is the same value the plugin stamps into every lifecycle record it writes.
+- **provenance floor** is the earliest release the plugin's own clearance data can be attributed
+  to. It is **window-relative**: the lifecycle log is a rolling family trimmed to the `keepLastN`
+  newest files, so the floor names the earliest attributable release among the records **still
+  retained**, and it *rises* as older records age out. It is an honesty marker, never a filter --
+  records below it are still counted in every rate, simply never attributed to a release.
+
+The other renderings are honest answers rather than a fabricated floor: `(none)` when records exist
+but none carries a usable version; `(absent)` when no lifecycle log has been written yet, or when
+one exists but holds no record; and `(undetermined)` when the search ran under a fallback data root,
+where "nothing was ever captured" and "this run could not find it" cannot be told apart.
+
+**The command output is the live answer -- prefer it to this page.** Each figure has exactly one
+source (`Get-PluginVersion` and `Get-LifecycleProvenanceFloor`), and the `clearance provenance
+floor` that `scripts/rule-efficacy-ledger.ps1` prints comes from that same function, so the
+readout, the ledger and this section cannot disagree. The numbers above are illustrative; yours
+come from your install.
+
 ## Security and trust
 
 Evaluating this plugin for a managed or locked-down Windows estate? **[TRUST.md](./TRUST.md)** is

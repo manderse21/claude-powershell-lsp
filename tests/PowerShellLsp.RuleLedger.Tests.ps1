@@ -1168,6 +1168,34 @@ powershell-lsp per-rule diagnostic efficacy ledger (Arc A slice A1) -- facts onl
             $out | Should -Not -Match 'KNOWN, BOUNDED gap'
         }
 
+        It 'the printed floor states its WINDOW-RELATIVE meaning (dispatch 000216)' {
+            # The meaning was real from the first line of this block -- the same rolling-family
+            # trim the floor has always been subject to -- but it lived only in a source comment,
+            # where the reader quoting the number never saw it. Read as "the earliest release this
+            # plugin ever had data for", the floor is a claim about history; what it actually
+            # names is the earliest attributable release among the RETAINED records, and it rises
+            # as Invoke-LogSweep trims the family. Asserted on the RENDERED readout from the
+            # shipped entry point, not on the source text.
+            $out = Get-LedgerReadout -LifecycleLines @(
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version '1.29.0' -Cleared 3 -StillPresent 1)
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version '1.29.1' -Cleared 1 -StillPresent 0))
+            $out | Should -Match 'clearance provenance floor: v1\.29\.0'
+            $out | Should -Match 'WINDOW-RELATIVE'
+            $out | Should -Match 'STILL RETAINED'
+            $out | Should -Match 'Invoke-LogSweep'
+            $out | Should -Match 'keepLastN'
+            $out | Should -Match 'RISES as older records age out'
+        }
+
+        It 'the window-relative note qualifies a FLOOR -- it does not print when none is named' {
+            # The paired control. Printed in both states, the assertion above would pass for the
+            # wrong reason, and the readout would carry a caveat about a value it never named.
+            $out = Get-LedgerReadout -LifecycleLines @(
+                (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version $null -Cleared 3 -StillPresent 1))
+            $out | Should -Match 'clearance provenance floor: \(none -- no version-attributable record\)'
+            $out | Should -Not -Match 'WINDOW-RELATIVE'
+        }
+
         It 'a ledger WITH pre-floor records prints the caveat, naming how many' {
             $out = Get-LedgerReadout -LifecycleLines @(
                 (New-VersionedLifecycleLine -RuleId 'PSUseApprovedVerbs' -Version $null -Cleared 2 -StillPresent 1)
