@@ -929,12 +929,32 @@ function Format-RuleEfficacyLedger {
         # will matter again after the next format change. An all-attributable ledger reads clean;
         # a gap is never silent. (Open question 3, resolved this way and recorded.)
         #
+        # THE FLOOR IS WINDOW-RELATIVE, AND SAYS SO IN PRINT (dispatch 000216). That meaning was
+        # real from the first line of this block -- the same rolling-family trim the paragraph
+        # above turns on -- but it lived only HERE, in a source comment, where the reader quoting
+        # the number never sees it. A floor read as "the earliest release this plugin ever had
+        # data for" is a claim about history; what it actually names is the earliest attributable
+        # release among the records STILL RETAINED, and it RISES as Invoke-LogSweep trims the
+        # family to keepLastN. Printed beside the value, because a caveat a reader has to open the
+        # source to find is not a caveat.
+        #
         # These lines are ADDITIVE. No figure above or below them changes value, and none is
         # computed from them -- the floor annotates the clearance columns, it does not filter them.
         if ($Lifecycle.PSObject.Properties['Versions']) {
             $prov = Get-LifecycleProvenanceFloor -Versions $Lifecycle.Versions -PreFloor ([int]$Lifecycle.PreFloorRecords)
             $lines += ('    clearance provenance floor: ' +
                 $(if ([string]$prov.State -eq 'floored') { 'v' + [string]$prov.Floor } else { '(none -- no version-attributable record)' }))
+            if ([string]$prov.State -eq 'floored') {
+                # Attached to the floor VALUE, directly under it, because it qualifies that number
+                # and nothing else. It is not printed in the no-floor state: there is no floor
+                # there to be relative to, and a caveat about a value that was not named would be
+                # noise the reader learns to skip.
+                $lines += '      ^ WINDOW-RELATIVE, not a claim about this plugin''s whole history. It names the earliest'
+                $lines += '        version-attributable release among the lifecycle records STILL RETAINED. The'
+                $lines += '        lifecycle-*.jsonl family is a rolling window that session-start.ps1''s Invoke-LogSweep'
+                $lines += '        trims to the keepLastN newest, so this floor RISES as older records age out. Quote it'
+                $lines += '        with the retained-record counts below, never on its own.'
+            }
             $lines += ('      version-attributable records: ' + [string]$prov.Attributable +
                 '   pre-floor (bounded gap): ' + [string]$prov.PreFloor)
             if (@($prov.Versions).Count -gt 0) {
