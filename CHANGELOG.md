@@ -95,6 +95,36 @@ contributes no result object at all.
   so the docs, the runtime, and the ledger are one fact surfaced in three places rather than three
   copies to keep in sync.
 
+### Fixed
+
+The items below are **PATCH-level and do not move this section's MINOR classification** -- a MINOR
+cut already carries them. They are recorded rather than folded into "internal hardening" for one
+reason: the first changes what an operator can verify about a released artifact, and the second
+corrects a published instruction that could not succeed as written. The Gate 6 and pipeline
+mechanics behind them are internal and are deliberately NOT itemized here; they live in the
+decision ledger, Section 3.
+
+- **Release tags cut from the next release forward are findable in the Rekor transparency log, and
+  the documented way to verify one now runs.** `docs/RELEASING.md` told a reader to run `gitsign
+  verify <tag>`, which is the **commit** subcommand -- it resolves the tag to its commit, finds no
+  signature block, and dies. The tag subcommand is `gitsign verify-tag`, and correcting that alone
+  would not have been enough: it then failed at its transparency-log step for every tag this
+  project has ever cut. The pipeline pinned gitsign v0.16.1, whose signer keyed a tag's log entry
+  on the hash of the tag reassembled as a *commit* while every verifier looks up the real
+  tag-object hash, so the two could never meet. The pin is now v0.17.1, where upstream routes both
+  through one helper. Nothing about signing changes otherwise -- same keyless GitHub-OIDC identity,
+  same certificate authority and log, same signature format on the tag.
+
+- **Stated plainly, because it affects anyone verifying an existing release: `gitsign verify-tag`
+  cannot pass for v1.30.0 or any earlier tag, and never will.** Those tags are not re-signed -- the
+  released history stays exactly as cut -- so their log entries remain keyed where no verifier
+  reads, and the corrected command will keep failing on them by design rather than because
+  something is wrong with the tag. What that costs is transparency-log inclusion *for the tag*
+  only. Signer identity and the signature over the tag payload remain fully verifiable offline for
+  every release, and the release **assets** carry their own inclusion proofs throughout, which is
+  why `gh attestation verify` is now documented as the primary integrity check. `docs/RELEASING.md`
+  gives the offline tag procedure that does succeed on those tags.
+
 ## [1.30.0] - 2026-08-09
 MINOR: **the doctor resolves the PowerShell host that actually serves PSES and can fail on it,
 the doctor and `/status` state the plugin version unconditionally, and every lifecycle record now
