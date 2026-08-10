@@ -279,25 +279,32 @@ jobs:
 
           # LEGACY FALLBACK (dispatch 000169's method), for runs created before the run-name marker
           # shipped: a dry run is the one whose "Dry-run summary" step CONCLUDED success, because
-          # that step is `if: inputs.dry_run`. A producing run has it `skipped`. Only runs that are
-          # successful and carry NO marker need this, so the extra API calls stay few; the cap below
-          # is announced rather than applied silently.
-          LEGACY_CAP=20
-          NEEDS_LEGACY="$(echo "$CANDIDATES" | jq -r \
+          # that step is `if: inputs.dry_run`. A producing run has it `skipped`.
+          #
+          # SELECTED BY COMMIT IDENTITY, NOT BY RECENCY (dispatch 000217). This used to inspect only
+          # the newest 20 unmarked runs and leave every older one UNKNOWN, so a genuine rehearsal
+          # expired purely because 20 unrelated runs accumulated behind it -- the v1.30.0 cut
+          # announced exactly that at 45 unmarked runs. Raising that cap only moves the cliff out.
+          # Selecting on the TARGET COMMIT removes it outright, and removes nothing else: an unmarked
+          # run carries no `target=` field, so Test-DryRunPair.ps1 resolves its target to its own
+          # head_sha, which means an unmarked run whose head_sha is not $TARGET could never have
+          # paired at any cap. Every run this filter drops was already unpairable. What is inspected
+          # is now bounded by how often THIS commit was rehearsed rather than by how many runs exist,
+          # so it cannot grow with repository age.
+          NEEDS_LEGACY="$(echo "$CANDIDATES" | jq -r --arg target "$TARGET" \
             '[ .[] | select(.conclusion == "success")
                    | select(((.display_title // .name // "") | test("\\[DRY-RUN\\]|\\[PRODUCING\\]")) | not)
+                   | select(((.head_sha // "") | ascii_downcase) == ($target | ascii_downcase))
                    | .id ] | .[]' || true)"
+          UNMARKED_TOTAL="$(echo "$CANDIDATES" | jq \
+            '[ .[] | select(.conclusion == "success")
+                   | select(((.display_title // .name // "") | test("\\[DRY-RUN\\]|\\[PRODUCING\\]")) | not) ] | length')"
           LEGACY_COUNT="$(echo "$NEEDS_LEGACY" | grep -c . || true)"
-          echo "Runs with no run-name marker needing step-conclusion inspection: $LEGACY_COUNT"
-          if (( LEGACY_COUNT > LEGACY_CAP )); then
-            echo "::warning::$LEGACY_COUNT unmarked runs exceed the inspection cap of $LEGACY_CAP; only the newest $LEGACY_CAP are classified. The remainder stay UNKNOWN and cannot satisfy this gate."
-          fi
+          echo "Unmarked successful runs: $UNMARKED_TOTAL in total, of which $LEGACY_COUNT are on target commit $TARGET and are inspected below."
+          echo "The other $(( UNMARKED_TOTAL - LEGACY_COUNT )) are on other commits and cannot pair with $TARGET at any age, so they are not inspected. No run is dropped for being old."
 
           LEGACY_JSON="{}"
-          INSPECTED=0
           for rid in $NEEDS_LEGACY; do
-            if (( INSPECTED >= LEGACY_CAP )); then break; fi
-            INSPECTED=$(( INSPECTED + 1 ))
             SUMMARY_CONC="$(gh api --paginate "repos/${{ github.repository }}/actions/runs/$rid/jobs" \
                               --jq '.jobs[].steps[] | select(.name == "Dry-run summary (no tag cut, no release created)") | .conclusion' \
                               2>/dev/null | head -n1 || true)"
@@ -369,7 +376,18 @@ jobs:
           # signature is logged in the public Rekor transparency log. Pinned to a release tag
           # (consistent with the @v-pinned actions above), built from source with the Go
           # toolchain preinstalled on the runner.
-          go install github.com/sigstore/gitsign@v0.16.1
+          #
+          # v0.17.1 is a FLOOR, not a preference (dispatch 000217 leg A). Through v0.16.1 the
+          # signer reassembled every object with the COMMIT joiner before hashing it for the
+          # Rekor upload (internal/git/git.go LegacySHASign -> pkg/git JoinCommit), while the
+          # VERIFIER already dispatched JoinTag for tags (pkg/git/verify.go). For a tag those
+          # two disagree, so the entry landed under the hash of a tag-reassembled-as-a-commit
+          # and no verifier ever looked it up: v1.29.0, v1.29.1 and v1.30.0 each have a real
+          # Rekor entry with a full inclusion proof, keyed where nothing reads. v0.17.0+ routes
+          # the signer through the same git.ObjectHashFromSignature helper the verifier uses,
+          # so a tag cut from here on is keyed on its REAL tag-object hash and `gitsign
+          # verify-tag` can find it. Existing tags are unaffected -- they are not re-signed.
+          go install github.com/sigstore/gitsign@v0.17.1
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Cut and push the gitsign-signed tag FROM the pipeline (keyless, on the validated commit)

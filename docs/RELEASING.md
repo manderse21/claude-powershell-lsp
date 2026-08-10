@@ -293,38 +293,97 @@ Two things to keep in mind:
 
 ## Verifying a release
 
-Anyone who downloads the release archive can use GitHub's attestation tooling to confirm that
-this repository's release workflow produced that exact archive at that exact commit. The bill
-of materials lets a security reviewer see precisely which external components the plugin
-fetches at install time, and at which versions, without needing to clone anything.
+Two independent things can be verified: the released **assets**, and the release **tag**. Do the
+asset check first -- it is the stronger of the two, it covers the bytes a consumer actually
+downloads, and it works today with no caveats.
+
+### 1. The assets (primary check)
+
+GitHub's attestation tooling confirms that this repository's release workflow produced that exact
+archive at that exact commit, and the attestation carries a Rekor transparency-log inclusion proof.
 
 ```
-# Verify the build provenance of the release archive:
-gh attestation verify powershell-lsp-1.13.0.tar.gz --repo manderse21/claude-powershell-lsp
+gh release download v1.30.0 --repo manderse21/claude-powershell-lsp \
+  --pattern 'powershell-lsp-1.30.0.tar.gz'
 
-# Inspect the SBOM attached to the release:
-#   powershell-lsp-1.13.0.cdx.json   (CycloneDX 1.5 JSON)
+gh attestation verify powershell-lsp-1.30.0.tar.gz --repo manderse21/claude-powershell-lsp
 ```
+
+Exit status **0** is the pass. The check is load-bearing rather than decorative: it exits **1** on a
+copy with a single byte flipped, and **1** when asked to attribute the intact archive to a different
+repository. The SBOM published alongside it (`powershell-lsp-1.30.0.cdx.json`, CycloneDX 1.5 JSON)
+lets a reviewer see exactly which external components the plugin fetches at install time, and at
+which versions, without cloning anything.
 
 The same steps, written for a consumer evaluating a download, are in
 [SECURITY.md](../SECURITY.md#verifying-release-integrity).
 
-The release **tag** carries its own keyless Sigstore signature. Verifying it needs
-[gitsign](https://github.com/sigstore/gitsign) (a plain `git verify-tag` cannot read the x509 /
-Sigstore signature, and even with gitsign configured it checks only cryptographic integrity and
-Rekor existence -- not signer identity, so it is not a full verification). Fetch the tags, then
-verify against the expected workflow identity and the GitHub OIDC issuer:
+### 2. The tag
+
+The release tag carries its own keyless Sigstore signature. The tag subcommand is
+**`gitsign verify-tag`** -- `gitsign verify` is the COMMIT subcommand, and pointing it at a tag
+resolves the tag to its commit, finds no CMS block there, and dies with `unsupported signature
+type: not a PEM block`. Run it from a normal clone: `verify-tag` cannot resolve refs inside a git
+**worktree** and exits with `reference not found` there.
 
 ```
 git fetch --tags
-gitsign verify \
+gitsign verify-tag \
   --certificate-identity="https://github.com/manderse21/claude-powershell-lsp/.github/workflows/powershell-lsp-release.yml@refs/heads/main" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
-  v1.13.0
+  <tag>
 ```
 
-A successful verify confirms the tag was signed by THIS repository's release workflow under
-GitHub's OIDC issuer, anchored in Rekor.
+**This command passes only for tags cut after the gitsign v0.17.1 pin landed (dispatch 000217).**
+For **v1.30.0 and every earlier tag** it fails at its Rekor step with `hashes don't match` /
+`could not find matching tlog entry`, and that is expected, permanent, and not a sign of a bad tag.
+Those tags were cut by gitsign v0.16.1, whose signer keyed the transparency-log entry on the hash of
+the tag reassembled as a COMMIT while every verifier looks up the real tag-object hash. The entries
+exist and carry full inclusion proofs; nothing reads them at that key. They are deliberately not
+re-signed, so the mismatch is permanent for those tags -- see the decision ledger, Section 3.
+
+What still verifies for those tags, fully offline and without gitsign, is the part that carries the
+trust: that the signature covers the tag payload, and who signed it. From a clone, with `$TAG` set:
+
+```powershell
+$ErrorActionPreference = 'Stop'   # a failed check must STOP, not print VALID anyway
+
+# Windows PowerShell 5.1 does not load the assembly holding the Pkcs types; without
+# this the block dies on New-Object with "cannot find type ... ContentInfo". PowerShell
+# 7 already has them and has no such assembly to load, hence the guard.
+if ($PSVersionTable.PSVersion.Major -lt 6) { Add-Type -AssemblyName System.Security }
+
+$raw  = [System.Text.Encoding]::ASCII.GetBytes((((git cat-file tag $TAG) -join "`n") + "`n"))
+$text = [System.Text.Encoding]::ASCII.GetString($raw)
+$cut  = $text.IndexOf('-----BEGIN SIGNED MESSAGE-----')
+$payload = $raw[0..($cut - 1)]
+$armor = $text.Substring($cut) -replace '-----(BEGIN|END) SIGNED MESSAGE-----', ''
+$der   = [Convert]::FromBase64String(($armor -replace '\s', ''))
+
+# The signature is DETACHED: the signed content is the tag payload, so it must be
+# supplied at construction or CheckSignature would verify nothing at all.
+$ci  = New-Object System.Security.Cryptography.Pkcs.ContentInfo (, $payload)
+$cms = New-Object System.Security.Cryptography.Pkcs.SignedCms ($ci, $true)
+$cms.Decode($der)
+$cms.CheckSignature($true)        # throws unless the signature covers the payload
+
+$leaf = $cms.Certificates[0]
+"signer  : " + (($leaf.Extensions['2.5.29.17'].Format($false)) -replace '^URL=', '')
+"commit  : " + ([System.Text.Encoding]::ASCII.GetString(
+    $leaf.Extensions['1.3.6.1.4.1.57264.1.13'].RawData) -replace '[^0-9a-f]', '')
+"git says: " + (git rev-list -n 1 $TAG)
+```
+
+A pass means the signature is valid over the tag payload; the printed signer must equal the
+workflow identity above, and the certificate's commit-binding extension must equal the commit git
+says the tag points at. Flipping one bit of `$payload` makes `CheckSignature` throw `The hash value
+is not correct.`, which is what keeps the check from being vacuous.
+
+**Coverage, stated exactly.** For every released tag this proves signer identity and that the
+signature covers the tag payload. Transparency-log inclusion is proven for the release **assets**
+via `gh attestation verify` on all releases, and for the **tag** only on tags cut after the v0.17.1
+pin. For v1.30.0 and earlier, tag transparency-log inclusion is not provable -- signer identity for
+them is not in doubt, and the assets keep their own inclusion proofs regardless.
 
 ## Provenance: what it covers (and what it does not)
 

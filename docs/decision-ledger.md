@@ -118,13 +118,17 @@ v1.29.1 and v1.30.0** -- so this is systemic and long-standing, NOT a property o
 two prior tags were released and recorded verified while carrying it. The cause was isolated rather
 than assumed: Rekor is up and its search index is working (`POST /api/v1/index/retrieve` returns a
 UUID for the release archive's digest, and the attestation's own entry fetches HTTP 200 by
-logIndex), but the same index returns `[]` for all three tags' payload hashes, so no tlog entry is
-indexed under the signed tag payload. **What this does and does not cost:** every identity claim
+logIndex), but the same index returns `[]` for all three tags' payload hashes. 000215 read that
+absence as an absent entry; **dispatch 000217 leg A refuted that inference** -- a tlog entry exists
+for every one of the three, each with a full inclusion proof, keyed on a hash no verifier looks up.
+The payload-hash lookup 000215 ran was the wrong query, not evidence of a missing entry; the finding
+that `verify-tag` cannot pass, and the wrong-subcommand finding, both stand. See Section 3.
+**What this does and does not cost:** every identity claim
 `verify-tag` would assert is independently verified above from the certificate and the CMS
 signature, so signer identity is NOT in doubt; what is unproven locally is transparency-log
 inclusion for the TAG specifically (the release ASSETS keep theirs, proven by the attestation's
-inclusion proof). Root-causing the missing tag entry, and correcting the RELEASING.md command, are
-each their own dispatch -- 000215's charter is read-only against the release.
+inclusion proof). Root-causing the mis-keyed tag entry, and correcting the RELEASING.md command,
+were each their own dispatch -- 000215's charter was read-only against the release; 000217 did both.
 
 **The v1.28.x measurement record is PREDECESSOR detail and is not restated here.** Everything
 dispatch 000169 measured directly for v1.28.0 and v1.28.1 -- each tag object's type, tagger, tagger
@@ -1145,6 +1149,55 @@ unit. The v1.26.0 cycle is the standing argument: a pre-existing hand tag had to
 Gate 2 would let the pipeline cut its own (Section 2), and only the pipeline's tag carries the
 keyless gitsign signature and the SLSA provenance the trust surface advertises. `docs/RELEASING.md`
 is the single-sourced runbook and states the same convention.
+
+### 000217 -- the Rekor tag entries were MIS-KEYED, not missing (root-caused, fixed forward)
+
+**The entry exists. It always did.** 000215 concluded no transparency-log entry existed for any
+release tag, having searched Rekor for the SHA-256 of each tag's signed payload and received `[]`
+three times. That query was wrong. Searching the same index by the tag's signing CERTIFICATE
+(`POST /api/v1/index/retrieve` with `publicKey.format=x509`) returns exactly ONE `hashedrekord` per
+tag, each with a full inclusion proof and a signed entry timestamp: v1.29.0 at logIndex
+**2314546105**, v1.29.1 at **2374087615**, v1.30.0 at **2400946105**. What is true is narrower and
+more specific than "missing": the entries are keyed on a hash **no verifier ever computes.**
+
+**The cause is an internal sign/verify asymmetry in gitsign v0.16.1 -- the version the pipeline
+pinned.** For the default `RekorMode=online` path, the signer
+(`internal/git/git.go` `LegacySHASign`) reassembled the signed object with `pkg/git.JoinCommit` --
+the COMMIT joiner, which writes the signature into a `gpgsig` HEADER -- unconditionally, whatever
+the object's type. A real signed tag stores its PEM in the message BODY instead, so for a tag that
+reassembly yields a synthetic object hash that is not the tag's hash; gitsign then signed that
+synthetic hash string and uploaded a hashedrekord keyed on its SHA-256. The VERIFIER in the very
+same version (`pkg/git/verify.go`) already dispatched `JoinTag` for `object `-prefixed data, so it
+computes the REAL tag-object hash and looks up a key the signer never wrote. Sign and verify could
+never meet for a tag; they meet fine for a commit, which is why only tags are affected.
+
+**Derived, not asserted, and reproduced on all three tags.** Feeding each published tag's real
+payload and signature bytes through the actual gitsign library reproduces the observed Rekor key
+EXACTLY -- `SHA256(ObjectHash(JoinCommit(payload, sig)))` equals the entry's `data.hash` for
+v1.29.0, v1.29.1 and v1.30.0, 3/3. The same inputs through v0.17.1's tag-aware
+`git.ObjectHashFromSignature` return each tag's REAL object hash (`81a7b29b`, `75b5602d`,
+`8dab6a38`), 3/3 -- which is precisely the key a verifier looks up. Two independent controls fix the
+reading: the Rekor entry's certificate is byte-identical to the tag's signing cert (same serial), so
+it is unambiguously this tag's entry; and the Rekor entry's signature is NOT the tag's CMS signature
+-- it is a second signature over the synthetic hash string, which is what the legacy upload path
+makes and what proves the entry is the signer's own artifact rather than a coincidence.
+
+**Disposition: fixable pipeline-config cause, fixed forward -- the pin.** Upstream repaired this in
+v0.17.0 by routing the signer through the same `ObjectHashFromSignature` helper the verifier uses,
+so the two can no longer disagree. The whole fix here is therefore the version floor in
+`.github/workflows/powershell-lsp-release.yml`: `go install github.com/sigstore/gitsign@v0.16.1`
+becomes `@v0.17.1` (the current latest). Nothing else in the signing step changes -- same keyless
+GitHub-OIDC flow, same Fulcio and Rekor URLs, same on-disk CMS signature format. A tag cut from here
+on is keyed on its real tag-object hash and `gitsign verify-tag` can find it.
+
+**What this does NOT do, stated plainly.** The three existing tags are NOT re-signed or re-tagged
+and their entries stay keyed where they are, so `gitsign verify-tag` will keep failing on v1.29.0,
+v1.29.1 and v1.30.0 permanently -- and it will keep failing under the FIXED gitsign too, because the
+fix corrects the lookup to the hash the old signer never wrote. That is the honest cost of not
+rewriting released history, and it is why `docs/RELEASING.md` documents the tag check as an identity
+and signature proof rather than a transparency-log proof for tags cut before this change. Tag
+transparency-log inclusion for those three remains unproven; signer identity for them is not in
+doubt and never was, and the release ASSETS carry their own inclusion proofs independently.
 
 ## 4. Forward plan -- the four-horizon ladder (tactical -> strategic)
 

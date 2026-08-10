@@ -163,6 +163,18 @@ foreach ($run in $runs) {
     $conclusion = [string](Get-RunProp -Run $run -Name 'conclusion')
     $createdRaw = [string](Get-RunProp -Run $run -Name 'created_at')
 
+    # COMMIT IDENTITY IS THE QUESTION, so it is asked FIRST (dispatch 000217). Pairing asks exactly
+    # one thing -- "is there a successful dry run for THIS target commit?" -- and answering that
+    # before anything order- or time-dependent is what keeps the verdict independent of how many
+    # unrelated runs have piled up since the rehearsal. The gate's scalability rests here: a run is
+    # a candidate because of the commit it targeted, never because of where it sits in a list.
+    # Moving this check first changes no verdict (every condition below is conjunctive); it changes
+    # which reason is reported for a run that fails more than one, and reports the load-bearing one.
+    $runTarget = Get-RunTargetCommit -Run $run
+    if ($runTarget -ne $target) {
+        $rejected += ('run ' + $id + ': dry run targeted ' + $runTarget + ', not ' + $target)
+        continue
+    }
     if ($conclusion -ne 'success') {
         $rejected += ('run ' + $id + ': conclusion=' + $conclusion + ' (a failed rehearsal is not a rehearsal)')
         continue
@@ -184,11 +196,6 @@ foreach ($run in $runs) {
     if ($created -lt $cutoff) {
         $rejected += ('run ' + $id + ': dry run at ' + $created.ToString('o') + ' is OUTSIDE the ' +
             $WindowDays + '-day window')
-        continue
-    }
-    $runTarget = Get-RunTargetCommit -Run $run
-    if ($runTarget -ne $target) {
-        $rejected += ('run ' + $id + ': dry run targeted ' + $runTarget + ', not ' + $target)
         continue
     }
     $match = [pscustomobject]@{

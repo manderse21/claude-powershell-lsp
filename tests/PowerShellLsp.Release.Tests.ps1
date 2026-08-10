@@ -493,6 +493,64 @@ Describe 'Test-DryRunPair.ps1 -- the dry-run-pair decision (dispatch 000197 leg 
         $r.Norm | Should -Match 'run id : 1001'
     }
 
+    It 'pairs a same-commit rehearsal sitting BEYOND the former 20-run window (dispatch 000217)' {
+        # THE REGRESSION THIS PINS. Gate 6 used to attach legacy verdicts to only the newest 20
+        # unmarked runs, so a genuine rehearsal further back stayed UNKNOWN and could not satisfy
+        # the gate -- not because anything was wrong with it, but because unrelated runs had
+        # accumulated in front of it. The v1.30.0 cut announced that at 45 unmarked runs. The fix
+        # selects what to inspect by TARGET COMMIT, so depth in the list stops mattering.
+        #
+        # The selection rule is DERIVED FROM THE WORKFLOW rather than assumed, which is what makes
+        # this a regression test instead of a restatement: it is RED against the recency-capped
+        # workflow and GREEN against commit-identity selection, rather than passing under both.
+        $capMatch = [regex]::Match($script:PairWfText, 'LEGACY_CAP=(\d+)')
+        $selection = [regex]::Match($script:PairWfText, '(?s)NEEDS_LEGACY="\$\(.*?\)"')
+        $selection.Success | Should -BeTrue -Because 'the rule must be findable to be derived from'
+        $commitScoped = ($selection.Value -match 'head_sha') -and (-not $capMatch.Success)
+
+        $runs = @()
+        for ($i = 0; $i -lt 44; $i++) {
+            $runs += (New-Run -Id ('90{0:d2}' -f $i) -Title 'powershell-lsp release' -HeadSha $script:OtherSha)
+        }
+        $runs += (New-Run -Id '1001' -Title 'powershell-lsp release' -HeadSha $script:TargetSha)
+        $runs.Count | Should -Be 45 -Because 'the paired rehearsal must sit beyond the former cap of 20'
+
+        # Attach legacy verdicts exactly as the workflow's CURRENT rule would produce them.
+        if ($commitScoped) {
+            foreach ($run in $runs) {
+                if ($run['head_sha'] -eq $script:TargetSha) { $run['legacyIsDryRun'] = $true }
+            }
+        } else {
+            # The capped rule, granted every benefit of the doubt: classify the newest N as dry
+            # runs. It still cannot pair, because those N are all on other commits and the one
+            # rehearsal that matches sits at position 45, beyond the cap, forever unclassified.
+            $cap = [int]$capMatch.Groups[1].Value
+            for ($i = 0; $i -lt [Math]::Min($cap, $runs.Count); $i++) {
+                $runs[$i]['legacyIsDryRun'] = $true
+            }
+        }
+
+        $r = Invoke-Pair -Runs $runs
+        $r.ExitCode | Should -Be 0 -Because 'a genuine same-commit rehearsal must pair however many runs came after it'
+        $r.Norm | Should -Match 'run id : 1001'
+        $r.Norm | Should -Match 'the dry-run pair is satisfied'
+    }
+
+    It 'depth alone never pairs an off-commit rehearsal -- the 000217 control' {
+        # The control for the test above. Removing the cap must not turn "classify more runs" into
+        # "accept more runs": a rehearsal on a DIFFERENT commit stays refused however deep the list
+        # is and however generously the caller classified it.
+        $all = @()
+        for ($i = 0; $i -lt 44; $i++) {
+            $run = New-Run -Id ('80{0:d2}' -f $i) -Title 'powershell-lsp release' -HeadSha $script:OtherSha
+            $run['legacyIsDryRun'] = $true
+            $all += $run
+        }
+        $r = Invoke-Pair -Runs $all
+        $r.ExitCode | Should -Be 1 -Because 'commit identity is the guard the cap removal must not weaken'
+        $r.Norm | Should -Match 'dry run targeted .* not '
+    }
+
     It 'SAFE-FAILS on an empty or missing runs file -- refuse, never pass' {
         # "No data" must never read as "no problem".
         # Both refusals below are `throw`s, so their text arrives on STDERR. $ErrorActionPreference is
@@ -605,9 +663,28 @@ Describe 'Release workflow Gate 6 -- the dry-run pair is STRUCTURAL (dispatch 00
         $script:G6Text | Should -Match ([regex]::Escape('select(.name == "' + $stepName + '")'))
     }
 
-    It 'the legacy inspection cap is ANNOUNCED when it truncates (no silent cap)' {
-        $script:G6Text | Should -Match 'LEGACY_CAP=\d+'
-        $script:G6Text | Should -Match 'exceed the inspection cap'
+    It 'the legacy inspection is scoped by COMMIT IDENTITY and carries no recency cap (000217)' {
+        # RE-DERIVED, not loosened. The predecessor of this test pinned the opposite invariant --
+        # that a truncating cap existed and announced itself -- which was the right guard while the
+        # cap was the design. 000217 removed the cap rather than raising it (a bigger number only
+        # moves the cliff), so the guard is re-aimed at what now has to hold: the identifier is
+        # gone, the truncating loop is gone, and selection is by target commit.
+        # Anchored to the bash IDENTIFIERS, not to the word: `Should -Match` is case-insensitive,
+        # so a bare 'INSPECTED' also matches the step's own "are inspected below" narration and
+        # would fail against correct code.
+        $script:G6Text | Should -Not -Match 'LEGACY_CAP'
+        $script:G6Text | Should -Not -Match 'INSPECTED\s*='
+        $script:G6Text | Should -Not -Match 'INSPECTED\s*>='
+        $script:G6Text | Should -Not -Match 'exceed the inspection cap'
+
+        $sel = [regex]::Match($script:G6Text, '(?s)NEEDS_LEGACY="\$\(.*?\)"')
+        $sel.Success | Should -BeTrue -Because 'the legacy selection must still be findable to be checked'
+        $sel.Value | Should -Match 'head_sha'
+        $sel.Value | Should -Match '\$target'
+
+        # No silent truncation: the step must still say what it inspected and what it skipped.
+        $script:G6Text | Should -Match 'UNMARKED_TOTAL'
+        $script:G6Text | Should -Match 'No run is dropped for being old'
     }
 
     It 'all SIX gates are present -- Gate 6 is added, none of 1-5 removed' {
