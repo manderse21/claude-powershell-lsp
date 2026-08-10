@@ -347,6 +347,12 @@ trust: that the signature covers the tag payload, and who signed it. From a clon
 
 ```powershell
 $ErrorActionPreference = 'Stop'   # a failed check must STOP, not print VALID anyway
+
+# Windows PowerShell 5.1 does not load the assembly holding the Pkcs types; without
+# this the block dies on New-Object with "cannot find type ... ContentInfo". PowerShell
+# 7 already has them and has no such assembly to load, hence the guard.
+if ($PSVersionTable.PSVersion.Major -lt 6) { Add-Type -AssemblyName System.Security }
+
 $raw  = [System.Text.Encoding]::ASCII.GetBytes((((git cat-file tag $TAG) -join "`n") + "`n"))
 $text = [System.Text.Encoding]::ASCII.GetString($raw)
 $cut  = $text.IndexOf('-----BEGIN SIGNED MESSAGE-----')
