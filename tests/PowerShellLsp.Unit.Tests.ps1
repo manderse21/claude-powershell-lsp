@@ -3504,9 +3504,10 @@ Describe 'Preflight doctor -- clearance provenance floor readout (dispatch 00021
     BeforeAll {
         . (Join-Path $script:ScriptsDir 'doctor.ps1')
         # The floor's own source, loaded separately HERE so the expectations below are derived
-        # from it rather than written as literals. Dot-sourced in the test scope on purpose: it is
-        # the same script doctor.ps1 consults, so a change to its ruling moves both sides at once.
-        . (Join-Path $script:ScriptsDir 'rule-efficacy-ledger.ps1')
+        # from it rather than written as literals. It is the same library doctor.ps1 consults and
+        # the same one the efficacy ledger renders from, so a change to its ruling moves every
+        # side at once -- which is the property this Describe exists to pin.
+        . (Join-Path $script:ScriptsDir 'lib/lifecycle-provenance.ps1')
 
         $script:ProvFloored = Join-Path $TestDrive 'prov-floored'
         $script:ProvGapOnly = Join-Path $TestDrive 'prov-gap-only'
@@ -3627,7 +3628,7 @@ Describe 'Preflight doctor -- clearance provenance floor readout (dispatch 00021
             Should -Match 'provenance floor: v9\.9\.9-injected'
     }
 
-    It 'FAILS OPEN -- an unreachable ledger yields an honest line, never a throw' {
+    It 'FAILS OPEN -- an unreachable library yields an honest line, never a throw' {
         $missing = Join-Path $TestDrive 'no-scripts-dir-here'
         { Get-DoctorProvenanceObservation -ScriptsDir $missing } | Should -Not -Throw
         $o = Get-DoctorProvenanceObservation -ScriptsDir $missing
@@ -3635,29 +3636,47 @@ Describe 'Preflight doctor -- clearance provenance floor readout (dispatch 00021
         (Get-DoctorProvenanceHeader -ScriptsDir $missing) | Should -Match 'undetermined'
     }
 
-    It 'adds NO second attributability derivation -- doctor.ps1 calls the ledger, it does not re-rule' {
+    It 'adds NO second attributability derivation -- the doctor calls the library, it does not re-rule' {
         # The single-source guard, at the source level: the doctor must not grow its own opinion
         # about what counts as a version. The paired control proves the strings are absent from
-        # doctor.ps1 because they live in the ledger, not because they exist nowhere.
+        # doctor.ps1 because they live in the shared library, not because they exist nowhere.
         $doctorSrc = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'doctor.ps1') -Raw
-        $ledgerSrc = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'rule-efficacy-ledger.ps1') -Raw
+        $libSrc = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'lib/lifecycle-provenance.ps1') -Raw
         $doctorSrc | Should -Match 'Get-LifecycleProvenanceFloor'
         @([regex]::Matches($doctorSrc, [regex]::Escape('0.0.0-unknown'))).Count | Should -Be 0
         @([regex]::Matches($doctorSrc, [regex]::Escape('[System.Version]::TryParse'))).Count | Should -Be 0
-        @([regex]::Matches($ledgerSrc, [regex]::Escape('0.0.0-unknown'))).Count | Should -BeGreaterThan 0
-        @([regex]::Matches($ledgerSrc, [regex]::Escape('[System.Version]::TryParse'))).Count | Should -BeGreaterThan 0
+        @([regex]::Matches($libSrc, [regex]::Escape('0.0.0-unknown'))).Count | Should -BeGreaterThan 0
+        @([regex]::Matches($libSrc, [regex]::Escape('[System.Version]::TryParse'))).Count | Should -BeGreaterThan 0
     }
 
-    It 'the ledger dot-source cannot silently reset the caller''s lifecycle path' {
-        # OBSERVED, not inferred. rule-efficacy-ledger.ps1 declares a $LifecyclePath parameter of
-        # its own, and dot-sourcing a .ps1 runs its param() block in the CALLING scope -- so an
-        # observation function that read its own parameter AFTER the load searched the ledger's
-        # default family instead of the caller's, and every explicit path came back as the
-        # fallback-root rendering. The capture-before-load fix is what this pins: two different
-        # fixture paths must produce two different answers.
+    It 'ONE definition serves both readers -- neither file carries a copy of the floor' {
+        # The point of the 000216 relocation, pinned. Reaching the floor by dot-sourcing the ledger
+        # is not merely untidy, it is forbidden: the ledger is an entry point with a param() block,
+        # and dot-sourcing a .ps1 runs that block in the caller's scope (hit live while building
+        # this, then refused structurally by the G1 purity guard). So the definition lives in the
+        # library and BOTH consumers ask it -- there is no second copy to drift.
+        $libSrc = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'lib/lifecycle-provenance.ps1') -Raw
+        @([regex]::Matches($libSrc, '(?m)^function Get-LifecycleProvenanceFloor\b')).Count | Should -Be 1
+        foreach ($consumer in @('doctor.ps1', 'rule-efficacy-ledger.ps1')) {
+            $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir $consumer) -Raw
+            $src | Should -Match ([regex]::Escape("lib/lifecycle-provenance.ps1"))   # it loads the library
+            @([regex]::Matches($src, '(?m)^function Get-LifecycleProvenanceFloor\b')).Count | Should -Be 0
+        }
+        # ...and the doctor never dot-sources the param()-carrying entry point to get there.
+        (Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'doctor.ps1') -Raw) |
+            Should -Not -Match ([regex]::Escape("rule-efficacy-ledger.ps1"))
+    }
+
+    It 'the -LifecyclePath seam is honored -- two fixtures give two answers' {
+        # Re-derived from the CURRENT free-pass risk (the earlier version of this guard pinned the
+        # dot-source clobber, whose premise the relocation removed). What can still go wrong is a
+        # readout that ignores the path it was handed and reports whatever the default family says
+        # -- which is exactly how the clobber presented. Two fixtures, two answers, so a readout
+        # that ignored its argument could not pass.
         (Get-DoctorProvenanceHeader -LifecyclePath $script:ProvFloored) |
             Should -Not -BeExactly (Get-DoctorProvenanceHeader -LifecyclePath $script:ProvNoLog)
         (Get-DoctorProvenanceObservation -LifecyclePath $script:ProvFloored).State | Should -BeExactly 'floored'
+        (Get-DoctorProvenanceObservation -LifecyclePath $script:ProvNoLog).State | Should -BeExactly 'none'
     }
 }
 

@@ -61,6 +61,10 @@ param(
 )
 
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
+# The lifecycle READ side (dispatch 000216) -- Resolve-LifecycleLogSearch / Read-LifecycleLog /
+# Get-LifecycleProvenanceFloor, the single source the efficacy ledger renders its own floor from.
+# Loaded AFTER lsp-common.ps1, which it depends on.
+. (Join-Path $PSScriptRoot 'lib/lifecycle-provenance.ps1')
 
 # The native-serve removability probe's init-result wait bound (dispatch 000104, OQ2). Measured:
 # the direct launcher's initialize RESULT arrives ~1.9 s (warm, this repo's Windows dev host); the
@@ -1220,21 +1224,25 @@ function Get-DoctorProvenanceObservation {
     # asks after "what version are you on?" -- "and how far back can that answer be trusted?"
     #
     # SURFACES, NEVER RE-DERIVES. The floor is computed by Get-LifecycleProvenanceFloor in
-    # scripts/rule-efficacy-ledger.ps1 and nowhere else. This asks that function, exactly as the
-    # version header asks Get-PluginVersion. A private re-implementation here could disagree with
-    # the ledger about the same log -- the drift the single-source rule exists to refuse -- and
-    # would also have to re-decide what counts as attributable, which is the ledger's ruling.
+    # lib/lifecycle-provenance.ps1 and nowhere else -- the same definition scripts/rule-efficacy-
+    # ledger.ps1 renders from. This asks that function, exactly as the version header asks
+    # Get-PluginVersion. A private re-implementation here could disagree with the ledger about the
+    # same log -- the drift the single-source rule exists to refuse -- and would also have to
+    # re-decide what counts as attributable, which is not this file's ruling to make.
     #
-    # THE DOT-SOURCE IS INSIDE THIS FUNCTION ON PURPOSE. The ledger carries a param() block of its
-    # own, and dot-sourcing a .ps1 runs that block in the CALLING scope (the 000156 lesson recorded
-    # in the ledger's own header). Loading it here confines its parameters and its function
-    # definitions to this function's scope, so doctor.ps1's script scope is untouched.
+    # THE LIBRARY IS WHY THIS WORKS AT ALL. Reaching into the ledger directly is not an option: it
+    # is an entry point carrying a param() block, and dot-sourcing a .ps1 runs that block in the
+    # CALLER's scope. Hit by hand while building this (every explicit -LifecyclePath came back as
+    # the fallback-root rendering, because the ledger's own $LifecyclePath default overwrote the
+    # parameter), and then refused structurally by the G1 purity guard, which treats a dot-sourced
+    # param() block as an invariant violation with no baseline. The functions moved to a shared
+    # library instead; nothing about the computation changed.
     #
     # FAIL-OPEN, ALWAYS. This is a readout over a telemetry log. Any failure to locate, load or
     # read degrades to an UNDETERMINED observation the renderer states honestly -- never a throw,
     # never a fabricated floor, and never a result object, a check row, or an exit-code input.
     #
-    # -LifecyclePath is a TEST SEAM, not a knob: empty (the shipped call) lets the ledger resolve
+    # -LifecyclePath is a TEST SEAM, not a knob: empty (the shipped call) lets the reader resolve
     # its own rolling family under Get-LogDir, carrying the search provenance with it.
     param([string] $ScriptsDir = '', [string] $LifecyclePath = '')
     $none = @{
@@ -1244,24 +1252,16 @@ function Get-DoctorProvenanceObservation {
     try {
         $dir = $ScriptsDir
         if ([string]::IsNullOrWhiteSpace($dir)) { $dir = $PSScriptRoot }
-        $ledgerScript = Join-Path $dir 'rule-efficacy-ledger.ps1'
-        if (-not (Test-Path -LiteralPath $ledgerScript -PathType Leaf)) {
-            $none.Reason = 'the efficacy ledger (scripts/rule-efficacy-ledger.ps1) is missing, so the floor cannot be asked for.'
+        # -ScriptsDir stays a seam so the fail-open path is reachable in a test: it is the only way
+        # to point this at a tree where the library is genuinely absent.
+        if (-not (Test-Path -LiteralPath (Join-Path $dir 'lib/lifecycle-provenance.ps1') -PathType Leaf)) {
+            $none.Reason = 'the lifecycle provenance library (scripts/lib/lifecycle-provenance.ps1) is missing, so the floor cannot be asked for.'
             return $none
         }
-        # CAPTURED BEFORE THE DOT-SOURCE, and this is not defensive style -- it is required. The
-        # ledger's param() block declares a $LifecyclePath of its own, and dot-sourcing runs that
-        # block in THIS scope, so the line below resets the parameter to the ledger's '' default.
-        # Reading it afterwards would silently search the ledger's default family instead of the
-        # caller's, which is the same silent-wrong failure recorded in the ledger's own header
-        # (dispatch 000156) -- observed here, not inferred: the first build of this function read
-        # it after the load and every explicit path came back as the fallback-root rendering.
-        $wantedLifecyclePath = [string]$LifecyclePath
-        . $ledgerScript
         # Resolved through the provenance-carrying seam (dispatch 000185, D1-B) so a NOT-FOUND
         # result knows whether it searched the real data root or a silent temp substitute -- the
         # difference between "nothing was ever captured" and "this reader could not find it".
-        $search = Resolve-LifecycleLogSearch -LifecyclePath $wantedLifecyclePath
+        $search = Resolve-LifecycleLogSearch -LifecyclePath $LifecyclePath
         $life = Read-LifecycleLog -LogPaths @($search.Paths) -Search $search
         $floor = Get-LifecycleProvenanceFloor -Versions $life.Versions -PreFloor ([int]$life.PreFloorRecords)
         return @{

@@ -61,11 +61,17 @@ contributes no result object at all.
   count with a non-check. Being a header also makes it unconditional -- it is there even when
   every check below it is UNKNOWN, which is exactly the run a stranger pastes into a bug report.
 
-  **Surfaced, never re-derived.** The value comes from `Get-LifecycleProvenanceFloor`
-  (`scripts/rule-efficacy-ledger.ps1`), the single source the efficacy ledger prints from, exactly
-  as the version line comes from `Get-PluginVersion`. The doctor grows no opinion of its own about
+  **Surfaced, never re-derived.** The value comes from `Get-LifecycleProvenanceFloor`, exactly as
+  the version line comes from `Get-PluginVersion`. The doctor grows no opinion of its own about
   what counts as an attributable version, so the readout and the ledger cannot disagree about the
-  same log.
+  same log. Giving that function a second consumer is what turned it into a shared library: the
+  lifecycle **read** side (`Resolve-LifecycleLogSearch`, `Read-LifecycleLog`,
+  `Get-LifecycleProvenanceFloor` and their two helpers) moved from
+  `scripts/rule-efficacy-ledger.ps1` to a new `scripts/lib/lifecycle-provenance.ps1`, **bodies
+  unchanged** -- no computation, ruling, or rendering differs. Reaching into the ledger directly
+  was not an option: it is an entry point with a `param()` block, and dot-sourcing a `.ps1` runs
+  that block in the caller's scope, which the G1 purity guard refuses as an invariant with no
+  baseline.
 
   **Five states, five renderings, because they are five different claims:** a floor; records with
   none attributable; a log holding no record yet; no lifecycle log at all under a *known* data
