@@ -42,7 +42,9 @@ the moment that PR merges -- which is the ordinary state, not a regression.
 
 **The 24 commits between the two tags ARE the release -- the 000206-through-000214 arc, cut rather
 than left standing.** `git rev-list --count v1.29.1..v1.30.0` returns **24**, and
-`git log --oneline --merges v1.29.1..v1.30.0` lists them as seven merged PRs -- **#133** (000206, the
+`git log --oneline --merges v1.29.1..v1.30.0` returns **eight** merge commits -- seven PR merges plus
+one `Merge branch 'main' into dispatch/...-000209-lifecycle-provenance`, which is a branch refresh
+rather than a landing and is counted here as neither. The seven are **#133** (000206, the
 v1.29.1 ledger true-up and doctor slice 1), **#134** (000207, the quiescence gate and the per-profile
 sweep), **#135** (000208, the `ps_host` doctor check and the plugin-version header), **#136** (000209,
 the Arc A lifecycle provenance stamp), **#137** (000210, the plugin-repo doc true-ups), **#138**
