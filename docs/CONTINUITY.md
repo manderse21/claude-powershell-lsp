@@ -129,8 +129,11 @@ Select-String -Path scripts/ensure-pses.ps1, scripts/ensure-pssa.ps1 -Pattern 'P
 
 Verify a released tag's keyless signature against the expected workflow identity (needs gitsign;
 canonical procedure and the asset-provenance verification are in
-[docs/RELEASING.md](./RELEASING.md)):
+[docs/RELEASING.md](./RELEASING.md)). The tag subcommand is `verify-tag` -- `gitsign verify` is the
+COMMIT subcommand and cannot verify a tag. This passes only for tags cut after the gitsign v0.17.1
+pin (dispatch 000217); for v1.30.0 and earlier it fails at its Rekor step by design, and
+RELEASING.md gives the offline identity check that still applies to those:
 
 ```
-gitsign verify --certificate-identity="https://github.com/manderse21/claude-powershell-lsp/.github/workflows/powershell-lsp-release.yml@refs/heads/main" --certificate-oidc-issuer="https://token.actions.githubusercontent.com" v1.24.0
+gitsign verify-tag --certificate-identity="https://github.com/manderse21/claude-powershell-lsp/.github/workflows/powershell-lsp-release.yml@refs/heads/main" --certificate-oidc-issuer="https://token.actions.githubusercontent.com" v1.24.0
 ```
