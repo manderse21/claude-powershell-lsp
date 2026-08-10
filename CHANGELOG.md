@@ -29,13 +29,17 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
-## [Unreleased]
+## [1.31.0] - 2026-08-10
+MINOR: **the doctor and `/status` state the clearance provenance floor beside the version, and the
+README answers "what version am I on, and how far back is my data attributable?"** One
+backward-compatible capability addition, on the self-check surface a user reads when something is
+wrong, plus the user-facing documentation that points at it.
 
-**Classifies MINOR (so the next cut is 1.31.0) -- derived, not asserted.** This changelog's own
-Versioning section calls MINOR "a new backward-compatible capability" and PATCH "bug fixes and
-internal hardening with no user-visible contract change". This adds a new header line to two
-shipped user-facing command surfaces (`/powershell-lsp:doctor` and `/powershell-lsp:status`), plus
-the user-facing documentation for it, so it is a capability rather than hardening.
+Classified MINOR -- derived, not asserted. This changelog's own Versioning section calls MINOR "a
+new backward-compatible capability" and PATCH "bug fixes and internal hardening with no
+user-visible contract change". This adds a new header line to two shipped user-facing command
+surfaces (`/powershell-lsp:doctor` and `/powershell-lsp:status`), plus the user-facing
+documentation for it, so it is a capability rather than hardening.
 
 The precedent settles it without stretching: the v1.30.0 entry directly below classified **the
 version header line itself** MINOR on exactly this reasoning, and the doctor-surface precedent in
@@ -44,7 +48,8 @@ left the default doctor byte-for-byte unchanged. A default, always-rendered line
 below an opt-in probe.
 
 **Report-only, and nothing else moves.** No knob is added, removed, renamed, or re-defaulted
-(`.claude-plugin/plugin.json` is untouched, `userConfig` stays at 20); `CONTRACT.md` is untouched;
+(no `userConfig` entry in `.claude-plugin/plugin.json` is touched, and the count stays at 20 --
+this release changes only that file's `version`); `CONTRACT.md` is untouched;
 the frozen `pass`/`fail`/`unknown` status vocabulary is unchanged; the default doctor stays at
 **11 checks**; and the exit code is computed from exactly the inputs it was before. The new line
 contributes no result object at all.
