@@ -50,14 +50,22 @@ open work. What shipped and when is [CHANGELOG.md](./CHANGELOG.md); why is the
   `logs/lifecycle-<stamp>.jsonl` is a stamped rolling family that `session-start.ps1`'s
   `Invoke-LogSweep` trims to the `keepLastN` newest. That is the intended reading rather than a
   defect: the ledger reports what it can still see, and a floor pinned to a release whose records
-  have aged out would claim knowledge the reader no longer holds. One **wording** follow-up is
-  carried and is deliberately not release-blocking -- the shipped caveat states the floor and the
-  bounded gap, but the printed text does not yet say *window-relative*; that meaning currently lives
-  only in a source comment, so a reader has to infer it.
+  have aged out would claim knowledge the reader no longer holds. The **wording** follow-up this
+  carried is now closed: the printed caveat says *window-relative* directly under the value it
+  qualifies, rather than leaving that meaning in a source comment for the reader to infer.
 
   *Do version and provenance belong in user-facing documentation?* **Yes** -- version plus provenance
-  is a supportability surface, not an internal diagnostic. It is scheduled as the next slice rather
-  than closed here; see "What is next".
+  is a supportability surface, not an internal diagnostic. That ruling has now been built out; see
+  the surfacing item below.
+
+- **Version and provenance surfaced where a user will actually read them.** The adjudicated
+  successor to Arc A's provenance work, and the doctor lane's concrete slice, now shipped in both
+  places it named: the README's support / trust section, and a `doctor` / `status` line. "What
+  version am I on, and how far back can that answer be trusted?" is answerable without running the
+  efficacy ledger. The floor is **surfaced, never re-derived** -- it comes from the same function
+  the ledger reads, so the readout and the ledger cannot disagree about the same log -- and it
+  renders as a header line rather than a check, so it stays unconditional and does not inflate the
+  check count. The one wording follow-up it carried shipped with it.
 
 ## What is next
 
@@ -69,15 +77,6 @@ open work. What shipped and when is [CHANGELOG.md](./CHANGELOG.md); why is the
   the survey's remaining candidate -- surfacing security-classifier verdicts -- is **declined
   while the 000036 boundary stands**, and reopening that boundary is an attended ruling, not a
   slice. See the [decision ledger](docs/decision-ledger.md).
-
-- **Surface the version stamp and the provenance floor where a user will actually read them.** The
-  adjudicated successor to Arc A's provenance work, and the doctor lane's next concrete slice.
-  Version and provenance are a supportability surface, so they belong in user-facing documentation
-  and not only in a reader-side ledger. Two places: the README's support / trust section, and a
-  doctor / `status` line -- so that "what version am I on, and how far back can that answer be
-  trusted?" is answerable without running the efficacy ledger. The in-record stamp and the floor
-  already ship; this item is the **surfacing**, and it carries the one wording follow-up noted
-  above (say *window-relative* in the printed caveat, not only in a source comment).
 
 > **Plugin-catalog submission is not an item on this list.** It is maintainer-owned and is not
 > tracked on this page as an open action. It previously appeared under "What is next" as "the queued
