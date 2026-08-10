@@ -29,6 +29,66 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [Unreleased]
+
+**Classifies MINOR (so the next cut is 1.31.0) -- derived, not asserted.** This changelog's own
+Versioning section calls MINOR "a new backward-compatible capability" and PATCH "bug fixes and
+internal hardening with no user-visible contract change". This adds a new header line to two
+shipped user-facing command surfaces (`/powershell-lsp:doctor` and `/powershell-lsp:status`), plus
+the user-facing documentation for it, so it is a capability rather than hardening.
+
+The precedent settles it without stretching: the v1.30.0 entry directly below classified **the
+version header line itself** MINOR on exactly this reasoning, and the doctor-surface precedent in
+this file is unanimous -- including one addition that was OPT-IN, never-`fail`, and explicitly
+left the default doctor byte-for-byte unchanged. A default, always-rendered line cannot classify
+below an opt-in probe.
+
+**Report-only, and nothing else moves.** No knob is added, removed, renamed, or re-defaulted
+(`.claude-plugin/plugin.json` is untouched, `userConfig` stays at 20); `CONTRACT.md` is untouched;
+the frozen `pass`/`fail`/`unknown` status vocabulary is unchanged; the default doctor stays at
+**11 checks**; and the exit code is computed from exactly the inputs it was before. The new line
+contributes no result object at all.
+
+### Added
+
+- **The doctor and `/status` state the clearance provenance floor beside the version.** Every
+  support interaction opens with "what version are you on?", which v1.30.0 answered. The question
+  immediately behind it -- *and how far back can that answer be trusted?* -- could until now be
+  answered only by running `scripts/rule-efficacy-ledger.ps1`, which is not something a user in a
+  support thread is going to do. The floor now prints as a second **header line above the check
+  table**, under the same ruling that placed the version there: a floor is a plain fact, the
+  frozen status vocabulary has no word for one, and a row would have inflated the "of N checks"
+  count with a non-check. Being a header also makes it unconditional -- it is there even when
+  every check below it is UNKNOWN, which is exactly the run a stranger pastes into a bug report.
+
+  **Surfaced, never re-derived.** The value comes from `Get-LifecycleProvenanceFloor`
+  (`scripts/rule-efficacy-ledger.ps1`), the single source the efficacy ledger prints from, exactly
+  as the version line comes from `Get-PluginVersion`. The doctor grows no opinion of its own about
+  what counts as an attributable version, so the readout and the ledger cannot disagree about the
+  same log.
+
+  **Five states, five renderings, because they are five different claims:** a floor; records with
+  none attributable; a log holding no record yet; no lifecycle log at all under a *known* data
+  root -- the only case entitled to say `(absent)`; and a search that ran under a *fallback* data
+  root, where "nothing was ever captured" and "this run could not find it" cannot be told apart,
+  so it reports `(undetermined)` rather than picking the flattering reading.
+
+- **The efficacy ledger's printed provenance-floor caveat states that the floor is
+  window-relative.** The floor names the earliest version-attributable release among the records
+  **still retained**, and it *rises* as `session-start.ps1`'s `Invoke-LogSweep` trims the
+  `lifecycle-*.jsonl` family to `keepLastN`. That was always true and always load-bearing -- read
+  as "the earliest release this plugin ever had data for", the number is a claim about history --
+  but it lived only in a source comment, where the reader quoting the figure never saw it. It now
+  prints directly under the value it qualifies, and only in the floored state: where no floor is
+  named there is nothing for it to be relative to.
+
+- **README: "What version am I on, and how far back is my data attributable?"** A support subsection
+  under the install-and-release verification material stating both facts, what each means, and
+  every rendering the readout can produce. It points at the live doctor/`status` line as *the*
+  answer and names the two sources behind it rather than restating a value that would go stale --
+  so the docs, the runtime, and the ledger are one fact surfaced in three places rather than three
+  copies to keep in sync.
+
 ## [1.30.0] - 2026-08-09
 MINOR: **the doctor resolves the PowerShell host that actually serves PSES and can fail on it,
 the doctor and `/status` state the plugin version unconditionally, and every lifecycle record now
