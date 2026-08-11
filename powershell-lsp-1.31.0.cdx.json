@@ -1,0 +1,96 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:2e63c4e3-92f0-4545-a8b2-50470f945fe1",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-08-10T18:59:34Z",
+    "tools": [
+      {
+        "vendor": "powershell-lsp",
+        "name": "New-PluginSbom.ps1",
+        "version": "1.31.0"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:github/manderse21/claude-powershell-lsp@v1.31.0",
+      "name": "powershell-lsp",
+      "version": "1.31.0",
+      "purl": "pkg:github/manderse21/claude-powershell-lsp@v1.31.0",
+      "description": "PowerShell diagnostics and PSScriptAnalyzer fix suggestions for Claude Code, via PowerShell Editor Services.",
+      "supplier": {
+        "name": "Mike Andersen"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "GPL-3.0-or-later"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/manderse21/claude-powershell-lsp"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:github/PowerShell/PowerShellEditorServices@v4.6.0",
+      "name": "PowerShellEditorServices",
+      "version": "4.6.0",
+      "purl": "pkg:github/PowerShell/PowerShellEditorServices@v4.6.0",
+      "supplier": {
+        "name": "Microsoft Corporation"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/PowerShell/PowerShellEditorServices/releases/download/v4.6.0/PowerShellEditorServices.zip"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/PowerShell/PowerShellEditorServices"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:nuget/PSScriptAnalyzer@1.25.0",
+      "name": "PSScriptAnalyzer",
+      "version": "1.25.0",
+      "purl": "pkg:nuget/PSScriptAnalyzer@1.25.0",
+      "supplier": {
+        "name": "Microsoft Corporation"
+      },
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.powershellgallery.com/packages/PSScriptAnalyzer/1.25.0"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/PowerShell/PSScriptAnalyzer"
+        }
+      ]
+    }
+  ]
+}
