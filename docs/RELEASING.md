@@ -216,11 +216,24 @@ with a clear error and **tags nothing** -- the safe direction is always to refus
   "Dry-run summary" step concluded `success`). A run that can be classified **neither** way is
   treated as UNKNOWN and never satisfies the gate.
 
-  **Why 3 days.** The primary guard is commit identity -- the rehearsal must have run against the
-  exact commit being tagged. The window bounds drift in the external state a rehearsal checked but
-  the commit does not pin (Gate 5 reads `origin/main`'s published manifest; Gate 4 reads CI runs).
-  Three days spans a rehearse-Friday / cut-Monday pattern without letting a release lean on a
-  week-old view of `main`.
+  **Why 3 days -- and why the window is RETAINED.** The primary guard is commit identity: the
+  rehearsal must have run against the exact commit being tagged. The window bounds what commit
+  identity cannot pin, and there are two such things. The first is **external state** -- Gate 5
+  reads `origin/main`'s published manifest and Gate 4 reads CI runs, both of which move while the
+  target commit stands still. The second is the one that makes the window non-redundant, because
+  Gates 4 and 5 re-read that external state fresh on the producing run anyway: **the pipeline
+  definition itself drifts.** This workflow checks out `ref: main`, so a run executes whatever the
+  release workflow *was at `main`'s tip at run time* -- not what it was when the target commit was
+  authored. A dry run from three days ago therefore rehearsed a possibly older pipeline, and no
+  amount of commit identity detects that, because the commit being tagged does not pin the workflow
+  that tags it. Dispatch 000217 is the worked example: it changed the gitsign pin, the tag-verify
+  path, and Gate 6's own pairing logic -- all in this workflow -- between cuts. So the window bounds
+  how stale the rehearsal *of the pipeline* may be. Three days spans a rehearse-Friday /
+  cut-Monday pattern without letting a producing run lean on a week-old view of either `main` or
+  the pipeline. **Ratified retained (dispatch 000220):** this was the last unsettled control in
+  Gate 6, and it is now a settled decision resting on that specific guarantee rather than an
+  unexamined recency vestige. The reasoning is recorded in the
+  [decision ledger](decision-ledger.md).
 
   **The recorded exception.** `skip_dry_check=true` bypasses this gate. It exists so that skipping
   the rehearsal is a **recorded run parameter**, visible on the run forever, rather than an
