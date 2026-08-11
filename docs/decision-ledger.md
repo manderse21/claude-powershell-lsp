@@ -1231,6 +1231,103 @@ the outside rather than inferred from the source read. Note the verifier here is
 v0.17.1: consistent with the diagnosis, since the verifier was never the broken side and needed no
 upgrade. The arc closes forward; the paragraph above still governs everything cut before it.
 
+### Gate 6's window: `WINDOW_DAYS=3` is RETAINED -- ratified, on the guarantee it actually makes
+
+Gate 6's recency window was the **last unsettled control in the release chain**, carried as an open
+ruling for Mike Andersen out of 000217 and still open when 000219 verified v1.31.0. **It is now
+ratified RETAINED at its current value, unchanged.** No executable moved to record this; the ruling
+IS that nothing should. Verified-from-disk at the ratification: the Gate 6 step in
+`.github/workflows/powershell-lsp-release.yml` sets `WINDOW_DAYS=3` and passes it as
+`-WindowDays "$WINDOW_DAYS"`, and `release/Test-DryRunPair.ps1` declares `[int] $WindowDays = 3` as
+its own default, so the value is stated twice and agrees.
+
+**The case for deleting it was strong, which is why it needed a ruling rather than a shrug.** Since
+000217 leg D, Gate 6 pairs by COMMIT IDENTITY rather than by recency: the old `LEGACY_CAP=20`
+newest-N slice is gone from the workflow -- verified-from-disk, the identifier does not appear in
+that file at all, and what stands in its place is a comment recording why selecting on the target
+commit *"removes it outright, and removes nothing else"* -- and the legacy fallback now filters
+unmarked runs to the target commit, logging *"No run is dropped for being old."* Commit identity
+pins the TREE. Gate 4 re-reads the CI runs and Gate
+5 re-reads `origin/main`'s published manifest, both FRESH on the producing run rather than trusting
+what the rehearsal saw. If the tree is pinned and every external read is re-taken at producing time,
+an age bound on top of that looks like a vestige of the recency-matching era it outlived.
+
+**It is not a vestige, because of the one thing neither commit identity nor Gates 4 and 5 covers:
+the pipeline definition drifts.** The release workflow checks out `ref: main`, so any run --
+rehearsal or producing -- executes the release workflow *as it stands at `main`'s tip when that run
+starts*. The commit being tagged does not pin the workflow that tags it. A dry run three days old
+therefore rehearsed a possibly older pipeline, and no identity check can see that, because the two
+runs agree on exactly the thing that did not change. This is not hypothetical: **dispatch 000217
+rewrote this workflow between cuts** -- the gitsign pin v0.16.1 -> v0.17.1, the tag-verify path, and
+Gate 6's own pairing logic. A rehearsal from before that landed would have validated a pipeline that
+signed tags a verifier could not find. So the window bounds how stale the rehearsal *of the
+pipeline* may be, which is a specific, non-redundant guarantee. Three days spans the realistic
+rehearse-Friday / cut-Monday pattern without letting a producing run lean on a week-old view of
+either `main` or the pipeline.
+
+**One residual is recorded rather than quietly closed.** The workflow's own inline comment at
+`WINDOW_DAYS=3` still gives only the external-state half of the rationale, because 000220 was
+chartered doc/record-only and may not touch a `.yml`. `docs/RELEASING.md` now carries the full
+rationale including pipeline-definition drift, and this entry is its evidence layer; aligning the
+workflow comment is a one-line follow-up for the next dispatch that opens that file for a reason of
+its own. Recorded so the gap is a known deferral and not a discovery.
+
+### The recorded-check authoring contract -- five points, earned by the 000219 F2
+
+Dispatch 000219's verify pass returned **six MISMATCHes across its recorded checks**, and the
+post-mortem found **one root cause in five costumes: the checks were not RE-RUN-SAFE.** They passed
+where they were written and failed where they were re-run, which is the only place a recorded check
+is ever executed again. A check that only holds in the session that authored it records nothing --
+it is a claim wearing a command's clothes. The contract below is that root cause turned into
+authoring rules, and it binds every dispatch from 000220 forward.
+
+1. **SELF-ROOTING.** A check `cd`s to an absolute repository path, or passes one (`git -C <abs>`,
+   `gh -R <owner>/<repo>`). It never inherits the cwd it happens to be launched in, and never
+   depends on an artifact a prior step left behind. The verifier's cwd is not the author's.
+2. **RE-RUN-TESTED BEFORE THE MINT.** Every check is executed from a scratch cwd -- not the repo,
+   not the hub -- before the outbox is minted, and it is run **twice**, so that a check which
+   silently consumes state fails in the author's session rather than at the gate.
+3. **NEGATIVE CONTROLS ASSERT ON THE NON-ZERO EXIT.** A control exists to prove the check can fail.
+   Asserting that a deliberately-broken input still exits 0 asserts nothing at all; the control must
+   demand the failure. This is the polarity error, and it is the one that makes a dead check look
+   healthiest.
+4. **QUOTE EVERY REVISION AND SHELL METACHARACTER.** Both 000219 F2 classes were quoting: an
+   unquoted `^{}` peel suffix, which the shell strips before git ever sees it, and a `gh` filter
+   whose quotes broke across the shell boundary. If a revision or a filter expression reaches a
+   shell, it is quoted.
+5. **POST-MERGE INVARIANTS ARE ASSERTED AS ANCESTRY, NEVER AS TIP-EQUALITY.** `git merge-base
+   --is-ancestor <tag>^{} origin/main`, not `<tag>^{} == origin/main`. A tip-equality assertion is
+   true exactly until the true-up PR that carries the record merges -- that is, it goes false
+   because the dispatch succeeded, which is the worst possible failure signature.
+
+**This dispatch is the first authored under the contract, and it applied it to itself** -- its
+recorded checks are self-rooting file-contains assertions, re-run twice from a scratch cwd before
+the mint, with the negative control (no executable file in the diff) asserting on a non-zero exit.
+The mechanical version of this -- a hub-side mint-time harness that refuses to mint a check it
+cannot re-run -- is noted for the hub stream and deliberately not built here: the contract is the
+part that belongs in this project's record, and a harness that enforces it belongs where dispatches
+are minted.
+
+### PK-staging refresh is a standard release close-out step
+
+The Strategic-Claude **project-knowledge (PK) bundle** stages this repository's own documents for
+planning, and it refreshes only when someone runs the collector. Nothing tied that to a release, so
+the bundle drifted: the 000220 charter describes its own PK bundle as three releases stale, which is
+why its `do_not` had to say *live file wins* and why every claim in this entry is labelled
+verified-from-disk. A planning surface that lags the artifact it plans against does not merely go
+quiet -- it confidently anchors work on retired facts. The cost is on the record one dispatch back:
+the 000218 charter anchored a `plugins[].version` field that does not exist in
+`marketplace.json` at all, and the deviation had to be found at execution time rather than at
+authoring time.
+
+**Recorded as a standing discipline: PK-staging refresh runs as a leg of every release close-out,**
+alongside the CHANGELOG cut, the manifest lockstep bump, and this ledger's own true-up. The
+collector is hub-side tooling and the powershell-lsp bundle is already configured there
+(verified-from-disk in the hub: `tools/pk/Collect-PK.ps1` with a per-project entry in
+`tools/pk/pk-projects.psd1`), so the step costs a command, not a build. **The claude.ai upload stays
+manual by design** -- it is user-gated, and this discipline does not automate it or claim it as
+done; it makes the staged bundle current so that the manual step has something current to upload.
+
 ## 4. Forward plan -- the four-horizon ladder (tactical -> strategic)
 
 Forward work is a ladder, not a set of parked lanes. It climbs Immediate tactical (unblocked now) ->
@@ -2099,16 +2196,41 @@ real usage, not machinery.
   true when that survey ran and was superseded by slice 1's `orgPolicy` check in 000206). The
   version line is a header, not a row, because the status vocabulary `CONTRACT.md` freezes has no
   token for a plain fact.
-  **`review-declined: doctor-security-classifier (000036 boundary standing)`** -- survey class
-  **F10** / candidate **C1**, surfacing the security classifier's verdicts in the doctor, was NOT
-  built and is recorded here so it is not silently re-litigated. It contradicts the boundary
-  **dispatch 000036** recorded and `scripts/doctor.ps1` still states in its own header: *the doctor
-  points to a failing control, it does not probe or attribute security controls* -- so for an
-  indeterminate failure it emits one GENERIC pointer and does zero control-specific probing. The
-  000203 survey flags the contradiction itself. An enterprise-robust posture is a real argument for
-  moving that boundary, but moving a recorded design boundary is **a separate, explicitly attended
-  ruling by Mike Andersen**, not a line item inside a routine slice; 000208's `do_not` says so in
-  as many words. Until such a ruling exists, the 000036 boundary stands.
+  **`review-declined: doctor-security-classifier (000036 boundary UPHELD -- declined-final)`** --
+  survey class **F10** / candidate **C1**, surfacing the security classifier's verdicts in the
+  doctor, was NOT built and is recorded here so it is not silently re-litigated. It contradicts the
+  boundary **dispatch 000036** recorded and `scripts/doctor.ps1` still states in its own header
+  (verified-from-disk, `scripts/doctor.ps1` lines 19-25): *this doctor does NOT detect or diagnose
+  security-control blocks (WDAC / App Control / AppLocker / ExecutionPolicy / Smart App Control /
+  Constrained Language Mode) ... for an indeterminate failure the doctor emits only a single GENERIC
+  pointer ... Zero control-specific probing here.* The 000203 survey flags the contradiction itself.
+  000208 recorded the decline as pending an attended ruling by Mike Andersen, and **that ruling has
+  now been made: DECLINED-FINAL (dispatch 000220).** It is no longer "the boundary stands until
+  someone rules"; the boundary is upheld on stated reasoning, and a reader should treat reopening it
+  as arguing against a decision rather than filling a vacancy.
+
+  **The reasoning, and it turns on WHERE a control gets named rather than on whether naming one is
+  ever right.** The enterprise-robust argument for surfacing verdicts is real, and this project
+  already conceded it -- in the other place. `scripts/lib/security-classifier.ps1` (000038) exists
+  precisely to name the blocking control, and it does so on the SessionStart **bootstrap-failure
+  banner**: verified-from-disk, its header states it will *attribute a component-bring-up failure to
+  the security control most likely blocking it, on POSITIVE EVIDENCE ONLY*, and that naming a
+  control without that evidence is *the same sin as silent failure*. That surface has the two
+  properties the doctor lacks. (1) **A live failure is in hand** -- the banner fires only when
+  bootstrap actually failed, so there is something to attribute. The doctor is a static, pasteable,
+  report-only surface that most often runs with nothing blocked at all, where a named control would
+  be a guess dressed as a finding. (2) **The verdict is graded and the grading is load-bearing** --
+  `New-SecurityClassification` carries a `Confidence` of `confirmed`, `likely`, `possible` or
+  `none` (verified-from-disk), and the banner's lead-in switches on it. A doctor row has no such
+  channel: a doctor check's status is a `[ValidateSet('pass', 'fail', 'unknown')]` parameter
+  (verified-from-disk, `scripts/doctor.ps1` line 88), three tokens with nowhere to put a grade, so a
+  `possible`-confidence verdict would land in a table that can only render it as though it were
+  determined -- and `unknown`, the only token that could absorb it, is precisely the token the
+  doctor uses to mean *I could not check*, which is a different statement. On top of both, a
+  doctor report is written to be pasted into a bug report or a support thread, which makes an
+  enumerated read of a machine's security posture a disclosure the user did not ask to make. The
+  division is therefore deliberate and stated: **the banner does live, evidence-gated, named
+  diagnosis; the doctor does generic health and points.** Both halves ship. Neither is a gap.
 
 ## 7. Operating posture (unchanged)
 
