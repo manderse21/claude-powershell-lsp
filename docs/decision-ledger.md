@@ -1243,9 +1243,11 @@ its own default, so the value is stated twice and agrees.
 
 **The case for deleting it was strong, which is why it needed a ruling rather than a shrug.** Since
 000217 leg D, Gate 6 pairs by COMMIT IDENTITY rather than by recency: the old `LEGACY_CAP=20`
-newest-N slice is gone from the workflow (the name survives only in the comment explaining what it
-used to do), and the legacy fallback now selects unmarked runs on the target commit, logging *"No
-run is dropped for being old."* Commit identity pins the TREE. Gate 4 re-reads the CI runs and Gate
+newest-N slice is gone from the workflow -- verified-from-disk, the identifier does not appear in
+that file at all, and what stands in its place is a comment recording why selecting on the target
+commit *"removes it outright, and removes nothing else"* -- and the legacy fallback now filters
+unmarked runs to the target commit, logging *"No run is dropped for being old."* Commit identity
+pins the TREE. Gate 4 re-reads the CI runs and Gate
 5 re-reads `origin/main`'s published manifest, both FRESH on the producing run rather than trusting
 what the rehearsal saw. If the tree is pinned and every external read is re-taken at producing time,
 an age bound on top of that looks like a vestige of the recency-matching era it outlived.
