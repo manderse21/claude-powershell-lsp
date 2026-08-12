@@ -1,15 +1,45 @@
 # Drafted PR -- PSES PrepareRename/Rename null RenameCapability guard (#2297)
 
-**Status:** PR-READY, **NOT SUBMITTED**. The fix branch is pushed to Mike's fork:
+**Status re-derived: 2026-08-12 via gh; live state wins over this file.**
+
+## SUBMITTED, and CLOSED UNMERGED -- this is a historical record, not a pending action
+
+**The draft below was opened upstream** as
+[PowerShell/PowerShellEditorServices#2299](https://github.com/PowerShell/PowerShellEditorServices/pull/2299)
+on 2026-06-10T12:25:23Z, from `manderse21:fix/2297-prepare-rename-null-capability` into
+`main`, under the title "Fix #2297: guard PrepareRenameHandler against null rename
+capability" -- slightly different from the draft title recorded further down. It was
+**closed without merging** on 2026-06-11T14:36:23Z (no merge commit, no merged-at
+timestamp), with maintainer JustinGrote commenting: "Thanks for your submission! We are
+going to go with #2296 as the approach is more clear and tested."
+
+**The underlying defect is fixed upstream regardless.** Issue
+[#2297](https://github.com/PowerShell/PowerShellEditorServices/issues/2297) -- filed
+2026-06-06T19:53:48Z by manderse21 -- is **CLOSED / COMPLETED** (2026-06-11T14:43:51Z),
+closed by [#2296](https://github.com/PowerShell/PowerShellEditorServices/pull/2296)
+(mgreenegit, merged 2026-06-11T14:43:50Z, merge commit `40cf5e1e`), which handles the null
+capability and adds registration-option tests. JustinGrote on the issue: "Agreed, closing
+in favor of #2296 as I like the approach better."
+
+**Nothing further is to be submitted from this file, by anyone, Mike included.** There is no
+open upstream action here. Re-opening or re-filing this fix would duplicate a change
+upstream has already merged by another route.
+
+**What this file said until 2026-08-12, and why the draft is retained.** It opened
+"**Status:** PR-READY, **NOT SUBMITTED**" and stated that "Nothing has been submitted,
+commented, or posted upstream." That was accurate when written and false from
+2026-06-10T12:25Z onward -- the fork branch it describes as merely *pushed* became PR #2299
+the same day. The draft body below is kept verbatim as the record of what was proposed and
+what validation backed it; the fork-branch facts in the next paragraph remain true as
+history.
 
 - Fork branch: `manderse21/PowerShellEditorServices` @ `fix/2297-prepare-rename-null-capability`
 - Base: `PowerShell/PowerShellEditorServices` @ `main` (which is `v4.6.0`, commit `d2112c21`)
 - Commit: `Fix #2297: guard null RenameCapability in rename handlers`
 
-Opening the PR (fork branch -> upstream `main`) is **Mike's explicit action**. Nothing
-has been submitted, commented, or posted upstream.
-
 ---
+
+## Reference draft (HISTORY -- submitted as #2299, closed unmerged)
 
 ## PR title
 

@@ -1,12 +1,27 @@
 # Upstream draft -- PowerShell Editor Services: PrepareRename NullReferenceException
 
-**Target:** a NEW issue on `PowerShell/PowerShellEditorServices`. Searched the
-tracker 2026-06-06 for `PrepareRenameHandler`, `RenameCapability`, and a rename
-`NullReferenceException` on initialize -- no existing issue covers this, so file it
-fresh.
+**Status re-derived: 2026-08-12 via gh; live state wins over this file.**
 
-**Status:** DRAFT for Mike to post. Re-run the repro against a clean PSES `v4.6.0`
-checkout to confirm wording before filing.
+## ALREADY FILED AS #2297 -- DO NOT FILE THIS
+
+**This draft was filed** as
+[PowerShell/PowerShellEditorServices#2297](https://github.com/PowerShell/PowerShellEditorServices/issues/2297)
+(manderse21, 2026-06-06T19:53:48Z), under this document's exact title -- "PrepareRename
+throws NullReferenceException when an LSP client omits the `rename` capability (v4.6.0)".
+It is **CLOSED / COMPLETED** (2026-06-11T14:43:51Z), fixed upstream by
+[#2296](https://github.com/PowerShell/PowerShellEditorServices/pull/2296) (mgreenegit,
+merged 2026-06-11T14:43:50Z, merge commit `40cf5e1e`). This repository's own fix PR
+[#2299](https://github.com/PowerShell/PowerShellEditorServices/pull/2299) was closed
+unmerged in favour of it; see `pses-2297-pr.md`.
+
+**No action remains, and filing this fresh would duplicate a closed, fixed issue.** The
+"**Status:** DRAFT for Mike to post" line and the "no existing issue covers this, so file it
+fresh" instruction this file carried until 2026-08-12 were true on 2026-06-06 and false from
+2026-06-06T19:53Z that same evening -- the tracker search they describe is the search that
+immediately preceded filing #2297. Left uncorrected they read as an instruction to duplicate.
+
+**Retained as reference material:** the title, repro, and environment below are the source
+text of #2297.
 
 ---
 
