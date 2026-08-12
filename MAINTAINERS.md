@@ -10,6 +10,34 @@ honestly, with its mitigations and the guaranteed GPLv3 fork path, in
 the practical on-ramp for a **second maintainer**: what access is needed, how to run a release
 end-to-end, how to verify one, and how this repo relates to the private dispatch hub.
 
+## Release authority
+
+**Who may release: any account holding repository admin on
+`manderse21/claude-powershell-lsp` plus the ability to run GitHub Actions. Today that is exactly one
+account, `manderse21`.** There is no second holder, and no secret or key that could be delegated
+separately -- signing is keyless (see [Access grants](#access-grants) below).
+
+Authority here is split, and the split is the point:
+
+- **The pipeline decides whether a commit MAY be released.** Six gates, each of which refuses
+  rather than proceeds: merged to main, tag free, version lockstep, CI green on every leg,
+  tree-vs-published parity, and a rehearsal dry run on the same commit. They are enumerated in
+  [docs/RELEASING.md](./docs/RELEASING.md#what-the-pipeline-validates-the-gates), and they are the
+  reason a tag on an unmerged, red, wrong-version or unrehearsed commit is structurally impossible.
+- **A human decides whether it SHOULD be.** Five gates are human-only and no automation passes
+  them: **accept, merge, the `verified` flip, tag, and the product / positioning / sequencing
+  calls** (`ROADMAP.md`, "Operating posture"). Choosing the moment and the version number is a
+  judgement the pipeline deliberately does not make -- "automate the mechanics, preserve the
+  decision" ([docs/RELEASING.md](./docs/RELEASING.md)).
+
+Two consequences worth stating plainly:
+
+- **The pipeline cuts the tag; a maintainer does not.** A hand-cut tag is unsigned, unattested, and
+  blocks Gate 2 until it is deleted. The printed `git tag` commands are an unblock-only fallback.
+- **Both halves rest on one person today.** The pipeline half is delegable the moment a second
+  admin exists; the human half is not delegable to anything but another human. That open item is
+  tracked in [CONTINUITY.md](./CONTINUITY.md) and is the subject of the on-ramp below.
+
 ## Second-maintainer onboarding
 
 Work top to bottom. Every command here is ASCII and parses under Windows PowerShell 5.1. The
@@ -40,11 +68,19 @@ require a stored signing key, that is the rejected key-custody path, not this on
 ### Learn the release process
 
 The canonical runbook is [docs/RELEASING.md](./docs/RELEASING.md). Read it end to end once. In
-brief, a release is: bump the version in lockstep, record the CHANGELOG entry, open and merge a
-pull request, let the four-leg CI go green, then manually trigger the release workflow -- which
-refuses to tag unless all four gates pass (merged to main, tag free, version lockstep, CI green on
-every leg). Do not re-tag by hand; the pipeline cuts the tag on a commit it has already validated.
-Rehearse first with a dry run, as that runbook describes.
+brief, a release is: bump the version in lockstep, record the CHANGELOG entry, advance the roadmap,
+confirm published release bodies still agree with the CHANGELOG, open and merge a pull request, let
+the four-leg CI go green, then manually trigger the release workflow -- which refuses to tag unless
+all **six** gates pass (merged to main; tag free; version lockstep; CI green on every leg;
+tree-vs-published parity; and a rehearsal dry run on the same commit within 3 days). Do not re-tag
+by hand; the pipeline cuts the tag on a commit it has already validated. Rehearse first with a dry
+run -- Gate 6 makes the rehearsal required, not advisory.
+
+> **Corrected 2026-08-12 (dispatch 000227).** This paragraph previously said "all four gates",
+> naming only Gates 1-4. That understated the pipeline in both directions: **Gate 5**
+> (tree-vs-published parity, dispatch 000076) already existed when this file was created on
+> 2026-07-19, and **Gate 6** (the dry-run pair, dispatch 000197) landed afterwards. The gate list
+> above is now the one the workflow actually declares; `docs/RELEASING.md` remains canonical.
 
 ### Verify a release end-to-end
 

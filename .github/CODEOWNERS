@@ -1,0 +1,26 @@
+# Code owners for powershell-lsp.
+#
+# WHAT THIS FILE DOES TODAY: nothing. It is a statement of review ownership in the
+# place tooling looks for one. GitHub consults a CODEOWNERS file only when a branch
+# protection rule (or ruleset) turns on "Require review from Code Owners". As of
+# 2026-08-12 the protection rule on `main` has require_code_owner_reviews = false, so
+# this file is inert content and changes no merge behaviour.
+#
+# HOW IT WOULD BE ACTIVATED (deliberately NOT done):
+#   Settings -> Branches -> Branch protection rules -> `main`
+#     -> Require a pull request before merging
+#       -> tick "Require review from Code Owners"
+#
+# WHY IT IS NOT ACTIVATED YET -- this is the honest part, not an oversight:
+# a code-owner requirement is satisfied only by an approving review FROM a code owner.
+# GitHub does not let anyone approve their own pull request; `manderse21` is the sole
+# code owner and authors effectively every pull request; and `enforce_admins` is true
+# on this repository, so there is no admin bypass. Turning the setting on today would
+# make every pull request unmergeable. It becomes enforceable when a second maintainer
+# exists -- the open human item in CONTINUITY.md, which no document can close.
+#
+# See docs/roadmap-ii/GOVERNANCE-SURFACE.md section 4.3 for the full derivation, and
+# MAINTAINERS.md for release authority and the second-maintainer on-ramp.
+
+# Everything in the tree.
+*       @manderse21
