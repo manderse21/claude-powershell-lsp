@@ -112,8 +112,27 @@ Two inclusions are judgment calls and are flagged as such:
 | `rulesets/*.psd1` | 5 | Configuration data consumed as settings, not as analysis input. `base.psd1` and `surface-history.psd1` are additionally generated, never hand-edited. |
 | The ad-hoc survey oracle | 0 committed | Discussed in Finding 1. It is machine state and has never been committed, so it contributes no file to any tree. |
 
-`tests/` holds **293** tracked files in total (`git ls-files tests`, 2026-08-12); 137 of the audited
-surface's files come from it, plus `demo.ps1` from the repo root.
+`tests/` holds **293** tracked files in total (`git ls-files tests`, 2026-08-12); **136** of the
+audited surface's files come from it, plus `demo.ps1` from the repo root, for 137.
+
+### The 000221 baseline, confirmed
+
+`docs/roadmap-ii/CURRENT-STATE.md` line 130 records the corpus inventory this audit extends: **253**
+files under `tests/corpus/`, itemised as "127 `samples/`, 121 `expected/`, 3 `parser-samples/`". The
+total is **CONFIRMED** -- `git ls-files tests/corpus` returns exactly **253** at `7f34277`,
+2026-08-12.
+
+One nuance, recorded so a later reader does not "correct" a correct number: that itemisation sums to
+**251**, not 253. The two unlisted files are the harness scripts at the `tests/corpus/` root,
+`Corpus.Common.ps1` and `Update-CorpusSnapshots.ps1` -- which this audit also excludes from the
+surface, as harness code rather than sample material. The row's total is right and its itemisation
+is partial. That is a presentational gap, not a drift, and it is **not corrected here**:
+`CURRENT-STATE.md` is outside this dispatch's write scope.
+
+The two counts reconcile exactly. Of the 253, this surface takes **130** (127 `samples/` + 3
+`parser-samples/`) and excludes **123** (121 `expected/` + the 2 harness scripts); the remaining
+**7** rows come from outside `tests/corpus/` -- the two guard-fixture pairs, the two bench fixtures,
+and `demo.ps1`. 130 + 7 = 137.
 
 ---
 
