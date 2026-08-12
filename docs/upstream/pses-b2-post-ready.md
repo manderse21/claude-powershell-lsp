@@ -1,3 +1,23 @@
+# Posted issue body -- PSES OnInitialize NRE on Linux with workspaceFolders (#2300)
+
+**Status re-derived: 2026-08-12 via gh; live state wins over this file.**
+
+## ALREADY FILED AS #2300 -- DO NOT FILE THIS
+
+**This body was filed** as
+[PowerShell/PowerShellEditorServices#2300](https://github.com/PowerShell/PowerShellEditorServices/issues/2300)
+(manderse21, 2026-06-10T14:50:00Z), and the issue is **CLOSED / COMPLETED**
+(2026-06-18T03:08:27Z). The companion draft with the title and pre-filing tracker search is
+`pses-b2-workspacefolders-issue.md`.
+
+**The `post-ready` in this file's name means "ready to post" and is now historical -- it was
+posted.** The filename is the only status this file ever carried, it cannot be re-derived by
+reading the text, and on its own it invites a reader to post an already-filed issue. Hence
+this block. **No action remains; filing this would duplicate a closed issue.** Retained as the
+verbatim source text of #2300.
+
+---
+
 On PSES `v4.6.0` running on Linux, an LSP `initialize` whose `params` include a
 `workspaceFolders` array throws a `NullReferenceException` inside the server's own
 `OnInitialize` handler, on the path that adds the workspace folders. The handshake
