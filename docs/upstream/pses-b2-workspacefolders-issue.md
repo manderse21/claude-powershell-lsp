@@ -1,14 +1,30 @@
 # Upstream draft -- PowerShell Editor Services: OnInitialize NullReferenceException on Linux when initialize carries workspaceFolders
 
-**Target:** a NEW issue on `PowerShell/PowerShellEditorServices`. Searched the
-tracker 2026-06-10 for an `OnInitialize` / `workspaceFolders` `NullReferenceException`
-on Linux -- the close hits are unrelated (an AnalysisService code-action NRE in
-#1534; old, already-fixed workspace null-marker work) -- so file it fresh.
-Re-run the repro against a clean PSES `v4.6.0` checkout to confirm wording before filing.
+**Status re-derived: 2026-08-12 via gh; live state wins over this file.**
 
-**Status:** DRAFT for Mike to post. Distinct from the rename-handler NRE (#2297 /
-PR #2299): different trigger (workspaceFolders, not an omitted rename capability),
-different code path, and Linux-only rather than cross-platform.
+## ALREADY FILED AS #2300 -- DO NOT FILE THIS
+
+**This draft was filed** as
+[PowerShell/PowerShellEditorServices#2300](https://github.com/PowerShell/PowerShellEditorServices/issues/2300)
+(manderse21, 2026-06-10T14:50:00Z), under this document's exact title -- "NullReferenceException
+in OnInitialize on Linux when the initialize request includes workspaceFolders (v4.6.0)". It is
+**CLOSED / COMPLETED** (2026-06-18T03:08:27Z), with no comments on the issue.
+
+**No action remains, and filing this fresh would duplicate a closed issue.** The "**Status:**
+DRAFT for Mike to post" line and the "so file it fresh" instruction this file carried until
+2026-08-12 were true on 2026-06-10 morning and false from 14:50Z that same day. Note also that
+`sitting-closeout.md` recorded this item as DEFERRED with "no body file" at 12:56:52Z -- about
+two hours before it was filed, and with this file and `pses-b2-post-ready.md` already on disk;
+that row has been corrected in that page too.
+
+The cross-reference the original draft carried remains accurate as history: this is distinct
+from the rename-handler NRE (#2297 / PR #2299) -- different trigger (workspaceFolders, not an
+omitted rename capability), different code path, and Linux-only rather than cross-platform.
+
+**Retained as reference material:** the title, repro, and environment below are the source text
+of #2300. The 2026-06-10 tracker search recorded above (close hits unrelated: an AnalysisService
+code-action NRE in #1534, since CLOSED; old already-fixed workspace null-marker work) is kept as
+the record of the pre-filing search.
 
 ---
 

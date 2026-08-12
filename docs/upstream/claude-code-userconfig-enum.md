@@ -1,9 +1,49 @@
 # Feature request: an enum / select `userConfig` option type for Claude Code plugins
 
-**What this is: a POST-READY DRAFT, UNPOSTED.** The body below is written to be filed as-is against
-`anthropics/claude-code`. **Filing it is Mike Andersen's gate** -- as with every upstream posting
-from this repo, no agent files, comments on, or otherwise transmits this. It sits here until Mike
-decides to post it, revise it, or drop it.
+**Status re-derived: 2026-08-12 via gh; live state wins over this file.**
+
+## ALREADY FILED AS #74289 -- DO NOT FILE THIS. Read this block before acting on anything below
+
+**The ask in this document is already filed upstream, as part of
+[`anthropics/claude-code#74289`](https://github.com/anthropics/claude-code/issues/74289)**
+-- OPEN, filed 2026-07-04T22:17:56Z, last updated 2026-07-04T22:19:04Z, re-derived live with
+`gh` on 2026-08-12. That issue's body carries this request **twice**:
+
+- in a section headed **"Second, separate defect (enum options)"**, which states that every
+  `userConfig` option renders as free text regardless of declared `type`, that the option
+  schema is strict, that `type` is limited to `string|number|boolean|directory|file`, that an
+  `enum` key is rejected, and which asks upstream to "consider an enum/select userConfig type,
+  and a boolean toggle, in the config panel"; and
+- as **suggested fix (c)**: "add an enum/select (and boolean) userConfig option type with a
+  picker/toggle in the panel."
+
+**Therefore the correct action on this file is NO ACTION.** Filing it -- as a new issue, as a
+comment, or as any other upstream transmission -- would **duplicate #74289**. Do not do it. If
+the enum ask needs to advance, it advances **on #74289**; and any upstream posting at all
+remains Mike Andersen's gate and his alone, as it is for everything in this directory.
+
+**This warning is in the file itself because the hazard is proven, not hypothetical.** This
+repository has already caused one duplicate submission by trusting an on-disk status line that
+had gone stale -- that incident is why `ROADMAP.md` carries its explicit catalog-submission
+warning. Until 2026-08-12 this file opened "**What this is: a POST-READY DRAFT, UNPOSTED**" and
+contained **zero** mention of #74289 anywhere in it. That is the same failure one step earlier,
+and it is the dangerous direction: the rational move on a genuinely unfiled draft *is* to file
+it, so a trusting reader -- human or agent -- would have done exactly the wrong thing for
+exactly the right reason. An UNPOSTED label is not self-correcting. Nothing in this tree
+notices when an issue elsewhere begins carrying the same ask, so the binding between draft and
+upstream id has to be written into the draft's own text. It now is.
+
+**What this file is now: RETAINED REFERENCE MATERIAL, not a pending submission.** The body
+below is longer and more specific than the summary that actually reached #74289 -- it quotes
+the shipped Zod schema verbatim, separates Option A (an optional `values` key) from Option B (a
+sixth `type`), and carries the value/label refinement and the backward-compatibility analysis.
+Keep it as the worked-out version of the argument, usable as raw material should Mike ever want
+to comment on #74289. Do not delete it, and do not read its length as evidence that it is
+unfiled.
+
+---
+
+## Reference draft (retained; its substance is already represented upstream by #74289)
 
 **Provenance.** The schema evidence below was re-derived from the installed binary at write time by
 dispatch 000197 leg 5 (Claude Code **2.1.223**, 2026-08-06). Dispatch 000195 leg F first derived the
