@@ -29,6 +29,56 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [Unreleased]
+
+### Fixed
+
+**A live-but-busy daemon is no longer mistaken for an unreachable one, and is never relaunched
+because of it** (dispatch 000225). On the edit path the client treated *every* failed diagnostics
+round-trip as "there is no daemon" and fired an auto-relaunch. `$null` from `Get-Diagnostics`
+actually covers three conditions, and only one of them is a missing daemon:
+
+1. the connect timed out because the daemon's single pipe instance was **busy** serving another
+   edit (its serve loop is serial, so it does not accept while it analyzes);
+2. the connect **succeeded** and the response did not arrive within the hard cap -- the daemon is
+   alive and still analyzing (the large-file case, where its 5000 ms settle cap and the client's
+   5000 ms hard cap are the same number, so the client can lose the race);
+3. there is genuinely no pipe -- a clean idle-TTL self-terminate, a crash, or the ~150 ms pre-pipe
+   launch sliver. This is the only condition a relaunch can repair.
+
+In cases 1 and 2 the daemon is alive and holding the pipe, so the replacement could not even take
+the name (the server allows one instance) and died before serving, while the user was told the
+analyzer *"had stopped (e.g. after idle) and is being restarted"*. Worse, the first such edit burnt
+the 30-second relaunch cooldown stamp, so every busy edit for the next 30 seconds fell through to
+*"the analyzer was not reachable and could not be restarted automatically ... Start a new session to
+restart it"* -- advice to restart a working session, about an analyzer that was fine.
+
+The client now asks whether the daemon's named pipe is **present** before concluding it is absent
+(`Test-DaemonPipePresent`, a read-only namespace probe, ~4 ms, and only ever on the failure path).
+A failed connect cannot answer that question on its own: measured on Windows, a busy pipe and an
+absent pipe raise the *same* `TimeoutException` after the *same* elapsed time. If the pipe is
+present the edit resolves through the existing transient `incomplete` status -- "analysis did not
+complete -- this edit was NOT checked" -- with no process spawned and the cooldown budget left
+intact for a real outage. If the pipe is absent, the 000030 relaunch-and-recover path runs exactly
+as before.
+
+**No new `userConfig` knob and no new status token** -- the four-token taxonomy
+(`ok` / `incomplete` / `degraded` / `unavailable`) is unchanged and the 000027 drift-guard is
+untouched. Reusing the transient `incomplete` here follows the precedent 000030 itself set. The warm
+path is unaffected by construction: a healthy pass never reaches the branch, so neither the probe nor
+the relaunch runs, verified by comparing the emitted context against pre-fix code byte for byte.
+
+Classified **PATCH**, derived from this changelog's own Versioning section: this is a bug fix with no
+user-visible *contract* change -- no knob added or renamed, no status token added, no change to the
+hook registration or fail-safe edit behavior. The banner a user sees in the busy case does change,
+but from a false statement to a true one, which is the fix rather than a contract change.
+
+Covered by five controls in `tests/` -- a RED reproduction on pre-000225 routing, the GREEN result on
+the same scenario, a positive control proving a genuinely unreachable daemon still relaunches, a
+warm-path regression control, and a bounded observation showing relaunches in the busy scenario at
+**0** -- plus unit coverage of the discriminator itself. `docs/roadmap-ii/POST-FIX-REMEASUREMENT-relaunch-thrash.md`
+remeasures the large-file behavior against the frozen v1.31.0 baseline.
+
 ## [1.31.0] - 2026-08-10
 MINOR: **the doctor and `/status` state the clearance provenance floor beside the version, and the
 README answers "what version am I on, and how far back is my data attributable?"** One

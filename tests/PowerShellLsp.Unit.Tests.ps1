@@ -4744,3 +4744,80 @@ Describe 'Org policy -- fail-open degrade (dispatch 000142)' {
         { @(Import-OrgPolicyExcludes -Path 'org/policy.psd1') } | Should -Not -Throw
     }
 }
+
+Describe 'Test-DaemonPipePresent -- the busy-vs-unreachable discriminator (dispatch 000225)' {
+    # The whole 000225 fix rests on one claim: a pipe that EXISTS is distinguishable from one that
+    # does not, cheaply and read-only, from inside the client process. These assert that claim
+    # directly against a real pipe, on every platform the suite runs on.
+    BeforeAll {
+        $script:DP_Name = 'powershell-lsp-unit225-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+    }
+
+    It 'reports FALSE for a pipe that does not exist' {
+        Test-DaemonPipePresent -PipeName $script:DP_Name | Should -BeFalse
+    }
+
+    It 'reports TRUE while a server holds the name, and FALSE again once it is disposed' {
+        # Both halves in one It on purpose: a probe stuck at $true and a probe stuck at $false each
+        # pass one half, so only the transition proves it actually discriminates.
+        $server = New-Object System.IO.Pipes.NamedPipeServerStream(
+            $script:DP_Name, [System.IO.Pipes.PipeDirection]::InOut, 1,
+            [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)
+        try {
+            Test-DaemonPipePresent -PipeName $script:DP_Name | Should -BeTrue
+        } finally {
+            $server.Dispose()
+        }
+        Start-Sleep -Milliseconds 250
+        Test-DaemonPipePresent -PipeName $script:DP_Name | Should -BeFalse
+    }
+
+    It 'still reports TRUE when the single instance is BUSY -- the case the fix turns on' -Skip:(-not $script:OnWindows) {
+        # A busy instance is exactly what a connect attempt cannot tell apart from an absent pipe:
+        # measured on Windows, both throw the same TimeoutException after the same elapsed time.
+        # Presence is what separates them, so presence must survive the instance being occupied.
+        $name = 'powershell-lsp-unit225busy-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+        $server = New-Object System.IO.Pipes.NamedPipeServerStream(
+            $name, [System.IO.Pipes.PipeDirection]::InOut, 1,
+            [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)
+        $squatter = $null
+        try {
+            $null = $server.WaitForConnectionAsync()
+            $squatter = New-Object System.IO.Pipes.NamedPipeClientStream('.', $name,
+                [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::Asynchronous)
+            $squatter.Connect(2000)
+            Start-Sleep -Milliseconds 250
+            $server.IsConnected | Should -BeTrue -Because 'the assertion below is vacuous unless the instance is genuinely occupied'
+            # A second client cannot get in ...
+            $second = New-Object System.IO.Pipes.NamedPipeClientStream('.', $name,
+                [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::Asynchronous)
+            try { { $second.Connect(600) } | Should -Throw } finally { $second.Dispose() }
+            # ... and yet the daemon is plainly still there.
+            Test-DaemonPipePresent -PipeName $name | Should -BeTrue
+        } finally {
+            try { if ($null -ne $squatter) { $squatter.Dispose() } } catch { }
+            $server.Dispose()
+        }
+    }
+
+    It 'is fail-safe: a malformed or empty name returns FALSE instead of throwing' {
+        # FALSE routes the caller down the pre-000225 relaunch path, so a probe that cannot answer
+        # is never WORSE than the behavior it replaced -- and it never breaks the edit.
+        foreach ($bad in @('', '   ', $null, 'has/slash', 'has\backslash', 'has:colon')) {
+            { Test-DaemonPipePresent -PipeName $bad } | Should -Not -Throw
+            Test-DaemonPipePresent -PipeName $bad | Should -BeFalse
+        }
+    }
+
+    It 'does not CREATE, open, or connect to the pipe it is asked about' {
+        # Read-only matters: if the probe took the name even momentarily, it would race a daemon
+        # that is legitimately starting -- introducing the failure the fix exists to remove.
+        $name = 'powershell-lsp-unit225ro-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+        Test-DaemonPipePresent -PipeName $name | Should -BeFalse
+        # If the probe had created it, this server could not be created with max 1 instance.
+        $server = New-Object System.IO.Pipes.NamedPipeServerStream(
+            $name, [System.IO.Pipes.PipeDirection]::InOut, 1,
+            [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)
+        try { Test-DaemonPipePresent -PipeName $name | Should -BeTrue } finally { $server.Dispose() }
+    }
+}
