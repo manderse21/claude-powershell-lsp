@@ -78,6 +78,29 @@ private root is removed from disk; the live bundles are intact (168 files under
 were confirmed still running afterwards. The live data root was never the value of
 `CLAUDE_PLUGIN_DATA` at any point in the walk.
 
+### 2.1 HOST CONTAMINATION -- what in this document is timing-dependent, and therefore suspect
+
+**The host was saturated while this walk ran.** The machine carried roughly **2,250 orphaned
+`statusline.ps1` shells** until shortly after the walk completed, when they were swept. The
+teardown's own process enumeration corroborates it independently: **2,256 to 2,279** live
+`pwsh`/`powershell` processes across three successive queries. For comparison,
+`SLO-BASELINES.md` section 2 recorded **547 to 585** total live processes on this same host --
+so this walk ran at roughly **four times** the process count of the baseline it is read against.
+
+This is disclosed here rather than quietly absorbed, because it changes what parts of this
+document may be relied on:
+
+| Evidence class | Status | Why |
+|---|---|---|
+| **Structural findings** -- a documented path that does not resolve, a quoted string that ships nowhere, an environment variable that is absent, a version that is never reconciled, a rule that does or does not fire, a check that reads UNKNOWN by design | **UNAFFECTED** | None depends on how fast anything ran. Each is a path resolution, a string comparison, a presence test, or a finding count, and each is reproducible on a quiet host. D1, D2, D3, O1, O2, O3, O4, T1, T3 and every anchor-1 count are of this class. |
+| **Edit-count observations** -- the 2, 5, 3 and 3 unchecked edits in section 3.2 | **CONTAMINATED, DO NOT RELY ON THE NUMBERS** | The count is a race between edit cadence and PSES initialization, and a saturated host lengthens initialization directly. Under this load the counts are expected to be inflated by an unknown factor. They are retained only as evidence that the count **varies**, never as a measurement, and explicitly **not** as a contradiction of `SLO-BASELINES.md`. |
+| **Any elapsed-time figure observed during the walk** | **CONTAMINATED, NOT PUBLISHED** | No latency figure from this walk appears as a result anywhere in this document. Every timing claim here is cited from `SLO-BASELINES.md`, which was measured under its own stated conditions. |
+
+**What this does not touch.** The teardown safety proofs are presence/absence facts, not timings:
+zero private-root processes remaining, the private root removed, the live bundles and markers
+intact, co-tenant daemons alive. Saturation cannot make a process that exists look absent, and
+the zero was re-derived on a query verified to have run and paired with a non-vacuity control.
+
 ## 3. The journey, documented against experienced
 
 ### 3.1 Install (README steps 1 and 2)
@@ -124,8 +147,21 @@ true.**
 **Divergence: the number of edits it took.** The README says the first edit "may briefly read
 `incomplete` while PSES finishes starting, **then settles on the next edit**." Across four
 independent cold sessions in this walk, the number of edits returning "NOT checked" before the
-first settled result was **2, 5, 3 and 3** -- never 1. The mechanism is legible in the daemon's
-own log:
+first settled result was 2, 5, 3 and 3 -- never 1.
+
+> **These four counts are CONTAMINATED and are not offered as a measurement.** See section 2.1:
+> the host carried roughly 2,250 orphaned shells during this walk, at about four times the
+> process count of the baseline. A saturated host lengthens PSES initialization, and the count is
+> a race against exactly that window, so these numbers are expected to be inflated by an unknown
+> factor. They are retained for one purpose only -- to show the count is **variable** rather than
+> fixed -- and they are **not** evidence against `SLO-BASELINES.md`'s measured 1 of 1 in 10 of 10
+> sessions, which was taken under a controlled protocol on a far quieter machine.
+
+The structural point survives the contamination, because it comes from the mechanism rather than
+from the counts: **nothing in the code bounds this number.** An edit is answered `incomplete`
+whenever it arrives before PSES reports ready, so the count is however many edits land inside the
+initialization window -- a function of typing speed and machine load, not a promise the plugin
+keeps. The mechanism is legible in the daemon's own log:
 
 ```
 [16:01:52] request action=diagnostics
@@ -143,12 +179,14 @@ are separated.
 
 **Honest bound on that observation.** `SLO-BASELINES.md` measured exactly 1 unchecked edit in 10
 of 10 sessions with spread zero, under a protocol with full teardown between iterations. This
-walk ran sessions back to back with earlier scratch daemons still alive, which is the *ordinary*
-condition a user is in and a *noisier* condition than the baseline's. These two results are not
-in conflict about the mechanism; they differ about the count under different conditions, and
-reconciling them is a measurement question this audit deliberately does not settle -- it is
-recorded as an open question in section 7 rather than resolved by remeasurement, which scope
-forbids.
+walk ran sessions back to back with earlier scratch daemons alive **on a host carrying roughly
+2,250 orphaned shells** (section 2.1). That is not a harder-but-representative condition, it is a
+pathological one, and it is the more likely explanation of the difference than anything about the
+plugin. **The two results are therefore not in conflict, and this document does not treat them as
+though they were.** They agree about the mechanism; the count under quiet conditions is
+`SLO-BASELINES.md`'s to state, and re-measuring it is out of scope here. What this walk
+contributes is the structural observation above -- that no bound exists in the code -- which is
+independent of load.
 
 ### 3.3 Prove it works (README step 3, the doctor)
 
@@ -177,9 +215,11 @@ environments:
 | Both set, data root = the private scratch root (the in-session case) | **10 pass, 0 fail, 1 unknown** of 11 |
 
 Exit code stayed 0 in all three; only a FAIL is non-zero, as documented. In the healthy case the
-end-to-end check reported a real diagnostic observed in 1823 ms through the same warm daemon and
-pipe an edit uses -- the check that distinguishes "analyzed, clean" from "nothing was analyzed",
-and it works.
+end-to-end check reported a real diagnostic observed through the same warm daemon and pipe an
+edit uses -- the check that distinguishes "analyzed, clean" from "nothing was analyzed", and it
+works. (The check prints an elapsed time with its result; that figure is not reproduced here,
+per section 2.1, because it was observed under host saturation. What matters for this audit is
+that the probe returned its expected finding, which is a presence fact, not a timing.)
 
 ### 3.4 A config change (the `ruleset` bump)
 
@@ -326,12 +366,18 @@ classify differently:
    documented. The user gets an honest banner rather than silence, which is the entire point.
    Classified **EXPECTED TRADEOFF** (T2).
 2. **That the README states the bound as "then settles on the next edit"** is a different claim,
-   and it did not hold in any of four cold sessions (2, 5, 3, 3 unchecked). Worse, the banner text
-   is byte-identical on every one of those edits and identical to the banner a *large file* gets
+   and the code enforces no such bound -- an edit is answered `incomplete` whenever it arrives
+   before PSES reports ready, however many that turns out to be. Worse, the banner text is
+   byte-identical on every one of those edits **and** identical to the banner a *large file* gets
    when it will never settle at all (`SLO-BASELINES.md` section 8: 1 of 5 sessions converged on a
-   3,881-line file). So a stranger watching five identical "analysis did not complete" lines has
-   no shipped means to distinguish *starting up*, *this file is too big*, and *broken*. Classified
-   **USER-VISIBLE DX DEFECT** (D4).
+   3,881-line file). So a stranger watching repeated identical "analysis did not complete" lines
+   has no shipped means to distinguish *starting up*, *this file is too big*, and *broken*.
+   Classified **USER-VISIBLE DX DEFECT** (D4).
+
+   **D4 rests on the two structural facts above -- the absent bound and the indistinguishable
+   banner -- not on this walk's edit counts, which section 2.1 flags as contaminated by host
+   saturation.** Both structural facts are reproducible on a quiet host, and neither depends on
+   how many edits any particular session lost.
 
 The information needed to tell them apart exists and is precise -- the daemon logs
 `diagnostics request while not ready (state=initializing)` -- it simply never reaches the user.
@@ -402,7 +448,7 @@ Ten findings, each in exactly one category. **Zero unclassified.**
 | **D1** | The README's out-of-session doctor invocation, `pwsh -File scripts/doctor.ps1`, exits 64 for anyone who installed via `/plugin`. There is no `scripts/` directory relative to a user's working directory, and the README never gives the cache path. | Not observability: nothing needs explaining, the command simply does not run. Not a tradeoff: nothing is being bought. It is the documented escape hatch for the out-of-session case, and it is the one path a user reaches for precisely when the in-session path is unavailable. |
 | **D2** | The README quotes the no-pipe banner as *"analyzer was not reachable -- this edit was NOT checked"*. That string **ships nowhere**. The client ships two distinct banners for this condition, with opposite remedies: *"the analyzer had stopped (e.g. after idle) and is being restarted ... your next edit should be"* (wait) and *"...could not be restarted automatically ... Start a new session to restart it"* (act). | The README collapses two states into one and quotes a third string for both. A user searching their transcript for the documented text finds nothing, and a user told "your next edit should be" who instead needs to restart has been given the wrong instruction. That is misdirection at the point of failure, not a gap in explanation. |
 | **D3** | The doctor's data-blind UNKNOWNs advise "run this doctor from inside a Claude Code session (where CLAUDE_PLUGIN_DATA is set)". In this live, plugin-enabled session, tool shells carry neither `CLAUDE_PLUGIN_DATA` nor `CLAUDE_PLUGIN_ROOT`. | The diagnosis is excellent (see anchor 1); the remedy returns the user to the state they are already in. A remedy that cannot be executed from the context that produced the message is a defect in the user's path, not a missing observation -- the observation is already there and is correct. |
-| **D4** | The README states the cold-start bound as "then settles on the next edit". Four cold sessions returned 2, 5, 3 and 3 unchecked edits, and the banner is identical across all of them and identical to the never-settles large-file case. | The unchecked edits themselves are a tradeoff (T2). This entry is only the **stated bound** and the **indistinguishability**: the user was told one edit, sees five, and has no shipped means to tell startup from a file that will never settle. Recovery requires knowing which case they are in, and nothing tells them. |
+| **D4** | The README states the cold-start bound as "then settles on the next edit", but the code enforces no bound -- an edit reads `incomplete` whenever it arrives before PSES reports ready. The banner is byte-identical across every such edit **and** identical to the never-settles large-file case. | The unchecked edits themselves are a tradeoff (T2). This entry is only the **stated bound** and the **indistinguishability**: the user was told one edit, may see several, and has no shipped means to tell startup from a file that will never settle. Recovery requires knowing which case they are in, and nothing tells them. Rests on the two structural facts, **not** on this walk's contaminated counts (section 2.1). |
 
 ### OBSERVABILITY DEFECT -- the behavior may be fine; the tooling cannot explain it
 
@@ -435,7 +481,8 @@ Recorded so coverage is falsifiable rather than assumed. Unknown is not zero.
 | `formatOnEdit`, `moduleAwareness`, `referenceSurfacing`, `orgPolicy`, `settingsPath`, `profile` | Only `ruleset` was exercised as the config change, per the charter's single-config-change journey step. |
 | The `/plugin` config panel itself | Knobs were set through the `CLAUDE_PLUGIN_OPTION_*` environment seam that the hooks actually read. The panel's own UX -- discoverability, validation, error text -- is unwalked. |
 | Large-file non-convergence | Cited from `SLO-BASELINES.md` section 8, not re-walked; re-walking it would have been the remeasurement scope forbids. |
-| Any latency figure | No new latency number is published here. Every timing claim is cited from `SLO-BASELINES.md`. The edit counts in section 3.2 are counts, not timings, and are reported with their conditions. |
+| Any latency figure | No new latency number is published here. Every timing claim is cited from `SLO-BASELINES.md`. |
+| **A quiet-host walk** | The host carried roughly 2,250 orphaned shells throughout (section 2.1), swept only after the walk finished. Every timing-dependent observation is therefore withdrawn, and the structural findings -- which is all ten -- are reported on evidence that does not depend on load. A re-walk on the swept host would settle the edit-count question, and is offered rather than assumed. |
 
 ## 7. Questions this audit raises but does not answer
 
@@ -444,11 +491,13 @@ Recorded so coverage is falsifiable rather than assumed. Unknown is not zero.
   observed to lack that variable. Resolving this needs one run against a live install, which this
   dispatch declined for co-tenant safety. It is the highest-value single question here, because
   D1 and D3 together would mean a stranger has **no** working doctor invocation.
-- **How many edits does a cold session really lose?** `SLO-BASELINES.md` says exactly 1 under
-  controlled teardown; this walk saw 2, 5, 3, 3 under ordinary conditions. Candidate target T3 in
-  that document ("at most one edit per session returns NOT checked") is proposed as a ratifiable
-  line, and on this evidence it is not a property the code enforces. Worth settling before T3 is
-  ratified.
+- **How many edits does a cold session really lose, and can "at most one" be ratified?** The
+  count question itself is **unanswerable from this walk** -- its observations are contaminated
+  by host saturation (section 2.1) and are withdrawn as evidence about magnitude. What stands is
+  structural and load-independent: **the code enforces no bound**, so candidate target T3 in
+  `SLO-BASELINES.md` ("at most one edit per session returns NOT checked") would be ratifying a
+  property nothing currently guarantees. Whether that gap matters in practice needs one clean
+  re-run on the now-swept host, which this dispatch did not have and does not attempt.
 - **Should the four-state model extend to the client's own banners?** The status table owns four
   daemon-side states in one place (`Get-DiagnosticsStatusBanner`), which is why they are
   consistent. The two client-side no-pipe banners live at `lsp-client.ps1:484` and `:487` and are
@@ -461,8 +510,8 @@ An audit that reports only defects misrepresents the thing it audited.
 - **The headline promise is true.** The README's example file returns the README's example
   diagnostic, with an added explanation.
 - **The end-to-end check earns its place.** It proved a real diagnostic through the real warm
-  daemon in 1823 ms. It is the check that separates "analyzed, clean" from "nothing ran", and it
-  is the reason a silent result can be trusted once it passes.
+  daemon, returning the expected finding. It is the check that separates "analyzed, clean" from
+  "nothing ran", and it is the reason a silent result can be trusted once it passes.
 - **The active-ruleset check is the best piece of DX in the plugin.** It anticipates the exact
   confusion a narrow default creates, names the missing rule, states which layer won, and gives
   the fix.
