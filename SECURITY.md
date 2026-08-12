@@ -71,6 +71,43 @@ When you report, please include as much as you can:
 - **No bug bounty:** there is no monetary reward program. Credit and our thanks are what we
   can offer.
 
+## How a fix reaches you
+
+The section above is what a reporter can expect. This section is the other half: how a confirmed
+fix actually ships. The acknowledgement window and the coordinated-disclosure posture are the ones
+stated under **What to expect** above -- they are not restated here.
+
+**A security fix takes the normal release path, and is not exempt from any gate.** There is no
+expedited lane that skips validation, because the checks that would be skipped are the ones that
+keep a hurried fix from shipping broken:
+
+1. **The fix is a pull request**, like any other change, and must be green on the **four CI legs**
+   (`windows-pwsh`, `windows-powershell`, `ubuntu-pwsh`, `macos-pwsh`). Those four are required
+   status checks on `main`, so this is enforced rather than intended.
+2. **The release runs the pipeline's six gates** -- merged to main, tag free, version lockstep, CI
+   green on every leg, tree-vs-published parity, and a rehearsal dry run on the same commit. Each
+   refuses rather than proceeds. The gates are documented in
+   [docs/RELEASING.md](./docs/RELEASING.md#what-the-pipeline-validates-the-gates).
+3. **The fix ships as a new release, not a backport** -- see **Supported versions** above.
+4. **Then the advisory is published**, with credit in the advisory and the CHANGELOG unless you
+   asked to stay anonymous.
+
+**The two recorded bypasses, named rather than hidden.** Neither is a security shortcut, and both
+leave a permanent trace:
+
+- `skip_dry_check=true` bypasses the dry-run gate and logs `SKIPPED-BY-INPUT` on the run forever
+  ([docs/RELEASING.md](./docs/RELEASING.md#what-the-pipeline-validates-the-gates)).
+- The **manual fallback** exists only for a broken pipeline, and a hand-cut release is **unsigned
+  and carries no provenance** -- it cannot produce the keyless artifacts that need the workflow's
+  server-issued OIDC identity
+  ([docs/RELEASING.md](./docs/RELEASING.md#manual-fallback-if-the-pipeline-misbehaves)).
+
+**What limits this in practice.** Triage, fix, review, and release all rest on **one maintainer**
+(see [MAINTAINERS.md](./MAINTAINERS.md#release-authority) and
+[CONTINUITY.md](./CONTINUITY.md)). That is the real constraint on response time -- not the pipeline,
+which is fast once a fix exists. It is stated here so the timeline above is read as best-effort by a
+solo maintainer rather than as a staffed on-call rotation.
+
 ## Verifying release integrity
 
 Every tagged release is produced by this repository's gated release pipeline, which publishes a
