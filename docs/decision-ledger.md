@@ -2676,3 +2676,54 @@ prints only when a pre-floor record actually exists. Once the rolling family age
 un-instrumented window there is no gap, and a ledger that kept reciting an empty caveat would train
 its reader to skip the section that will matter again after the next format change. An
 all-attributable ledger reads clean; a gap is never silent.
+
+## Roadmap II governance: five rulings, ratified-by-Mike 2026-08-12
+
+Dispatch 000221 (R2-01), the Roadmap II opener. Roadmap I closed at 000220 with the pre-horizon
+board empty. These five rulings are the authority the rest of the program cites; R2-02 and later
+dispatches cite this section rather than re-deriving them. Recorded here as ratified, not proposed.
+
+### 1. The North Star, and what Pillars A and H become
+
+The North Star is approved with this wording: be the PowerShell layer a coding agent can be trusted
+with -- every diagnostic honest about whether analysis ran, every release and policy
+cryptographically attributable, every effectiveness claim measured -- **"in headless, automated, and
+enterprise environments where editor-bound tooling is insufficient or unavailable"**. The quoted
+clause is the ratified half: it names the environment the work is for, which is what keeps the
+program from drifting back into editor-parity framing.
+
+**Pillar A is reshaped to agent-facing semantic EXPOSURE of PSES capability.** The plugin is a
+client of PowerShell Editor Services, not a re-implementation of it; the pillar is about surfacing
+what PSES already computes in a form an agent can consume, not about growing an analysis engine.
+
+**Pillar H is recorded DECLINED-pending-demand.** A custom-rule seam would resurrect the
+already-declined new-custom-rules item under a new name. Guidance overrides remain the sanctioned
+seam. Declined pending demand, not declined permanently: real user demand reopens it, and nothing
+else does.
+
+### 2. The program name
+
+The program is named **Roadmap II**, everywhere and without exception. The roman-numeral phase form
+of the name is not used in any authored file. The retired Phase 1-4 launch framing stays retired --
+this ruling does not revive it, and no document should reintroduce it as a synonym.
+
+### 3. ROADMAP.md stays short, and stays countless
+
+`ROADMAP.md` keeps the short / no-counts public-view ruling it already carries. Per-initiative
+detail lives in a **separate program document**, not in the public roadmap. The reason is the one
+the no-counts ruling already rests on: a public roadmap carrying live counts is a stale-count
+hazard on the most-read surface in the repository.
+
+### 4. How Roadmap I is archived
+
+The archival convention is two artifacts: a **closure section in this ledger**, plus a **slim
+immutable snapshot at `docs/ROADMAP-I-ARCHIVE.md`**. Both are built by **R2-02**, not by this
+dispatch. Recording the convention here is what gives R2-02 something to cite; building it here
+would have pre-empted the dispatch chartered for it.
+
+### 5. The re-audit / V10 verification is an acceptance criterion of R2-01
+
+The eleven doc-set re-audit verdicts and the V10 stamp are folded into this dispatch as an
+acceptance criterion rather than left as a standing unknown: R2-01 cannot close until every
+previously unknown state is classified. The classification is carried in the 000221 outbox as a
+twelve-row table, each row citing the outbox or log line it was derived from.
