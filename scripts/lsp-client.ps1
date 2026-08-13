@@ -182,11 +182,18 @@ function Get-FormatResponse([string]$pipeName, [string]$filePath, [int]$connectM
 
 function Start-DaemonRelaunchIfRecoverable {
     # Auto-relaunch the per-session daemon when an edit finds it UNREACHABLE (dispatch 000030).
-    # Reaching here means $null = no daemon process at all (a clean idle-TTL self-terminate, a
-    # crashed daemon, or the ~150ms pre-pipe launch sliver) -- the RECOVERABLE no-daemon condition.
+    # Reaching here means no daemon process at all (a clean idle-TTL self-terminate, a crashed
+    # daemon, or the ~150ms pre-pipe launch sliver) -- the RECOVERABLE no-daemon condition.
     # A PERMANENT init failure never reaches here: the pipe-first daemon stays UP serving
-    # 'unavailable' (a reachable status, not $null), so this seam is structurally the recoverable
-    # case -- the $null-vs-status='unavailable' gate IS the recoverable/permanent split.
+    # 'unavailable' (a reachable status, not $null).
+    #
+    # CORRECTED PREMISE (dispatch 000225). This header used to read "$null = no daemon process at
+    # all", and the caller relied on it. That was FALSE: $null is also returned when a LIVE daemon
+    # is busy (connect timed out against its single pipe instance) or still analyzing (connected,
+    # but no response within the hard cap). $null alone therefore never established absence, and
+    # treating it as absence is exactly the relaunch thrash 000225 repaired. What makes this
+    # function's precondition true is now the CALLER's pipe-presence gate (Test-DaemonPipePresent),
+    # not the $null itself -- do not re-derive absence from $null here.
     #
     # BOUND (never a loop): at most one relaunch per cooldown window, tracked by a per-session stamp.
     # Returns @{ Attempted; LaunchOk }. Attempted=$false = suppressed (cooldown) or no host found;
@@ -455,17 +462,43 @@ try {
     # path/analysisMs/codeActionMs/recordCount/correctionCount). A null/!ok response
     # means the edit was never analyzed (unreachable/timeout) -> no stats line.
     if ($null -eq $resp) {
-        # Auto-relaunch (dispatch 000030), plugged into the 000028 never-silent backstop seam. $null
-        # means the daemon was UNREACHABLE -- NO pipe: a clean idle-TTL self-terminate, a crashed
-        # daemon, or the ~150ms pre-pipe launch sliver. That is the RECOVERABLE no-daemon condition;
-        # a PERMANENT init failure stays UP serving 'unavailable' (reachable, never $null), so it
-        # never reaches here. FIRST attempt a bounded silent relaunch (the same pipe-first launch
-        # session-start uses), then retry-connect within the remaining hard cap. The relaunched daemon
-        # comes up pipe-first, so this edit honestly gets the transient 'incomplete' if it lands during
-        # init -- ONE edit, then real analysis. Recovery is SILENT only when it works; otherwise the
-        # honest banner below fires (never silence). GATED on $null, which a HEALTHY pass is NEVER (a
-        # clean pass returns an ok object -> renders nothing), so the byte-identical warm path is
-        # untouched: relaunch+backstop fire only on a genuine could-not-reach, never on a clean result.
+        # BUSY-vs-UNREACHABLE GATE (dispatch 000225). $null means "this edit got no answer"; it does
+        # NOT mean "there is no daemon". There are THREE ways to reach it and only one is a missing
+        # daemon:
+        #   1. the connect timed out because the daemon's single pipe instance was BUSY serving
+        #      another edit -- its serve loop is SERIAL, so it is not accepting while it analyzes;
+        #   2. the connect SUCCEEDED and the response did not arrive within the hard cap -- the
+        #      daemon is alive and still analyzing (the large-file case: its 5000 ms settle cap and
+        #      this client's 5000 ms hard cap are the same number, so the client can lose the race);
+        #   3. there is genuinely NO pipe -- a clean idle-TTL self-terminate, a crashed daemon, or
+        #      the ~150ms pre-pipe launch sliver. THIS is the RECOVERABLE no-daemon condition.
+        # Before 000225 all three relaunched. Cases 1 and 2 are live daemons, so that spawned a
+        # replacement which cannot even take the pipe while the incumbent holds it (max 1 instance):
+        # it died before serving, the incumbent's in-flight analysis was abandoned, and the user was
+        # told the analyzer "had stopped" -- of a daemon that was working. The pipe's presence in the
+        # OS namespace is what separates 1 and 2 from 3, so it is asked FIRST.
+        #
+        # A PERMANENT init failure still never reaches here at all: it stays UP serving 'unavailable'
+        # (reachable, never $null). And a HEALTHY pass is never $null, so the warm path is untouched
+        # -- neither the probe nor the relaunch runs on a clean result.
+        if (Test-DaemonPipePresent -PipeName $pipeName) {
+            # Cases 1 and 2: the daemon is demonstrably ALIVE. Relaunching it is never correct here
+            # (a replacement cannot own the pipe while this one does), so nothing is spawned and no
+            # cooldown stamp is burned -- leaving the one-relaunch-per-window budget intact for a
+            # real outage. The edit still resolves honestly through the EXISTING transient
+            # 'incomplete' token: "analysis did not complete -- this edit was NOT checked" is
+            # precisely what happened, and it carries the right expectation (the next edit should be
+            # checked), where the unreachable banners would have told the user to restart a session
+            # whose analyzer is fine. No new token; never silence.
+            Write-HookContext (Get-DiagnosticsStatusBanner 'incomplete' $path)
+            Write-CLog 'daemon LIVE but did not answer within the cap (pipe present) -> no relaunch; emitted honest incomplete banner'
+            exit 0
+        }
+        # Case 3 ONLY from here down -- the pre-000225 recoverable path, unchanged. FIRST attempt a
+        # bounded silent relaunch (the same pipe-first launch session-start uses), then retry-connect
+        # within the remaining hard cap. The relaunched daemon comes up pipe-first, so this edit
+        # honestly gets the transient 'incomplete' if it lands during init -- ONE edit, then real
+        # analysis. Recovery is SILENT only when it works; otherwise the honest banner below fires.
         $relaunch = Start-DaemonRelaunchIfRecoverable -SessionId $sessionId
         if ($relaunch.LaunchOk) {
             while ($null -eq $resp -and $swTotal.ElapsedMilliseconds -lt $HardCapMs) {

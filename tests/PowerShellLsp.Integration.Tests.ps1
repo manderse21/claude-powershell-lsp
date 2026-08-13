@@ -2934,6 +2934,355 @@ Describe 'Integration: format-on-edit APPLY -- the guarded write-back (dispatch 
     }
 }
 
+Describe 'Integration: a live-but-busy daemon is never relaunched (dispatch 000225)' -Skip:$script:SkipIntegration {
+    # 000225 repairs a MISCLASSIFICATION on the edit path. Get-Diagnostics returns $null for three
+    # different conditions, and before this dispatch all three were treated as "no daemon" and
+    # relaunched:
+    #   1. the connect timed out because the daemon's single pipe instance was BUSY serving another
+    #      edit (its serve loop is serial, so it does not accept while it analyzes);
+    #   2. the connect SUCCEEDED and no response arrived within the hard cap (still analyzing);
+    #   3. there is genuinely no pipe -- the only condition a relaunch can repair.
+    # In 1 and 2 the daemon is alive and holding the pipe, so a replacement cannot even take the
+    # name (max 1 instance) and dies before serving, while the user is told the analyzer "had
+    # stopped" and, once the cooldown stamp is burnt, to "start a new session".
+    #
+    # SCENARIO CHOICE. The portable vehicle is the STALLED daemon (case 2): a real pipe server of
+    # the daemon's exact shape that READS the request and never answers. It behaves identically on
+    # all four CI legs because it does not depend on instance-limit semantics, which differ between
+    # the Windows NPFS and the Unix sockets backing .NET named pipes on Linux/macOS. Case 1 is
+    # asserted additionally, Windows-only, for that same reason.
+    #
+    # Reading the request before stalling is REQUIRED, not incidental: a pipe created without
+    # explicit buffer sizes is unbuffered, so a server that never reads blocks the client's request
+    # WRITE -- a different failure than the one under study.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # New-PluginHookOutcome (000231: Invoke-ThEdit is an instrumented collapser)
+
+        $script:TH_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:TH_Client = Join-Path $script:TH_ScriptsDir 'lsp-client.ps1'
+        $script:TH_Base = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000225-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:TH_Base | Out-Null
+        $script:TH_Procs = New-Object System.Collections.Generic.List[object]
+
+        # One fake daemon, two modes. 'stall' models a daemon whose settle cap outlives the
+        # client's hard cap; 'respond' models a healthy warm daemon answering normally.
+        $fakeSrc = @'
+param([string]$PipeName, [string]$Mode = 'stall', [int]$StallMs = 20000, [int]$Requests = 12)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$server = New-Object System.IO.Pipes.NamedPipeServerStream(
+    $PipeName, [System.IO.Pipes.PipeDirection]::InOut, 1,
+    [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)
+Write-Host 'READY'
+try {
+    for ($i = 0; $i -lt $Requests; $i++) {
+        $t = $server.WaitForConnectionAsync()
+        if (-not $t.Wait(60000)) { break }
+        try {
+            $reader = New-Object System.IO.StreamReader($server, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+            $line = $reader.ReadLine()
+            if ($Mode -eq 'respond') {
+                $req = $null
+                try { $req = $line | ConvertFrom-Json } catch { }
+                $f = if ($null -ne $req) { [string]$req.file } else { '' }
+                $d = [ordered]@{ severity = 'Warning'; line = 1; col = 10; source = 'PSScriptAnalyzer'
+                    code = 'PSLS225SyntheticRule'; message = 'synthetic warm-path finding'
+                    correction = ''; correctionCount = 0 }
+                $payload = [ordered]@{ ok = $true; action = 'diagnostics'; file = $f; cached = $false
+                    count = 1; omitted = 0; diagnostics = @($d)
+                    scopeApplied = $false; scopeTotal = 1; scopeSurfaced = 1
+                    path = 'daemon-analyze'; analysisMs = 100; codeActionMs = 1
+                    recordCount = 1; correctionCount = 0 }
+                $writer = New-Object System.IO.StreamWriter($server, (New-Object System.Text.UTF8Encoding($false)), 4096, $true)
+                $writer.NewLine = "`n"; $writer.AutoFlush = $true
+                $writer.WriteLine(($payload | ConvertTo-Json -Depth 8 -Compress))
+                $writer.Flush()
+            } else {
+                Start-Sleep -Milliseconds $StallMs
+            }
+        } catch {
+        } finally {
+            try { if ($server.IsConnected) { $server.Disconnect() } } catch { }
+        }
+    }
+} finally { try { $server.Dispose() } catch { } }
+'@
+        $script:TH_FakePath = Join-Path $script:TH_Base 'fake-daemon.ps1'
+        Set-Content -LiteralPath $script:TH_FakePath -Value $fakeSrc -Encoding ascii
+
+        function New-ThRoot {
+            param([string]$Name)
+            $r = Join-Path $script:TH_Base $Name
+            foreach ($d in @($r, (Join-Path $r 'session'), (Join-Path $r 'logs'))) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
+            return $r
+        }
+
+        function Start-FakeDaemon {
+            param([string]$PipeName, [string]$Mode = 'stall', [int]$Requests = 12)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+            Add-ProcessArguments $psi @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                $script:TH_FakePath, '-PipeName', $PipeName, '-Mode', $Mode, '-StallMs', '20000', '-Requests', [string]$Requests)
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $null = $p.StandardError.ReadToEndAsync()
+            $ready = $p.StandardOutput.ReadLine()
+            if ($ready -ne 'READY') { throw ('fake daemon (' + $Mode + ') did not come up; got: ' + [string]$ready) }
+            $script:TH_Procs.Add($p)
+            return $p
+        }
+
+        function Invoke-ThEdit {
+            # Drive ONE real PostToolUse edit through a given client, against a given data root.
+            #
+            # INSTRUMENTED COLLAPSER (dispatch 000231). This helper answers a bare string, so the
+            # three distinct ways it can answer EMPTY -- killed at the cap, a stdout drain that did
+            # not finish, and a clean exit that wrote nothing -- are indistinguishable at the call
+            # site unless each records WHY. That is the defect class the 000159 instrumentation
+            # closes, and the suite-wide guard in PowerShellLsp.HookInstrumentation.Tests.ps1 holds
+            # every collapsing spawner to it. The shape is the sibling hooks' shape verbatim
+            # (Invoke-HookEnvU, Invoke-PluginHook): record into $script:PslsHookOutcome via
+            # New-PluginHookOutcome, leave the RETURN VALUE untouched.
+            #
+            # The cap path previously threw. Returning '' instead is what puts this helper in the
+            # collapser set rather than the excluded set -- the exclusion list stays at the two
+            # capture helpers, which earn their place by returning a RECORD (ExitCode = -999,
+            # Err = 'timeout') that already discriminates. Widening that list was the naive repair
+            # and is prohibited: it would trade a guard for a hand-list.
+            param([string]$ClientPath, [string]$DataRoot, [string]$SessionId, [string]$Fixture)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            Add-ProcessArguments $psi @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ClientPath)
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $outTask = $p.StandardOutput.ReadToEndAsync()
+            $null = $p.StandardError.ReadToEndAsync()
+            $json = @{ session_id = $SessionId; tool_input = @{ file_path = $Fixture }; cwd = $DataRoot } | ConvertTo-Json -Compress
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+            $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
+            $p.StandardInput.Close()
+            $swEdit = [System.Diagnostics.Stopwatch]::StartNew()
+            $capMs = 60000
+            if (-not $p.WaitForExit($capMs)) {
+                try { $p.Kill() } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $capMs -ElapsedMs ([int]$swEdit.ElapsedMilliseconds) -ScriptPath $ClientPath -DataRoot $DataRoot
+                return ''
+            }
+            [void]$outTask.Wait(5000)
+            if (-not $outTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $capMs -ElapsedMs ([int]$swEdit.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ClientPath -DataRoot $DataRoot
+                return ''
+            }
+            $editReason = 'ok'
+            if ([string]::IsNullOrEmpty($outTask.Result)) { $editReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $editReason -CapMs $capMs -ElapsedMs ([int]$swEdit.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ClientPath -DataRoot $DataRoot
+            return [string]$outTask.Result
+        }
+
+        function Get-ThLogCount {
+            param([string]$DataRoot, [string]$Needle)
+            $log = Join-Path $DataRoot 'logs/lsp-client.log'
+            if (-not (Test-Path -LiteralPath $log)) { return 0 }
+            return @(Get-Content -LiteralPath $log | Where-Object { $_ -like ('*' + $Needle + '*') }).Count
+        }
+
+        function New-ThFixture {
+            param([string]$Root, [string]$Name)
+            $f = Join-Path $Root $Name
+            "function Frobnicate-Th {`n    Get-Process`n}" | Set-Content -LiteralPath $f -Encoding ascii
+            return $f
+        }
+
+        function New-MutantClient {
+            # Pre-000225 routing, reconstructed from the SHIPPED client by neutralizing exactly the
+            # one gate this dispatch added. String.Replace substitutes GLOBALLY, and the anchor
+            # count is asserted to be exactly 1, so the mutation can never silently under-apply and
+            # leave a half-mutated control that passes for the wrong reason.
+            param([string]$Dest)
+            Copy-Item -LiteralPath $script:TH_ScriptsDir -Destination $Dest -Recurse -Force
+            $client = Join-Path $Dest 'lsp-client.ps1'
+            $src = Get-Content -LiteralPath $client -Raw
+            $anchor = 'if (Test-DaemonPipePresent -PipeName $pipeName) {'
+            $hits = ([regex]::Matches($src, [regex]::Escape($anchor))).Count
+            if ($hits -ne 1) { throw ('mutant anchor must appear EXACTLY once in the shipped client; found ' + $hits) }
+            Set-Content -LiteralPath $client -Value ($src.Replace($anchor, 'if ($false) {')) -Encoding ascii -NoNewline
+            return $client
+        }
+    }
+
+    AfterAll {
+        foreach ($p in $script:TH_Procs) { try { if ($null -ne $p -and -not $p.HasExited) { $p.Kill() } } catch { } }
+        # Any daemon this block's relaunch controls spawned is scoped to TH_Base by its -DataRoot
+        # argument, so the sweep predicate cannot reach a co-tenant or a sibling suite's daemon.
+        try {
+            if ($script:OnWindows) {
+                Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" -ErrorAction SilentlyContinue |
+                    Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine -like ('*' + $script:TH_Base + '*') } |
+                    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+            }
+        } catch { }
+        Start-Sleep -Milliseconds 400
+        if (Test-Path -LiteralPath $script:TH_Base) { Remove-Item -LiteralPath $script:TH_Base -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It '(control 1 -- RED) pre-000225 routing DOES relaunch a live daemon: the gate is what stops it' {
+        # Falsifiability control. Without this, control 2 could pass because the scenario never
+        # reaches the relaunch seam at all rather than because the gate held it back.
+        $root = New-ThRoot 'red'
+        $mutant = New-MutantClient -Dest (Join-Path $script:TH_Base 'mutant-scripts')
+        $sid = 'th225red-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $fix = New-ThFixture -Root $root -Name 'red-fixture.ps1'
+        $null = Start-FakeDaemon -PipeName ('powershell-lsp-' + $sid) -Mode 'stall' -Requests 6
+
+        $out = Invoke-ThEdit -ClientPath $mutant -DataRoot $root -SessionId $sid -Fixture $fix
+
+        (Test-Path -LiteralPath (Join-Path $root ('session/' + $sid + '.relaunch'))) | Should -BeTrue -Because 'pre-000225 routing relaunches a daemon that is alive and analyzing -- this is the defect'
+        (Get-ThLogCount -DataRoot $root -Needle 'auto-relaunch: daemon launch fired') | Should -BeGreaterThan 0
+        $out | Should -Match 'is being restarted'   # and it tells the user the analyzer had stopped
+    }
+
+    It '(control 2 -- GREEN) the shipped client does NOT relaunch a daemon that is alive and analyzing' {
+        $root = New-ThRoot 'green'
+        $sid = 'th225grn-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $fix = New-ThFixture -Root $root -Name 'green-fixture.ps1'
+        $null = Start-FakeDaemon -PipeName ('powershell-lsp-' + $sid) -Mode 'stall' -Requests 6
+
+        $out = Invoke-ThEdit -ClientPath $script:TH_Client -DataRoot $root -SessionId $sid -Fixture $fix
+
+        (Test-Path -LiteralPath (Join-Path $root ('session/' + $sid + '.relaunch'))) | Should -BeFalse -Because 'a live daemon must never be relaunched, and the cooldown budget must stay unspent'
+        (Get-ThLogCount -DataRoot $root -Needle 'auto-relaunch') | Should -Be 0
+        # Resolves through the EXISTING transient token, with its existing wording. Never silence.
+        $out | Should -Not -BeNullOrEmpty
+        $out | Should -Match 'analysis did not complete'
+        $out | Should -Match 'this edit was NOT checked'
+        $out | Should -Not -Match 'is being restarted'
+        $out | Should -Not -Match 'could not be restarted automatically'
+        $out | Should -Not -Match 'Start a new session'
+    }
+
+    It '(control 2b -- GREEN, Windows) a BUSY single pipe instance is also not a relaunch trigger' -Skip:(-not $script:OnWindows) {
+        # Case 1 rather than case 2: nothing stalls, the instance is simply already taken, which is
+        # what a second concurrent edit meets. Windows-only because Unix pipe instance limits do
+        # not reject a second connect the same way.
+        $root = New-ThRoot 'greenbusy'
+        $sid = 'th225busy-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $pipeName = 'powershell-lsp-' + $sid
+        $fix = New-ThFixture -Root $root -Name 'busy-fixture.ps1'
+        $server = New-Object System.IO.Pipes.NamedPipeServerStream(
+            $pipeName, [System.IO.Pipes.PipeDirection]::InOut, 1,
+            [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)
+        try {
+            $null = $server.WaitForConnectionAsync()
+            $squatter = New-Object System.IO.Pipes.NamedPipeClientStream('.', $pipeName,
+                [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::Asynchronous)
+            $squatter.Connect(2000)
+            Start-Sleep -Milliseconds 250
+            $server.IsConnected | Should -BeTrue -Because 'the scenario requires the single instance to be genuinely occupied'
+
+            $out = Invoke-ThEdit -ClientPath $script:TH_Client -DataRoot $root -SessionId $sid -Fixture $fix
+
+            (Test-Path -LiteralPath (Join-Path $root ('session/' + $sid + '.relaunch'))) | Should -BeFalse
+            (Get-ThLogCount -DataRoot $root -Needle 'auto-relaunch') | Should -Be 0
+            $out | Should -Match 'analysis did not complete'
+        } finally {
+            try { $squatter.Dispose() } catch { }
+            try { $server.Dispose() } catch { }
+        }
+    }
+
+    It '(control 3 -- positive) a genuinely unreachable daemon STILL relaunches and recovers' {
+        # The property this fix must not break. No pipe at all: the one condition a relaunch can
+        # actually repair, and the 000030 behavior must survive untouched.
+        $root = New-ThRoot 'unreach'
+        $sid = 'th225unr-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $fix = New-ThFixture -Root $root -Name 'unreach-fixture.ps1'
+        (Test-DaemonPipePresent -PipeName ('powershell-lsp-' + $sid)) | Should -BeFalse -Because 'the scenario requires no pipe'
+
+        $out = Invoke-ThEdit -ClientPath $script:TH_Client -DataRoot $root -SessionId $sid -Fixture $fix
+
+        (Test-Path -LiteralPath (Join-Path $root ('session/' + $sid + '.relaunch'))) | Should -BeTrue -Because 'a genuinely absent daemon must still be relaunched -- the gate must not disable recovery'
+        (Get-ThLogCount -DataRoot $root -Needle 'auto-relaunch: daemon launch fired') | Should -Be 1
+        $out | Should -Not -BeNullOrEmpty
+        $out | Should -Match 'this edit was NOT checked'
+    }
+
+    It '(control 4 -- regression) the warm path is untouched: identical emitted context pre-fix and post-fix' {
+        # A HEALTHY round-trip never reaches the $null branch, so neither the probe nor the relaunch
+        # can run. Proven by comparing the shipped client's emitted surface against the pre-000225
+        # mutant's on the same response. The fixture path is shared between the two runs precisely
+        # so the compared surfaces can be equal.
+        #
+        # COMPARED ON THE CONTRACT SURFACE, NOT RAW BYTES, and the distinction is not a dodge:
+        # Write-HookContext serializes an UNORDERED @{} hashtable, so the two JSON keys
+        # (hookEventName, additionalContext) come out in an order that varies from one client
+        # process to the next. That was measured varying BETWEEN EDITS inside a single run of
+        # unmodified origin/main code, so it predates this dispatch and is independent of it.
+        # Asserting raw bytes here would fail at random on unrelated code. The emitted context and
+        # the event name are the surface the contract actually defines, and both are deterministic.
+        $rootA = New-ThRoot 'warmnew'
+        $rootB = New-ThRoot 'warmold'
+        $fix = New-ThFixture -Root $script:TH_Base -Name 'warm-fixture.ps1'
+        $mutant = New-MutantClient -Dest (Join-Path $script:TH_Base 'mutant-warm')
+
+        $sidA = 'th225wa-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $null = Start-FakeDaemon -PipeName ('powershell-lsp-' + $sidA) -Mode 'respond' -Requests 4
+        $outNew = Invoke-ThEdit -ClientPath $script:TH_Client -DataRoot $rootA -SessionId $sidA -Fixture $fix
+
+        $sidB = 'th225wb-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $null = Start-FakeDaemon -PipeName ('powershell-lsp-' + $sidB) -Mode 'respond' -Requests 4
+        $outOld = Invoke-ThEdit -ClientPath $mutant -DataRoot $rootB -SessionId $sidB -Fixture $fix
+
+        $outNew | Should -Match 'PSLS225SyntheticRule'          # a real analyzed edit, not a banner
+        $outNew | Should -Not -Match 'NOT checked'
+        $ctxNew = ($outNew | ConvertFrom-Json).hookSpecificOutput
+        $ctxOld = ($outOld | ConvertFrom-Json).hookSpecificOutput
+        $ctxNew.additionalContext | Should -Be $ctxOld.additionalContext -Because 'the 000225 gate must be invisible on a healthy edit'
+        $ctxNew.hookEventName | Should -Be $ctxOld.hookEventName
+        # Guard against the comparison passing on two empty surfaces (a vacuous pass).
+        $ctxNew.additionalContext | Should -Not -BeNullOrEmpty
+        # And the healthy path did no relaunch work at all -- no probe log line, no stamp.
+        (Get-ThLogCount -DataRoot $rootA -Needle 'auto-relaunch') | Should -Be 0
+        (Get-ThLogCount -DataRoot $rootA -Needle 'pipe present') | Should -Be 0
+        (Test-Path -LiteralPath (Join-Path $rootA ('session/' + $sidA + '.relaunch'))) | Should -BeFalse
+    }
+
+    It '(control 5 -- bounded) relaunches across repeated busy edits is exactly 0, the derived intended value' {
+        # INTENDED VALUE, derived before observation and stated here rather than read off the run:
+        # strictly 0, with no bounded exception. The daemon owns its pipe name for its whole life
+        # (the server stream is disposed only in its exit finally), so while it is alive a
+        # replacement can NEVER take the name -- a relaunch in this scenario has exactly zero
+        # chance of producing a serving daemon. A relaunch that cannot help, against a daemon that
+        # is alive, is unnecessary by the required property's own words, so no exception is
+        # warranted and the target is 0 rather than "0 with an allowance".
+        $root = New-ThRoot 'bounded'
+        $sid = 'th225bnd-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $fix = New-ThFixture -Root $root -Name 'bounded-fixture.ps1'
+        $null = Start-FakeDaemon -PipeName ('powershell-lsp-' + $sid) -Mode 'stall' -Requests 12
+
+        $edits = 3
+        $outs = @()
+        for ($i = 1; $i -le $edits; $i++) {
+            Add-Content -LiteralPath $fix -Value ('# nonce ' + [guid]::NewGuid().ToString('N')) -Encoding ascii
+            $outs += (Invoke-ThEdit -ClientPath $script:TH_Client -DataRoot $root -SessionId $sid -Fixture $fix)
+        }
+
+        (Get-ThLogCount -DataRoot $root -Needle 'auto-relaunch: daemon launch fired') | Should -Be 0
+        # Zero SUPPRESSED relaunches too: a suppressed attempt still means the stamp was burnt on an
+        # earlier busy edit, which is the state that turned later busy edits into "start a new
+        # session". Counting only fired relaunches would miss that.
+        (Get-ThLogCount -DataRoot $root -Needle 'auto-relaunch suppressed') | Should -Be 0
+        (Test-Path -LiteralPath (Join-Path $root ('session/' + $sid + '.relaunch'))) | Should -BeFalse
+        # Every edit resolved to a truthful terminal status, and none advised a session restart.
+        @($outs).Count | Should -Be $edits
+        foreach ($o in $outs) {
+            $o | Should -Match 'analysis did not complete'
+            $o | Should -Not -Match 'Start a new session'
+        }
+    }
+}
+
 Describe 'Integration: suite-final daemon-leak backstop (dispatch 000078)' -Skip:$script:SkipIntegration {
     # The teardown guarantee + in-suite proof. After every daemon block's AfterAll has run its
     # info-independent per-session reap (Stop-IntegrationDaemon), sweep any STRAGGLER suite-owned
