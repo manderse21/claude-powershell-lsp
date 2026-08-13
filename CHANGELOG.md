@@ -29,7 +29,13 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
-## [Unreleased]
+## [1.31.1] - 2026-08-13
+PATCH: **a live-but-busy analyzer daemon is no longer mistaken for an unreachable one, and is no
+longer relaunched because of it -- on every supported platform.** Two fixes on a single edit-path
+failure mode: the discriminator that tells a busy or still-analyzing daemon apart from a genuinely
+absent one (dispatch 000225), and the off-Windows correction that makes its probe prove a daemon is
+*listening* rather than merely that a socket file exists (dispatch 000231). No new `userConfig`
+knob, no new status token, and no change to the hook registration or fail-safe edit behavior.
 
 ### Fixed
 
