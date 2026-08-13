@@ -128,7 +128,7 @@ jobs:
         # deliberately does not follow that convention for THIS action, because it is the only
         # one in the repository holding a write scope. Re-pin by resolving the desired release
         # tag to its commit: gh api repos/github/codeql-action/tags.)
-        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           sarif_file: results.sarif
           category: powershell-lsp
