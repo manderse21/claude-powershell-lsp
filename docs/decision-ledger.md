@@ -3005,10 +3005,26 @@ dispatch to itself. **Recorded as a finding, not promoted to a rule.**
 
 Statusline shells are spawned on a two-second refresh interval (`~/.claude/settings.json`,
 `statusLine.refreshInterval: 2`), which makes an accumulating population the expected failure mode
-if any fail to exit. **Measured at this dispatch's sweep: zero stale shells** -- no `pwsh` process
-running `statusline.ps1` exceeded five minutes of age, excluding this session's own pids. The
-finding is recorded with its measurement, and the measurement did not reproduce a leak on this
-run.
+if any fail to exit.
+
+**The leak is real, and it is measured -- but only the second measurement sees it.** This dispatch
+swept twice, excluding its own pids both times:
+
+| Sweep | Stale shells (`statusline.ps1`, age > 5 min) |
+| --- | --- |
+| At session start | **0** |
+| At close-out, roughly one hour later | **3**, killed |
+
+The opening sweep is the one that matters methodologically. It found zero and, taken alone, would
+have been recorded as "no leak reproduced" -- which is what this section said before the close-out
+sweep falsified it. **A leak whose unit of accumulation is longer than the interval between
+observation and conclusion reads as absent.** The first sweep was not wrong; it was early, and a
+single early measurement of an accumulating quantity is indistinguishable from a measurement of
+zero.
+
+Recorded as a finding with both measurements, because the pair is the evidence and either one
+alone is misleading. A sweep that finds nothing is worth recording precisely so that a later sweep
+finding something can be read as accumulation rather than as noise.
 
 ### Rule candidates -- NOT promoted
 
@@ -3021,5 +3037,6 @@ none is a rule.
 | 2 | A purity guard that hardcodes an exact allow-list of derived names is a tripwire on every future helper; the guard belongs in the same review breath as the helper. | No |
 | 3 | A foreground-CI claim must cite a run id. "Four-leg green observed in the foreground" with no run id and no `gh` invocation in the transcript is unfalsifiable at write time and false at read time. | **Yes** -- second observation of the foreground-only violation class |
 | 4 | A dispatch whose deliverable merges but whose outbox is never committed leaves the work done and the record absent. The state machine does not catch it: 000228's inbox reached `verified` with no outbox in existence. | No -- first observation |
+| 5 | A negative finding about an *accumulating* quantity must state when it was measured, and should be re-measured at close-out before it is recorded. One early sweep of a leak is indistinguishable from no leak: this dispatch measured zero stale statusline shells at session start and three an hour later, and the first number would have shipped as "no leak reproduced". | No -- first observation |
 
 Promotion of any of these is Mike's call and has not been made.
