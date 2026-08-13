@@ -52,28 +52,40 @@ release. The exact steps and the exact checks follow below.
    `PATCH:` / `MINOR:` / `MAJOR:` summary line (see [the SemVer policy](../CHANGELOG.md#versioning)).
    This entry becomes the release notes verbatim, so write it for the reader of the release.
 
-3. **Advance the roadmap.** Before the release PR merges, bring
-   [ROADMAP.md](../ROADMAP.md) into line with what this release actually ships. Two checks, both
-   by hand:
+3. **Do NOT edit the roadmap. A release cut does not touch it.**
+   [ROADMAP.md](../ROADMAP.md) was **canonicalized version-free and count-free** by dispatch
+   000230, and the per-release "move the shipped item" step this document used to carry is
+   **RETIRED**. The page states the rule in its own header: it deliberately carries *no version
+   numbers, counts, or shipped-item tallies*, because those go stale between releases and a stale
+   count reads as a false claim. Its sections are thematic lanes -- "Now", "Next", "Gated and
+   paced", "Declined, and why" -- not a shipped-item ledger, and there is no "Recently completed"
+   destination to move anything into. A lane legitimately stays under "Now" while a slice of it
+   ships; that is the page working as designed, not drift to be repaired at cut time.
 
-   - **No item under "What is next" that this release ships.** Anything the CHANGELOG entry from
-     step 2 records as shipped must have left that list -- into "Recently completed", or out of
-     the document entirely. An item under "What is next" that already shipped reads as a false
-     claim about the project's state, and the roadmap says so itself in its own header.
-   - **Any design question this release RESOLVED is rewritten as the next unresolved one** -- not
-     deleted, and not left standing as open. A resolved question left in place tells a reader an
-     adjudicated decision is still up for debate; deleting it silently loses the thread. State
-     the successor question, or state plainly that the arc has none.
+   **So there is nothing here to do, and doing something is the error.** Editing ROADMAP.md during
+   a release cut re-adds exactly the per-release state 000230 removed, which is why this step now
+   forbids the edit rather than requesting it.
 
-   **This gate is HUMAN and the pipeline does not enforce it.** That is deliberate, not an
-   omission. Roadmap currency is a judgement, and a check that cannot adjudicate its subject
-   should not pretend to -- a guard that is wrong in a way it cannot settle gets silenced, and one
-   silenced guard teaches that guards are advisory. Numbers are a different matter and ARE
-   machine-enforced: see `tests/doc-claims.psd1`, which fails CI when a published number disagrees
-   with the thing it counts.
+   Where the currency obligation actually lives now:
 
-   Introduced by dispatch 000177 leg 8, after v1.29.0 shipped Arc A's opener while the roadmap
-   still listed it under "What is next" and still called its adjudicated design question open.
+   - **What shipped** is recorded by the CHANGELOG entry from step 2 and by the release itself --
+     one place, not two.
+   - **Per-initiative detail, classification, gates and evidence** live in
+     [docs/roadmap-ii/PROGRAM.md](roadmap-ii/PROGRAM.md), with the factual baseline in
+     [docs/roadmap-ii/CURRENT-STATE.md](roadmap-ii/CURRENT-STATE.md). Those move when the
+     *program* moves, which is not the same event as a version being cut.
+   - **Resolved design questions and their successors** are recorded in the
+     [decision ledger](decision-ledger.md), which is the evidence layer ROADMAP.md links to.
+
+   Numbers published elsewhere ARE machine-enforced: see `tests/doc-claims.psd1`, which fails CI
+   when a published number disagrees with the thing it counts.
+
+   *History, so the change is legible.* A roadmap-currency gate was introduced by dispatch 000177
+   leg 8, after v1.29.0 shipped Arc A's opener while the roadmap still listed it under "What is
+   next". 000230 removed the state that gate policed, which retired the gate with it. Two
+   consecutive release preps -- 000218 and 000232 -- had to override this step by charter to avoid
+   regressing the canonicalization, and 000232 raised the contradiction as a finding; dispatch
+   000234 fixed the document rather than the page.
 
 4. **Confirm every already-published release body still AGREES with its CHANGELOG entry.**
    Run the sweep:
@@ -116,8 +128,10 @@ release. The exact steps and the exact checks follow below.
      the precedent). Editing a published release body is a deliberate act of publishing to an
      external surface; it is the maintainer's call and no automation performs it.
 
-   **This gate is HUMAN, and unlike the roadmap gate above it could not be machine-enforced even
-   if we wanted it to be.** A published release body is **external state** -- it lives in
+   **This gate is HUMAN, and it could not be machine-enforced even if we wanted it to be.** (Step 3
+   above used to carry the other human gate in this runbook; it was retired with the state it
+   policed, so this is now the only one -- and it is human for a stronger reason than that one
+   was.) A published release body is **external state** -- it lives in
    GitHub's Releases API, not in the working tree. `tests/doc-claims.psd1` works because it
    derives the true value from a file ON DISK and fails CI when a published number disagrees with
    the thing it counts; there is nothing on disk for it to derive a release body from. A registry
