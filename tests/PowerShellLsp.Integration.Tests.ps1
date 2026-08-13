@@ -2957,6 +2957,7 @@ Describe 'Integration: a live-but-busy daemon is never relaunched (dispatch 0002
     # WRITE -- a different failure than the one under study.
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # New-PluginHookOutcome (000231: Invoke-ThEdit is an instrumented collapser)
 
         $script:TH_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         $script:TH_Client = Join-Path $script:TH_ScriptsDir 'lsp-client.ps1'
@@ -3034,6 +3035,21 @@ try {
 
         function Invoke-ThEdit {
             # Drive ONE real PostToolUse edit through a given client, against a given data root.
+            #
+            # INSTRUMENTED COLLAPSER (dispatch 000231). This helper answers a bare string, so the
+            # three distinct ways it can answer EMPTY -- killed at the cap, a stdout drain that did
+            # not finish, and a clean exit that wrote nothing -- are indistinguishable at the call
+            # site unless each records WHY. That is the defect class the 000159 instrumentation
+            # closes, and the suite-wide guard in PowerShellLsp.HookInstrumentation.Tests.ps1 holds
+            # every collapsing spawner to it. The shape is the sibling hooks' shape verbatim
+            # (Invoke-HookEnvU, Invoke-PluginHook): record into $script:PslsHookOutcome via
+            # New-PluginHookOutcome, leave the RETURN VALUE untouched.
+            #
+            # The cap path previously threw. Returning '' instead is what puts this helper in the
+            # collapser set rather than the excluded set -- the exclusion list stays at the two
+            # capture helpers, which earn their place by returning a RECORD (ExitCode = -999,
+            # Err = 'timeout') that already discriminates. Widening that list was the naive repair
+            # and is prohibited: it would trade a guard for a hand-list.
             param([string]$ClientPath, [string]$DataRoot, [string]$SessionId, [string]$Fixture)
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
@@ -3047,8 +3063,21 @@ try {
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
             $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
             $p.StandardInput.Close()
-            if (-not $p.WaitForExit(60000)) { try { $p.Kill() } catch { }; throw 'client exceeded 60s' }
+            $swEdit = [System.Diagnostics.Stopwatch]::StartNew()
+            $capMs = 60000
+            if (-not $p.WaitForExit($capMs)) {
+                try { $p.Kill() } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $capMs -ElapsedMs ([int]$swEdit.ElapsedMilliseconds) -ScriptPath $ClientPath -DataRoot $DataRoot
+                return ''
+            }
             [void]$outTask.Wait(5000)
+            if (-not $outTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $capMs -ElapsedMs ([int]$swEdit.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ClientPath -DataRoot $DataRoot
+                return ''
+            }
+            $editReason = 'ok'
+            if ([string]::IsNullOrEmpty($outTask.Result)) { $editReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $editReason -CapMs $capMs -ElapsedMs ([int]$swEdit.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ClientPath -DataRoot $DataRoot
             return [string]$outTask.Result
         }
 
