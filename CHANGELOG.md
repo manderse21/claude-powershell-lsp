@@ -79,6 +79,34 @@ warm-path regression control, and a bounded observation showing relaunches in th
 **0** -- plus unit coverage of the discriminator itself. `docs/roadmap-ii/POST-FIX-REMEASUREMENT-relaunch-thrash.md`
 remeasures the large-file behavior against the frozen v1.31.0 baseline.
 
+**Follow-on correction: off-Windows, the pipe probe now proves liveness rather than file presence**
+(dispatch 000231). The paragraphs above describe the discriminator as a namespace probe measured at
+~4 ms. That measurement was taken on Windows, and it holds there: NPFS is kernel-managed, so the pipe
+name disappears the moment its owner dies, however it dies. The first cut of the **unix** arm was
+written by analogy from that same measurement and never measured off-Windows -- and off-Windows the
+analogy does not hold. .NET backs a named pipe with a socket file that is unlinked only when the
+server stream is *disposed*, so a daemon that dies without running its exit finally -- killed,
+crashed, or reaped -- leaves the file behind. A bare presence test read that orphan as a live daemon,
+suppressed the relaunch, and left the session with no analyzer at all. CI caught it: the
+idle-stopped-recovery test failed on ubuntu and macos while both Windows legs passed.
+
+The unix arm now asks whether anyone is **listening** on that socket, not merely whether the file
+exists. The file check remains as a cheap first filter; when the file is present, a short non-owning
+client connect settles it, because a connect to a unix socket with no listener is refused by the
+kernel. A live-but-*busy* daemon still answers present -- the kernel completes the connection into
+the listen backlog even while the serve loop is analyzing and not accepting -- so the property the
+fix above exists to protect is preserved. The connect is non-owning: a client can never hold a pipe
+name against its server, so the probe still cannot race a daemon that is legitimately starting. The
+Windows arm is untouched.
+
+Still **no new `userConfig` knob and no new status token**, and still classified **PATCH**: this
+repairs the off-Windows half of the fix above, on the same failure path, with no contract change.
+The three required behaviors are each covered by a test that runs on every leg -- a live-but-busy
+daemon is not relaunched, a genuinely absent one still recovers, and an idle-stopped one is silently
+relaunched and the next edit gets real analysis -- and the unix defect itself is asserted directly by
+two off-Windows unit controls that reproduce a stale socket file and a leftover regular file at the
+derived path.
+
 ## [1.31.0] - 2026-08-10
 MINOR: **the doctor and `/status` state the clearance provenance floor beside the version, and the
 README answers "what version am I on, and how far back is my data attributable?"** One

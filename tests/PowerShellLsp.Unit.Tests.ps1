@@ -4809,15 +4809,75 @@ Describe 'Test-DaemonPipePresent -- the busy-vs-unreachable discriminator (dispa
         }
     }
 
-    It 'does not CREATE, open, or connect to the pipe it is asked about' {
-        # Read-only matters: if the probe took the name even momentarily, it would race a daemon
-        # that is legitimately starting -- introducing the failure the fix exists to remove.
+    It 'never OWNS the name of the pipe it is asked about -- it cannot race a starting daemon' {
+        # Non-ownership matters: if the probe took the name even momentarily, it would race a daemon
+        # that is legitimately starting -- introducing the failure the fix exists to remove. The unix
+        # arm opens a CLIENT connection (dispatch 000231), which is non-owning in exactly this sense:
+        # a client can never hold a pipe name against its server. The property under test is
+        # ownership, not abstinence from I/O.
         $name = 'powershell-lsp-unit225ro-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
         Test-DaemonPipePresent -PipeName $name | Should -BeFalse
         # If the probe had created it, this server could not be created with max 1 instance.
         $server = New-Object System.IO.Pipes.NamedPipeServerStream(
             $name, [System.IO.Pipes.PipeDirection]::InOut, 1,
             [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)
-        try { Test-DaemonPipePresent -PipeName $name | Should -BeTrue } finally { $server.Dispose() }
+        try {
+            Test-DaemonPipePresent -PipeName $name | Should -BeTrue
+            # And probing did not consume the name either: a second probe still answers the same.
+            Test-DaemonPipePresent -PipeName $name | Should -BeTrue
+        } finally { $server.Dispose() }
+    }
+
+    It 'off-Windows: a STALE socket file whose owner is gone reads as ABSENT, not present (dispatch 000231)' -Skip:$script:OnWindows {
+        # THE UNIX DEFECT, ASSERTED ON UNIX. The first cut of this probe's unix arm was a bare
+        # Test-Path on the CoreFxPipe_ file, written by analogy from a Windows measurement. NPFS
+        # removes the name when the owner dies; a unix socket file does not -- .NET unlinks it only
+        # when the server stream is DISPOSED. So a daemon killed without running its exit finally
+        # left the file behind and read as LIVE, the client suppressed the relaunch, and recovery
+        # never happened on ubuntu or macos while both Windows legs stayed green.
+        #
+        # A raw unix-domain socket reproduces that end state exactly and in-process: closing a UDS
+        # does NOT unlink its path, so Dispose leaves precisely the orphan a killed daemon leaves.
+        # Both halves are in one It on purpose -- a probe stuck at $true and a probe stuck at $false
+        # each pass one half, so only the transition proves it discriminates.
+        $name = 'powershell-lsp-unit231stale-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+        $sock = Join-Path ([System.IO.Path]::GetTempPath()) ('CoreFxPipe_' + $name)
+        $listener = New-Object System.Net.Sockets.Socket(
+            [System.Net.Sockets.AddressFamily]::Unix,
+            [System.Net.Sockets.SocketType]::Stream,
+            [System.Net.Sockets.ProtocolType]::Unspecified)
+        try {
+            $listener.Bind((New-Object System.Net.Sockets.UnixDomainSocketEndPoint($sock)))
+            $listener.Listen(4)
+            (Test-Path -LiteralPath $sock) | Should -BeTrue -Because 'the scenario requires a real socket file at the derived path'
+            # This listener NEVER accepts, which is also the BUSY case the 000225 gate exists to
+            # protect: a daemon whose serial serve loop is analyzing is not accepting either. The
+            # kernel completes the connection into the listen backlog regardless, so present is the
+            # right answer and the unix arm must not mistake "not accepting" for "not there".
+            Test-DaemonPipePresent -PipeName $name | Should -BeTrue -Because 'a listener that is busy rather than absent is still a live daemon'
+            $listener.Dispose()
+            $listener = $null
+            # The orphan the old probe mistook for a daemon. Assert it is genuinely there, or the
+            # FALSE below would be passing for the trivial reason that the file went away.
+            (Test-Path -LiteralPath $sock) | Should -BeTrue -Because 'closing a unix socket does not unlink its path -- this is the stale artifact'
+            Test-DaemonPipePresent -PipeName $name | Should -BeFalse -Because 'nobody is listening: a corpse must not suppress the relaunch'
+        } finally {
+            if ($null -ne $listener) { try { $listener.Dispose() } catch { } }
+            if (Test-Path -LiteralPath $sock) { Remove-Item -LiteralPath $sock -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'off-Windows: a leftover REGULAR file at the socket path reads as ABSENT' -Skip:$script:OnWindows {
+        # The other orphan shape: something that is not a socket at all sitting at the derived path.
+        # Presence alone would call it a daemon; a connect cannot be established to it.
+        $name = 'powershell-lsp-unit231notasock-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+        $sock = Join-Path ([System.IO.Path]::GetTempPath()) ('CoreFxPipe_' + $name)
+        Set-Content -LiteralPath $sock -Value 'not a socket' -Encoding ascii
+        try {
+            (Test-Path -LiteralPath $sock) | Should -BeTrue
+            Test-DaemonPipePresent -PipeName $name | Should -BeFalse
+        } finally {
+            if (Test-Path -LiteralPath $sock) { Remove-Item -LiteralPath $sock -Force -ErrorAction SilentlyContinue }
+        }
     }
 }

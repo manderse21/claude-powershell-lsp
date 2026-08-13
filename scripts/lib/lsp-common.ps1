@@ -1135,15 +1135,17 @@ function Test-DaemonPipePresent {
     # its whole life -- the server stream is disposed only in the daemon's exit finally
     # (pses-daemon.ps1) -- and a busy instance does not remove the name.
     #
-    # READ-ONLY by design: it never creates, opens, or connects to the pipe, so it can
-    # never take the name from a daemon that is legitimately (re)starting. (Probing by
-    # trying to CREATE the server would be platform-neutral but would own the name for
-    # the duration, which is exactly the race a relaunch path must not introduce.)
+    # NON-OWNING by design: it never CREATES the pipe and never takes its NAME, so it can
+    # never race a daemon that is legitimately (re)starting. (Probing by trying to CREATE
+    # the server would be platform-neutral but would own the name for the duration, which
+    # is exactly the race a relaunch path must not introduce.) The unix arm does open a
+    # client connection -- see below -- which is non-owning in that same sense: a client
+    # connect cannot hold a pipe name against its server.
     #
     # FAIL-SAFE: any failure returns $false, which routes the caller down the pre-000225
     # relaunch path -- so a broken probe is never WORSE than the behavior it replaced.
     # Cost is off the warm path entirely (the caller asks only after a failed round-trip)
-    # and measured at ~4 ms.
+    # and measured at ~4 ms on Windows.
     param([string]$PipeName)
     if ([string]::IsNullOrWhiteSpace($PipeName)) { return $false }
     try {
@@ -1161,7 +1163,41 @@ function Test-DaemonPipePresent {
         # Unix: .NET backs a named pipe with a socket file under the temp dir. Deriving
         # that path the same way the client's own NamedPipeClientStream does keeps the
         # probe self-consistent with the transport it is asking about.
-        return (Test-Path -LiteralPath (Join-Path ([System.IO.Path]::GetTempPath()) ('CoreFxPipe_' + $PipeName)))
+        #
+        # PRESENCE IS NOT LIVENESS OFF-WINDOWS (dispatch 000231). The Windows arm above can
+        # key on the name alone because NPFS is kernel-managed: the name vanishes when the
+        # owning process dies, however it dies. A unix socket file does not. .NET unlinks it
+        # only when the server stream is DISPOSED, so a daemon that dies WITHOUT running its
+        # exit finally -- killed, crashed, or reaped -- leaves the file behind, and a bare
+        # presence test reports the corpse as a live daemon. That suppressed the relaunch and
+        # broke the D3 required property (a genuinely unreachable daemon must still recover)
+        # on ubuntu and macos, while both Windows legs passed. The first cut of this arm was
+        # written by ANALOGY from the Windows measurement above and never measured off-Windows;
+        # the two behave differently, so this arm now carries its own evidence.
+        $sockPath = Join-Path ([System.IO.Path]::GetTempPath()) ('CoreFxPipe_' + $PipeName)
+        if (-not (Test-Path -LiteralPath $sockPath)) { return $false }
+        # The path exists; the remaining question is whether anyone is LISTENING on it. A
+        # connect to a unix domain socket with no listener is refused by the kernel
+        # (ECONNREFUSED), which .NET surfaces as a failed connect and, at the end of the
+        # window, a TimeoutException -- so refusal is what separates a live daemon from a
+        # stale file. A live-but-BUSY daemon still answers PRESENT, which is the case the
+        # 000225 gate exists to protect: the kernel completes the connection into the listen
+        # backlog even while the serve loop is analyzing and not accepting, and the daemon's
+        # loop already tolerates a peer that sends nothing ('empty request', then it
+        # continues). The window is deliberately small: it is paid only on the DEAD path,
+        # after the caller has already spent its hard cap, and never on the warm path.
+        $probe = $null
+        try {
+            $probe = New-Object System.IO.Pipes.NamedPipeClientStream(
+                '.', $PipeName, [System.IO.Pipes.PipeDirection]::InOut,
+                [System.IO.Pipes.PipeOptions]::Asynchronous)
+            $probe.Connect(250)
+            return $true
+        } catch {
+            return $false
+        } finally {
+            if ($null -ne $probe) { try { $probe.Dispose() } catch { } }
+        }
     } catch {
         return $false
     }
