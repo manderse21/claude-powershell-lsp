@@ -62,7 +62,7 @@ jobs:
         run: ./scripts/print-pssa-pin.ps1 >> $env:GITHUB_OUTPUT
 
       - name: Cache pinned PSScriptAnalyzer .nupkg
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ env.PSSA_CACHE_DIR }}
           key: pssa-${{ runner.os }}-${{ steps.pin.outputs.version }}-${{ steps.pin.outputs.sha256 }}
