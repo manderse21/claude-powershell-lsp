@@ -2727,3 +2727,299 @@ The eleven doc-set re-audit verdicts and the V10 stamp are folded into this disp
 acceptance criterion rather than left as a standing unknown: R2-01 cannot close until every
 previously unknown state is classified. The classification is carried in the 000221 outbox as a
 twelve-row table, each row citing the outbox or log line it was derived from.
+
+## Roadmap I -- closure record, ratified-by-Mike 2026-08-12
+
+Written by dispatch 000230 (R2-02), the sanctioned scribe for the deferred ledger appends. Eight
+dispatches ran with their ledger writes deferred so parallel work could stay file-disjoint; this
+section and the three that follow are that deferred record landing at once.
+
+**On placement.** Ruling 4 (above) called for "a closure section in this ledger" without fixing
+where. This document's own convention answers it: the numbered sections `## 1`-`## 9` are the
+standing structure, and everything since has been appended at the tail as an un-numbered `##`
+section with a descriptive, dated title -- "## The Arc A provenance ruling...", "## Roadmap II
+governance: five rulings, ratified-by-Mike 2026-08-12". Interleaving Roadmap I's closure into the
+numbered spine would have rewritten sections that other documents cite by number. So: **pure
+append, as a bounded top-level section**, following the convention the last two entries already
+set. Recorded here because ruling 4 asked for the choice to be recorded.
+
+### The arc, inception to 000220
+
+Roadmap I ran from the plugin's inception to dispatch 000220, which closed it with the pre-horizon
+board empty (`SC_SESSION_LEDGER.md`, 2026-08-06/07 entry: "the pre-horizon board emptied"; the
+000220 outbox, state `verified`). Its shape was the four-horizon ladder recorded at section 4 of
+this ledger, above -- Horizon 0 immediate tactical through Horizon 3 strategic what-if -- with the
+retired Phase 1-4 launch framing preceding it.
+
+**Closing state.** The program closed across release line v1.29.0 through v1.31.0. The two rulings
+000220 carried are recorded above at "Gate 6's window: `WINDOW_DAYS=3` is RETAINED" and, for the
+doctor security-verdict candidate, declined-final under the 000036 boundary. The v1.31.0 verify
+ran at the 000161 standard under dispatch 000219, and the Rekor arc closed under dispatch 000217.
+
+**Standing declines carried out of Roadmap I** are the table in `ROADMAP.md` under "Declined, and
+why", each with its reasoning already recorded in this ledger: renaming the plugin, a file watcher
+or background workspace sweep, loosening the 1.x semver freeze, new custom rules, flipping the
+broader ruleset on by default, and reducing documentation volume.
+
+**Pointer set** (per ruling 4 -- pointers, not restatement):
+
+| For | See |
+| --- | --- |
+| The slim immutable snapshot | [`docs/ROADMAP-I-ARCHIVE.md`](ROADMAP-I-ARCHIVE.md) |
+| What shipped, and when | [`CHANGELOG.md`](../CHANGELOG.md) and the GitHub Releases page |
+| The reasoning behind each decision | this ledger, sections 1-9 and the appended tail sections |
+| What is frozen in 1.x | [`CONTRACT.md`](../CONTRACT.md) |
+| The Roadmap II baseline | [`docs/roadmap-ii/CURRENT-STATE.md`](roadmap-ii/CURRENT-STATE.md) |
+| The Roadmap II detail layer | [`docs/roadmap-ii/PROGRAM.md`](roadmap-ii/PROGRAM.md) |
+
+Roadmap I is closed. It is not a source of open work, and no item on it is pending.
+
+## Roadmap II gate decisions D1-D7, ratified-by-Mike 2026-08-12
+
+Companions to the five governance rulings recorded in the preceding section. Same ratification
+date, same authority: recorded here as ratified, not proposed. Dispatch 000230 is their scribe,
+not their author.
+
+**Reader warning on identifier collision.** These gate decisions are D1-D7. The DX audit
+(`docs/roadmap-ii/DX-AUDIT.md`) independently numbers its user-visible-DX-defect findings D1-D4.
+They are unrelated namespaces. In this ledger, a bare D-number means a gate decision.
+
+### D1 -- the Arc B gate, re-derived
+
+The Arc B licensing gate is **PASS**, re-derived rather than assumed. All **137** files in the
+audited corpus surface classify AUTHORED-IN-REPO, with zero DERIVED-FROM-EXTERNAL and zero unknown
+(dispatch 000222, `docs/roadmap-ii/CORPUS-PROVENANCE-AUDIT.md`; PR
+manderse21/claude-powershell-lsp#147, merged 2026-08-12).
+
+Three riders ride with the PASS:
+
+- **The licensing risk attaches to the never-published FP-survey oracle, not to the corpus.** This
+  ledger's own prior Arc B wording named a population -- installed-module scripts mixed into the
+  ad-hoc survey oracle -- that is *machine state and was never committed*. The gate's risk
+  language therefore described something outside the repository. The committed corpus is clean;
+  the ad-hoc oracle is what the caution was ever about, and it has never been published.
+- **GPL-vs-permissive relicensing is deferred to Arc B activation.** Every one of the 137 files is
+  authored in-repo under a single human rightsholder and takes GPL-3.0-or-later by repo-wide
+  inheritance, with no per-file header anywhere in the set. That single-rightsholder fact is what
+  makes relicensing *possible* later; whether to relicense for a community benchmark is not
+  decided now and is not implied by the PASS.
+- **A small rider: the SARIF attribution gap.** `tests/sarif/sarif-2.1.0.json` is committed
+  third-party content under OASIS RF-on-RAND terms. Attribution is preserved thoroughly in a
+  co-located `tests/sarif/NOTICE.md`, but `THIRD-PARTY-LICENSES.md` returns zero hits for SARIF,
+  OASIS and SchemaStore and frames the project as "a downloader, not a redistributor". Recorded as
+  a rider on the gate, not as a blocker of it.
+
+### D2 -- SLO targets: measured, proposed, and not back-filled
+
+Dispatch 000223 measured five metrics against the installed v1.31.0 cache build and proposed six
+targets, T1-T6, *independently of* the measurements (`docs/roadmap-ii/SLO-BASELINES.md`; PR
+manderse21/claude-powershell-lsp#149, merged 2026-08-12). The separation is the point: a target
+back-filled from one run is not a target.
+
+**The candidate targets remain UNRATIFIED as targets.** What is ratified at D2 is the *status*:
+the measurements stand as the v1.31.0 baseline, and **T4 is red as engineering input, not as a
+failure to be argued away**. T4 -- that every `.ps1`/`.psm1` shipped in this repository settles on
+the edit path -- is not met: the edit path does not converge on the 3,881-line
+`lib/lsp-common.ps1`, via a settle-cap-then-relaunch-thrash the plugin's own source already
+documents on the scan path. Dispatch 000133 had already ratified that these files need up to
+~15000 ms and raised the *scan* cap to match; the edit path was deliberately left at 5000 ms.
+D2 records the red as the input that chartered D3, rather than as a target to be loosened.
+
+### D3 -- the fix slice, chartered, with the frozen-baseline addendum
+
+A fix slice is chartered against the T4 red: a live-but-busy daemon must never be classified
+unreachable or relaunched; a genuinely unreachable daemon must still recover; every edit must
+still resolve to a truthful terminal status. RED repro before the fix, GREEN after, with
+unreachable-recovery and warm-path regression controls and a bounded relaunch-count observation.
+
+**Hard boundaries, ratified verbatim:** no daemon redesign, no retry-policy cleanup beyond the
+misclassification, no startup optimization, no cold-start work, no settle-cap change, no
+status-token change.
+
+**The addendum, ratified with the charter:** the v1.31.0 SLO baseline is **FROZEN pre-fix
+history**. `docs/roadmap-ii/SLO-BASELINES.md` stays byte-identical, and the post-fix remeasurement
+lands as a *separate new document*. The reason is the one the no-counts ruling rests on in a
+different key: a baseline edited to reflect the fix stops being a baseline, and a before/after
+claim whose "before" was rewritten after the fact cannot be checked.
+
+Chartered as dispatch 000225. Its execution state is recorded in the Wave B section below.
+
+### D4 -- the quiet-window rerun, declined
+
+A rerun of the measurement set in a quiet window is **declined**. The baseline was taken on the
+machine and under the conditions the plugin actually runs on; a quiet-window figure would measure
+a machine no user has. Declined, not deferred.
+
+### D5 -- cross-repository reference convention, ratified
+
+Cross-repository references are fully qualified **`owner/repo#n`**, everywhere and without
+exception. A bare `#n` is ambiguous the moment a document is read beside another repository's
+issue tracker, and this program cites several repositories routinely. Ratified at D5 and already
+binding on the Wave B dispatches (000227 inbox, acceptance criteria).
+
+### D6 -- the pull-feature gating probe, corrected
+
+`docs/upstream/pull-feature-gating-probe.md` (2026-06-14, dispatch 000015 Track B) recorded the
+verdict **"#66987-gated (NOT buildable-now)"** on the premise that plugin LSP-server registration
+is "empirically inert". That technical verdict has been **overtaken by dispatch 000069**, and D6
+rules that the file is corrected in this pass rather than left to read as current.
+
+What actually superseded it: 000069 proved the registration failure was *this project's own
+manifest*, not an upstream init-ordering bug -- Claude Code's registrar silently drops any
+`lspServers` entry declaring `restartOnCrash` or `shutdownTimeout`. Dispatch 000075 removed the
+two fields and added an allowlist guard, and **registration was restored in v1.18.1** (this
+ledger, the "Registration -- restored, v1.18.1 / 000075" entry and the v1.18.1 row of the release
+table; `docs/upstream/claude-code-lsp-registration.md`). Mike rewrote
+anthropics/claude-code#66987 on 2026-07-06 to the registrar-drop root cause, superseding the
+init-ordering title the probe cited (`docs/upstream/sitting-closeout.md`, live table).
+
+**The probe's forward guidance survives its verdict.** What remains blocked is *serve* on the
+direct path -- a separate `#1359`-class handshake issue, closed locally by the opt-in
+`nativeServe = shim` -- so "do not build a hook-shaped imitation of pull features now" still
+holds, for a reason the probe did not have. The correction is dated and additive; the historical
+text is preserved, per the re-derivation header convention dispatch 000224 established.
+
+### D7 -- Wave B proceeds, with the DX taxonomy ratified
+
+Wave B proceeds. The three-category taxonomy governing the DX audit is ratified **in advance of
+the findings**, which is what keeps it a classification rather than a rationalization:
+
+| Category | Meaning |
+| --- | --- |
+| **USER-VISIBLE DX DEFECT** | A stranger encounters it and cannot interpret or recover from it with shipped means. |
+| **OBSERVABILITY DEFECT** | The behavior may be perfectly acceptable, but doctor / log / status cannot explain it. |
+| **EXPECTED TRADEOFF** | Real, perhaps unpleasant, and intentionally bounded -- documented, priced, and recoverable. |
+
+The taxonomy carries the weight because a DX audit that converts every measured imperfection into
+a ticket is not an audit. Findings only; nothing is fixed by the audit itself, and triage of the
+findings is not decided here.
+
+## Wave A and Wave B -- completion records, derived 2026-08-13
+
+State as of this dispatch's derivation, from `dispatch list`, the project log's GATE lines, and
+live `gh` against manderse21/claude-powershell-lsp. Every row is the state at write time, not a
+forecast. Where the record diverges from the charter's expectation, the divergence is recorded.
+
+### Wave A -- 000221 through 000224
+
+| Dispatch | Scope | Outbox state | PR | Merge commit |
+| --- | --- | --- | --- | --- |
+| 000221 | R2-01, canonical current state | `verified` | manderse21/claude-powershell-lsp#146 | `7f34277` |
+| 000222 | R2-05, corpus licensing and provenance | `verified` | manderse21/claude-powershell-lsp#147 | `c0e4b51` |
+| 000223 | R2-06, candidate SLOs and baselines | `verified` | manderse21/claude-powershell-lsp#149 | `776ea07` |
+| 000224 | Wave A, `docs/upstream` true-up | `verified` | manderse21/claude-powershell-lsp#148 | `cfd2409` |
+
+Wave A is complete: four dispatches, four outboxes at `verified`, four PRs merged.
+
+### Wave B -- 000225 through 000228
+
+| Dispatch | Scope | State at derivation | PR | Merge commit |
+| --- | --- | --- | --- | --- |
+| 000226 | R2-04, threat model | outbox `verified` | manderse21/claude-powershell-lsp#151 | `98eb027` |
+| 000227 | R2-14, governance surface | outbox `verified` | manderse21/claude-powershell-lsp#150 | `5d8ac83` |
+| 000228 | R2-08, DX audit | inbox `verified`; **no outbox document exists** | manderse21/claude-powershell-lsp#152 | `c4fc5ce` |
+| 000225 | D3 fix slice | inbox `in_progress` | manderse21/claude-powershell-lsp#153 | **OPEN, red** |
+
+**Two divergences from the "000221-000228 all verified" expectation, recorded rather than
+smoothed:**
+
+1. **000228 has no outbox.** Its deliverable shipped -- `docs/roadmap-ii/DX-AUDIT.md` is on `main`
+   via PR #152, merged 2026-08-13T00:43:44Z -- and its *inbox* was walked to `verified` by Mike at
+   2026-08-12T20:22:47-04:00. But the project log carries no `000228 | outbox` line at any state,
+   and no such file exists in the hub, on `origin/main`, or anywhere on disk. The work landed; the
+   record of the work did not. This is the "never-committed" entry of the taxonomy below, observed
+   in its own right rather than inferred.
+
+2. **000225 is still open and red.** PR #153 has had **three** CI runs on its branch and **none**
+   has been green: `31654261705` (head `6a6d368`), `31654292071` (head `da1d6df`), and
+   `31655416504` (head `7ce3c4b`, 2026-08-13T00:44:01Z) -- every one `failure`.
+
+**The 000225 fix-forward, cited because its outbox is on origin.** Dispatch 000229 (N1) ran the
+diagnostic, and its outbox is present on `origin/main` at write time, so its outcome is cited here
+rather than left open:
+`projects/powershell-lsp/outbox/000229-n1-fix-forward-diagnostic-for-pr-153-no-missing-delta-psl.md`,
+state `complete`. Its findings, as recorded there:
+
+- **No missing delta.** The 000225 worktree is clean and fully pushed; all five changed files are
+  blob-identical between fix commit `6a6d368` and PR head `7ce3c4b`.
+- **Both reds are PR-introduced regressions, separately root-caused.** An all-four-leg test-guard
+  collision on the new `Invoke-ThEdit` helper, and a unix-only pipe-presence misclassification
+  proven from CI artifacts.
+- **The repair gate did not fire.** Leg 4 was missing-delta-only, so both fixes defer to Mike.
+- **N1 asks whether repairing the unix arm of `Test-DaemonPipePresent` falls inside the D3
+  boundaries** or needs a fresh charter. That question is open and is not answered here.
+
+D3's charter therefore stands and its addendum still binds: `SLO-BASELINES.md` remains
+byte-identical, and no post-fix remeasurement has been written.
+
+## Tail-failure taxonomy and process findings -- FINDINGS AND CANDIDATES ONLY, 2026-08-13
+
+**Status: none of this is a rule.** Every item below is recorded as a finding or a rule
+*candidate*. Promotion of a candidate to a rule is Mike-gated (standing), and nothing here has
+been promoted. A future reader should treat this section as evidence for a decision not yet made.
+
+### The tail-failure taxonomy
+
+Five failure shapes named at the tail of the Wave A/B run -- the close-out phase, after the
+deliverable is already good. Recorded with what the disk actually supports, which is not the same
+for every item.
+
+| # | Shape | Status at derivation |
+| --- | --- | --- |
+| 1 | **Never-committed** -- the deliverable ships but its outbox is never written or committed | **CONFIRMED on disk.** 000228: PR #152 merged, `DX-AUDIT.md` on `main`, inbox walked to `verified`, and no outbox anywhere -- not in the hub, not on `origin/main`, not on disk. |
+| 2 | **Sibling-dirt block** -- a close-out commit is blocked by unrelated dirt in a sibling path | Recorded as named by the 000230 charter. **Not independently reproduced by this dispatch:** no dirty sibling path was present in the shared hub root at write time (`git status` clean before and after the claim). |
+| 3 | **Wrong-remote worktree push** -- a push lands somewhere other than the intended origin | Recorded as named. **Not supported by disk evidence here:** the hub's only remote is `https://github.com/manderse-dispatch/strategic-dispatch.git` for both fetch and push, and 000229 found no repository anywhere with a local-path origin. |
+| 4 | **Unvalidated hand-mint** -- a dispatch file authored by hand, bypassing the CLI's schema validation | Recorded as named. Adjacent confirmed fact: a pre-mint draft fails the id regex by design, so hand-authoring is exactly the path that skips validation. Not independently reproduced in this run. |
+| 5 | **Phantom-topology observations** -- close-out evidence read from a tree that is not the one being shipped | **REFUTED as a per-session-hub-copy mechanism.** See below; this is the item the record most needs to state carefully. |
+
+### On item 5, stated plainly
+
+The 000229 charter expected a per-session hub-copy topology and asked N1 to name the mechanism
+that created it. **N1 could not, because it does not exist**: no per-session hub copies on this
+machine, no repository anywhere with a local-path origin, no prunable or deleted hub-worktree
+admin entries, and all five of that night's sessions recorded `cwd` = the shared root. This
+dispatch re-derived the same fact independently: `git worktree list` in the shared hub root shows
+only real hub worktrees, and no `strategic-dispatch-worktrees` or `hub-0002xx` path exists on
+disk.
+
+**What the symptoms actually had.** N1 found a simpler proven explanation, and two real
+regressions in PR #153, neither of which needs a phantom tree. The errata it recorded stands:
+000225's claim of "four-leg CI green observed in the foreground" is **falsified** by run
+`31654261705`'s failure. N1 classifies 000225's other claims as unaffected -- its recorded checks
+re-ran locally at verify and stand.
+
+The finding worth carrying forward is therefore *not* "sessions work in phantom hub copies". It is
+that **a foreground-CI claim with no run id is unfalsifiable at write time and false at read
+time**. That is candidate 3 below, and it is the one with a second observation.
+
+### The origin-evidence gate
+
+The gate -- after minting and pushing, run `git fetch origin` and confirm the outbox commit
+appears in `git log origin/main` from the shared root, recording the command and its output in the
+outbox itself -- is recorded here as the countermeasure the tail failures point at. Items 1 and 5
+are both shapes it catches: a never-committed outbox cannot appear in `git log origin/main`, and a
+claim read from the wrong tree cannot be confirmed against the real origin. It is applied by this
+dispatch to itself. **Recorded as a finding, not promoted to a rule.**
+
+### The statusline-leak finding
+
+Statusline shells are spawned on a two-second refresh interval (`~/.claude/settings.json`,
+`statusLine.refreshInterval: 2`), which makes an accumulating population the expected failure mode
+if any fail to exit. **Measured at this dispatch's sweep: zero stale shells** -- no `pwsh` process
+running `statusline.ps1` exceeded five minutes of age, excluding this session's own pids. The
+finding is recorded with its measurement, and the measurement did not reproduce a leak on this
+run.
+
+### Rule candidates -- NOT promoted
+
+Carried forward from 000229's `rule_observations`, plus this dispatch's own. Each is a candidate;
+none is a rule.
+
+| # | Candidate | Second observation? |
+| --- | --- | --- |
+| 1 | A platform-conditional branch added to a cross-platform discriminator must carry per-platform evidence before it ships. `Test-DaemonPipePresent` measured the Windows arm and wrote the unix arm by analogy, unmeasured -- and the unix arm is the one that is wrong. | No |
+| 2 | A purity guard that hardcodes an exact allow-list of derived names is a tripwire on every future helper; the guard belongs in the same review breath as the helper. | No |
+| 3 | A foreground-CI claim must cite a run id. "Four-leg green observed in the foreground" with no run id and no `gh` invocation in the transcript is unfalsifiable at write time and false at read time. | **Yes** -- second observation of the foreground-only violation class |
+| 4 | A dispatch whose deliverable merges but whose outbox is never committed leaves the work done and the record absent. The state machine does not catch it: 000228's inbox reached `verified` with no outbox in existence. | No -- first observation |
+
+Promotion of any of these is Mike's call and has not been made.

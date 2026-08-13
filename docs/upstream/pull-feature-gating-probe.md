@@ -1,7 +1,43 @@
 # Track B findings -- can pull-model LSP features ship on the current surface?
 
+**Status re-derived: 2026-08-13; live state wins over this file.**
+
 **Dispatch:** powershell-lsp/000015, Track B (read-only gating probe).
 **Date:** 2026-06-14. **No code change** -- this note only orders the next dispatch.
+
+## CORRECTION (2026-08-13, gate decision D6): the verdict below is SUPERSEDED
+
+**The technical verdict of this page -- "#66987-gated (NOT buildable-now)", resting on the premise
+that plugin LSP-server registration is "empirically inert" -- was overtaken by dispatch 000069 and
+is no longer current.** Ratified as gate decision D6, 2026-08-12
+(`docs/decision-ledger.md`, "Roadmap II gate decisions D1-D7"). The original text is preserved
+below unchanged, because what this record asserted at the time is itself part of the record.
+
+**What actually superseded it.** Registration was never gated on an upstream init-ordering bug. It
+was gated on **this project's own manifest**: Claude Code's runtime LSP registrar silently drops
+any `lspServers` entry that declares `restartOnCrash` or `shutdownTimeout`, so the plugin's server
+never registered. Dispatch 000069 isolated that root cause, and dispatch 000075 removed the two
+fields and added an allowlist guard -- **registration was restored in v1.18.1**. See
+`docs/upstream/claude-code-lsp-registration.md` (the corrected record, with the 000069 probe
+matrix) and the v1.18.1 row of the release table in `docs/decision-ledger.md`.
+
+Mike rewrote [anthropics/claude-code#66987](https://github.com/anthropics/claude-code/issues/66987)
+on 2026-07-06 to the registrar silent-drop root cause, which **superseded the init-ordering issue
+title this page cites** at evidence item 5 (`docs/upstream/sitting-closeout.md`, live table). The
+issue remains OPEN, but it is no longer the issue this page describes.
+
+**What survives the correction.** The pull features are still not deliverable today, for a
+*different* reason: registration works, but **serve** does not on the direct path -- a separate
+`#1359`-class handshake failure, closed locally by the opt-in `nativeServe = shim`. So the forward
+guidance under "Consequence for the roadmap" still holds -- do not build a hook-shaped imitation of
+pull features now -- and evidence items 1, 2 and 3 are unaffected. What is wrong is the *named
+gate*, at the verdict line and at evidence items 4 and 5.
+
+**Reading rule.** Treat everything below this note as of 2026-06-14. For the live state of native
+registration and serve, read `docs/upstream/claude-code-lsp-registration.md` and
+`docs/roadmap-ii/CURRENT-STATE.md` section 7.
+
+---
 
 ## Question
 
