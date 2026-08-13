@@ -4836,34 +4836,64 @@ Describe 'Test-DaemonPipePresent -- the busy-vs-unreachable discriminator (dispa
         # left the file behind and read as LIVE, the client suppressed the relaunch, and recovery
         # never happened on ubuntu or macos while both Windows legs stayed green.
         #
-        # A raw unix-domain socket reproduces that end state exactly and in-process: closing a UDS
-        # does NOT unlink its path, so Dispose leaves precisely the orphan a killed daemon leaves.
-        # Both halves are in one It on purpose -- a probe stuck at $true and a probe stuck at $false
-        # each pass one half, so only the transition proves it discriminates.
+        # THE OWNER MUST BE KILLED, NOT CLOSED. An in-process reproduction was tried first --
+        # bind a raw unix socket, then Dispose it and expect the path to survive, since the KERNEL
+        # does not unlink a socket path on close. It does not work: .NET's Socket removes the file
+        # itself when a socket bound to a UnixDomainSocketEndPoint is disposed. Measured on both
+        # unix legs of run 31679281256, where that step asserted the file was still there and got
+        # $false. Managed cleanup is exactly what a killed daemon never runs, so the orphan can
+        # only be made by killing the process that owns it.
+        #
+        # Both halves are in one It on purpose -- a probe stuck at $true and a probe stuck at
+        # $false each pass one half, so only the transition proves it discriminates.
         $name = 'powershell-lsp-unit231stale-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
         $sock = Join-Path ([System.IO.Path]::GetTempPath()) ('CoreFxPipe_' + $name)
-        $listener = New-Object System.Net.Sockets.Socket(
-            [System.Net.Sockets.AddressFamily]::Unix,
-            [System.Net.Sockets.SocketType]::Stream,
-            [System.Net.Sockets.ProtocolType]::Unspecified)
+        $holderSrc = Join-Path ([System.IO.Path]::GetTempPath()) ('psls231-holder-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.ps1')
+        # The daemon's own server shape: max 1 instance, asynchronous, never accepting.
+        $body = @'
+param([string]$PipeName)
+$server = New-Object System.IO.Pipes.NamedPipeServerStream(
+    $PipeName, [System.IO.Pipes.PipeDirection]::InOut, 1,
+    [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)
+Write-Host 'READY'
+Start-Sleep -Seconds 120
+'@
+        Set-Content -LiteralPath $holderSrc -Value $body -Encoding ascii
+        $holder = $null
         try {
-            $listener.Bind((New-Object System.Net.Sockets.UnixDomainSocketEndPoint($sock)))
-            $listener.Listen(4)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+            $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            # Add-ProcessArguments (lsp-common.ps1, dot-sourced above) rather than .ArgumentList
+            # directly: ArgumentList is PowerShell 6+ only, and the suite's own helper is the
+            # cross-version seam. This block is off-Windows, but the file is PARSED under 5.1.
+            Add-ProcessArguments $psi @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $holderSrc, '-PipeName', $name)
+            $holder = [System.Diagnostics.Process]::Start($psi)
+            $null = $holder.StandardError.ReadToEndAsync()
+            $ready = $holder.StandardOutput.ReadLine()
+            $ready | Should -BeExactly 'READY' -Because 'the scenario requires a real pipe server to be up before it is killed'
+
             (Test-Path -LiteralPath $sock) | Should -BeTrue -Because 'the scenario requires a real socket file at the derived path'
-            # This listener NEVER accepts, which is also the BUSY case the 000225 gate exists to
+            # This server NEVER accepts, which is also the BUSY case the 000225 gate exists to
             # protect: a daemon whose serial serve loop is analyzing is not accepting either. The
             # kernel completes the connection into the listen backlog regardless, so present is the
             # right answer and the unix arm must not mistake "not accepting" for "not there".
             Test-DaemonPipePresent -PipeName $name | Should -BeTrue -Because 'a listener that is busy rather than absent is still a live daemon'
-            $listener.Dispose()
-            $listener = $null
-            # The orphan the old probe mistook for a daemon. Assert it is genuinely there, or the
-            # FALSE below would be passing for the trivial reason that the file went away.
-            (Test-Path -LiteralPath $sock) | Should -BeTrue -Because 'closing a unix socket does not unlink its path -- this is the stale artifact'
+
+            # SIGKILL: no finally, no Dispose, no unlink -- exactly how the daemon dies in the
+            # recovery scenario, and the only way to manufacture the orphan.
+            $holder.Kill()
+            $holder.WaitForExit(15000) | Should -BeTrue
+            Start-Sleep -Milliseconds 300
+
+            # Assert the orphan is genuinely there, or the FALSE below would pass for the trivial
+            # reason that the file went away -- which is how the first cut of this test failed.
+            (Test-Path -LiteralPath $sock) | Should -BeTrue -Because 'a killed owner runs no cleanup, so its socket path survives -- this is the stale artifact'
             Test-DaemonPipePresent -PipeName $name | Should -BeFalse -Because 'nobody is listening: a corpse must not suppress the relaunch'
         } finally {
-            if ($null -ne $listener) { try { $listener.Dispose() } catch { } }
+            if ($null -ne $holder) { try { if (-not $holder.HasExited) { $holder.Kill() } } catch { } }
             if (Test-Path -LiteralPath $sock) { Remove-Item -LiteralPath $sock -Force -ErrorAction SilentlyContinue }
+            if (Test-Path -LiteralPath $holderSrc) { Remove-Item -LiteralPath $holderSrc -Force -ErrorAction SilentlyContinue }
         }
     }
 
