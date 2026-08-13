@@ -28,21 +28,27 @@ row). The tagged commit is the **PR #155** landing, `git log -1 --format=%s 90c0
 the subject carries the `(#155)` suffix rather than the "Merge pull request" form the v1.31.0 and
 v1.30.0 rows show. That is a difference in merge style, not in provenance.
 
-**Main IS sitting exactly on the tagged commit, and that was derived by PEELING the tag rather than
-by comparing the tag object.** `git rev-parse refs/tags/v1.31.1^{}` and `git rev-parse origin/main`
-both return **90c04ca7bddc1811b93f23ffc153c17488b8f857**. The tag OBJECT is a different SHA
-(**2871d6d9d1c9f354a0505f05c91f15d401470d0c**), which is what an annotated tag IS and not an
-anomaly -- comparing the unpeeled object against a commit would have produced a false mismatch, and
-comparing peeled commits is the check that means anything. `git describe --tags origin/main` reads a
-plain **`v1.31.1`** with NO commit-distance suffix, `git rev-list --count v1.31.1..origin/main`
-returns **0**, and `git merge-base --is-ancestor v1.31.1^{} origin/main` exits **0**, so Gate 1's
-merged-to-main property holds at verification time and not only at cut time. This relation stays the
-document's most reliably-stale fact: it read 0 at 000206, 14 at 000210, 0 at 000215, 0 at 000219 and
-0 again here, so a reader must treat any inherited value as unverified. **It is already scheduled to
-go stale again:** this dispatch's own plugin PR is a commit on main and nothing else, so the count
-becomes non-zero the moment that PR merges -- which is the ordinary state, not a regression. The
-durable half of the pair is `merge-base --is-ancestor`, which stays true forever once the tag is
-merged; the count is the half that decays, and only the count.
+**The tag commit is MERGED TO MAIN, derived by PEELING the tag rather than by comparing the tag
+object -- and main has ALREADY moved past it, which is the ordinary state and not an anomaly.**
+`git rev-parse refs/tags/v1.31.1^{}` returns **90c04ca7bddc1811b93f23ffc153c17488b8f857**. The tag
+OBJECT is a different SHA (**2871d6d9d1c9f354a0505f05c91f15d401470d0c**), which is what an annotated
+tag IS -- comparing the unpeeled object against a commit would have produced a false mismatch, and
+comparing peeled commits is the check that means anything. **`git merge-base --is-ancestor
+v1.31.1^{} origin/main` exits 0**, so Gate 1's merged-to-main property holds at verification time and
+not only at cut time.
+
+**This paragraph's own most-stale fact went stale DURING the verification session, and that is
+recorded rather than smoothed.** When the verification legs were derived, the peeled tag EQUALED the
+`origin/main` tip: `git rev-list --count v1.31.1..origin/main` returned **0** and
+`git describe --tags origin/main` read a suffixless `v1.31.1`. Partway through the session
+**PR #156** (`chore: enable Dependabot for GitHub Actions`, merged 2026-08-13 14:50:33 -0500) landed
+on main, and the same two commands now return **1** and **`v1.31.1-1-gbc7431c`**. Nothing about the
+release changed: #156 adds exactly one file, `.github/dependabot.yml`, and touches nothing the tag
+carries. The relation has now read 0 at 000206, 14 at 000210, 0 at 000215, 0 at 000219, and 0-then-1
+here -- so a reader must treat ANY inherited value as unverified, including one written minutes ago.
+**The durable half of the pair is `merge-base --is-ancestor`**, which stays true forever once the tag
+is merged; the count is the half that decays, and only the count. That is why the count is recorded
+as an observation with its timestamp and the ancestry is what the re-runnable check asserts.
 
 **The 15 commits between the two tags ARE the release -- the Roadmap II execution arc, cut rather
 than left standing.** `git rev-list --count v1.31.0..v1.31.1^{}` returns **15**. Only **two** are
