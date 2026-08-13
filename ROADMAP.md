@@ -1,7 +1,7 @@
 # Roadmap
 
-The short, public view: what is next, what is blocked, what is deferred, the top risks, and where
-the evidence lives.
+The short, public view: the North Star, what is moving, what is waiting and on what, what is
+settled against, the top risks, and where the evidence lives.
 
 This page deliberately carries **no version numbers, counts, or shipped-item tallies** -- those go
 stale between releases and a stale count reads as a false claim. For the current version see
@@ -9,77 +9,71 @@ stale between releases and a stale count reads as a false claim. For the current
 decision below -- including the ones that were declined and why -- see the
 [decision ledger](docs/decision-ledger.md).
 
-## Recently completed
+**Per-initiative detail is not on this page.** It lives in
+[docs/roadmap-ii/PROGRAM.md](docs/roadmap-ii/PROGRAM.md), with each initiative's classification,
+its gate, and the evidence it rests on. This page stays short on purpose. The program's factual
+baseline is [docs/roadmap-ii/CURRENT-STATE.md](docs/roadmap-ii/CURRENT-STATE.md); the preceding
+program is archived at [docs/ROADMAP-I-ARCHIVE.md](docs/ROADMAP-I-ARCHIVE.md).
 
-Deliberately short: this records only what has *left* "What is next", so that list stays a list of
-open work. What shipped and when is [CHANGELOG.md](./CHANGELOG.md); why is the
-[decision ledger](docs/decision-ledger.md).
+## North Star
 
-- **Diagnostic efficacy ledger (Arc A) -- opener shipped.** Per-rule fired / fixed / ignored facts,
-  aggregated reader-side from the dogfood capture the plugin already writes. Facts, not scores. The
-  design question this arc carried -- whether the closed-loop "cleared" signal must be persisted
-  per rule -- has been **adjudicated and built**: it is persisted, in a sibling log, and the derived
-  clearance columns read from it. That question is settled, not open.
+> Be the PowerShell layer a coding agent can be trusted with -- every diagnostic honest about
+> whether analysis ran, every release and policy cryptographically attributable, every
+> effectiveness claim measured -- **in headless, automated, and enterprise environments where
+> editor-bound tooling is insufficient or unavailable**.
 
-  **The union-filter question is now CLOSED: it never filters.** The reader unions every
-  per-version capture log it discovers, deliberately, so that an upgrade does not reset the
-  denominator -- which means the union permanently includes occurrences produced by rules that no
-  longer ship. That much is *visible*: the ledger reports both denominators side by side, total and
-  current-rule-surface, and names the out-of-surface rules. It **filters neither**, on purpose, so
-  that no previously published figure changes value. The question was whether it ever should; the
-  answer is no, and it is a ruling rather than a deferral. Retroactively filtering the union would
-  move figures that have already been published, which is the cardinal metrics anti-pattern -- and
-  the dual view without mutation already answers the need that a filter was reaching for.
+The bolded clause names the environment the work is for. It is what keeps the program from
+drifting back into editor-parity framing: this is not a race to match what an editor extension
+already does well.
 
-  The **clearance columns had no equivalent**, and that was the sharper half. The attribution above
-  works because a committed surface history maps releases to the rule surface that shipped with
-  them; the sibling lifecycle log had no counterpart, so for those columns the provenance was not
-  merely unfiltered but unrecoverable. **Resolved forward, not retroactively:** each lifecycle
-  record now carries the plugin version stamped in-record at emit time, and the ledger prints a
-  **provenance floor** -- the earliest version-attributable point -- with anything below it labelled
-  a bounded, known gap rather than a silent one. Pre-instrumentation records are still *counted* in
-  every rate (the union stays non-filtering) and simply never *attributed* to a version. An
-  un-instrumented past cannot be recovered; it can be bounded and named, and now is. Recorded in the
-  [decision ledger](docs/decision-ledger.md).
+Two consequences of the North Star are settled rather than open. The plugin is a **client** of
+PowerShell Editor Services, not a re-implementation of it -- so capability work means surfacing
+what PSES already computes in a form an agent can consume, not growing an analysis engine. And a
+**custom-rule seam is declined pending demand**; see the declines table below.
 
-  **Both design questions that work carried are now adjudicated; neither is left standing as open.**
+## Now
 
-  *Is the floor absolute, or relative to what the reader still holds?* It is
-  **retained-window-relative by design.** The floor names the earliest version-attributable release
-  among the records *currently retained*, and it RISES as the family rolls --
-  `logs/lifecycle-<stamp>.jsonl` is a stamped rolling family that `session-start.ps1`'s
-  `Invoke-LogSweep` trims to the `keepLastN` newest. That is the intended reading rather than a
-  defect: the ledger reports what it can still see, and a floor pinned to a release whose records
-  have aged out would claim knowledge the reader no longer holds. The **wording** follow-up this
-  carried is now closed: the printed caveat says *window-relative* directly under the value it
-  qualifies, rather than leaving that meaning in a source comment for the reader to infer.
+Work that is chartered and moving.
 
-  *Do version and provenance belong in user-facing documentation?* **Yes** -- version plus provenance
-  is a supportability surface, not an internal diagnostic. That ruling has now been built out; see
-  the surfacing item below.
-
-- **Version and provenance surfaced where a user will actually read them.** The adjudicated
-  successor to Arc A's provenance work, and the doctor lane's concrete slice, now shipped in both
-  places it named: the README's support / trust section, and a `doctor` / `status` line. "What
-  version am I on, and how far back can that answer be trusted?" is answerable without running the
-  efficacy ledger. The floor is **surfaced, never re-derived** -- it comes from the same function
-  the ledger reads, so the readout and the ledger cannot disagree about the same log -- and it
-  renders as a header line rather than a check, so it stays unconditional and does not inflate the
-  check count. The one wording follow-up it carried shipped with it.
-
-## What is next
-
+- **Edit-path settle behavior.** A live-but-busy daemon must never be classified unreachable or
+  relaunched, a genuinely unreachable one must still recover, and every edit must still resolve to
+  a truthful terminal status. Chartered off a measured, red baseline rather than an intuition.
 - **Doctor and command surface.** Continuing to close the gap between "the plugin is installed"
-  and "the user can prove it is working", through the preflight doctor and plugin commands.
-  Slice 2 (000208) closed the last two boundary-clean gaps the 000203 survey evidenced: the
-  `ps_host` child-host resolution check (fail-capable) and a report-only version header, taking the
-  default doctor to 11 checks. The lane stays open rather than moving to "Recently completed" --
-  but it now carries **no open ruling**. The survey's remaining candidate, surfacing
-  security-classifier verdicts in the doctor, is **declined-final** (dispatch 000220): the 000036
-  boundary is upheld deliberately rather than left standing by default, because the live named
-  diagnosis that candidate was reaching for already ships on the bootstrap-failure banner, at the
-  moment of failure and only where positive evidence exists to name a control. See the
-  [decision ledger](docs/decision-ledger.md).
+  and "the user can prove it is working". The lane carries no open ruling.
+
+## Next
+
+Queued behind the current work, not started.
+
+- **Agent-facing semantic exposure.** Making more of what PSES already computes reachable by an
+  agent, on the surfaces this project already ships.
+- **The measured-baseline follow-through.** Candidate service-level targets have baselines; the
+  targets themselves are not ratified, and a post-fix remeasurement lands as its own document
+  rather than as an edit to the frozen baseline.
+
+## Gated and paced
+
+Real work that is deliberately not moving, each waiting on a named thing rather than on attention.
+
+- **Native code navigation, end to end.** Registration works. **Serve** does not, on the direct
+  path: Claude Code's LSP client rejects the standard server-to-client requests PSES sends during
+  initialization. The opt-in `nativeServe = shim` closes that gap locally and is shipped, so this
+  is un-gated *in practice* -- but the shim is a workaround, and removing it waits on the upstream
+  fix. A separate upstream Windows regression
+  ([anthropics/claude-code#73961](https://github.com/anthropics/claude-code/issues/73961)) blocks
+  the native tier from starting at all on Windows under some Claude Code versions.
+- **Corpus commons.** The licensing and provenance audit that gated publishing the correctness
+  oracle as a community benchmark has **passed**. What remains is a licensing decision at
+  activation, not an audit.
+- **Attested diagnostics.** Extending the SLSA / Sigstore chain from release assets to scan
+  outputs waits on real efficacy data existing and on a real consumer to read it.
+- **Enterprise control plane.** Policy distribution and fleet rollup, continuing the shipped
+  `orgPolicy` knob. **Demand-paced:** one slice per real adoption signal, never built ahead of a
+  consumer.
+- **Scale and robustness.** A performance harness and characterized very-large-repo behavior.
+  **On-demand:** it moves when a real scale problem is reported.
+- **Deeper rule curation and fix-suggestion quality.** Paced by the dogfood log and gated on real
+  interactive usage, not on machinery -- the machinery already ships.
 
 > **Plugin-catalog submission is not an item on this list.** It is maintainer-owned and is not
 > tracked on this page as an open action. It previously appeared under "What is next" as "the queued
@@ -89,32 +83,7 @@ open work. What shipped and when is [CHANGELOG.md](./CHANGELOG.md); why is the
 > catalog** -- submission goes through a Console form that is invisible to the API, so a query
 > cannot answer the question, and acting on one has already gone wrong once. Ask the maintainer.
 
-## What is blocked
-
-- **Native code navigation, end to end.** Registration works; **serve** does not, on the direct
-  path. Claude Code's LSP client rejects the standard server-to-client requests PSES sends during
-  initialization (upstream `#1359`-class handshake). The opt-in `nativeServe = shim` closes that
-  gap locally and is shipped, so this is un-gated *in practice* -- but the shim is a workaround,
-  and removing it waits on the upstream fix. A separate upstream Windows regression
-  ([anthropics/claude-code#73961](https://github.com/anthropics/claude-code/issues/73961)) blocks
-  the native tier from starting at all on Windows under some Claude Code versions.
-- **Corpus commons (Arc B).** Publishing the correctness oracle as a community benchmark is
-  contingent on a licensing / provenance audit of the corpus samples passing. Provenance is the
-  gate, not an afterthought.
-- **Attested diagnostics (Arc C).** Extending the SLSA / Sigstore chain from release assets to
-  scan outputs waits on real efficacy data existing and on a real consumer to read it.
-
-## What is deferred
-
-- **Enterprise control plane (Arc D).** Policy distribution and fleet rollup, continuing the
-  shipped `orgPolicy` knob. **Demand-paced:** one slice per real adoption signal, never built
-  ahead of a consumer.
-- **Scale and robustness (Arc E).** A performance harness and characterized very-large-repo
-  behavior. **On-demand:** it moves when a real scale problem is reported.
-- **Deeper rule curation and fix-suggestion quality.** Paced by the dogfood log and gated on real
-  interactive usage, not on machinery -- the machinery already ships.
-
-### Declined, and why
+## Declined, and why
 
 These are settled decisions, not backlog. Each is recorded with its reasoning in the
 [decision ledger](docs/decision-ledger.md):
@@ -125,8 +94,10 @@ These are settled decisions, not backlog. Each is recorded with its reasoning in
 | A file watcher / background workspace sweep | fails the cost and safety bar; `lsp-scan.ps1` already covers explicit whole-repo scanning |
 | Loosening the 1.x semver freeze | trades a trust asset for speculative flexibility |
 | New custom rules | the rule freeze stands; guidance overrides on rules that already fire are the sanctioned path |
+| A custom-rule seam | **declined pending demand** -- it resurrects the declined new-custom-rules item under a new name; guidance overrides remain the sanctioned seam, and real user demand is the only thing that reopens it |
 | Flipping the broader ruleset on by default | a missing finding beats a wrong finding; `ruleset = base` is the opt-in |
 | Reducing documentation volume | documentation is **restructured**, not reduced |
+| Surfacing security-classifier verdicts in the doctor | declined-final; the live named diagnosis it reached for already ships on the bootstrap-failure banner, at the moment of failure |
 
 ## Top risks
 
@@ -147,6 +118,9 @@ These are settled decisions, not backlog. Each is recorded with its reasoning in
 |---|---|
 | What changed, and when | [CHANGELOG.md](./CHANGELOG.md) |
 | Why a decision was made (or declined) | [decision ledger](docs/decision-ledger.md) |
+| What each initiative is, and what gates it | [docs/roadmap-ii/PROGRAM.md](docs/roadmap-ii/PROGRAM.md) |
+| What is true of the codebase today | [docs/roadmap-ii/CURRENT-STATE.md](docs/roadmap-ii/CURRENT-STATE.md) |
+| What the preceding program did | [docs/ROADMAP-I-ARCHIVE.md](docs/ROADMAP-I-ARCHIVE.md) |
 | What is frozen in 1.x, and what a change costs | [CONTRACT.md](./CONTRACT.md) |
 | Whether a claim about diagnostics correctness holds | `tests/corpus/`, recomputed and guarded on every CI run |
 | Measured latency | [docs/benchmarks.md](docs/benchmarks.md) |
