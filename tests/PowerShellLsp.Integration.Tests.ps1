@@ -1412,9 +1412,30 @@ Describe 'Integration: supervised restart + incomplete/degraded status (dispatch
         $script:R_InfoD | Should -Not -BeNullOrEmpty   # daemon came up ready despite no vendored PSSA (no crash)
         $fix = Join-Path $script:R_DataD 'pester-degraded-fixture.ps1'
         "function Frobnicate-Degraded {`n    Get-Process`n}" | Set-Content -LiteralPath $fix -Encoding ascii
-        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:R_ScriptsDir 'lsp-client.ps1') `
-            -StdinJson (@{ session_id = $script:R_SidD; tool_input = @{ file_path = $fix }; cwd = $script:R_DataD } | ConvertTo-Json -Compress) `
-            -ExtraArgs @() -CapMs 25000 -DataRoot $script:R_DataD -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+        # It-time serve-readiness gate (dispatch 000236, closing dispatch 000159's deferred step 3).
+        # This It used to fire ONE un-gated request and assert on whatever came back, so a daemon
+        # still warming returned the transient 'incomplete' banner and the assertion tripped on a
+        # state that was never the state under test. Observed on PR #164 windows-pwsh: the isolated
+        # daemon's pre-warm took 5022 ms under contention, the single request hit the daemon's own
+        # 5000 ms MaxWaitMs, and 'analysis did not settle (cause=settle-timeout) -> incomplete' was
+        # asserted against 'parser-only'. The 000159 instrumentation supplied the deciding evidence:
+        # the hook was NEITHER killed-at-cap NOR empty-stdout ('ok -- completed with output
+        # [elapsedMs=6032 capMs=25000 exit=0]'), so a WIDENED WINDOW was never the answer -- it
+        # finished in 6 s against a 25 s cap. Bounded progress-aware retry is. On a healthy runner
+        # the same daemon settles in ~1.7 s, so the gate is a no-op there.
+        # Budget scaled to THIS scenario, not inherited: the healthy path settles in ~1.7 s and the
+        # worst observed pre-warm was 5.0 s, so 60000 ms base / 120000 ms cap is ample headroom
+        # while still failing a genuine PSSA-absent regression in half the default cap's time.
+        $out = Wait-DaemonDiagReady -Scenario 'degraded' -Kind 'supervised-restart' `
+            -ReadyPattern 'parser-only' -SessionId $script:R_SidD -TimeoutMs 60000 -HardCapMs 120000 `
+            -GetDiag {
+                Invoke-PluginHook -ScriptPath (Join-Path $script:R_ScriptsDir 'lsp-client.ps1') `
+                    -StdinJson (@{ session_id = $script:R_SidD; tool_input = @{ file_path = $fix }; cwd = $script:R_DataD } | ConvertTo-Json -Compress) `
+                    -ExtraArgs @() -CapMs 25000 -DataRoot $script:R_DataD -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+            }
+        # Non-vacuity: the gate guarantees 'parser-only' (re-asserted here, the 000087 house
+        # pattern), but 'PSScriptAnalyzer unavailable' is NOT part of the ready pattern -- it is
+        # independent content the gate cannot manufacture, so this It still discriminates.
         $out | Should -Match 'parser-only'
         $out | Should -Match 'PSScriptAnalyzer unavailable'
     }
