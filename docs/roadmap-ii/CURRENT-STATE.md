@@ -12,6 +12,11 @@ restated. Nothing in this file is asserted from memory.
 **Derivation moment.** Repository facts derived 2026-08-12 from the plugin repo at
 `origin/main`; live-service facts carry their own query timestamps.
 
+**Line anchors into `ROADMAP.md` are stale throughout this document.** That page was rewritten and
+shortened by dispatch 000230 after this derivation, so every `ROADMAP.md:<n>` citation below points
+at the pre-canonicalization line numbering. Recorded rather than repaired: re-anchoring them is part
+of re-deriving this document, which only a successor dispatch does.
+
 ---
 
 ## 1. Current version
@@ -181,8 +186,9 @@ Recorded from the repository's own statements and from the derivations above.
 - **Serve on the direct native path does not work.** Claude Code's LSP client rejects the
   server-to-client requests PSES sends during initialization. The shipped `nativeServe = shim`
   is a workaround, not a fix (`ROADMAP.md:94-100`).
-- **A second upstream Windows defect blocks the native tier from starting at all** under some
-  Claude Code versions (`ROADMAP.md:98-100`; live state in section 7).
+- **A second upstream Windows defect had blocked the native tier from starting at all** under some
+  Claude Code versions. It is **fixed and closed upstream** as of the write-time re-check recorded
+  in section 7, so it is history rather than a current limitation.
 - **Analysis depth is bounded by PSES and PSScriptAnalyzer.** The plugin adds no analysis engine
   (section 3), so any capability PSES does not expose is not available to surface.
 - **The default rule surface is deliberately narrow.** 53 rules in the generated base set, with the
@@ -207,9 +213,36 @@ number,title,state,stateReason,createdAt,updatedAt,closedAt,comments,labels`.
 | `anthropics/claude-code#73961` | **OPEN** | 2026-07-03T19:22:38Z | 2026-07-03T19:23:44Z | 0 | bug, has repro, platform:windows, area:lsp, area:plugins | **None.** Zero comments since filing |
 | `anthropics/claude-code#74289` | **OPEN** | 2026-07-04T22:17:56Z | 2026-07-04T22:19:04Z | 0 | bug, platform:windows, area:tui, area:plugins | **None.** Zero comments since filing |
 
-**All four are open. None carries any upstream-side response.** Every "last activity" timestamp
-above is the maintainer's own edit or comment, not an upstream reply. The most recent activity of
-any kind across all four is 2026-07-06 -- **37 days before this derivation**.
+**All four were open at the derivation moment, and none carried any upstream-side response.** Every
+"last activity" timestamp in the table is the maintainer's own edit or comment, not an upstream
+reply. The most recent activity of any kind across all four was 2026-07-06 -- **37 days before this
+derivation**.
+
+### Write-time re-check, 2026-08-13 (dispatch 000235)
+
+**Two of the four have since closed, and every one of them moved on 2026-08-13.** The table above
+is left as the derivation it was; this is the newer state recorded beside it, not an edit to it.
+Re-derived with `gh issue view <n> --repo <repo> --json
+number,state,stateReason,createdAt,updatedAt,closedAt,title,comments`, query timestamp
+**2026-08-14T01:33:51Z**:
+
+| Issue | State at re-check | Last activity | Comments | Change since 2026-08-12 |
+|---|---|---|---|---:|
+| `anthropics/claude-plugins-official#1359` | **OPEN** | 2026-08-13T16:10:59Z | 4 | still open; one new comment |
+| `anthropics/claude-code#66987` | **CLOSED** (`COMPLETED`) | 2026-08-13T16:09:48Z | 2 | **closed** |
+| `anthropics/claude-code#73961` | **CLOSED** (`COMPLETED`) | 2026-08-13T16:08:43Z | 1 | **closed** |
+| `anthropics/claude-code#74289` | **OPEN** | 2026-08-13T18:32:37Z | 2 | still open; two new comments |
+
+**#1359 is the one that still gates native serve.** It is the client-side handling of the
+server-to-client requests PSES sends during initialization, and it remains open, so the
+`nativeServe = shim` workaround stays load-bearing. The two that closed are the registration-side
+defects: #66987 (the registrar silently dropping `lspServers` entries) and #73961 (a bare command
+refused pre-spawn on Windows).
+
+**A fifth item was filed on 2026-08-13 and is recorded here for completeness**, since it is not in
+the table above: `anthropics/claude-code#86551` -- **OPEN**, filed 2026-08-13T23:53:22Z, last
+updated 2026-08-13T23:54:28Z, 0 comments; Windows statusline `pwsh.exe` processes never exit. Its
+internal record is [`docs/upstream/claude-code-statusline-pwsh-leak.md`](../upstream/claude-code-statusline-pwsh-leak.md).
 
 What each blocks, from the issue titles as returned by the live query:
 
@@ -249,8 +282,10 @@ Re-derived live 2026-08-12 for completeness, since `docs/upstream/` carries clai
   release-provenance chain, "Why trust this release". Both are tracked at `origin/main`. The names
   differ only by case and directory.
 - **The shim is load-bearing for native serve.** `nativeServe = shim` is the only working native
-  path (section 6), and its removal is contingent on an upstream fix that shows no movement in 37
-  days (section 7).
+  path (section 6), and its removal is contingent on an upstream fix. The "no movement in 37 days"
+  reading this entry carried at derivation no longer holds -- the write-time re-check in section 7
+  records movement on every one of those issues on 2026-08-13, two of them closing -- but the issue
+  that actually gates serve, `#1359`, is still open, so the shim stays load-bearing.
 - **Knob type validation lives in plugin code rather than in the manifest.** All 20 knobs are
   strings (section 4), so type and enum enforcement is run-time and local.
 - **`docs/paper/` ships two binary Office documents** -- `Stated_Shipped_Violated_Repaired.docx`
@@ -286,8 +321,11 @@ Recorded facts about this set:
   combined size of every document in the table.
 - **`ARCHITECTURE.md` is the oldest document in the set** at 2026-06-24, 49 days before this
   derivation, and the only one predating July.
-- **`docs/upstream/` carries eight files whose status text is not gate-guarded.** Three carry text
-  contradicted by the live queries in section 7; those are itemized in section 13.
+- **`docs/upstream/` carries nine files whose status text is not gate-guarded** -- the eight
+  present at this derivation, plus the `claude-code#86551` record added 2026-08-13. The four
+  contradictions section 13 itemized have since been corrected (dispatch 000224,
+  manderse21/claude-powershell-lsp#148, merge `cfd2409`); what remains true is that no gate stops
+  the next one.
 
 ## 10. Evidence and measurement gaps
 
@@ -401,8 +439,11 @@ Recorded as observed state, with no remedy proposed.
 
 **This section is the result of a search that was actually run, not an assumption.** Every claim in
 `docs/upstream/` that names a state was compared against the live queries in section 7 on
-2026-08-12. Four discrepancies were found. **Per this dispatch's scope, `docs/upstream/` was NOT
-edited; these are recorded for a later true-up.**
+2026-08-12. Four discrepancies were found. **Per that dispatch's scope, `docs/upstream/` was NOT
+edited; they were recorded for a later true-up.** That true-up has since landed: dispatch 000224
+(manderse21/claude-powershell-lsp#148, merge `cfd2409`) corrected all four, and each of those files
+now opens with a dated "Status re-derived ... via `gh`; live state wins over this file" line. The
+table below is retained as the finding it was, not as a live defect list.
 
 | # | Document | What it says | What is true (derivation) |
 |---|---|---|---|
@@ -431,11 +472,17 @@ discrepancy 2 (the stale #66987 title), which is recorded here for the first tim
   imprecise. Root `TRUST.md` *is* named as a load-bearing evidence surface by `ROADMAP.md:153`
   ("What the plugin runs, downloads, and never does").
 
-### Documents checked and found accurate
+### Documents checked and found accurate at derivation
 
 Recorded so that absence of a finding is a search rather than a silence:
 `docs/upstream/claude-code-lsp-registration.md` states #1359 open, #66987 OPEN with the post-rewrite
-framing, and #73961 open -- all three match the live queries in section 7.
+framing, and #73961 open -- all three matched the live queries in section 7 on 2026-08-12.
+
+**Two of those three have gone stale since.** The write-time re-check in section 7 finds #66987 and
+#73961 both **CLOSED**, so that file's open-state text for both is now wrong. It was deliberately
+**not** edited here -- dispatch 000235's `docs/upstream/` scope was the `#86551` addition only -- and
+is recorded as the finding it is. It is the same silent-drift class section 9 names: a file found
+accurate on one date is not a file that stays accurate.
 
 ## 14. Old-horizon items already overtaken
 
@@ -456,6 +503,8 @@ framing, and #73961 open -- all three match the live queries in section 7.
   carried in the 000221 outbox in the strategic-dispatch hub. Of these, four were executed by the
   parallel hub stream after the powershell-lsp-side audit: V2 by dispatch 000295, and V5, V10, and
   the V4 cite correction by dispatch 000293.
-- **`ROADMAP.md:155` points at `docs/upstream/` as the answer to "Upstream issues and their
-  status".** As of 2026-08-12 that surface carries the four discrepancies in section 13, so the
-  pointer resolves to text that disagrees with the live queries in section 7.
+- **`ROADMAP.md` points at `docs/upstream/` as the answer to "Upstream issues and their
+  status".** On 2026-08-12 that surface carried the four discrepancies in section 13, so the
+  pointer resolved to text that disagreed with the live queries in section 7. Both ends have moved
+  since: dispatch 000224 corrected the four files, and dispatch 000230 rewrote `ROADMAP.md` -- which
+  is why the line anchor this bullet used to carry has been dropped rather than renumbered.
