@@ -46,7 +46,7 @@ jobs:
             interpreter: pwsh
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       # Pinned-PSSA .nupkg cache (dispatch 000049): the structural cure for the 000047 PowerShell
       # Gallery / Azure-CDN egress flake. Restore the pinned, hash-verified PSScriptAnalyzer .nupkg
