@@ -1448,9 +1448,7 @@ Write-DLog ('--- daemon start: ' + (Get-VersionStamp) + ' session=' + $SessionId
 # startup. PSES is then brought up NON-BLOCKING and finished cooperatively in the serve loop
 # (Complete-PsesInit), so this ordering never blocks the pipe (the 000026 non-blocking spirit,
 # carried inside the daemon).
-$server = New-Object System.IO.Pipes.NamedPipeServerStream(
-    $pipeName, [System.IO.Pipes.PipeDirection]::InOut, 1,
-    [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)
+$server = New-DaemonPipeServer -PipeName $pipeName
 Write-SessionFile $pipeName 'starting'
 Write-DLog 'pipe server ready (PSES initializing)'
 
@@ -1471,6 +1469,10 @@ $lastActivity = Get-Date
 $lastHeartbeat = [DateTime]::MinValue
 $connectTask = $null
 $running = $true
+# Set when a request leaves the pipe server in a state it cannot accept from again
+# (dispatch 000237). Consumed at the top of the accept region below, which disposes the old
+# stream and builds a fresh one on the SAME name rather than letting the loop end.
+$pipeNeedsRebuild = $false
 
 try {
     while ($running) {
@@ -1507,8 +1509,32 @@ try {
         # with a live child to pump)
         if ($script:psesState -eq 'ready' -and (Test-PsesAlive)) { Invoke-LspPump -Until { $false } -MaxMs 40 | Out-Null }
 
-        if ($null -eq $connectTask) { $connectTask = $server.WaitForConnectionAsync() }
-        if (-not $connectTask.Wait(500)) { continue }
+        # ACCEPT, GUARDED (dispatch 000237). This region used to sit BARE inside the loop's
+        # outer try, which is the whole of why an abandoned reply killed the daemon: a stream
+        # left unusable by the previous request threw HERE, past the per-request handler, and
+        # straight into the outer finally. The primary cure is one line further down (the
+        # unconditional Disconnect in the per-request finally); this is the structural
+        # backstop, so no future way of leaving the stream unusable can end the process
+        # either. A pipe server that cannot be armed is a pipe server to REBUILD, not a
+        # reason to stop serving.
+        if ($pipeNeedsRebuild) {
+            try { $server.Dispose() } catch { }
+            $server = New-DaemonPipeServer -PipeName $pipeName
+            $connectTask = $null
+            $pipeNeedsRebuild = $false
+            Write-DLog 'pipe server rebuilt on the same name; still serving'
+        }
+        $connected = $false
+        try {
+            if ($null -eq $connectTask) { $connectTask = $server.WaitForConnectionAsync() }
+            $connected = $connectTask.Wait(500)
+        } catch {
+            Write-DLog ('accept failed (' + $_.Exception.Message + '); rebuilding the pipe server and continuing')
+            $connectTask = $null
+            $pipeNeedsRebuild = $true
+            continue
+        }
+        if (-not $connected) { continue }
         $connectTask = $null
         $lastActivity = Get-Date
 
@@ -1653,7 +1679,22 @@ try {
         } catch {
             Write-DLog ('request handling error: ' + $_.Exception.Message)
         } finally {
-            try { if ($server.IsConnected) { $server.Disconnect() } } catch { }
+            # THE PRIMARY CURE (dispatch 000237). This line used to read
+            #   try { if ($server.IsConnected) { $server.Disconnect() } } catch { }
+            # and the IsConnected guard was the bug. A reply write to a client that walked
+            # away at its hard cap raises "Pipe is broken." and, in doing so, moves the
+            # stream's internal state from Connected to BROKEN -- so IsConnected reads FALSE
+            # and the disconnect was SKIPPED on precisely the path that needed it. The stream
+            # stayed Broken, and the next accept (guarded above) threw past this handler into
+            # the outer finally: four daemon deaths per session, one per abandoned reply.
+            # Disconnect() is willing to take a Broken stream back to Disconnected; only the
+            # guard stopped it being asked. One abandoned reply is now one discarded write.
+            $reset = Reset-PipeServerConnection -Server $server
+            if (-not $reset.Ok) {
+                Write-DLog ('pipe server not reusable after this request (' + $reset.Reason +
+                            '); rebuilding before the next accept')
+                $pipeNeedsRebuild = $true
+            }
         }
     }
 } finally {

@@ -1171,6 +1171,89 @@ function Get-ProcessCommandLine {
     } catch { return '' }
 }
 
+function New-DaemonPipeServer {
+    # THE daemon's pipe-server constructor, in ONE place (dispatch 000237).
+    #
+    # The daemon creates its NamedPipeServerStream once at start-up and, since 000237, may
+    # have to rebuild it mid-life when a stream is left unusable (see
+    # Reset-PipeServerConnection below). Two `New-Object` calls with the same five arguments
+    # in two files is exactly the shape that drifts -- a maxNumberOfServerInstances or a
+    # PipeOptions that differs between the first pipe and its replacement would change the
+    # daemon's contract silently at the worst possible moment. So both callers come here.
+    #
+    # The arguments are the shipped ones, unchanged: InOut, ONE instance (the single-instance
+    # property the busy-vs-unreachable discriminator in Test-DaemonPipePresent depends on),
+    # Byte transmission, Asynchronous (the serve loop accepts via WaitForConnectionAsync).
+    param([Parameter(Mandatory)][string]$PipeName)
+    return New-Object System.IO.Pipes.NamedPipeServerStream(
+        $PipeName, [System.IO.Pipes.PipeDirection]::InOut, 1,
+        [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)
+}
+
+function Reset-PipeServerConnection {
+    # Return a pipe server to a state that can accept the NEXT client (dispatch 000237).
+    #
+    # THE DEFECT THIS EXISTS FOR, derived from the live serve loop rather than guessed.
+    # When a client walks away at its hard cap and the daemon then writes its reply, the
+    # write raises IOException "Pipe is broken." The serve loop's per-request handler CATCHES
+    # and LOGS that, correctly. What killed the daemon was the line after it:
+    #
+    #   try { if ($server.IsConnected) { $server.Disconnect() } } catch { }
+    #
+    # The failed write moves the stream's internal state from Connected to BROKEN, and
+    # PipeStream.IsConnected is `State == Connected` -- so it reads FALSE, and the guard
+    # SKIPS the Disconnect. The stream is then left in Broken, and the next
+    # WaitForConnectionAsync() -- which sits OUTSIDE the per-request try -- throws
+    # IOException "Pipe is broken." synchronously, straight past the handler and into the
+    # loop's outer finally. Hence the measured log shape: the handler's own
+    # "request handling error: ... Pipe is broken." line followed IMMEDIATELY by
+    # "main loop ended; cleanup", with no second handled error in between.
+    #
+    # Measured on pwsh 7.6.3 / Windows 11 with a real client that connects, sends, and exits:
+    #   after the failed write   IsConnected=False  internalState=Broken
+    #   guarded Disconnect       SKIPPED
+    #   next WaitForConnectionAsync()  -> IOException "Pipe is broken." (synchronous)
+    #   UNCONDITIONAL Disconnect -> succeeds, internalState=Disconnected
+    #   next WaitForConnectionAsync()  -> arms normally
+    #
+    # So the guard was the bug and its removal is the cure: Disconnect() is willing to
+    # transition a BROKEN stream back to Disconnected, and only the IsConnected test stopped
+    # it being asked. The try/catch stays, because Disconnect() legitimately refuses a stream
+    # that was never connected or has been disposed -- and in that case the caller is told to
+    # rebuild rather than left to discover it at the next accept.
+    #
+    # Returns a hashtable: Ok (can this stream accept again?), Reason (for the log).
+    # PURE apart from the Disconnect call; no logging of its own, so the caller owns the log
+    # line and its wording.
+    param([AllowNull()]$Server)
+    if ($null -eq $Server) { return @{ Ok = $false; Reason = 'no server stream' } }
+    try {
+        $Server.Disconnect()
+        return @{ Ok = $true; Reason = 'disconnected' }
+    } catch {
+        $ex = $_.Exception
+        if ($ex -is [System.Management.Automation.MethodInvocationException] -and $ex.InnerException) {
+            $ex = $ex.InnerException
+        }
+        # ORDER IS LOAD-BEARING: ObjectDisposedException DERIVES from
+        # InvalidOperationException, so testing the base type first classifies a DISPOSED
+        # stream as merely "never connected" and hands the serve loop a dead pipe to accept
+        # on forever. Measured on .NET 9: a fresh server throws InvalidOperationException
+        # "Pipe hasn't been connected yet."; a disposed one throws ObjectDisposedException
+        # "Cannot access a closed pipe." Only the second needs a rebuild, and only this
+        # ordering tells them apart. (Caught by the guard's own disposed-server case.)
+        if ($ex -is [System.ObjectDisposedException]) {
+            return @{ Ok = $false; Reason = ('disposed: ' + $ex.Message) }
+        }
+        if ($ex -is [System.InvalidOperationException]) {
+            # The empty-request path: nothing was ever connected, so there is nothing to
+            # disconnect and the stream can already accept.
+            return @{ Ok = $true; Reason = 'not connected (nothing to disconnect)' }
+        }
+        return @{ Ok = $false; Reason = ($ex.GetType().Name + ': ' + $ex.Message) }
+    }
+}
+
 function Test-DaemonPipePresent {
     # Is the per-session daemon's named pipe PRESENT in the OS namespace right now?
     # This is the busy-vs-unreachable discriminator (dispatch 000225).

@@ -30,12 +30,45 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
-PATCH: **`nativeServe` and `ps_host` finally reach the process that acts on them**, and every
-external GitHub Action is now pinned to an immutable commit SHA. No new `userConfig` knob, no knob
-removed or renamed, no default changed, and no diagnostics change.
+PATCH: **a client that walks away from a reply no longer kills the analyzer daemon**, and
+**`nativeServe` / `ps_host` finally reach the process that acts on them**. Every external GitHub
+Action is also pinned to an immutable commit SHA. No new `userConfig` knob, no knob removed or
+renamed, no default changed, and no diagnostics change.
 
 ### Fixed
 
+**A client that abandoned one reply killed the whole daemon** (dispatch 000237). When an edit
+reached the client's hard cap the client exited -- correctly, having already emitted an honest
+banner -- and the daemon, finishing a moment later, wrote its reply into a pipe with nobody on
+the other end. The write raised `Pipe is broken.`, the serve loop's per-request handler caught
+and logged it, and **the daemon exited anyway**: four deaths per session across five measured
+sessions, and the binding reason a large-file session never converged once the relaunch thrash
+was gone.
+
+The mechanism, derived from the live loop rather than guessed. The failed write moves the
+`NamedPipeServerStream`'s internal state from `Connected` to `Broken`, and `IsConnected` is
+`State == Connected` -- so the per-request cleanup, written as
+`if ($server.IsConnected) { $server.Disconnect() }`, **skipped the disconnect on exactly the
+path that needed it**. The stream stayed `Broken`, and the loop's next
+`WaitForConnectionAsync()` -- which sat *outside* the per-request `try` -- threw
+`Pipe is broken.` synchronously, past the handler and into the loop's outer `finally`. That is
+why the daemon log showed the handled error followed immediately by `main loop ended; cleanup`,
+with no second handled error between them.
+
+Two changes, both inside daemon lifecycle. The per-request cleanup now calls the new
+`Reset-PipeServerConnection`, which asks for the disconnect **unconditionally** -- `Disconnect()`
+is willing to take a `Broken` stream back to `Disconnected`; only the guard stopped it being
+asked. And the accept region is now guarded, so a pipe server that cannot be armed for any
+reason is rebuilt on the same name (via the new single-source `New-DaemonPipeServer`) instead of
+ending the process. One abandoned reply is one discarded write.
+
+Measured red-to-green at the daemon level, same scenario, same host: the pre-fix daemon exits
+after ONE abandoned reply and serves no further request (`main loop ended; cleanup` and
+`--- daemon exit ---` both present in its log); the fixed daemon survives one and then three
+consecutive abandonments, keeps answering, and its log carries the handled error with neither
+of those two lines. The controls ship in
+`tests/PowerShellLsp.DaemonSurvival.Tests.ps1`, which keeps the pre-fix implementation verbatim
+and runnable so the RED can be re-run rather than merely cited.
 **Setting `nativeServe` or `ps_host` had no effect on the LSP serve subprocess** (dispatch 000233).
 Both knobs resolve through `Get-PluginOption`, which reads the environment variable
 `CLAUDE_PLUGIN_OPTION_<KEY>`. Claude Code exports those variables to plugin **hooks** -- which is why
@@ -66,6 +99,16 @@ also logs the effective PSES host and names a substitution when the configured h
 on PATH. `/doctor` gains a **configured vs effective** check for the serve subprocess that FAILS when
 a knob is set but the manifest declares no transport for it -- measured RED against the pre-fix
 manifest (`configured=shim effective=off [NO TRANSPORT]`) and GREEN against this one.
+
+**A release test encoded the dependency version instead of the invariant** (dispatch 000240).
+`tests/PowerShellLsp.Release.Tests.ps1` asserted the literal `actions/attest-build-provenance@v3`,
+so a clean Dependabot major bump failed a *structural* release test although nothing structural
+had changed -- and bumping the literal would have reproduced the same failure at the next major.
+The assertion is now a family invariant (any numbered release, either upstream action name,
+pinned by commit SHA) paired with an explicit floating-ref rejection, mirroring the idiom the
+same `Describe` already used for gitsign. The `New-PluginSbom.ps1` companion assertion is
+unchanged, and the block gained an executable anti-vacuity control that mutates an in-memory
+copy of the workflow text rather than claiming in prose that it could.
 
 ### Security
 
@@ -106,17 +149,6 @@ and no predicate input is supplied, which is exactly how this pipeline calls it.
 subjects (source archive + CycloneDX SBOM), same `id-token: write` / `attestations: write`
 grants, same `!inputs.dry_run` gating, same release gates.
 
-### Fixed
-
-**A release test encoded the dependency version instead of the invariant** (dispatch 000240).
-`tests/PowerShellLsp.Release.Tests.ps1` asserted the literal `actions/attest-build-provenance@v3`,
-so a clean Dependabot major bump failed a *structural* release test although nothing structural
-had changed -- and bumping the literal would have reproduced the same failure at the next major.
-The assertion is now a family invariant (any numbered release, either upstream action name,
-pinned by commit SHA) paired with an explicit floating-ref rejection, mirroring the idiom the
-same `Describe` already used for gitsign. The `New-PluginSbom.ps1` companion assertion is
-unchanged, and the block gained an executable anti-vacuity control that mutates an in-memory
-copy of the workflow text rather than claiming in prose that it could.
 
 ## [1.31.1] - 2026-08-13
 PATCH: **a live-but-busy analyzer daemon is no longer mistaken for an unreachable one, and is no
