@@ -86,8 +86,12 @@ The plugin runs its own diagnostics over `scripts/` and uploads the result to Gi
 code scanning as SARIF, via
 [`.github/workflows/powershell-lsp-code-scanning.yml`](../.github/workflows/powershell-lsp-code-scanning.yml).
 That workflow's highest-privilege action -- the SARIF upload -- is pinned by full commit
-SHA (`github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a`), not a
-movable tag.
+SHA (`github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd`, v4.37.7),
+not a movable tag. So is every other external action in every workflow: a full 40-character
+commit SHA plus a release comment, enforced both by GitHub's own `sha_pinning_required`
+repository policy and by a CI block that discovers the workflow surface rather than
+consulting a list -- see [TRUST.md](../TRUST.md), "Every external GitHub Action is pinned to
+an immutable commit SHA".
 
 ### 8. Every finding carries a generated rationale
 
