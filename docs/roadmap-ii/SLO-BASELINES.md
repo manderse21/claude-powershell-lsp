@@ -116,6 +116,53 @@ derived here from the installed build rather than recalled.
 > promise, and section 8 is a direct consequence of the smaller number. The charter's chain is
 > real; it simply governs a different path.
 
+**Integration readiness-gate path (a THIRD chain, dispatch 000236):** the It-time gates that wait
+for a warm daemon before an assertion fires. It is neither of the two chains above: it drives the
+CLIENT path at raised caps, under a wall-clock ceiling of its own.
+
+| Bound | Value | Where | In force on this path? |
+|---|---:|---|---|
+| Gate wall-clock budget | **90000 ms** | `Integration.Common.ps1:236`, `Wait-DaemonDiagReady -TimeoutMs` | **YES -- this is the bound that binds** |
+| Gate absolute hard cap | **240000 ms** | `Integration.Common.ps1:237`, `$HardCapMs` | YES (ceiling on progress extension) |
+| Progress grace per live observation | **45000 ms** | `Integration.Common.ps1:238`, `$ProgressGraceMs` | YES |
+| Consecutive dark polls before fast-fail | **3** | `Integration.Common.ps1:239`, `$DarkPollsToFail` | YES |
+| Poll backoff ceiling | **4000 ms** | `Integration.Common.ps1:241`, `$MaxPollSleepMs` | YES |
+| Per-poll process cap | 25000 ms | `PowerShellLsp.Integration.Tests.ps1:789`, `Get-RulesetDiag -CapMs` | rarely -- 1 of 36 observed polls reached it |
+| Client `timeoutMs` | 18000 ms | `PowerShellLsp.Integration.Tests.ps1:789`, `CLAUDE_PLUGIN_OPTION_timeoutMs` | no -- never reached in the observed failures |
+| Daemon `MaxWaitMs` | 5000 ms | `pses-daemon.ps1:33` | YES -- it sets the ~5.2 s cost of every poll |
+| Daemon `SettleMs` | 600 ms | `pses-daemon.ps1:28` | yes (inside `MaxWaitMs`) |
+| BeforeAll daemon launch cap | 60000 ms | `PowerShellLsp.Integration.Tests.ps1:782` | yes, but only at launch |
+
+> **Which bound actually binds, and why the arithmetic matters.** The 000236 charter reasoned that
+> because each poll may consume its full 25000 ms process cap, a 90000 ms ceiling "buys as few as
+> three attempts". The failing job logs say otherwise: polls cost **~5.2 s**, not 25 s, because the
+> **daemon's own `MaxWaitMs` (5000 ms)** ends them -- and the gate got **9, 15 and 12** attempts
+> across the observed runs, with exactly one poll ever reaching the process cap. So the process cap
+> and the client `timeoutMs` are effectively **not in force** here; the gate's own wall-clock
+> ceiling is.
+>
+> **The 278-byte response, identified.** Both red legs reported `last response length=278`. That is
+> the 000022 `incomplete` banner in its PostToolUse envelope plus CRLF -- reproduced to the byte.
+> It means the daemon was **alive, serving, and had already resolved its settings** (the daemon log
+> records `PSSA settings: honoring rulesets\base.psd1` 1.2 s after PSES init, and the same daemon
+> returned all 8 broadened findings 26 s after the gate gave up). The broaden was applied; this was
+> never a settings-resolution defect.
+>
+> **Why polling harder is counterproductive.** `pses-daemon.ps1:1194` clears the prior publish for
+> the uri and re-sends a versioned `didChange` on **every** request, so each poll discards the
+> analysis it is waiting for and re-queues the work -- the failing run's daemon emitted **nine
+> publishes in a 36 ms burst**, one per poll. Each poll also spawns a fresh `pwsh` competing with
+> the PSES it is waiting on (one spawn took 24.8 s). The gate therefore **backs off** rather than
+> hammering.
+>
+> **Observed first-request-to-settled on Windows CI** (the basis for the bounds above, not a
+> guess): **8.4 s** / **77.1 s** / **125.6 s** / **174.9 s**. The old 90 s ceiling sat *inside* that
+> spread, which is why equivalent content went red, green, red, green across four runs -- and why
+> the surviving green cleared the ceiling by only **12.9 s**. `$HardCapMs` = 174.9 s worst observed
+> + 25 s for one process-cap-killed poll + ~20% margin. `$ProgressGraceMs` = ~1.8x the worst
+> observed gap between consecutive live responses (25 s), and is held above `$MaxPollSleepMs` by a
+> self-enforcing clamp so the gate can never expire between two polls of a live daemon.
+
 ## 4. Method
 
 **Instrument selection.** The shipped instruments were preferred wherever they cover the metric:

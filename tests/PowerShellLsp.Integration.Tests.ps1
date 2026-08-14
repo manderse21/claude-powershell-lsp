@@ -588,22 +588,25 @@ Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -S
             # the DATA ROOT (no settings in its walk-up), which would lock the WRONG resolution and
             # corrupt the GREEN/OVERRIDE assertions. Returns the diagnostics text; THROWS a clear,
             # bounded message on timeout -- never a bare $null/'' for an assertion to trip on.
+            #
+            # BUDGET MODEL (dispatch 000236): shared with the ruleset and format gates via
+            # Wait-DaemonDiagReady (Integration.Common.ps1) -- progress-aware, extended only by
+            # observed daemon liveness, under a finite 240000 ms hard cap. Repaired ALONGSIDE
+            # Wait-RulesetDiagReady on purpose: the two were byte-identical fixed-ceiling copies,
+            # so repairing one alone would have left the identical defect live here and forked two
+            # gates that were deliberately built alike. Sharing the budget model does NOT
+            # reintroduce the shared-probe problem this comment warns about above: the $GetDiag
+            # closure still belongs to THIS scenario, so the file and cwd (and therefore the
+            # settings resolution) are unchanged.
             param(
                 [Parameter(Mandatory = $true)][scriptblock]$GetDiag,
                 [string]$Scenario = 'honor',
                 [string]$ReadyPattern = 'PSUseApprovedVerbs|PSAvoidUsingCmdletAliases',
-                [int]$TimeoutMs = 90000
+                [int]$TimeoutMs = 90000,
+                [string]$SessionId = ''
             )
-            $sw = [System.Diagnostics.Stopwatch]::StartNew()
-            $lastLen = -1
-            while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
-                $out = & $GetDiag
-                if (-not [string]::IsNullOrWhiteSpace($out) -and ($out -match $ReadyPattern)) { return $out }
-                $lastLen = ([string]$out).Length
-                Start-Sleep -Milliseconds 500
-            }
-            throw ("honor daemon '" + $Scenario + "' did not return analysis within " + $TimeoutMs +
-                "ms (daemon not ready / process-leak contention; dispatch 000078); last response length=" + $lastLen)
+            Wait-DaemonDiagReady -GetDiag $GetDiag -ReadyPattern $ReadyPattern -Scenario $Scenario `
+                -Kind 'honor' -TimeoutMs $TimeoutMs -SessionId $SessionId
         }
 
         $script:GreenSid = 'honor-green-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -643,6 +646,7 @@ Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -S
         # Deterministic readiness: wait for a SETTLED analysis of the GREEN file (carries the
         # non-excluded verb rule) -- never assert on a bare $null from a not-yet-warm daemon (000078).
         $out = Wait-HonorDiagReady -Scenario 'GREEN' -ReadyPattern 'PSUseApprovedVerbs' `
+            -SessionId $script:GreenSid `
             -GetDiag { Get-HonorDiag -Sid $script:GreenSid -File $script:GreenFile -Cwd $script:GreenDir }
         $out | Should -Match 'PSUseApprovedVerbs'              # NOT excluded -> still fires (we did not silence everything)
         $out | Should -Not -Match 'PSAvoidUsingCmdletAliases'  # excluded by the repo settings -> suppressed
@@ -650,12 +654,14 @@ Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -S
 
     It 'RED control: the SAME file with NO settings honored shows the excluded rule (honoring is load-bearing)' {
         $out = Wait-HonorDiagReady -Scenario 'RED' -ReadyPattern 'PSAvoidUsingCmdletAliases' `
+            -SessionId $script:RedSid `
             -GetDiag { Get-HonorDiag -Sid $script:RedSid -File $script:RedFile -Cwd $script:RedDir }
         $out | Should -Match 'PSAvoidUsingCmdletAliases'    # reappears without honoring -> RED to GREEN's absence
     }
 
     It 'explicit absolute settingsPath override is applied (points PSES at a settings file elsewhere)' {
         $out = Wait-HonorDiagReady -Scenario 'OVERRIDE' -ReadyPattern 'PSUseApprovedVerbs' `
+            -SessionId $script:OvrSid `
             -GetDiag { Get-HonorDiag -Sid $script:OvrSid -File $script:OvrFile -Cwd $script:OvrDir }
         $out | Should -Match 'PSUseApprovedVerbs'              # analysis ran (verb rule not excluded)
         $out | Should -Not -Match 'PSAvoidUsingCmdletAliases'  # excluded via the override settings file
@@ -665,6 +671,7 @@ Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -S
         # The RED daemon honors nothing; the default rules must fire -- nothing is
         # silently suppressed, so behavior matches the pre-honoring default.
         $out = Wait-HonorDiagReady -Scenario 'no-config' -ReadyPattern 'PSAvoidUsingCmdletAliases' `
+            -SessionId $script:RedSid `
             -GetDiag { Get-HonorDiag -Sid $script:RedSid -File $script:RedFile -Cwd $script:RedDir }
         $out | Should -Match 'PSAvoidUsingCmdletAliases'
         $out | Should -Match 'PSUseApprovedVerbs'
@@ -788,22 +795,21 @@ Describe 'Integration: opt-in ruleset=base broadens the live surface (dispatch 0
             # the assertion to trip on. For the BASE daemon $ReadyPattern is a broadened-only
             # rule (proving base settings are applied); for DEFAULT it is the alias rule that
             # fires under the 15-rule set (proving the daemon is warm and analyzing).
+            #
+            # The BUDGET MODEL now lives in Wait-DaemonDiagReady (Integration.Common.ps1,
+            # dispatch 000236): progress-aware, extended only by observed daemon liveness, under
+            # a finite 240000 ms hard cap, with a dark daemon failing FASTER than the old fixed
+            # 90000 ms ceiling. This gate keeps its own $GetDiag closure, so the 000078 reason for
+            # gating on the scenario's own file and cwd is untouched.
             param(
                 [Parameter(Mandatory = $true)][scriptblock]$GetDiag,
                 [string]$Scenario = 'ruleset',
                 [Parameter(Mandatory = $true)][string]$ReadyPattern,
-                [int]$TimeoutMs = 90000
+                [int]$TimeoutMs = 90000,
+                [string]$SessionId = ''
             )
-            $sw = [System.Diagnostics.Stopwatch]::StartNew()
-            $lastLen = -1
-            while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
-                $out = & $GetDiag
-                if (-not [string]::IsNullOrWhiteSpace($out) -and ($out -match $ReadyPattern)) { return $out }
-                $lastLen = ([string]$out).Length
-                Start-Sleep -Milliseconds 500
-            }
-            throw ("ruleset daemon '" + $Scenario + "' did not return analysis within " + $TimeoutMs +
-                "ms (daemon not ready / broaden not applied); last response length=" + $lastLen)
+            Wait-DaemonDiagReady -GetDiag $GetDiag -ReadyPattern $ReadyPattern -Scenario $Scenario `
+                -Kind 'ruleset' -TimeoutMs $TimeoutMs -SessionId $SessionId
         }
 
         $script:B87BaseSid = 'ruleset-base-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -824,7 +830,7 @@ Describe 'Integration: opt-in ruleset=base broadens the live surface (dispatch 0
     It 'BASE: the three security Error rules AND a Write-Host-class rule surface on real source' {
         # Gate on ANY broadened-only rule (proves the base settings are applied), then assert ALL
         # four broadened rules are present. If base were not applied the gate would time out loud.
-        $out = Wait-RulesetDiagReady -Scenario 'BASE' `
+        $out = Wait-RulesetDiagReady -Scenario 'BASE' -SessionId $script:B87BaseSid `
             -ReadyPattern 'PSAvoidUsingComputerNameHardcoded|PSAvoidUsingConvertToSecureStringWithPlainText|PSAvoidUsingUsernameAndPasswordParams|PSAvoidUsingWriteHost' `
             -GetDiag { Get-RulesetDiag -Sid $script:B87BaseSid -File $script:B87BaseFile -Cwd $script:B87BaseDir }
         $out | Should -Match 'PSAvoidUsingComputerNameHardcoded'
@@ -837,6 +843,7 @@ Describe 'Integration: opt-in ruleset=base broadens the live surface (dispatch 0
         # RED-to-BASE: the SAME file under the default knob. The alias rule fires (analysis ran),
         # but the broadened rules stay absent -- proving the broaden is the knob, not the fixture.
         $out = Wait-RulesetDiagReady -Scenario 'DEFAULT' -ReadyPattern 'PSAvoidUsingCmdletAliases' `
+            -SessionId $script:B87DefSid `
             -GetDiag { Get-RulesetDiag -Sid $script:B87DefSid -File $script:B87DefFile -Cwd $script:B87DefDir }
         $out | Should -Match 'PSAvoidUsingCmdletAliases'
         $out | Should -Not -Match 'PSAvoidUsingComputerNameHardcoded'
@@ -854,6 +861,7 @@ Describe 'Integration: opt-in ruleset=base broadens the live surface (dispatch 0
         # with Write-Output ('Instead, use Write-Output, ...'); asserting that phrasing is ABSENT
         # proves the override actually displaced it.
         $out = Wait-RulesetDiagReady -Scenario 'BASE-override' -ReadyPattern 'PSAvoidUsingWriteHost' `
+            -SessionId $script:B87BaseSid `
             -GetDiag { Get-RulesetDiag -Sid $script:B87BaseSid -File $script:B87BaseFile -Cwd $script:B87BaseDir }
         # Non-vacuity: the finding is present (guaranteed by the ready gate, re-asserted here).
         $out | Should -Match 'PSAvoidUsingWriteHost'
@@ -865,6 +873,161 @@ Describe 'Integration: opt-in ruleset=base broadens the live surface (dispatch 0
         # PSSA's own rule MESSAGE -- which legitimately contains 'Instead, use Write-Output' -- is
         # not mistaken for the rationale line.
         $out | Should -Not -Match 'why: Avoid Using Write-Host'
+    }
+}
+
+Describe 'Readiness gate budget model is progress-aware and finitely bounded (dispatch 000236)' {
+    # DELIBERATELY NOT platform-skipped: these are PURE-LOGIC proofs of the budget model in
+    # Wait-DaemonDiagReady (Integration.Common.ps1), driven by stub $GetDiag closures instead of a
+    # real daemon, so they are deterministic, take ~20s, and run on every CI leg.
+    #
+    # THE CONTROLLED SLOW-BUT-VALID CONDITION (000236 leg 3) reproduces the CI failure mechanism
+    # exactly, at a scale a test can run. The stub daemon is ALIVE and ANSWERING throughout --
+    # returning the real 'incomplete' banner byte-for-byte, the same payload both failing CI jobs
+    # measured as "last response length=278" -- and it DOES become ready, only later than the
+    # gate's base budget. That last part is what makes the old model's failure a FALSE red rather
+    # than a true one, and it is why waiting for another slow GitHub runner was never needed.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
+
+        # The EXACT payload the failing runs measured: the 000022 'incomplete' banner wrapped in
+        # the PostToolUse envelope, plus the trailing CRLF the harness captures. 278 characters.
+        $script:G236Banner = '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"PowerShell diagnostics unavailable for D:\\a\\claude-powershell-lsp\\claude-powershell-lsp\\psls-test-data\\ruleset-000087\\proj-base\\box.ps1: analysis did not complete -- this edit was NOT checked."}}' + "`r`n"
+        $script:G236Ready = 'PSAvoidUsingWriteHost  Write-Host writes to the host, not the pipeline'
+        $script:G236Unavailable = 'PowerShell diagnostics unavailable for box.ps1: PowerShell editor services could not start -- not installed (the bootstrap did not complete).'
+
+        # The pre-000236 gate, preserved VERBATIM as the RED control. Deleting the old model
+        # without keeping a runnable copy would leave the GREEN half unfalsifiable -- a green with
+        # no red control proves nothing (anti-vacuity discipline).
+        function Wait-OldFixedCeilingGate {
+            param([scriptblock]$GetDiag, [string]$ReadyPattern, [string]$Scenario = 'ctl', [int]$TimeoutMs = 90000)
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $lastLen = -1
+            while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
+                $out = & $GetDiag
+                if (-not [string]::IsNullOrWhiteSpace($out) -and ($out -match $ReadyPattern)) { return $out }
+                $lastLen = ([string]$out).Length
+                Start-Sleep -Milliseconds 500
+            }
+            throw ("ruleset daemon '" + $Scenario + "' did not return analysis within " + $TimeoutMs +
+                "ms (daemon not ready / broaden not applied); last response length=" + $lastLen)
+        }
+
+        # Arms the slow-but-valid daemon: live (banner) until ReadyAfterMs, ready thereafter.
+        function Reset-SlowButValidDiag {
+            param([int]$ReadyAfterMs)
+            $script:G236ReadyAfterMs = $ReadyAfterMs
+            $script:G236Sw = [System.Diagnostics.Stopwatch]::StartNew()
+        }
+        $script:G236SlowDiag = {
+            if ($script:G236Sw.ElapsedMilliseconds -lt $script:G236ReadyAfterMs) { return $script:G236Banner }
+            return $script:G236Ready
+        }
+    }
+
+    It 'the controlled fixture IS the payload the two failing CI jobs measured (length 278)' {
+        # Ties the injection to the evidence: if this drifts, the RED/GREEN pair below stops
+        # standing in for the observed failure and silently becomes a different experiment.
+        $script:G236Banner.Length | Should -Be 278
+        $script:G236Banner | Should -Match 'analysis did not complete'
+        # ...and it must NOT satisfy the readiness pattern, or the whole condition is vacuous.
+        $script:G236Banner | Should -Not -Match 'PSAvoidUsingWriteHost'
+    }
+
+    It 'RED-BEFORE: the OLD fixed-ceiling model FAILS a daemon that is live throughout and does become ready' {
+        Reset-SlowButValidDiag -ReadyAfterMs 6000
+        { Wait-OldFixedCeilingGate -Scenario 'BASE' -ReadyPattern 'PSAvoidUsingWriteHost' `
+                -TimeoutMs 2000 -GetDiag $script:G236SlowDiag } |
+            Should -Throw -ExpectedMessage '*did not return analysis within 2000ms*'
+        # THE FALSE-RED HALF: the very same daemon becomes ready moments later, so the failure
+        # above was the gate giving up on healthy work -- not a real defect in the daemon.
+        Start-Sleep -Milliseconds 4500
+        (& $script:G236SlowDiag) | Should -Match 'PSAvoidUsingWriteHost'
+    }
+
+    It 'GREEN-AFTER: the repaired progress-aware model PASSES the SAME controlled condition' {
+        Reset-SlowButValidDiag -ReadyAfterMs 6000
+        $out = Wait-DaemonDiagReady -Scenario 'BASE' -Kind 'ruleset' -ReadyPattern 'PSAvoidUsingWriteHost' `
+            -TimeoutMs 2000 -GetDiag $script:G236SlowDiag
+        $out | Should -Match 'PSAvoidUsingWriteHost'
+    }
+
+    It 'MUTATION CONTROL: neutralising the progress grace turns GREEN-AFTER back to RED' {
+        # The sharpest anti-vacuity check available: the SAME gate, the SAME injection, with the
+        # ONE mechanism under repair switched off in-band (grace 0 => the deadline can no longer be
+        # extended by observed liveness, which is exactly the old fixed-ceiling behaviour). If this
+        # still passed, the progress extension would not be what makes GREEN-AFTER green.
+        Reset-SlowButValidDiag -ReadyAfterMs 6000
+        { Wait-DaemonDiagReady -Scenario 'BASE' -Kind 'ruleset' -ReadyPattern 'PSAvoidUsingWriteHost' `
+                -TimeoutMs 2000 -ProgressGraceMs 0 -GetDiag $script:G236SlowDiag } |
+            Should -Throw -ExpectedMessage '*did not return analysis within 2000ms*'
+    }
+
+    It 'ANTI-VACUITY: the repaired gate STILL FAILS a daemon that stays live but never becomes ready' {
+        # The GREEN case above rides on liveness extending the deadline. If that had merely made
+        # the gate unfailable, this would pass and GREEN would prove nothing. It must still throw,
+        # and it must throw because the HARD CAP stopped an otherwise-endless extension.
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        { Wait-DaemonDiagReady -Scenario 'never-ready-live' -Kind 'ruleset' -ReadyPattern 'PSAvoidUsingWriteHost' `
+                -TimeoutMs 500 -HardCapMs 3000 -ProgressGraceMs 2000 -PollSleepMs 300 -MaxPollSleepMs 300 `
+                -GetDiag { $script:G236Banner } } |
+            Should -Throw -ExpectedMessage '*HARD CAP reached*'
+        $sw.Stop()
+        # Finite: a permanently-live-but-never-ready daemon cannot drive the extension forever.
+        $sw.ElapsedMilliseconds | Should -BeLessThan 9000
+    }
+
+    It 'HARD CAP clamps the progress grace: a 60000ms grace cannot outlive a 4000ms cap' {
+        # Without the clamp this would run for a full minute. The elapsed bound IS the assertion:
+        # it proves the cap, not the grace, is the ceiling that actually binds.
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        { Wait-DaemonDiagReady -Scenario 'grace-vs-cap' -Kind 'ruleset' -ReadyPattern 'PSAvoidUsingWriteHost' `
+                -TimeoutMs 1000 -HardCapMs 4000 -ProgressGraceMs 60000 -PollSleepMs 200 -MaxPollSleepMs 200 `
+                -GetDiag { $script:G236Banner } } |
+            Should -Throw -ExpectedMessage '*HARD CAP reached*'
+        $sw.Stop()
+        $sw.ElapsedMilliseconds | Should -BeLessThan 12000
+    }
+
+    It 'DEAD DAEMON: a daemon that never answers fails FAST, far inside its budget, and says why' {
+        # The old model burned its ENTIRE ceiling before admitting a dead daemon -- which is the
+        # standing objection to simply raising the constant. Here darkness is not liveness, so no
+        # extension is earned and the dark run trips its own short fuse.
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        { Wait-DaemonDiagReady -Scenario 'dead' -Kind 'ruleset' -ReadyPattern 'PSAvoidUsingWriteHost' `
+                -TimeoutMs 60000 -GetDiag { '' } } |
+            Should -Throw -ExpectedMessage '*daemon DARK*'
+        $sw.Stop()
+        $sw.ElapsedMilliseconds | Should -BeLessThan 10000
+    }
+
+    It 'PERMANENT FAILURE: an unavailable (PSES could not start) reply fails at once, not at the ceiling' {
+        # 'unavailable' is permanent for the session, so waiting out any budget can only produce a
+        # slower and less informative failure.
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        { Wait-DaemonDiagReady -Scenario 'unavail' -Kind 'ruleset' -ReadyPattern 'PSAvoidUsingWriteHost' `
+                -TimeoutMs 30000 -GetDiag { $script:G236Unavailable } } |
+            Should -Throw -ExpectedMessage '*PSES UNAVAILABLE*'
+        $sw.Stop()
+        $sw.ElapsedMilliseconds | Should -BeLessThan 8000
+    }
+
+    It 'the failure message carries the classification and the counters, never a bare $null' {
+        # 000078 contract: the gate THROWS a bounded, diagnosable message. The old message could
+        # not tell a warming daemon from a dead one; this one names which it was.
+        $threw = $null
+        try {
+            Wait-DaemonDiagReady -Scenario 'diag' -Kind 'ruleset' -ReadyPattern 'PSAvoidUsingWriteHost' `
+                -TimeoutMs 700 -HardCapMs 700 -PollSleepMs 200 -MaxPollSleepMs 200 `
+                -GetDiag { $script:G236Banner } | Out-Null
+        } catch { $threw = $_.Exception.Message }
+        $threw | Should -Not -BeNullOrEmpty
+        $threw | Should -Match 'polls='
+        $threw | Should -Match 'live='
+        $threw | Should -Match 'dark='
+        $threw | Should -Match 'cap=700ms'
+        $threw | Should -Match 'last response length=278'
     }
 }
 
@@ -1249,9 +1412,30 @@ Describe 'Integration: supervised restart + incomplete/degraded status (dispatch
         $script:R_InfoD | Should -Not -BeNullOrEmpty   # daemon came up ready despite no vendored PSSA (no crash)
         $fix = Join-Path $script:R_DataD 'pester-degraded-fixture.ps1'
         "function Frobnicate-Degraded {`n    Get-Process`n}" | Set-Content -LiteralPath $fix -Encoding ascii
-        $out = Invoke-PluginHook -ScriptPath (Join-Path $script:R_ScriptsDir 'lsp-client.ps1') `
-            -StdinJson (@{ session_id = $script:R_SidD; tool_input = @{ file_path = $fix }; cwd = $script:R_DataD } | ConvertTo-Json -Compress) `
-            -ExtraArgs @() -CapMs 25000 -DataRoot $script:R_DataD -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+        # It-time serve-readiness gate (dispatch 000236, closing dispatch 000159's deferred step 3).
+        # This It used to fire ONE un-gated request and assert on whatever came back, so a daemon
+        # still warming returned the transient 'incomplete' banner and the assertion tripped on a
+        # state that was never the state under test. Observed on PR #164 windows-pwsh: the isolated
+        # daemon's pre-warm took 5022 ms under contention, the single request hit the daemon's own
+        # 5000 ms MaxWaitMs, and 'analysis did not settle (cause=settle-timeout) -> incomplete' was
+        # asserted against 'parser-only'. The 000159 instrumentation supplied the deciding evidence:
+        # the hook was NEITHER killed-at-cap NOR empty-stdout ('ok -- completed with output
+        # [elapsedMs=6032 capMs=25000 exit=0]'), so a WIDENED WINDOW was never the answer -- it
+        # finished in 6 s against a 25 s cap. Bounded progress-aware retry is. On a healthy runner
+        # the same daemon settles in ~1.7 s, so the gate is a no-op there.
+        # Budget scaled to THIS scenario, not inherited: the healthy path settles in ~1.7 s and the
+        # worst observed pre-warm was 5.0 s, so 60000 ms base / 120000 ms cap is ample headroom
+        # while still failing a genuine PSSA-absent regression in half the default cap's time.
+        $out = Wait-DaemonDiagReady -Scenario 'degraded' -Kind 'supervised-restart' `
+            -ReadyPattern 'parser-only' -SessionId $script:R_SidD -TimeoutMs 60000 -HardCapMs 120000 `
+            -GetDiag {
+                Invoke-PluginHook -ScriptPath (Join-Path $script:R_ScriptsDir 'lsp-client.ps1') `
+                    -StdinJson (@{ session_id = $script:R_SidD; tool_input = @{ file_path = $fix }; cwd = $script:R_DataD } | ConvertTo-Json -Compress) `
+                    -ExtraArgs @() -CapMs 25000 -DataRoot $script:R_DataD -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+            }
+        # Non-vacuity: the gate guarantees 'parser-only' (re-asserted here, the 000087 house
+        # pattern), but 'PSScriptAnalyzer unavailable' is NOT part of the ready pattern -- it is
+        # independent content the gate cannot manufacture, so this It still discriminates.
         $out | Should -Match 'parser-only'
         $out | Should -Match 'PSScriptAnalyzer unavailable'
     }
@@ -2650,14 +2834,15 @@ Describe 'Integration: format-on-edit suggestion (dispatch 000059)' -Skip:$scrip
             # diagnostics settings to "no settings" before any settings-bearing fixture is touched,
             # so a later malformed-settings fixture cannot poison the diagnostics engine. Returns the
             # diagnostics text; THROWS a clear bounded message on timeout (never a silent skip).
+            #
+            # THIRD instance of the 000236 fixed-ceiling defect (the sibling sweep found it; the
+            # charter named only the ruleset and honor gates). Same shape, same 90000 ms constant,
+            # same spawn-per-poll round-trip, so it takes the SAME shared progress-aware budget
+            # model rather than being left as the one gate still on a fixed ceiling.
             param([int]$TimeoutMs = 90000)
-            $sw = [System.Diagnostics.Stopwatch]::StartNew()
-            while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
-                $out = Get-FmtHook -File $script:F_PlainFile -Cwd $script:F_PlainDir -Mode 'off'
-                if (-not [string]::IsNullOrWhiteSpace($out) -and ($out -match 'PSUseApprovedVerbs')) { return $out }
-                Start-Sleep -Milliseconds 500
-            }
-            throw ("format-on-edit daemon did not return analysis within " + $TimeoutMs + "ms (daemon not ready)")
+            Wait-DaemonDiagReady -Scenario 'plain-warm' -Kind 'format-on-edit' -TimeoutMs $TimeoutMs `
+                -ReadyPattern 'PSUseApprovedVerbs' -SessionId $script:F_Sid `
+                -GetDiag { Get-FmtHook -File $script:F_PlainFile -Cwd $script:F_PlainDir -Mode 'off' }
         }
 
         $script:F_Sid = 'fmt-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
