@@ -36,11 +36,11 @@ present rather than a status badge.
 | Initiative | Scope | Dispatch | Classification | Gate | Evidence |
 | --- | --- | --- | --- | --- | --- |
 | **R2-01** | Canonical current state at the release baseline | 000221 | **HUMAN-GATED** | Delivered and merged; the document is the program's baseline and moves only when a successor dispatch re-derives it | [`CURRENT-STATE.md`](CURRENT-STATE.md); manderse21/claude-powershell-lsp#146, merge `7f34277` |
-| **R2-02** | Roadmap I archived, `ROADMAP.md` canonicalized, deferred ledger record landed | 000230 | **HUMAN-GATED** | This dispatch. Docs-only PR held for Mike's merge | [`decision-ledger.md`](../decision-ledger.md) tail sections; [`ROADMAP-I-ARCHIVE.md`](../ROADMAP-I-ARCHIVE.md); this page |
+| **R2-02** | Roadmap I archived, `ROADMAP.md` canonicalized, deferred ledger record landed | 000230 | **HUMAN-GATED** | Delivered and merged. The canonicalization it established -- no version numbers, counts, or shipped tallies on `ROADMAP.md` -- is the standing constraint every later true-up of that page works under | [`decision-ledger.md`](../decision-ledger.md) tail sections; [`ROADMAP-I-ARCHIVE.md`](../ROADMAP-I-ARCHIVE.md); this page; manderse21/claude-powershell-lsp#154, merge `d2e929d` |
 | **R2-04** | Threat model and least-privilege statement | 000226 | **HUMAN-GATED** | Delivered and merged. Ten OPEN/unknown findings were routed to the gate with no fix proposed; their triage is Mike's | [`THREAT-MODEL.md`](THREAT-MODEL.md); manderse21/claude-powershell-lsp#151, merge `98eb027` |
 | **R2-05** | Corpus licensing and provenance audit | 000222 | **GATED** | Arc B licensing gate is **PASS** (D1). What remains is the GPL-vs-permissive relicensing decision, deferred to Arc B activation -- an audit no longer gates it | [`CORPUS-PROVENANCE-AUDIT.md`](CORPUS-PROVENANCE-AUDIT.md); manderse21/claude-powershell-lsp#147, merge `c0e4b51`; D1 |
 | **R2-06** | Candidate SLOs and their baselines | 000223 | **HUMAN-GATED** | Measurements stand as the baseline; the six proposed targets T1-T6 are **unratified as targets** (D2). Ratifying them is Mike's | [`SLO-BASELINES.md`](SLO-BASELINES.md); manderse21/claude-powershell-lsp#149, merge `776ea07`; D2 |
-| **R2-07** | Stop the busy-vs-unreachable relaunch thrash on the edit path | 000225 | **GATED** | Chartered under D3 against the T4 red. PR is **open and red**; the fix-forward diagnostic found two PR-introduced regressions and its repair gate did not fire, so both fixes defer to Mike | manderse21/claude-powershell-lsp#153 (OPEN); dispatch 000229 outbox; D3 |
+| **R2-07** | Stop the busy-vs-unreachable relaunch thrash on the edit path | 000225 | **HUMAN-GATED** | Chartered under D3 against the T4 red. Delivered, merged, released in v1.31.1, and remeasured against the fixed build: the thrash is gone and every remaining relaunch now follows a real daemon death. What remains is a maintainer decision on the successor the remeasurement isolated -- see the PENDING-MIKE row for the daemon-exit charter, which this program does **not** charter | [`POST-FIX-REMEASUREMENT-relaunch-thrash.md`](POST-FIX-REMEASUREMENT-relaunch-thrash.md); manderse21/claude-powershell-lsp#153, merge `bdd78f1`; dispatches 000229 and 000231; D3 |
 | **R2-08** | Developer-experience journey audit, install through upgrade | 000228 | **HUMAN-GATED** | Delivered and merged. Findings only; nothing fixed. Triage against the D7 taxonomy is Mike's | [`DX-AUDIT.md`](DX-AUDIT.md); manderse21/claude-powershell-lsp#152, merge `c4fc5ce`; D7 |
 | **R2-14** | Governance surface | 000227 | **HUMAN-GATED** | Delivered and merged, which ratified the four proposals. CODEOWNERS ships **inert** by design: enabling `require_code_owner_reviews` would deadlock the repository until a second maintainer exists | [`GOVERNANCE-SURFACE.md`](GOVERNANCE-SURFACE.md); manderse21/claude-powershell-lsp#150, merge `5d8ac83` |
 
@@ -72,14 +72,21 @@ here is not a recommendation.
 
 | Item | What is waiting |
 | --- | --- |
-| A v1.31.1 release cut | Whether to cut at all, and what it would carry |
+| **The daemon-exit successor** | Whether to charter it at all. The post-fix remeasurement isolated a departed client killing the daemon (`Pipe is broken` -> `main loop ended` -> exit) as the binding reason a large-file session does not converge now that the thrash is gone, and named the question a charter would have to answer: the serve loop's own handler logs that exception, so why does the loop end? Carried in `ROADMAP.md`'s Next lane as queued and **not chartered** |
 | A second fix slice arising from D1 | Whether the D1 riders -- the SARIF attribution gap in particular -- warrant their own slice |
 | DX findings triage | Classifying which of the DX audit's findings become work, against the ratified D7 taxonomy |
-| Statusline upstream filing | Whether the statusline-shell behavior is filed upstream |
 | Rule-candidate promotions | The four candidates recorded in the ledger's tail-failure section; promotion is Mike-gated and standing |
 | Quarantine disposal | Disposition of the trees and failed-run evidence held from the 000225 / 000229 cycle |
-| The unix-arm question from 000229 | Whether repairing the unix arm of `Test-DaemonPipePresent` falls inside the D3 boundaries or needs a fresh charter |
 | The missing pillar catalog | Whether B through G are restated, renamed, or dropped (see above) |
+
+**Three rows have left this table since it was written**, each because the decision was taken
+rather than deferred. Recorded so their absence reads as resolution rather than omission:
+
+| Row that left | How it was decided |
+| --- | --- |
+| A v1.31.1 release cut | Cut and released 2026-08-13, carrying the 000225 + 000231 pair |
+| Statusline upstream filing | Filed as [`anthropics/claude-code#86551`](https://github.com/anthropics/claude-code/issues/86551); the internal record is [`docs/upstream/claude-code-statusline-pwsh-leak.md`](../upstream/claude-code-statusline-pwsh-leak.md) |
+| The unix-arm question from 000229 | Ratified 2026-08-13 and shipped inside manderse21/claude-powershell-lsp#153 as dispatch 000231, which made the off-Windows presence check a liveness check |
 
 ## Wave process notes
 

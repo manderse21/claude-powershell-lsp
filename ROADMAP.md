@@ -35,9 +35,6 @@ what PSES already computes in a form an agent can consume, not growing an analys
 
 Work that is chartered and moving.
 
-- **Edit-path settle behavior.** A live-but-busy daemon must never be classified unreachable or
-  relaunched, a genuinely unreachable one must still recover, and every edit must still resolve to
-  a truthful terminal status. Chartered off a measured, red baseline rather than an intuition.
 - **Doctor and command surface.** Continuing to close the gap between "the plugin is installed"
   and "the user can prove it is working". The lane carries no open ruling.
 
@@ -47,9 +44,16 @@ Queued behind the current work, not started.
 
 - **Agent-facing semantic exposure.** Making more of what PSES already computes reachable by an
   agent, on the surfaces this project already ships.
+- **The daemon should survive a client that walked away.** When an edit reaches the client's hard
+  cap the client exits, having already emitted an honest banner; the daemon finishes a moment
+  later, its reply to the departed client raises a broken pipe, and the daemon exits. Now that the
+  relaunch thrash is gone, this is the binding reason a large-file session still does not converge.
+  The open question a charter would have to answer is already named: the serve loop's own handler
+  logs that exception, so why does the loop end at all? Measured and recorded in the
+  [post-fix remeasurement](docs/roadmap-ii/POST-FIX-REMEASUREMENT-relaunch-thrash.md).
+  **Not chartered** -- naming it here is not a decision to do it.
 - **The measured-baseline follow-through.** Candidate service-level targets have baselines; the
-  targets themselves are not ratified, and a post-fix remeasurement lands as its own document
-  rather than as an edit to the frozen baseline.
+  targets themselves are not ratified.
 
 ## Gated and paced
 
@@ -60,8 +64,10 @@ Real work that is deliberately not moving, each waiting on a named thing rather 
   initialization. The opt-in `nativeServe = shim` closes that gap locally and is shipped, so this
   is un-gated *in practice* -- but the shim is a workaround, and removing it waits on the upstream
   fix. A separate upstream Windows regression
-  ([anthropics/claude-code#73961](https://github.com/anthropics/claude-code/issues/73961)) blocks
-  the native tier from starting at all on Windows under some Claude Code versions.
+  ([anthropics/claude-code#73961](https://github.com/anthropics/claude-code/issues/73961)), which
+  had blocked the native tier from starting at all on Windows, is fixed and closed upstream, so
+  what still gates this item is the client's handling of those initialization requests rather than
+  that regression.
 - **Corpus commons.** The licensing and provenance audit that gated publishing the correctness
   oracle as a community benchmark has **passed**. What remains is a licensing decision at
   activation, not an audit.
