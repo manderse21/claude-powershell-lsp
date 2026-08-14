@@ -169,6 +169,161 @@ function Wait-DaemonRequestReady {
     }
 }
 
+function Wait-DaemonDiagReady {
+    # PROGRESS-AWARE It-time serve-readiness gate (dispatch 000236). The ONE implementation
+    # behind Wait-RulesetDiagReady, Wait-HonorDiagReady and Wait-FmtWarm, which were three
+    # byte-identical copies of a FIXED 90000 ms wall-clock ceiling and drifted apart the moment
+    # any one of them was repaired. It keeps the 000051/000078 rule intact -- the caller supplies
+    # its OWN $GetDiag closure, so each scenario still gates on the real request its assertion
+    # fires, for its own file and cwd, and no shared probe can lock the wrong settings resolution.
+    # Only the BUDGET MODEL changes.
+    #
+    # WHY the fixed ceiling was wrong (000236 leg 1/2, re-derived from the failing CI job logs):
+    # the gate polls a warm, serving daemon whose every reply is the 000022 'incomplete' banner --
+    # 278 bytes of "analysis did not complete", byte-identical on every poll. The daemon is alive,
+    # PSES is attached, and the settings ARE resolved ('PSSA settings: honoring ...\base.psd1'
+    # appears 1.2 s after PSES init); PSES is simply CPU-starved by the other daemons the suite
+    # runs concurrently, and cannot produce the first publish for many tens of seconds. Observed
+    # first-request -> settled on Windows CI: 8.4 s / 77.1 s / 125.6 s / 174.9 s. The 90 s ceiling
+    # sat INSIDE that spread, so equivalent content went red, green, red, green across four runs.
+    #
+    # WHY polling harder is not the answer: pses-daemon.ps1 CLEARS the prior publish for the uri
+    # and re-sends a versioned didChange on EVERY request, so each poll discards the analysis it
+    # was waiting for and re-queues the work -- the failing run's daemon emitted nine publishes in
+    # a 36 ms burst, one per poll. Each poll also spawns a fresh pwsh that competes with the very
+    # PSES it is waiting on (one spawn took 24.8 s under that contention). So this gate BACKS OFF
+    # instead of hammering: the sleep grows 1.5x per poll to $MaxPollSleepMs.
+    #
+    # THE BUDGET MODEL. Three observable outcomes per poll, where the old gate saw only two:
+    #   READY  -- the response matches $ReadyPattern. Return it (unchanged).
+    #   LIVE   -- a NON-EMPTY response that does not match. This is the progress signal: it proves
+    #             the pipe is up, PSES is attached, the settings resolved, and an analysis is
+    #             queued. A dead or never-started daemon cannot produce it.
+    #   DARK   -- an empty/whitespace response (client killed at its process cap, or unreachable).
+    #             When -SessionId is supplied this is corroborated by a cheap DIRECT-PIPE ping
+    #             (no pwsh spawn), because a client killed at its cap returns '' while the daemon
+    #             is perfectly healthy -- exactly what happened on poll 7 of the red run.
+    # The deadline starts at $TimeoutMs and is extended to (last LIVE observation +
+    # $ProgressGraceMs) -- extended ONLY by observed liveness, never by the clock -- and is then
+    # clamped to $HardCapMs, which is never exceeded for any reason. A daemon that is merely noisy
+    # rather than progressing therefore still dies at $HardCapMs.
+    #
+    # DEAD-DAEMON PROTECTION IS STRICTLY BETTER, NOT WORSE. A larger constant would buy silence:
+    # a genuinely dead daemon would take twice as long to say so. Here liveness is what buys time,
+    # so a daemon that never answers trips $DarkPollsToFail consecutive dark polls and fails in
+    # SECONDS instead of burning the full ceiling, and a PERMANENT PSES start failure
+    # ('unavailable') short-circuits immediately instead of timing out with a misleading message.
+    #
+    # BOUND DERIVATION (000236 acceptance D -- derived from observation, not picked):
+    #   $HardCapMs 240000       = 174.9 s worst observed settle (run 31747644193, windows-pwsh)
+    #                             + 25 s for one full process-cap-killed poll (observed once)
+    #                             + ~20% margin for a runner worse than any yet seen.
+    #   $ProgressGraceMs 45000  = ~1.8x the worst observed gap between consecutive LIVE responses
+    #                             (25 s, the killed-at-cap poll), so a live daemon is never cut off
+    #                             mid-progress; kept well above $MaxPollSleepMs by construction.
+    #   $TimeoutMs 90000        = the historical budget, UNCHANGED, so the fast common case
+    #                             (settled in 8.4 s) behaves exactly as before.
+    #
+    # Returns the diagnostics text; THROWS a bounded, classified message on failure -- never a bare
+    # $null/'' for an assertion to trip on (the 000078 contract).
+    #
+    # Requires Get-Prop (scripts/lib/lsp-common.ps1), dot-sourced by every caller.
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$GetDiag,
+        [Parameter(Mandatory = $true)][string]$ReadyPattern,
+        [string]$Scenario = 'daemon',
+        [string]$Kind = 'daemon',
+        [int]$TimeoutMs = 90000,
+        [int]$HardCapMs = 240000,
+        [int]$ProgressGraceMs = 45000,
+        [int]$DarkPollsToFail = 3,
+        [int]$PollSleepMs = 500,
+        [int]$MaxPollSleepMs = 4000,
+        [string]$SessionId = ''
+    )
+    # A caller-supplied budget larger than the cap would make the cap the (silent) real budget;
+    # raise the cap instead so $TimeoutMs is always honored and the cap is only ever an EXTENSION
+    # ceiling. Keeps the adversarial short-budget callers exact.
+    if ($HardCapMs -lt $TimeoutMs) { $HardCapMs = $TimeoutMs }
+    # INVARIANT: the backoff must stay well inside the grace window, or the gate could expire
+    # BETWEEN two polls of a daemon that is still perfectly live -- reintroducing the very
+    # false-red this dispatch removes. Self-enforcing so no caller can misconfigure it.
+    if ($MaxPollSleepMs -ge $ProgressGraceMs) { $MaxPollSleepMs = [Math]::Max(50, [int]($ProgressGraceMs / 3)) }
+    if ($PollSleepMs -gt $MaxPollSleepMs) { $PollSleepMs = $MaxPollSleepMs }
+
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $lastLen = -1
+    $polls = 0
+    $liveCount = 0
+    $darkCount = 0
+    $consecutiveDark = 0
+    $lastLiveMs = -1          # -1 = liveness NEVER observed, so no grace has been earned yet
+    $sleepMs = $PollSleepMs
+    $deadline = $TimeoutMs
+    $reason = 'budget exhausted before the daemon returned a matching analysis'
+
+    while ($true) {
+        # Deadline recomputed each pass: the base budget, extended ONLY from an actual LIVE
+        # observation, then clamped by the absolute cap. With $lastLiveMs -lt 0 (nothing ever
+        # answered) the grace is never applied, so a short caller budget stays short.
+        $deadline = $TimeoutMs
+        if ($lastLiveMs -ge 0) { $deadline = [Math]::Max($deadline, $lastLiveMs + $ProgressGraceMs) }
+        if ($deadline -gt $HardCapMs) { $deadline = $HardCapMs }
+        if ([int]$sw.ElapsedMilliseconds -ge $deadline) {
+            if ($deadline -ge $HardCapMs -and $liveCount -gt 0) {
+                $reason = 'HARD CAP reached: the daemon stayed live but never returned a matching analysis'
+            } elseif ($liveCount -gt 0) {
+                $reason = 'budget exhausted: the daemon was live but progress stopped'
+            }
+            break
+        }
+
+        $polls++
+        $out = & $GetDiag
+        $text = [string]$out
+        if (-not [string]::IsNullOrWhiteSpace($text) -and ($text -match $ReadyPattern)) { return $out }
+        $lastLen = $text.Length
+
+        $isLive = -not [string]::IsNullOrWhiteSpace($text)
+        if (-not $isLive -and -not [string]::IsNullOrWhiteSpace($SessionId)) {
+            # Corroborate darkness over the pipe DIRECTLY (no pwsh spawn, side-effect-free): an
+            # empty client return is 'the CLIENT gave up', which is not the same as 'the DAEMON is
+            # gone'. Only a failed ping too makes it genuinely dark.
+            if (Wait-DaemonPipeReady -SessionId $SessionId -TimeoutMs 1500 -ConnectMs 500) { $isLive = $true }
+        }
+
+        if ($isLive) {
+            # PERMANENT failure short-circuit: 'unavailable' means PSES could not start AT ALL and
+            # will not for this session, so waiting out the budget can only produce a slower, less
+            # informative failure (dispatch 000024 wording is the stable marker).
+            if ($text -match 'PowerShell editor services could not start') {
+                $reason = 'daemon reported PSES UNAVAILABLE (permanent start failure, not a timing condition)'
+                break
+            }
+            $liveCount++
+            $consecutiveDark = 0
+            $lastLiveMs = [int]$sw.ElapsedMilliseconds
+        } else {
+            $darkCount++
+            $consecutiveDark++
+            if ($consecutiveDark -ge $DarkPollsToFail) {
+                $reason = ('daemon DARK: ' + $consecutiveDark +
+                    ' consecutive empty responses with no pipe ping -- failing fast rather than waiting out the budget')
+                break
+            }
+        }
+
+        Start-Sleep -Milliseconds $sleepMs
+        # Back off: each extra poll discards a publish and steals CPU from PSES (see above).
+        $sleepMs = [Math]::Min($MaxPollSleepMs, [int]($sleepMs * 1.5))
+    }
+
+    throw ($Kind + " daemon '" + $Scenario + "' did not return analysis within " + $deadline + 'ms (' + $reason +
+        '); polls=' + $polls + ' live=' + $liveCount + ' dark=' + $darkCount +
+        ' elapsed=' + [int]$sw.ElapsedMilliseconds + 'ms budget=' + $TimeoutMs + 'ms cap=' + $HardCapMs +
+        'ms; last response length=' + $lastLen)
+}
+
 # ===========================================================================
 # Process-leak reap (dispatch 000078)
 # ===========================================================================
