@@ -104,7 +104,7 @@ jobs:
 
       - name: Upload emitted SARIF artifacts
         if: always() && matrix.label == 'windows-powershell'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: sarif-emitted-${{ matrix.label }}
           path: psls-sarif-emitted/**
@@ -112,7 +112,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: pester-results-${{ matrix.label }}
           path: tests/testResults.xml
@@ -120,7 +120,7 @@ jobs:
 
       - name: Upload daemon logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: daemon-logs-${{ matrix.label }}
           path: |
@@ -134,7 +134,7 @@ jobs:
       # the (deliberately generous) regression thresholds.
       - name: Upload benchmark results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-results-${{ matrix.label }}
           path: psls-test-data/logs/benchmark-results.json
