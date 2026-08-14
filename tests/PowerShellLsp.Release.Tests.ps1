@@ -290,6 +290,39 @@ Describe 'Release workflow signing -- keyless gitsign-signed tags (dispatch 0000
     BeforeAll {
         $script:ReleaseWf = Join-Path $script:PluginRoot '.github/workflows/powershell-lsp-release.yml'
         $script:WfText    = [System.IO.File]::ReadAllText($script:ReleaseWf)
+
+        # THE PROVENANCE GUARD, AS A FAMILY INVARIANT (dispatch 000240).
+        #
+        # This assertion used to read `Should -Match 'actions/attest-build-provenance@v3'`.
+        # That wrote down today's ANSWER instead of the property: a clean Dependabot major
+        # bump (@v3 -> @v4, one file, one line) failed a STRUCTURAL release test although
+        # nothing structural had broken, and "fixing" it by typing @v4 would reproduce the
+        # same failure the day v5 landed. The job of this guard is to say the provenance
+        # action is PINNED, not to say what it is pinned to.
+        #
+        # The idiom is the one the gitsign It fourteen lines below already established --
+        # a version-family positive PLUS an explicit floating-ref negative -- carried across
+        # at the granularity this action is actually referenced with.
+        #
+        # TWO axes are deliberately NOT encoded here:
+        #   * the VERSION. Any explicit numbered release satisfies the positive.
+        #   * the ACTION NAME. Upstream made attest-build-provenance@v4 a thin composite
+        #     wrapper around actions/attest and recommends actions/attest for new work, so
+        #     this repository calls actions/attest directly. Hard-coding either name would
+        #     be the same defect one level up, so the alternation accepts both.
+        #
+        # What IS encoded is the property the repository actually commits to: an immutable
+        # 40-character upstream commit SHA with a human-readable release comment beside it
+        # (the repository-wide rule, mechanically enforced across every workflow by
+        # tests/PowerShellLsp.ActionPinning.Tests.ps1).
+        $script:ProvenancePositive = 'actions/attest(-build-provenance)?@[0-9a-f]{40}\s+#\s*v\d+(\.\d+)*'
+
+        # WHY THE NEGATIVE IS NOT REDUNDANT WITH THE POSITIVE. The positive proves only that
+        # SOME correctly pinned reference exists somewhere in the file. A workflow carrying
+        # BOTH a pinned reference and an added floating one would satisfy it and still be
+        # exposed to an upstream retag. The negative is what makes the policy total, which
+        # is exactly why the gitsign It carries both halves.
+        $script:ProvenanceFloating = 'actions/attest(-build-provenance)?@(latest|main|master|HEAD|v\d)'
     }
 
     It 'cuts a SIGNED tag (git tag -s), not an unsigned annotated tag (git tag -a)' {
@@ -320,9 +353,59 @@ Describe 'Release workflow signing -- keyless gitsign-signed tags (dispatch 0000
         $script:WfText | Should -Not -Match '(?i)user\.signingkey'
     }
 
-    It 'leaves the existing SBOM + SLSA provenance steps byte-for-byte (signing is ADDITIVE)' {
-        $script:WfText | Should -Match 'actions/attest-build-provenance@v3'
+    It 'leaves the SBOM + SLSA provenance path undisturbed, with the provenance action immutably pinned (signing is ADDITIVE)' {
+        # The It's purpose is unchanged -- signing did not disturb the SBOM / provenance
+        # path -- and both halves are still asserted. Only the provenance half stopped
+        # encoding which dependency version happens to be current. The title now says
+        # "immutably pinned" because that is what the assertion below actually proves.
+        $script:WfText | Should -Match $script:ProvenancePositive
+        $script:WfText | Should -Not -Match $script:ProvenanceFloating
         $script:WfText | Should -Match 'New-PluginSbom\.ps1'
+    }
+
+    It 'the provenance guard is a VERSION FAMILY, not a value: it accepts any numbered release of either upstream action name' {
+        # Acceptance evidence for the repair. Accepting only whichever release is current
+        # would prove nothing about the coupling being gone, so this exercises several --
+        # spanning the major this repository used to pin, the one it pins now, and one that
+        # does not exist yet -- under BOTH upstream action names.
+        foreach ($name in @('actions/attest-build-provenance', 'actions/attest')) {
+            foreach ($ver in @('v3', 'v3.2.0', 'v4', 'v4.2.2', 'v5.0.0', 'v10.11.12')) {
+                $synthetic = "        uses: ${name}@0123456789abcdef0123456789abcdef01234567 # $ver"
+                $synthetic | Should -Match $script:ProvenancePositive -Because "a $ver pin of $name must satisfy the family invariant"
+                $synthetic | Should -Not -Match $script:ProvenanceFloating -Because "a $ver SHA pin of $name is not a floating ref"
+            }
+        }
+    }
+
+    It 'records the defect this repair removed: the OLD exact-major assertion goes RED on a legitimate bump' {
+        # The measured RED, kept executable rather than described. The retired assertion was
+        # `Should -Match 'actions/attest-build-provenance@v3'`; a clean v3 -> v4 Dependabot
+        # bump does not satisfy it, which is precisely why PR #158 failed a structural test
+        # while changing nothing structural.
+        $legitimateBump = '        uses: actions/attest-build-provenance@v4'
+        $legitimateBump | Should -Not -Match 'actions/attest-build-provenance@v3' -Because 'this is the coupling defect: a clean major bump fails the old literal guard'
+        # And the same line is still correctly REJECTED by the replacement, because a major
+        # tag is movable -- the repair widened the version family, it did not weaken the pin.
+        $legitimateBump | Should -Not -Match $script:ProvenancePositive
+        $legitimateBump | Should -Match $script:ProvenanceFloating
+    }
+
+    It 'the provenance guard is NOT vacuous: an in-memory copy with the step removed FAILS it' {
+        # Anti-vacuity, EXECUTED. Mutate a copy of the workflow text -- never the file -- and
+        # prove the positive stops matching. Without this, a guard that had been weakened
+        # into something a provenance-free workflow would satisfy could not be told apart
+        # from a guard that works.
+        $stripped = [regex]::Replace($script:WfText, 'actions/attest(-build-provenance)?@[0-9a-f]{40}\s+#\s*v\d+(\.\d+)*', 'echo no-provenance-step-here')
+        $stripped | Should -Not -Match $script:ProvenancePositive -Because 'removing the provenance reference must break the positive guard'
+
+        # The floating-ref negative is independently non-vacuous: swap the pin for a float
+        # and the negative must fire.
+        $floated = [regex]::Replace($script:WfText, 'actions/attest@[0-9a-f]{40}', 'actions/attest@main')
+        $floated | Should -Match $script:ProvenanceFloating -Because 'a floating provenance ref must be caught by the negative'
+
+        # And the SBOM half of the It above is non-vacuous too.
+        $sbomless = $script:WfText -replace 'New-PluginSbom\.ps1', 'New-SomeOtherThing.ps1'
+        $sbomless | Should -Not -Match 'New-PluginSbom\.ps1'
     }
 
     It 'keeps id-token: write as the identity permission signing reuses (not a new/widened one)' {

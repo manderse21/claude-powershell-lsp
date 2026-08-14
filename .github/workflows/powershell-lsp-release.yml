@@ -77,7 +77,7 @@ jobs:
       attestations: write   # write the provenance attestation
     steps:
       - name: Checkout (full history + tags)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: main
@@ -358,9 +358,26 @@ jobs:
           Get-ChildItem "powershell-lsp-$v.tar.gz", "powershell-lsp-$v.cdx.json", "release-notes.md" |
             Select-Object Name, Length | Format-Table | Out-String | Write-Host
 
+      # SLSA build provenance over the release archive + the CycloneDX SBOM.
+      #
+      # WHY actions/attest AND NOT actions/attest-build-provenance. Upstream made
+      # attest-build-provenance@v4 a thin COMPOSITE wrapper: its action.yml runs exactly one
+      # step, `uses: actions/attest@<sha>`, forwarding subject-path / subject-name /
+      # subject-digest / subject-checksums / predicate* / push-to-registry /
+      # create-storage-record / show-summary / github-token unchanged, and setting
+      # NODE_OPTIONS=--max-http-header-size=32768 (preserved verbatim below). Upstream
+      # recommends actions/attest for new implementations. actions/attest's documented
+      # attestation-mode table selects PROVENANCE -- auto-generating a SLSA build-provenance
+      # predicate -- whenever no sbom-path and no predicate input is supplied, which is exactly
+      # this call. So the predicate type, the subjects, the OIDC identity, the attestations:
+      # write grant and the dry-run gating are all unchanged; only one wrapper hop is removed.
       - name: Attest build provenance (archive + SBOM)
         if: ${{ !inputs.dry_run }}
-        uses: actions/attest-build-provenance@v3
+        env:
+          # Carried over verbatim from the attest-build-provenance wrapper so the migration
+          # changes nothing observable about the request the action makes.
+          NODE_OPTIONS: "--max-http-header-size=32768"
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             powershell-lsp-${{ steps.resolve.outputs.version }}.tar.gz
@@ -373,9 +390,11 @@ jobs:
           set -euo pipefail
           # gitsign signs the release tag with the runner's ambient GitHub OIDC identity --
           # keyless: no stored key, no secret. The certificate is issued by Fulcio and the
-          # signature is logged in the public Rekor transparency log. Pinned to a release tag
-          # (consistent with the @v-pinned actions above), built from source with the Go
-          # toolchain preinstalled on the runner.
+          # signature is logged in the public Rekor transparency log. Pinned to an exact release
+          # tag and built from source with the Go toolchain preinstalled on the runner.
+          # (This is a `go install` module pin, NOT a `uses:` action reference -- the
+          # repository-wide 40-char-SHA action pinning rule does not reach a Go module
+          # path, so the exact-version tag is the strongest pin available here.)
           #
           # v0.17.1 is a FLOOR, not a preference (dispatch 000217 leg A). Through v0.16.1 the
           # signer reassembled every object with the COMMIT joiner before hashing it for the

@@ -520,6 +520,12 @@ Describe 'code-scanning workflow: inert until merged, SHA-pinned, CI legs untouc
     It 'pins upload-sarif by a 40-hex COMMIT SHA, never by a movable tag' {
         # This action runs with security-events: write -- the only write scope in the repo. A tag
         # can be moved under us; a commit SHA cannot.
+        #
+        # KEPT DELIBERATELY, though tests/PowerShellLsp.ActionPinning.Tests.ps1 now enforces the
+        # same property across EVERY external action in every workflow. That block is a scanner
+        # over a discovered surface; this one names the single highest-privilege instance in the
+        # file that owns it, so a reader of the code-scanning guards sees the pin requirement
+        # where the write scope is granted. The scanner is the policy; this is the local landmark.
         $script:ScanWfText | Should -Match 'github/codeql-action/upload-sarif@[0-9a-f]{40}'
         # Adversarial: assert no TAG-pinned form of this action slipped in alongside.
         $script:ScanWfText | Should -Not -Match 'github/codeql-action/upload-sarif@v\d'

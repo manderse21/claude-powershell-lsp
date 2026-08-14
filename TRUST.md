@@ -141,7 +141,12 @@ Every tagged release publishes, on the GitHub Release:
   with what the tool actually downloads.
 - A **SLSA build-provenance attestation** over both the source archive
   (`powershell-lsp-<version>.tar.gz`, a `git archive` of the exact tagged tree) and the
-  SBOM, produced by `actions/attest-build-provenance` with GitHub OIDC.
+  SBOM, produced by `actions/attest` with GitHub OIDC. (Through v1.31.1 this used
+  `actions/attest-build-provenance`; upstream turned that into a thin composite wrapper
+  around `actions/attest` and recommends the wrapped action for new work, so the pipeline
+  now calls it directly. The predicate, the subjects and the OIDC identity are unchanged --
+  `actions/attest` auto-generates SLSA build provenance whenever no SBOM or predicate input
+  is supplied, which is exactly how this pipeline calls it.)
 
 Verify the provenance of a downloaded artifact:
 
@@ -153,6 +158,45 @@ The release pipeline is **maintainer-triggered and gate-validated** (merged to `
 green on every CI leg, version-locked) and cuts the tag itself on the validated commit.
 See [docs/RELEASING.md](./docs/RELEASING.md). This document does not modify any of those
 generators; it points at what they already produce.
+
+## Every external GitHub Action is pinned to an immutable commit SHA
+
+The workflows that build, scan and release this project are themselves a supply chain, and
+they are pinned the same way the downloaded dependencies above are: to something an
+upstream owner cannot move.
+
+**The rule.** Every external action reference in every workflow is written as a full
+40-character upstream **commit SHA**, with the release it resolves to in a comment on the
+same line:
+
+```yaml
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+```
+
+A tag -- `@v7`, or even `@v7.0.1` -- is a *label*, and the upstream owner can repoint it at
+different code without anything changing in this repository. A commit SHA cannot be
+repointed. The trailing comment is not decoration: Dependabot's `github-actions` ecosystem
+rewrites the SHA and that comment together, so it is what keeps a pin auditable by a human
+and bumpable by a bot instead of rotting into an opaque, permanently stale hex string.
+
+**Three independent enforcements, so this cannot quietly regress:**
+
+| Layer | What it does | Where |
+|---|---|---|
+| Repository policy | GitHub itself refuses to run a workflow step whose action is not SHA-pinned (`sha_pinning_required = true` on the repository's Actions permissions) | repository settings |
+| CI gate | A Pester block **discovers** every workflow and composite-action YAML in the tree, extracts every `uses:` line, and fails on any external reference that is not a 40-hex SHA with a version comment | `tests/PowerShellLsp.ActionPinning.Tests.ps1` |
+| Dependency updates | Dependabot proposes SHA bumps weekly, labelled `dependencies` / `github-actions` | `.github/dependabot.yml` |
+
+Local actions (`uses: ./...`) are exempt -- they resolve inside this repository at the
+commit already being run, so there is no third-party mutability to pin.
+
+**This supersedes the project's earlier convention.** Until 2026-08-14 the workflows pinned
+by major-version tag and only the SARIF upload -- the one step holding a write scope -- was
+SHA-pinned as a deliberate exception. Two earlier records (dispatches 000042 and 000064)
+booked full SHA pinning as a defensible-but-deferred hardening. It is no longer deferred;
+it is the convention, and the exception now runs the other way: nothing may use a movable
+ref.
 
 ## Signing posture
 

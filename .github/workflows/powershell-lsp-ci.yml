@@ -46,7 +46,7 @@ jobs:
             interpreter: pwsh
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Pinned-PSSA .nupkg cache (dispatch 000049): the structural cure for the 000047 PowerShell
       # Gallery / Azure-CDN egress flake. Restore the pinned, hash-verified PSScriptAnalyzer .nupkg
@@ -62,7 +62,7 @@ jobs:
         run: ./scripts/print-pssa-pin.ps1 >> $env:GITHUB_OUTPUT
 
       - name: Cache pinned PSScriptAnalyzer .nupkg
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PSSA_CACHE_DIR }}
           key: pssa-${{ runner.os }}-${{ steps.pin.outputs.version }}-${{ steps.pin.outputs.sha256 }}
@@ -104,7 +104,7 @@ jobs:
 
       - name: Upload emitted SARIF artifacts
         if: always() && matrix.label == 'windows-powershell'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sarif-emitted-${{ matrix.label }}
           path: psls-sarif-emitted/**
@@ -112,7 +112,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pester-results-${{ matrix.label }}
           path: tests/testResults.xml
@@ -120,7 +120,7 @@ jobs:
 
       - name: Upload daemon logs
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: daemon-logs-${{ matrix.label }}
           path: |
@@ -134,7 +134,7 @@ jobs:
       # the (deliberately generous) regression thresholds.
       - name: Upload benchmark results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: benchmark-results-${{ matrix.label }}
           path: psls-test-data/logs/benchmark-results.json

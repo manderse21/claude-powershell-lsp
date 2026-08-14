@@ -29,6 +29,62 @@ keyed by a per-version marker):
 A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
+## [Unreleased]
+PATCH: **every external GitHub Action is now pinned to an immutable commit SHA, enforced three
+ways.** Build/CI hardening only -- no runtime behavior, no `userConfig` surface, no plugin
+contract, and no diagnostics change.
+
+### Security
+
+**Immutable action pinning is now the repository convention, not a deferred hardening.** All
+eleven external action references across the three workflows moved from movable tags to full
+40-character upstream commit SHAs with the resolved release in a trailing comment. A tag is a
+label its upstream owner can repoint at different code; a commit SHA cannot be repointed.
+Dispatches 000042 and 000064 each booked this as a defensible-but-deferred hardening; it is no
+longer deferred.
+
+| Action | Was | Now |
+|---|---|---|
+| `actions/checkout` (x3) | `@v7` | `@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1` |
+| `actions/cache` (x2) | `@v6` | `@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0` |
+| `actions/upload-artifact` (x5) | `@v7` | `@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1` |
+| `github/codeql-action/upload-sarif` | `@5595ccaf...` (v4.37.6) | `@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7` |
+| `actions/attest-build-provenance` | `@v3` | `actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2` |
+
+**A CI gate that discovers the surface instead of consulting a list.** New
+`tests/PowerShellLsp.ActionPinning.Tests.ps1` walks every YAML under `.github/` plus every
+composite `action.yml` in the tree, extracts every `uses:` line, and fails on any external
+reference that is not a 40-hex commit SHA carrying a version comment. It ships with its own
+anti-vacuity controls: discovery floors so an empty scan cannot pass, an acceptance case so a
+reject-everything classifier cannot pass, and mutation cases proving each movable form
+(`@v7`, `@v7.0.1`, `@main`, `@latest`, an abbreviated SHA, a SHA with no comment) is rejected.
+Measured RED against the pre-change workflows: 11 named offenders.
+
+### Changed
+
+**The release pipeline attests provenance through `actions/attest` directly** (this supersedes
+Dependabot PR #158, which proposed `actions/attest-build-provenance` v3 -> v4). Upstream made
+`attest-build-provenance@v4` a thin composite wrapper whose only step is
+`uses: actions/attest@<sha>` with every input forwarded unchanged, and recommends
+`actions/attest` for new implementations. The pipeline now calls the wrapped action, preserving
+the wrapper's `NODE_OPTIONS=--max-http-header-size=32768` verbatim. Provenance semantics are
+unchanged: `actions/attest` auto-generates a SLSA build-provenance predicate whenever no SBOM
+and no predicate input is supplied, which is exactly how this pipeline calls it. Same two
+subjects (source archive + CycloneDX SBOM), same `id-token: write` / `attestations: write`
+grants, same `!inputs.dry_run` gating, same release gates.
+
+### Fixed
+
+**A release test encoded the dependency version instead of the invariant** (dispatch 000240).
+`tests/PowerShellLsp.Release.Tests.ps1` asserted the literal `actions/attest-build-provenance@v3`,
+so a clean Dependabot major bump failed a *structural* release test although nothing structural
+had changed -- and bumping the literal would have reproduced the same failure at the next major.
+The assertion is now a family invariant (any numbered release, either upstream action name,
+pinned by commit SHA) paired with an explicit floating-ref rejection, mirroring the idiom the
+same `Describe` already used for gitsign. The `New-PluginSbom.ps1` companion assertion is
+unchanged, and the block gained an executable anti-vacuity control that mutates an in-memory
+copy of the workflow text rather than claiming in prose that it could.
+
 ## [1.31.1] - 2026-08-13
 PATCH: **a live-but-busy analyzer daemon is no longer mistaken for an unreachable one, and is no
 longer relaunched because of it -- on every supported platform.** Two fixes on a single edit-path

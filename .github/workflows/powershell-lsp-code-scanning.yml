@@ -57,7 +57,7 @@ jobs:
       PSSA_CACHE_DIR: ${{ github.workspace }}/.pssa-nupkg-cache
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Same pinned-PSSA .nupkg cache the CI legs use (dispatch 000049): the scan brings up the
       # real warm daemon, which vendors the pinned, hash-verified PSScriptAnalyzer through the
@@ -68,7 +68,7 @@ jobs:
         run: ./scripts/print-pssa-pin.ps1 >> $env:GITHUB_OUTPUT
 
       - name: Cache pinned PSScriptAnalyzer .nupkg
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PSSA_CACHE_DIR }}
           key: pssa-${{ runner.os }}-${{ steps.pin.outputs.version }}-${{ steps.pin.outputs.sha256 }}
@@ -122,20 +122,22 @@ jobs:
           exit 0
 
       - name: Upload SARIF to code scanning
-        # Pinned by COMMIT SHA, not by the movable v4 tag: this step runs with
-        # security-events: write, so a retagged upstream release must not silently change what
-        # executes here. (Note: the four CI legs pin actions by major-version tag; this file
-        # deliberately does not follow that convention for THIS action, because it is the only
-        # one in the repository holding a write scope. Re-pin by resolving the desired release
-        # tag to its commit: gh api repos/github/codeql-action/tags.)
-        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        # Pinned by COMMIT SHA, not by a movable tag: this step runs with security-events:
+        # write, so a retagged upstream release must not silently change what executes here.
+        # SHA pinning is now the REPOSITORY-WIDE convention -- every external action in every
+        # workflow is pinned to a full 40-character commit SHA with the resolved release in a
+        # trailing comment, mechanically enforced by tests/PowerShellLsp.ActionPinning.Tests.ps1
+        # and by the repository's Actions sha_pinning_required policy. This action is no longer
+        # an exception; it is simply the highest-privilege instance of the rule. Re-pin by
+        # resolving the desired release tag to its commit: gh api repos/github/codeql-action/tags.
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           sarif_file: results.sarif
           category: powershell-lsp
 
       - name: Upload SARIF as an artifact
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: powershell-lsp-sarif
           path: results.sarif
