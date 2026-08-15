@@ -417,10 +417,32 @@ integrity rests on the signed tag and the commit it names. Both
 job-scoped and enumerated: `security-events: write` for the SARIF upload, annotated in the file as
 the single highest-privilege action in the repository (`powershell-lsp-code-scanning.yml:51-55`),
 and `contents: write` + `actions: read` + `id-token: write` + `attestations: write` for the release
-job, each with an inline reason (`powershell-lsp-release.yml:73-77`). The SARIF upload action is
-pinned by full commit SHA rather than a movable tag
-(`powershell-lsp-code-scanning.yml:131`), which matches the SHA recorded in
-[`docs/trust.md`](../trust.md) item 7 exactly.
+job, each with an inline reason (`powershell-lsp-release.yml:73-77`).
+
+**T7.4 A retagged upstream action.** *Mitigated as of 2026-08-14; this row supersedes the narrower
+claim it replaces.* Until then, only the SARIF upload -- the single step holding a write scope -- was
+pinned by commit SHA, and the other ten external action references across the three workflows used
+movable major-version tags. An upstream owner can repoint a tag at different code without a byte
+moving in this repository, so those ten were an unmitigated path from an upstream account compromise
+to code executing with this repository's `GITHUB_TOKEN`. Three controls now close it:
+
+1. **Every** external action in every workflow is pinned to a full 40-character upstream commit SHA
+   with the resolved release in a trailing comment. A commit SHA cannot be repointed; the comment is
+   what keeps the pin auditable by a human and bumpable by Dependabot, which rewrites the SHA and
+   the comment together.
+2. **GitHub itself refuses** to run a step whose action is not SHA-pinned --
+   `sha_pinning_required: true` on the repository's Actions permissions, read back and recorded in
+   [`GOVERNANCE-SURFACE.md`](GOVERNANCE-SURFACE.md) section 4.3a row 9.
+3. **CI fails on a regression**, via a block that DISCOVERS the surface rather than naming actions:
+   `tests/PowerShellLsp.ActionPinning.Tests.ps1` walks every YAML under `.github/` plus every
+   composite `action.yml` in the tree and rejects any external `uses:` that is not a 40-hex SHA
+   carrying a version comment. It was measured RED against the pre-change workflows, naming all
+   eleven offenders.
+
+The residual is the one thing SHA pinning cannot remove: a pin freezes *which* code runs, not
+whether that code was benign when it was written. The `github/*` allow-list and the read-only
+default workflow token bound what a compromised-at-authorship action could do; neither is claimed to
+eliminate it.
 
 ---
 

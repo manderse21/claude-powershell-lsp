@@ -166,6 +166,75 @@ This also matches an existing recorded posture rather than inventing one: `CONTR
 already draws the same line, noting that the local pre-push guard's machine-independent complement
 is branch protection, "a separate repo-settings change, not part of the hook."
 
+### 4.3a The same surface, re-measured 2026-08-15 -- and this time settings WERE changed
+
+**Written beside section 4.3, not over it.** That block is dated 2026-08-12 and its figures were true
+then; editing them would make its date a lie about when they were taken. This section is the newer
+reading, with what moved between the two datings named explicitly.
+
+**Every row below is one authoritative API endpoint, queried separately.** GitHub runs several
+distinct security products, and an aggregate "security alerts" number silently merges them -- the
+earlier block's single ruleset row beside a set of branch-protection facts is exactly the ambiguity
+this corrects. Where a product is unavailable the row states its status rather than reporting zero:
+**N/A is not zero**, and a zero from a product that is switched off means nothing at all.
+
+Queried **2026-08-15T00:07:24Z** against `manderse21/claude-powershell-lsp`:
+
+| # | Measurement | Endpoint | Value |
+|---|---|---|---|
+| 1 | Repository **rulesets** | `GET /repos/{r}/rulesets` | **0** (`[]`) |
+| 2 | **Branch protection** on `main` | `GET /repos/{r}/branches/main/protection` | configured -- required contexts `ubuntu-pwsh`, `windows-powershell`, `windows-pwsh`, `macos-pwsh` with `strict: true`; `enforce_admins: true`; `require_code_owner_reviews: false`; `required_approving_review_count: 0`; force-pushes and deletions both `false` |
+| 3 | Open **code-scanning** alerts | `GET /repos/{r}/code-scanning/alerts?state=open` | **2**, both from tool `powershell-lsp`; **0** from tool `CodeQL` |
+| 4 | Open **Dependabot** alerts | `GET /repos/{r}/dependabot/alerts?state=open` | **0** (product enabled) |
+| 5 | Open **secret-scanning** alerts | `GET /repos/{r}/secret-scanning/alerts?state=open` | **0** (product enabled, push protection on) |
+| 6 | Open **issues**, pull requests excluded | `GET /repos/{r}/issues?state=open` filtered `pull_request == null` | **0** |
+| 7 | Open **pull requests** | `GET /repos/{r}/pulls?state=open` | **1** |
+| 8 | **CodeQL default setup** | `GET /repos/{r}/code-scanning/default-setup` | `state: configured`, `languages: ["actions"]`, `query_suite: default`, `threat_model: remote`, `schedule: weekly`, `updated_at: 2026-08-14T22:07:40Z` |
+| 9 | **Actions SHA-pinning enforcement** | `GET /repos/{r}/actions/permissions` | `sha_pinning_required: true` (with `enabled: true`, `allowed_actions: "selected"`) |
+| 10 | Actions **allow-list** | `GET /repos/{r}/actions/permissions/selected-actions` | `github_owned_allowed: true`, `patterns_allowed: ["github/*"]`, `verified_allowed: false` |
+| 11 | Default **workflow token** scope | `GET /repos/{r}/actions/permissions/workflow` | `default_workflow_permissions: "read"`, `can_approve_pull_request_reviews: false` |
+| 12 | **Security products** enabled | `GET /repos/{r}` -> `security_and_analysis` | Dependabot security updates ON; secret scanning ON; push protection ON; non-provider patterns OFF; validity checks OFF |
+
+**Rows 1 and 2 are the correction.** Section 4.3 records "repository rulesets: none" alongside a set
+of branch-protection facts, which can read as though the repository has no branch controls. It has
+them -- as a **classic branch protection rule**, which is a different API object from a **repository
+ruleset**. Both readings are true, they are not interchangeable, and each is now stated with the
+endpoint that produced it.
+
+**Three things moved between the two datings, and all three are deliberate changes made on
+2026-08-14.**
+
+- **Row 8, CodeQL default setup: `not-configured` -> `configured`.** Enabled for the one language
+  GitHub detects here, `actions`. The setup run succeeded and produced an analysis under category
+  `/language:actions` with **0** results. The plugin's own third-party SARIF workflow was then re-run
+  and its upload **still succeeds**, landing a separate analysis under category `powershell-lsp` with
+  tool `powershell-lsp` -- the two coexist as distinct categories, tools and analysis keys, and
+  neither displaces the other. PowerShell is not a CodeQL source language, so the custom workflow
+  remains the only thing analysing this project's own product code; default setup covers the
+  workflows themselves, which nothing previously analysed.
+- **Row 9, `sha_pinning_required`: `false` -> `true`.** Enabled only after every external action in
+  every workflow was pinned to a full 40-character commit SHA and CI was green on the merged commit,
+  so no workflow could be blocked by enforcement before its references complied. Rows 10 and 11 were
+  read before and after and are **unchanged** -- the write preserved `enabled`, `allowed_actions` and
+  the allow-list, and moved exactly one field.
+- **Row 3's composition.** Both open code-scanning alerts are this project's own
+  `PSUseDeclaredVarsMoreThanAssignments` findings from its own analyser. Enabling CodeQL added
+  **zero** alerts.
+
+**What section 4.3's "no settings change was made" means now.** It was true of dispatch 000227 and it
+remains a true statement about that dispatch. Settings *were* changed on 2026-08-14, by the security
+close-out that produced this section, and each is named above with its before value, its after value,
+and why the ordering was safe. The `CODEOWNERS` activation section 4.3 argues against is **still not
+performed**, and its reasoning is unchanged: `manderse21` is the sole code owner and `enforce_admins`
+is `true`, so requiring code-owner review would deadlock the repository until the second-maintainer
+gap in section 3 closes.
+
+**No security deferral remains open on this surface.** Immutable action pinning -- booked as a
+defensible-but-deferred hardening by dispatches 000042 and 000064 -- is landed, enforced by GitHub
+policy, and guarded in CI by a test that discovers the workflow surface rather than consulting a
+list. CodeQL default setup is landed rather than deferred. Both are recorded in
+[TRUST.md](../../TRUST.md).
+
 ### 4.4 Why the support posture is a new file, and why it is not named `SUPPORT.md`
 
 No existing document owns the host-and-compatibility axis: `SECURITY.md` "Supported versions" is
