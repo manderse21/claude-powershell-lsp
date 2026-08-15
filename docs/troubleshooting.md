@@ -32,12 +32,17 @@ section below.
   Install PowerShell 7 (`pwsh`) or set `ps_host` to `powershell`.
 - **Startup reports `Failed to load LSP servers for plugin powershell-lsp: Error:
   Plugin option "profile" isn't set.`** (or the same message naming `ps_host` or
-  `nativeServe`): on Claude Code 2.1.233, `${user_config.*}` references inside a
-  plugin's `lspServers` block are resolved against the options you have
-  **explicitly set**, ignoring the defaults this plugin's `userConfig` schema
-  declares -- and one unset key discards **every** LSP server the plugin declares.
-  Until that is fixed upstream, set all three keys explicitly in
-  `~/.claude/settings.json`:
+  `nativeServe`): **fixed -- update the plugin.** On Claude Code 2.1.233,
+  `${user_config.*}` references inside a plugin's `lspServers` block are resolved
+  against the options you have **explicitly set**, ignoring the defaults the
+  plugin's `userConfig` schema declares -- and one unset key discards **every** LSP
+  server the plugin declares. Opening `/plugin` and pressing Save does not help:
+  the panel seeds an unset field **empty** rather than from its declared default,
+  and skips blank optional keys when saving, so it writes nothing. The plugin no
+  longer declares those references at all, so a fresh install registers its LSP
+  server with nothing configured. If you are pinned to an affected build, set the
+  three keys explicitly in `~/.claude/settings.json` (note `pluginConfigs`, plural,
+  and the marketplace-qualified key):
 
   ```json
   "pluginConfigs": {
@@ -47,10 +52,27 @@ section below.
   }
   ```
 
-  Diagnostics are **not** affected -- they run through the hooks, which resolve
-  options normally. What is lost until the keys are set is the LSP server
-  registration (hover, go-to-definition, find-references). Root cause, the
-  reproducer, and the proposed upstream fix:
+- **`nativeServe` is set to `shim` but native navigation still does not serve, and
+  `/doctor` says `SUSPENDED BY UPSTREAM GATE`:** expected, and not a fault in your
+  configuration. Removing the `${user_config.*}` references above (the fix for the
+  startup error) also removed the only supported way to carry a configured value
+  into the LSP **serve subprocess**, so `profile`, `ps_host` and `nativeServe` are
+  currently read there at their shipped defaults (`safe`, `pwsh`, `off`) regardless
+  of what you set. The transport itself is correct and proven; what is **SUSPENDED**
+  is its use, until Claude Code merges declared `userConfig` defaults on the
+  `lspServers` path the way it already does for MCP servers. Concretely:
+  **`nativeServe = shim` cannot take effect while this holds.**
+
+  **Diagnostics are unaffected** by either issue -- they run through the hooks,
+  which do receive plugin options and resolve them normally, including your
+  `profile`. What is affected is only the LSP serve subprocess: hover,
+  go-to-definition and find-references stay on the default (`off`) path.
+
+  `scripts/doctor.ps1` reports this explicitly and distinguishes it from a knob
+  with genuinely broken transport; the serve log
+  (`${CLAUDE_PLUGIN_DATA}/logs/pses-serve-shim.log`) names the gate on every launch
+  rather than reporting a bare `provenance: default`. Root cause, the reproducer,
+  the suspension record and the upstream report:
   [docs/upstream/claude-code-lspservers-userconfig-defaults.md](upstream/claude-code-lspservers-userconfig-defaults.md).
 - **No diagnostics / server never starts:** confirm the bootstrap ran by checking
   that

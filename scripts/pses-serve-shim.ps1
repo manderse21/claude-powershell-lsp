@@ -72,12 +72,23 @@ function Write-ShimLog([string]$m) {
 # line whether the user left the knob alone or set it to `shim` and the value never arrived --
 # and for the whole life of the knob it was always the second. Claude Code does not export
 # CLAUDE_PLUGIN_OPTION_* to LSP server subprocesses (it does to hooks, which is why the daemon
-# path was never affected); the supported transport is the server's own `env` block, and the
-# manifest now uses it. A line that says WHY is what makes a future regression visible on the
-# first launch instead of after a survey.
+# path was never affected); the supported transport is the server's own `env` block. A line that
+# says WHY is what makes a future regression visible on the first launch instead of after a survey.
+#
+# THE GATE LINE IS NOT OPTIONAL (dispatch 000241). The manifest's ${user_config.*} mappings are
+# currently SUSPENDED: on Claude Code 2.1.233 one unset referenced key makes the host discard
+# every LSP server this plugin declares, so a zero-configuration install registered nothing at
+# all. With the mappings gone these three knobs necessarily resolve `provenance: default` -- and
+# that phrase asserts something about the USER ("nothing you configured reached this process")
+# which, under the gate, is the wrong claim. This subprocess cannot see what was configured, so
+# it cannot report the fork; what it CAN do is stop implying a user cause and name the system
+# one. Emitting the bare default here would be precisely the silent divergence 000233 killed.
+# /doctor is hook-adjacent, DOES receive CLAUDE_PLUGIN_OPTION_*, and reports both branches.
 $nativeServeResolved = Get-PluginOptionProvenance -Key 'nativeServe' -Default 'off'
 $psHostResolved = Get-PluginOptionProvenance -Key 'ps_host' -Default 'pwsh'
 $profileResolved = Get-PluginOptionProvenance -Key 'profile' -Default 'safe'
+$gateNotice = Get-ServeTransportGateNotice
+if (-not [string]::IsNullOrWhiteSpace($gateNotice)) { Write-ShimLog $gateNotice }
 Write-ShimLog ('serve knob ' + (Format-PluginOptionProvenance $profileResolved))
 Write-ShimLog ('serve knob ' + (Format-PluginOptionProvenance $nativeServeResolved))
 Write-ShimLog ('serve knob ' + (Format-PluginOptionProvenance $psHostResolved))
@@ -85,9 +96,15 @@ Write-ShimLog ('serve knob ' + (Format-PluginOptionProvenance $psHostResolved))
 $mode = ConvertTo-NativeServeMode $nativeServeResolved.Value
 $transparent = ($mode -ne 'shim')
 if ($transparent) {
+    # `configured=` must not claim the knob is UNSET when the truth is that nothing configured
+    # can be transported here at all (dispatch 000241). Under the gate the honest word for what
+    # this process knows about the user's setting is: nothing.
+    $configuredText = if (Test-ServeTransportSuspended -Key 'nativeServe') {
+        '(not transportable -- SUSPENDED BY UPSTREAM GATE; this process cannot observe your setting)'
+    } elseif ([string]::IsNullOrWhiteSpace([string]$nativeServeResolved.Value)) { '(unset)' }
+    else { [string]$nativeServeResolved.Value }
     Write-ShimLog ('nativeServe=off: transparent relay (no init patch, no interception; today behavior) [configured=' +
-        $(if ([string]::IsNullOrWhiteSpace([string]$nativeServeResolved.Value)) { '(unset)' } else { [string]$nativeServeResolved.Value }) +
-        ' effective=off]')
+        $configuredText + ' effective=off]')
 } else {
     Write-ShimLog ('nativeServe=shim: native-serve handshake proxy (init patch + local intercepts) [configured=' +
         [string]$nativeServeResolved.Value + ' effective=shim]')

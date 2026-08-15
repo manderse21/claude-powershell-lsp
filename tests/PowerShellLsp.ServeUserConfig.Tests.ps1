@@ -166,9 +166,46 @@ BeforeAll {
         }
         return , @($missing)
     }
+
+    # The SUSPENSION, read from the shipped record rather than restated here (dispatch 000241).
+    # A copy of the list in the test would be free to disagree with the list the doctor and the
+    # shim act on, which is the exact failure mode this whole block exists to prevent.
+    . (Join-Path $script:SucScripts 'lib/lsp-common.ps1')
+    $script:SucSuspendedKeys = @(@(Get-ServeTransportSuspension) | ForEach-Object { [string]$_.Key })
+
+    # "Unaccounted" = reachable, NOT mapped, and NOT on the recorded suspension list. This is the
+    # invariant that survives the gate: the mapping requirement is what upstream suspends, but
+    # every reachable knob must still be ACCOUNTED FOR by one of the two.
+    function script:Get-SucUnaccountedKnobs {
+        param($Manifest, [string[]]$Keys, [string[]]$Suspended)
+        $missing = script:Get-SucMissingMappings -Manifest $Manifest -Keys $Keys
+        $out = New-Object System.Collections.Generic.List[string]
+        foreach ($k in $missing) {
+            $t = ([string]$k -replace '_', '').ToLowerInvariant()
+            $isSuspended = $false
+            foreach ($s in $Suspended) {
+                if ((([string]$s) -replace '_', '').ToLowerInvariant() -eq $t) { $isSuspended = $true; break }
+            }
+            if (-not $isSuspended) { $out.Add([string]$k) }
+        }
+        return , @($out)
+    }
+
+    # A fresh manifest copy with every suspension record REPLAYED back into the env block -- i.e.
+    # the manifest as it will look the day the upstream gate lifts. The anti-vacuity controls
+    # below break THIS, because with the mappings suspended there is nothing left to delete and a
+    # deletion control would pass without doing anything.
+    function script:New-SucRestoredManifest {
+        $copy = Get-Content -LiteralPath $script:SucManifestPath -Raw | ConvertFrom-Json
+        foreach ($r in @(Get-ServeTransportSuspension)) {
+            $copy.lspServers.powershell.env |
+                Add-Member -NotePropertyName ([string]$r.EnvName) -NotePropertyValue ([string]$r.Mapping) -Force
+        }
+        return $copy
+    }
 }
 
-Describe 'Serve-subprocess userConfig transport -- every reachable knob is mapped (dispatch 000233)' {
+Describe 'Serve-subprocess userConfig transport -- every reachable knob is mapped OR suspended (000233, reconciled by 000241)' {
 
     Context 'the derivation is real' {
 
@@ -199,44 +236,118 @@ Describe 'Serve-subprocess userConfig transport -- every reachable knob is mappe
         }
     }
 
-    Context 'the invariant' {
+    Context 'the invariant -- reconciled with the upstream gate, not deleted (dispatch 000241)' {
 
-        It 'EVERY reachable knob has a supported ${user_config.*} mapping in lspServers.powershell.env' {
-            $missing = script:Get-SucMissingMappings -Manifest $script:SucManifest -Keys @($script:SucReachableKeys)
-            $detail = ($missing -join ', ')
-            @($missing).Count | Should -Be 0 -Because "these knobs are read by the serve subprocess but have no transport into it: $detail"
+        # WHAT CHANGED AND WHAT DID NOT. 000233's invariant was "every reachable knob is MAPPED".
+        # Claude Code 2.1.233 made that unshippable: one unset referenced key makes the host
+        # discard every LSP server the plugin declares, so a zero-configuration install
+        # registered nothing. The DERIVATION above -- which knobs the serve subprocess actually
+        # reads -- is the durable part and is untouched. The MAPPING REQUIREMENT is the part the
+        # gate suspends, and it is suspended EXPLICITLY, against a shipped record that names the
+        # condition lifting it, rather than by weakening the assertion until it stops complaining.
+        #
+        # This is deliberately NOT "assert the set is empty". A knob added to the shim tomorrow
+        # is neither mapped nor suspended, and must still turn this RED.
+
+        It 'EVERY reachable knob is ACCOUNTED FOR -- mapped, or explicitly suspended by the upstream gate' {
+            $unaccounted = script:Get-SucUnaccountedKnobs -Manifest $script:SucManifest `
+                -Keys @($script:SucReachableKeys) -Suspended @($script:SucSuspendedKeys)
+            $detail = ($unaccounted -join ', ')
+            @($unaccounted).Count | Should -Be 0 -Because "these knobs are read by the serve subprocess but are neither mapped into it nor on the recorded suspension list in scripts/lib/lsp-common.ps1: $detail"
         }
 
-        It 'the mapped env names are the ones Get-RawPluginOption actually reads' {
-            # The reader normalizes by stripping underscores and lower-casing, so
-            # CLAUDE_PLUGIN_OPTION_PS_HOST and _PSHOST both resolve 'ps_host'. Assert the
-            # prefix contract rather than an exact spelling, because the reader does too.
-            $env = $script:SucManifest.lspServers.powershell.env
-            $mapped = @($env.PSObject.Properties | Where-Object { $_.Name -like 'CLAUDE_PLUGIN_OPTION_*' })
-            @($mapped).Count | Should -BeGreaterOrEqual 3
-            foreach ($p in $mapped) {
-                [string]$p.Value | Should -Match '^\$\{user_config\.[A-Za-z_][A-Za-z0-9_]*\}$'
+        It 'the suspension record does not over-reach -- every suspended key is one the shim actually reads' {
+            # A suspension list is a licence not to have a transport. Left unchecked it could
+            # grow to cover a knob nothing reads, or outlive the knob entirely, and silently
+            # widen the hole the check above is meant to close.
+            foreach ($k in $script:SucSuspendedKeys) {
+                @($script:SucReachableKeys) | Should -Contain $k -Because "'$k' is suspended but the serve subprocess does not read it -- remove the record rather than carrying a suspension for a knob that does not exist"
             }
         }
 
-        It 'PSES_BUNDLE_PATH is untouched (the mapping is ADDITIVE)' {
+        It 'each suspended record carries a mapping that would GENUINELY restore that knob' {
+            # Restoration must be mechanical: add "<EnvName>": "<Mapping>" back for each record.
+            # If the record's own fields would not satisfy Get-SucMissingMappings, then following
+            # it would not actually restore the transport -- so the record is checked by REPLAYING
+            # it against the real check, not by eyeballing the strings.
+            $replay = Get-Content -LiteralPath $script:SucManifestPath -Raw | ConvertFrom-Json
+            foreach ($r in @(Get-ServeTransportSuspension)) {
+                $replay.lspServers.powershell.env | Add-Member -NotePropertyName ([string]$r.EnvName) -NotePropertyValue ([string]$r.Mapping) -Force
+            }
+            $missing = script:Get-SucMissingMappings -Manifest $replay -Keys @($script:SucReachableKeys)
+            @($missing).Count | Should -Be 0 -Because 'replaying every suspension record back into the manifest must satisfy the ORIGINAL 000233 mapping invariant -- that is what makes lifting the gate a mechanical edit'
+        }
+
+        It 'each suspended record names the gate, the affected version, and the condition that lifts it' {
+            foreach ($r in @(Get-ServeTransportSuspension)) {
+                [string]$r.Gate | Should -Not -BeNullOrEmpty
+                [string]$r.AffectedVersion | Should -Not -BeNullOrEmpty
+                [string]$r.Reference | Should -Not -BeNullOrEmpty
+                ([string]$r.LiftsWhen).Length | Should -BeGreaterThan 40 -Because 'a suspension with no stated lifting condition is indistinguishable from a permanent retreat'
+            }
+        }
+
+        It 'PSES_BUNDLE_PATH survives the suspension untouched' {
+            # The non-user_config interpolations resolve through a different upstream helper that
+            # CANNOT throw, so they were never implicated -- asserted rather than assumed.
             [string]$script:SucManifest.lspServers.powershell.env.PSES_BUNDLE_PATH |
                 Should -BeExactly '${CLAUDE_PLUGIN_DATA}/PowerShellEditorServices'
         }
+
+        It 'any ${user_config.*} mapping still present is well-formed for the reader that consumes it' {
+            # Vacuous while the gate holds (there are none) and load-bearing the moment one is
+            # restored -- the reader normalizes by stripping underscores and lower-casing, so the
+            # prefix contract is asserted rather than an exact spelling.
+            $env = $script:SucManifest.lspServers.powershell.env
+            foreach ($p in @($env.PSObject.Properties | Where-Object { $_.Name -like 'CLAUDE_PLUGIN_OPTION_*' })) {
+                [string]$p.Value | Should -Match '^\$\{user_config\.[A-Za-z_][A-Za-z0-9_]*\}$'
+            }
+        }
     }
 
-    Context 'anti-vacuity: the invariant is DEMONSTRATED RED by deleting one mapping' {
+    Context 'anti-vacuity: BOTH invariants demonstrated RED by breaking their own premise' {
 
-        It 'deleting the nativeServe mapping from an in-memory manifest copy makes the check FAIL' {
-            $copy = Get-Content -LiteralPath $script:SucManifestPath -Raw | ConvertFrom-Json
+        # THE CONTROL HAD TO MOVE WITH THE PREMISE. 000233's controls deleted a shipped mapping
+        # and asserted the check went red. With the mappings suspended there is nothing left to
+        # delete: `.Remove()` on an absent property is a silent no-op, and the assertion would
+        # still pass -- for the wrong reason, proving nothing. So the mapping controls now run
+        # against the RESTORED manifest (the shape the day the gate lifts), and the new
+        # accounted-for invariant gets controls of its own.
+
+        It 'a reachable knob that is NEITHER mapped NOR suspended makes the accounted-for check FAIL' {
+            # The teeth of the reconciliation: the suspension is a licence for THREE named knobs,
+            # not a blanket amnesty. A knob added to the shim tomorrow lands here.
+            $keys = @($script:SucReachableKeys) + @('someKnobAddedTomorrow')
+            $unaccounted = script:Get-SucUnaccountedKnobs -Manifest $script:SucManifest `
+                -Keys $keys -Suspended @($script:SucSuspendedKeys)
+            @($unaccounted) | Should -Contain 'someKnobAddedTomorrow'
+            Write-Host ('  RED for an unaccounted knob: ' + ($unaccounted -join ', '))
+        }
+
+        It 'shrinking the suspension list makes a currently-suspended knob report unaccounted' {
+            # The mirror control: if a record were dropped without restoring its mapping, the
+            # knob must NOT quietly become acceptable.
+            $shrunk = @($script:SucSuspendedKeys | Where-Object { $_ -ne 'nativeServe' })
+            $unaccounted = script:Get-SucUnaccountedKnobs -Manifest $script:SucManifest `
+                -Keys @($script:SucReachableKeys) -Suspended $shrunk
+            @($unaccounted) | Should -Contain 'nativeServe'
+        }
+
+        It 'the shipped manifest currently maps NOTHING -- the suspension is real, not nominal' {
+            $missing = script:Get-SucMissingMappings -Manifest $script:SucManifest -Keys @($script:SucReachableKeys)
+            @($missing).Count | Should -Be @($script:SucReachableKeys).Count -Because 'every reachable knob is suspended, so none may carry a ${user_config.*} mapping while the gate holds -- one that survived would break a zero-configuration install'
+            Write-Host ('  suspended (unmapped by design): ' + ($missing -join ', '))
+        }
+
+        It 'RESTORED, then deleting the nativeServe mapping makes the mapping check FAIL' {
+            $copy = script:New-SucRestoredManifest
             $copy.lspServers.powershell.env.PSObject.Properties.Remove('CLAUDE_PLUGIN_OPTION_NATIVESERVE')
             $missing = script:Get-SucMissingMappings -Manifest $copy -Keys @($script:SucReachableKeys)
             @($missing) | Should -Contain 'nativeServe'
-            Write-Host ('  RED with the mapping deleted: missing = ' + ($missing -join ', '))
         }
 
-        It 'deleting the ps_host mapping makes the check FAIL' {
-            $copy = Get-Content -LiteralPath $script:SucManifestPath -Raw | ConvertFrom-Json
+        It 'RESTORED, then deleting the ps_host mapping makes the mapping check FAIL' {
+            $copy = script:New-SucRestoredManifest
             $copy.lspServers.powershell.env.PSObject.Properties.Remove('CLAUDE_PLUGIN_OPTION_PS_HOST')
             $missing = script:Get-SucMissingMappings -Manifest $copy -Keys @($script:SucReachableKeys)
             @($missing) | Should -Contain 'ps_host'
@@ -249,17 +360,17 @@ Describe 'Serve-subprocess userConfig transport -- every reachable knob is mappe
             @($missing).Count | Should -Be @($script:SucReachableKeys).Count
         }
 
-        It 'a mapping whose VALUE is not the supported expansion does not count as one' {
+        It 'RESTORED, a mapping whose VALUE is not the supported expansion does not count as one' {
             # A name-only match would let `"CLAUDE_PLUGIN_OPTION_NATIVESERVE": "shim"` -- a
             # hardcoded value that ignores the user entirely -- satisfy the guard.
-            $copy = Get-Content -LiteralPath $script:SucManifestPath -Raw | ConvertFrom-Json
+            $copy = script:New-SucRestoredManifest
             $copy.lspServers.powershell.env.CLAUDE_PLUGIN_OPTION_NATIVESERVE = 'shim'
             $missing = script:Get-SucMissingMappings -Manifest $copy -Keys @($script:SucReachableKeys)
             @($missing) | Should -Contain 'nativeServe'
         }
 
-        It 'a mapping pointing at the WRONG knob does not count either' {
-            $copy = Get-Content -LiteralPath $script:SucManifestPath -Raw | ConvertFrom-Json
+        It 'RESTORED, a mapping pointing at the WRONG knob does not count either' {
+            $copy = script:New-SucRestoredManifest
             $copy.lspServers.powershell.env.CLAUDE_PLUGIN_OPTION_NATIVESERVE = '${user_config.ps_host}'
             $missing = script:Get-SucMissingMappings -Manifest $copy -Keys @($script:SucReachableKeys)
             @($missing) | Should -Contain 'nativeServe'
@@ -460,6 +571,43 @@ Describe 'Serve-subprocess knob resolution and provenance (dispatch 000233)' {
             $shim = [System.IO.File]::ReadAllText((Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/pses-serve-shim.ps1'))
             $shim | Should -Match 'PSES host: configured='
             $shim | Should -Match 'SUBSTITUTED'
+        }
+
+        It 'the shim NAMES THE UPSTREAM GATE rather than leaving a bare provenance: default (dispatch 000241)' {
+            # Under the gate these knobs necessarily resolve `provenance: default`, and that
+            # phrase asserts something about the USER. Emitting it alone would restore exactly
+            # the silent divergence 000233 was raised to kill, so the gate line is mandatory.
+            $shim = [System.IO.File]::ReadAllText((Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/pses-serve-shim.ps1'))
+            $shim | Should -Match 'Get-ServeTransportGateNotice'
+            $shim | Should -Match 'Test-ServeTransportSuspended'
+        }
+
+        It 'the gate notice states the transport, the version, and that nativeServe=shim cannot take effect' {
+            $notice = Get-ServeTransportGateNotice
+            $notice | Should -Not -BeNullOrEmpty
+            $notice | Should -BeLike '*SUSPENDED BY UPSTREAM GATE*'
+            $notice | Should -BeLike '*nativeServe*'
+            $notice | Should -BeLike '*2.1.233*'
+            $notice | Should -BeLike '*docs/upstream/claude-code-lspservers-userconfig-defaults.md*'
+        }
+
+        It 'the notice is DERIVED from the records -- it names every suspended key, so it cannot outlive its premise' {
+            # A hardcoded banner would keep announcing a gate that had already lifted, or would
+            # fall silent about a knob added to the list later. Naming every record is what makes
+            # deleting the records the whole of turning the notice off.
+            $notice = Get-ServeTransportGateNotice
+            foreach ($k in $script:SucSuspendedKeys) {
+                $notice | Should -BeLike "*$k*" -Because "'$k' is suspended but the serve log's gate notice never mentions it"
+            }
+        }
+
+        It 'Test-ServeTransportSuspended matches the reader normalization, not raw casing' {
+            # The doctor and the shim both gate on this. `ps_host` must match however the caller
+            # spells it, or a suspended knob would read as an unaccounted one and FAIL the doctor.
+            (Test-ServeTransportSuspended -Key 'ps_host') | Should -BeTrue
+            (Test-ServeTransportSuspended -Key 'PSHOST') | Should -BeTrue
+            (Test-ServeTransportSuspended -Key 'nativeserve') | Should -BeTrue
+            (Test-ServeTransportSuspended -Key 'ruleset') | Should -BeFalse
         }
     }
 

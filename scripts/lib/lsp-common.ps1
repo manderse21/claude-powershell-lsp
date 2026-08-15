@@ -400,6 +400,100 @@ function Format-PluginOptionProvenance {
     }
 }
 
+function Get-ServeTransportSuspension {
+    # The knobs whose ${user_config.*} transport into the LSP serve subprocess is SUSPENDED,
+    # and the exact condition that lifts each one (dispatch 000241).
+    #
+    # WHAT THIS IS NOT. It is not a retreat from dispatch 000233. That ruling -- the server's
+    # own `env` block is the supported transport for a knob the serve subprocess reads -- stands,
+    # is proven end-to-end against a real marketplace install, and remains the intended
+    # architecture. What is suspended is the USE of that transport on a Claude Code whose
+    # implementation of it is defective; the design is untouched.
+    #
+    # THE GATE. On Claude Code 2.1.233 the LSP loader interpolates ${user_config.<key>} against
+    # the user's STORED options only. The sibling MCP path merges the schema defaults first; the
+    # LSP path does not, so a declared `default` is meaningful for one server type and inert for
+    # the other. A key the user never explicitly typed is undefined, the interpolator THROWS, and
+    # the per-plugin catch discards EVERY server the plugin declares -- not just the entry that
+    # referenced the key. One mapping is therefore enough to break a zero-configuration install,
+    # which is why no "safe subset" of mappings exists and all three are suspended together.
+    #
+    # The /plugin configuration panel does not rescue this. Its fields are seeded from the same
+    # defaults-free reader (so an unset knob shows EMPTY, never its declared default), and its
+    # submit reducer SKIPS a blank non-required key whose stored value is undefined -- so opening
+    # the panel and pressing Save writes nothing at all. The user must type each value by hand.
+    #
+    # RESTORATION IS MECHANICAL, BY CONSTRUCTION. Each record below carries the exact env name
+    # and the exact mapping value that was removed. Lifting the gate is: add
+    # "<EnvName>": "<Mapping>" back to lspServers.powershell.env for each record, then delete
+    # the record. Nothing else was changed, and nothing has to be remembered or re-derived --
+    # tests/PowerShellLsp.LspServerLoadability.Tests.ps1 asserts each record still describes a
+    # mapping that would genuinely restore that knob's transport.
+    #
+    # Full root cause, the decompiled call sites, and the upstream report:
+    # docs/upstream/claude-code-lspservers-userconfig-defaults.md
+    $gate = 'claude-code-lspservers-userconfig-defaults'
+    $affected = '2.1.233'
+    $lifts = 'Claude Code merges the plugin userConfig schema defaults into the option map it ' +
+             'interpolates lspServers against (the sibling MCP path already does). VERIFY BY ' +
+             'MEASUREMENT, not by release notes -- upstream fixes in this area have shipped ' +
+             'undocumented before: install the plugin with NO stored options for these keys and ' +
+             'confirm the LSP server registers with no "Plugin option ... isn''t set" error.'
+    $reference = 'docs/upstream/claude-code-lspservers-userconfig-defaults.md'
+    $records = @(
+        @{ Key = 'profile';     EnvName = 'CLAUDE_PLUGIN_OPTION_PROFILE';     Mapping = '${user_config.profile}' }
+        @{ Key = 'ps_host';     EnvName = 'CLAUDE_PLUGIN_OPTION_PS_HOST';     Mapping = '${user_config.ps_host}' }
+        @{ Key = 'nativeServe'; EnvName = 'CLAUDE_PLUGIN_OPTION_NATIVESERVE'; Mapping = '${user_config.nativeServe}' }
+    )
+    foreach ($r in $records) {
+        $r['Gate'] = $gate
+        $r['AffectedVersion'] = $affected
+        $r['LiftsWhen'] = $lifts
+        $r['Reference'] = $reference
+    }
+    # NOT comma-wrapped. `return , @($records)` emits the wrapper, which unrolls to the INNER
+    # array as a single pipeline item -- so `@(Get-ServeTransportSuspension)` collects one
+    # element (the whole array) and every `foreach` over it runs exactly once, with $_.Key
+    # member-enumerating into 'profile ps_host nativeServe'. The comma idiom protects a
+    # ONE-element result from unrolling to a scalar; here every caller wraps in @() already,
+    # which handles the empty and single cases correctly on its own.
+    return @($records)
+}
+
+function Test-ServeTransportSuspended {
+    # Is this knob's transport suspended by the upstream gate? Key matching is normalized the
+    # same way Get-RawPluginOption normalizes the env name, so a caller's casing never silently
+    # misses a record.
+    param([string]$Key)
+    $target = ([string]$Key -replace '_', '').ToLowerInvariant()
+    foreach ($r in (Get-ServeTransportSuspension)) {
+        if ((([string]$r.Key) -replace '_', '').ToLowerInvariant() -eq $target) { return $true }
+    }
+    return $false
+}
+
+function Get-ServeTransportGateNotice {
+    # The one line the serve subprocess logs beside its provenance lines.
+    #
+    # WHY IT IS MANDATORY. Inside this subprocess a suspended knob resolves with
+    # `provenance: default` -- and that phrase makes a claim about the USER ("nothing you
+    # configured reached this process"), which under the gate is the wrong claim. The subprocess
+    # cannot see what the user configured, so it cannot report the fork; what it CAN do is stop
+    # implying a user cause and state the system one. Reporting the bare default here is exactly
+    # the silent divergence dispatch 000233 was raised to kill, so it is not an option.
+    # /doctor runs hook-adjacent, DOES receive CLAUDE_PLUGIN_OPTION_*, and is where both
+    # branches of the fork are distinguishable.
+    $records = @(Get-ServeTransportSuspension)
+    if ($records.Count -eq 0) { return '' }
+    $keys = (@($records | ForEach-Object { [string]$_.Key }) -join ', ')
+    $first = $records[0]
+    return ('serve transport SUSPENDED BY UPSTREAM GATE (' + [string]$first.Gate + '): no userConfig ' +
+        'can reach this subprocess on Claude Code ' + [string]$first.AffectedVersion + ', so the SHIPPED ' +
+        'DEFAULTS below are in effect for ' + $keys + ' REGARDLESS of what is configured -- a "provenance: ' +
+        'default" line for these knobs states the transport, NOT that the knob was left unset. ' +
+        'nativeServe=shim in particular cannot take effect while this gate holds. See ' + [string]$first.Reference)
+}
+
 function Get-PluginOptionInt {
     # Integer Get-PluginOption: fall back to $Default on absent / blank / non-numeric
     # (e.g. an unexpanded '${user_config...}' token).
