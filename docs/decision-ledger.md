@@ -3099,3 +3099,104 @@ none is a rule.
 | 5 | A negative finding about an *accumulating* quantity must state when it was measured, and should be re-measured at close-out before it is recorded. One early sweep of a leak is indistinguishable from no leak: this dispatch measured zero stale statusline shells at session start and three an hour later, and the first number would have shipped as "no leak reproduced". | No -- first observation |
 
 Promotion of any of these is Mike's call and has not been made.
+---
+
+## Security close-out -- the deferred supply-chain hardenings are landed, 2026-08-14
+
+Three items had sat as recorded-but-not-done security work. All three are now closed, each with the
+kind of closure it warranted rather than being left on a deferred list.
+
+### S1 -- Immutable action pinning: LANDED, and it is now the convention
+
+**What was deferred, and where it was recorded.** Dispatch 000042's outbox booked it as a
+noted-not-done hardening: *"the third-party actions are major-tag pinned ... to MATCH the existing
+CI workflow's convention; pinning to immutable commit SHAs would be a defensible future hardening
+for a trust-focused repo -- noted, not done, to stay consistent with the sibling CI."* Dispatch
+000064 restated it: *"SHA-pinning is a defensible separate dispatch for a trust-focused repo."*
+
+**What closed it.** All eleven external action references across the three workflows moved to full
+40-character upstream commit SHAs with the resolved release in a trailing comment, each SHA resolved
+from the upstream repository through the GitHub API and verified to exist. Each was taken to the
+current supported patch release in its intended line rather than re-pointed at the same major.
+
+**Why the trailing comment is load-bearing rather than cosmetic.** Dependabot's `github-actions`
+ecosystem maintains SHA-pinned refs by rewriting the SHA and the adjacent `# vX.Y.Z` comment
+together. Without it a pin becomes an opaque hex string that no human can audit and no bot can bump
+-- which is how a SHA pin rots into a permanently stale dependency. The comment is part of the
+mechanism, and the CI gate requires it.
+
+**Three enforcements, deliberately layered.** GitHub's own `sha_pinning_required` policy refuses to
+run a non-compliant step; `tests/PowerShellLsp.ActionPinning.Tests.ps1` fails CI by DISCOVERING the
+workflow surface rather than consulting a list; Dependabot keeps proposing bumps. The predecessor
+guard named one action in one file, and so protected exactly the instance someone had remembered to
+write down while ten other movable refs sat in the same three workflows.
+
+### S2 -- `sha_pinning_required`: ENABLED, and the ordering was the safety property
+
+`false` -> `true`, written through `PUT /repos/{r}/actions/permissions` and read back. The write
+preserved `enabled: true` and `allowed_actions: "selected"`, and the allow-list and the default
+workflow token scope were read before and after and are unchanged -- exactly one field moved.
+
+**Enforcement was turned on only after every reference complied and CI was green on the merged
+commit.** The reverse order would have blocked every workflow in the repository, including the CI
+that proves the references comply -- a self-inflicted outage rather than a hardening. The ordering
+is the whole of why this was safe, and it is recorded so a future toggle of a similar policy
+inherits the sequence rather than rediscovering it.
+
+### S3 -- CodeQL default setup: LANDED, not declined
+
+**The question was whether it could coexist with the plugin's own third-party SARIF upload**, since
+GitHub rejects CodeQL-tool SARIF from an advanced workflow while default setup is on. It can, and
+the coexistence was measured rather than assumed:
+
+- Default setup enabled for the one language GitHub detects here, **`actions`** -- PowerShell is not
+  a CodeQL source language, so this covers the workflows, not the product code.
+- Its setup run succeeded and produced an analysis under category `/language:actions`, tool
+  `CodeQL`, **0** results.
+- The plugin's own `powershell-lsp-code-scanning.yml` was then re-run and its **upload still
+  succeeded**, landing an analysis under category `powershell-lsp`, tool `powershell-lsp`,
+  2 results.
+- Both categories remain present and distinct -- distinct category, distinct tool, distinct analysis
+  key -- and enabling CodeQL added **zero** alerts.
+
+The rejection rule turns on the SARIF's *tool*, not on the presence of a second workflow, and this
+project's SARIF is produced by its own analyser. So the incompatibility that would have justified
+declining does not arise here. **Recorded as LANDED; it is not a deferred enhancement and should not
+be reintroduced to any deferred list.**
+
+**The method note worth keeping.** The REST endpoint for configuring default setup is `PATCH`, not
+`PUT`. A `PUT` returns `404 Not Found` with no `X-Accepted-OAuth-Scopes` header, which reads exactly
+like a permissions failure and cost a diagnostic detour into token scopes that were never the
+problem. A 404 from a path whose `GET` works is evidence about the VERB before it is evidence about
+the credential.
+
+### S4 -- The provenance action moved to `actions/attest`
+
+Dependabot proposed `actions/attest-build-provenance` v3 -> v4. Upstream had made v4 a thin
+**composite wrapper** whose entire body is one step, `uses: actions/attest@<sha>`, forwarding every
+input unchanged and setting `NODE_OPTIONS=--max-http-header-size=32768`; upstream recommends
+`actions/attest` for new implementations. Merging the bump would have taken the pipeline to a
+movable `@v4` that the SHA-pinning work replaced minutes later, so the pipeline moved to the wrapped
+action directly instead and the bump was **closed as superseded**, with the wrapper's `NODE_OPTIONS`
+carried over verbatim.
+
+Provenance semantics are unchanged: `actions/attest` auto-generates a SLSA build-provenance
+predicate whenever no SBOM and no predicate input is supplied, which is exactly how this pipeline
+calls it. Same two subjects, same OIDC identity, same `id-token: write` / `attestations: write`
+grants, same dry-run gating, same six release gates.
+
+**A defect that outlived its cause.** `tests/PowerShellLsp.Release.Tests.ps1` asserted the literal
+`actions/attest-build-provenance@v3`, so a clean dependency major bump failed a *structural* release
+test although nothing structural had changed. The assertion encoded today's answer rather than the
+property it was defending. It is now a family invariant -- any numbered release, either upstream
+action name, pinned by commit SHA -- paired with an explicit floating-ref rejection, which is the
+idiom the same `Describe` already used for gitsign fourteen lines above.
+
+### What is NOT closed, and why that is a decision rather than an omission
+
+- **`CODEOWNERS` remains inert.** Activating code-owner review would deadlock the repository while
+  `manderse21` is the sole code owner and `enforce_admins` is `true`. Gated on the second-maintainer
+  gap, not on attention. See `docs/roadmap-ii/GOVERNANCE-SURFACE.md` sections 3 and 4.3.
+- **Secret-scanning non-provider patterns and validity checks stay OFF.** Not examined by this
+  close-out; recorded in the section 4.3a measurement as read, so their state is visible rather than
+  assumed.
