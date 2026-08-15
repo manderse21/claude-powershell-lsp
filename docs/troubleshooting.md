@@ -30,6 +30,28 @@ section below.
 - **`/plugin` Errors tab shows `Executable not found in $PATH`** for the
   `powershell` server: `ps_host` points at an executable that is not on PATH.
   Install PowerShell 7 (`pwsh`) or set `ps_host` to `powershell`.
+- **Startup reports `Failed to load LSP servers for plugin powershell-lsp: Error:
+  Plugin option "profile" isn't set.`** (or the same message naming `ps_host` or
+  `nativeServe`): on Claude Code 2.1.233, `${user_config.*}` references inside a
+  plugin's `lspServers` block are resolved against the options you have
+  **explicitly set**, ignoring the defaults this plugin's `userConfig` schema
+  declares -- and one unset key discards **every** LSP server the plugin declares.
+  Until that is fixed upstream, set all three keys explicitly in
+  `~/.claude/settings.json`:
+
+  ```json
+  "pluginConfigs": {
+    "powershell-lsp@claude-powershell-lsp": {
+      "options": { "profile": "safe", "ps_host": "pwsh", "nativeServe": "off" }
+    }
+  }
+  ```
+
+  Diagnostics are **not** affected -- they run through the hooks, which resolve
+  options normally. What is lost until the keys are set is the LSP server
+  registration (hover, go-to-definition, find-references). Root cause, the
+  reproducer, and the proposed upstream fix:
+  [docs/upstream/claude-code-lspservers-userconfig-defaults.md](upstream/claude-code-lspservers-userconfig-defaults.md).
 - **No diagnostics / server never starts:** confirm the bootstrap ran by checking
   that
   `${CLAUDE_PLUGIN_DATA}/PowerShellEditorServices/PowerShellEditorServices/Start-EditorServices.ps1`

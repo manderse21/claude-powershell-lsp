@@ -3200,3 +3200,94 @@ idiom the same `Describe` already used for gitsign fourteen lines above.
 - **Secret-scanning non-provider patterns and validity checks stay OFF.** Not examined by this
   close-out; recorded in the section 4.3a measurement as read, so their state is visible rather than
   assumed.
+
+## Dispatch 000233 -- the installed-plugin integration proof, DISCHARGED 2026-08-15
+
+**Dispatch 000233 is not reopened. Its state stays `verified` and its outbox stands as written.**
+This section discharges the one deviation that outbox recorded as BLOCKED, using evidence obtained
+after it was filed. The ruling itself -- route serve-subprocess userConfig through
+`${user_config.*}` in `lspServers.env` -- is unchanged by anything here.
+
+### What was blocked, and what closed it
+
+The charter required an integration proof through a real Claude Code process, on the explicit
+ground that *a unit test cannot observe the manifest-to-subprocess transport*. 000233 could not
+obtain it: an inline `--plugin-dir` plugin loads on 2.1.233 but its `lspServers` are never
+registered, and an isolated `CLAUDE_CONFIG_DIR` demands interactive login. The outbox named the one
+manual action that would close it -- install the plugin for real and read the shim log.
+
+That action was taken on **2026-08-15**, and it passed. Four legs:
+
+1. **Configuration materialized.** `~/.claude/settings.json` carries
+   `pluginConfigs["powershell-lsp@claude-powershell-lsp"].options` =
+   `{ profile: "safe", ps_host: "pwsh", nativeServe: "shim" }`.
+2. **Registration.** Startup reported `Loaded 1 LSP server from powershell-lsp`, alongside
+   `pyright-lsp` and `typescript-lsp`, `Total LSP servers loaded: 3`.
+3. **Native operations, against the tracked `demo.ps1`.** `documentSymbol` returned
+   `Frobnicate-Thing`; PSES produced the expected `PSUseApprovedVerbs` diagnostic; `hover` on
+   `Get-Process` returned the real PowerShell parameter sets; `goToDefinition` succeeded.
+4. **Transport.** `pses-serve-shim.log` recorded all three knobs with `provenance: env`, plus
+   `nativeServe=shim ... [configured=shim effective=shim]` and `PSES host: configured=pwsh
+   effective=pwsh`.
+
+**Which legs this ledger re-derived, and which it records.** Legs 1 and 4 were **re-observed from
+disk** while writing this entry -- the settings block was read directly, and the shim log carries
+the three `provenance: env` lines plus the configured/effective pair at
+`2026-08-15T07:10:05` under pid `84768`. Legs 2 and 3 are **recorded from Mike's session
+observation**; they are corroborated but not re-run here. The corroboration is that `demo.ps1` is a
+tracked two-line file defining `Frobnicate-Thing` and calling `Get-Process` -- exactly the fixture
+that produces that symbol, that unapproved-verb diagnostic, and that hover target.
+
+**The proof therefore establishes what the charter said unit tests could not: Claude Code performs
+`${user_config.*}` substitution inside an `lspServers.env` block, and the substituted value reaches
+and is acted upon by the serve subprocess.** The 000233 deviation is DISCHARGED. Its OQ1
+open question -- what an unset knob expands to -- remains answered as the outbox answered it: both
+shapes are handled and both are tested, and the proof did not need to disambiguate them.
+
+### Two corrections to the record, made here rather than by editing a verified outbox
+
+- **The settings path in the outbox's closing instruction is wrong.** It says
+  `pluginConfig['powershell-lsp']`. The real path is `pluginConfigs` (plural), keyed by the
+  **qualified** plugin name `powershell-lsp@claude-powershell-lsp`, with the values under a nested
+  `options` object. Anyone following the outbox verbatim would have written a key Claude Code never
+  reads and concluded the fix had failed.
+- **The proving artifact is `main`, not the v1.31.1 release.** The installed plugin self-reports
+  version `1.31.1` and installs under a `1.31.1` cache path, but its install record reads
+  `gitCommitSha: 939048e955483b044f3d8e041c72448af68bc6f2` -- current `main` HEAD.
+  `git tag --contains d563b84` is **empty**, and tagged `v1.31.1` carries only `PSES_BUNDLE_PATH`
+  in `lspServers.powershell.env`. **The transport has never been in a tagged release.** The
+  marketplace sources the plugin at `./`, so installs track the default branch and pick the
+  mappings up ahead of any tag. Read the manifest `version` field as a self-report, not as
+  provenance -- the install record's commit SHA is the fact that means something.
+
+### The proof surfaced a new defect, registered separately
+
+Materializing the configuration is not optional on 2.1.233 -- it is what the LSP block now
+**requires**. With only `nativeServe` set, startup refused the plugin's whole LSP definition:
+
+```
+Failed to load LSP servers for plugin powershell-lsp: Error: Plugin option "profile" isn't set.
+```
+
+`profile` and `ps_host` both declare defaults in `userConfig`; the declared defaults do not satisfy
+the reference. Root cause is isolated to a missing defaults-merge on Claude Code's `lspServers`
+interpolation path -- the sibling MCP path performs it -- and is written up with the decompiled
+call sites, the 13-plugin control, the reproducer and the proposed one-line upstream fix in
+[docs/upstream/claude-code-lspservers-userconfig-defaults.md](upstream/claude-code-lspservers-userconfig-defaults.md).
+
+**This is not a reopening of 000233 and does not disturb its ruling.** It is a compatibility defect
+in a transport 000233 correctly identified as the supported one. The fix belongs **both** upstream
+(primary -- only upstream can remove the asymmetry) and in this plugin (a mitigation is required
+now, because the mappings are live in the distribution channel while the tagged release is
+unaffected). The plugin-side mitigation is a real trade against 000233's ruling and is left for
+adjudication in **dispatch 000241** rather than chosen here.
+
+Executable coverage landed with this entry:
+`tests/PowerShellLsp.LspServerLoadability.Tests.ps1`, 19 tests, green under pwsh 7.6.3 **and**
+Windows PowerShell 5.1. It does not pin today's answer -- it counts the mandatory-configuration
+cost of every `${user_config.*}` mapping, ties that count to the troubleshooting entry, and its
+zero-configuration prediction is written to **flip with its own premise**, so it stays honest under
+either mitigation. Writing it also refuted a plausible guess: dropping a referenced key's declared
+default does **not** keep the block failing after the upstream fix -- the merge assigns
+`default ?? ""`, so the knob silently resolves to an empty value instead. Only `required`-without-a
+-default stays fatal. Both behaviors are now pinned as separate tests.

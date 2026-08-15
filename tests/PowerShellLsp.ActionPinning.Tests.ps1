@@ -1,6 +1,12 @@
 #Requires -Version 5.1
 
-# Immutable-action pinning gate (dispatch 000241).
+# Immutable-action pinning gate (dispatch 000240).
+#
+# ID CORRECTED. This block shipped in PR #165 (commit 3aeb415) under dispatch 000240, whose
+# outbox lists this exact file -- but it was annotated "000241", an id that did not exist: the
+# hub counter still stood at 000240, and 000241 was later minted for unrelated work (the
+# lspServers userConfig-defaults defect). Corrected here so the annotation names the dispatch
+# that actually carried it.
 #
 # WHAT THIS ENFORCES. Every EXTERNAL GitHub Action this repository executes must be
 # referenced by a full 40-character upstream commit SHA, with the resolved release in a
@@ -152,7 +158,7 @@ BeforeAll {
     $script:External  = @($script:AllRefs | Where-Object { $_.Kind -eq 'external' })
 }
 
-Describe 'Immutable action pinning -- every external action is SHA-pinned (dispatch 000241)' {
+Describe 'Immutable action pinning -- every external action is SHA-pinned (dispatch 000240)' {
 
     Context 'the scan itself is not vacuous' {
 
