@@ -422,7 +422,22 @@ and **documentSymbol** to Claude Code's **native** LSP client on a `.ps1` / `.ps
 navigation resolves through PowerShell Editor Services rather than only the diagnostics from the
 warm hook.
 
-**Type:** string. **Values:** `off` (default), `shim`.
+**Type:** string. **Values:** `off` (default), `shim`. Anything else -- including a typo, a blank,
+or a value this build does not recognize -- resolves to `off`. `auto` is **not** a value.
+
+> **Corrected in 1.31.2 (dispatch 000233): before this release, setting this knob had no effect.**
+> The serve subprocess read the knob from the `CLAUDE_PLUGIN_OPTION_NATIVESERVE` environment
+> variable, and Claude Code exports those variables to plugin **hooks** but not to plugin **LSP
+> server subprocesses**. The manifest had not declared the supported alternative -- a
+> `${user_config.*}` mapping inside the server's own `env` block -- so `nativeServe = shim` was
+> configured by the user and resolved as `off` by the process that acts on it, silently, in every
+> release up to and including 1.31.1. The manifest now declares that mapping for `nativeServe`,
+> `ps_host` and `profile`, the serve log states each knob's effective value **and its provenance**
+> on every launch, and `/doctor` reports configured against effective. **`ps_host` was affected the
+> same way and matters even at `nativeServe = off`**, because the shim launches PSES through it in
+> transparent-relay mode too: before this release the PSES child host was always `pwsh` regardless
+> of what you set. Diagnostics -- the plugin's primary surface -- were never affected, because the
+> hook and daemon path does receive those variables.
 
 **Why it needs a shim.** Once the server is registered, Claude Code launches PSES but its LSP
 client currently rejects the standard server-to-client requests PSES sends during initialization

@@ -678,6 +678,73 @@ function Test-DoctorNativeServeStatus {
             -Remediation 'Set nativeServe to "off" (default) or "shim"; see docs/configuration.md#nativeserve.')
 }
 
+function Test-DoctorServeTransport {
+    # Check: does a knob the LSP SERVE SUBPROCESS reads actually REACH it (dispatch 000233)?
+    #
+    # THE QUESTION THIS EXISTS TO ANSWER. Every other knob check in this file reports the value
+    # the DOCTOR can see -- and the doctor is a hook-adjacent process, which Claude Code does
+    # export CLAUDE_PLUGIN_OPTION_* to. The LSP serve subprocess is not: it receives only what
+    # the manifest's own `lspServers.<server>.env` block declares. So for the whole life of the
+    # `nativeServe` knob the doctor could truthfully report `nativeServe = "shim"` while the
+    # process that acts on it resolved `off`, and no surface anywhere showed the difference.
+    # This check reports CONFIGURED against EFFECTIVE-IN-SERVE, so that divergence is visible
+    # rather than silent.
+    #
+    # FAIL-CAPABLE in exactly one state, report-only otherwise. A knob the user has SET that has
+    # no transport into the subprocess is a real fault: the user asked for something the running
+    # system will silently not do, which is the entire defect class this check exists to end.
+    # That is the same reasoning check 11 (ps_host) records for being fail-capable -- a shipped
+    # fallback makes a bad value invisible rather than loud. An UNSET knob with no mapping is not
+    # a fault, and a recognized-value divergence is reported UNKNOWN rather than failed, because
+    # degrading an unrecognized value to the documented default is deliberate behaviour.
+    # (The status set here is pass / fail / unknown -- New-DoctorResult has no 'warn'.)
+    #
+    #   $Determinable : the manifest and the knob values could both be read.
+    #   $Reason       : when not determinable, the honest why.
+    #   $Rows         : one hashtable per knob -- Key, Configured, Mapped (bool), Effective.
+    param(
+        [bool] $Determinable,
+        [string] $Reason = '',
+        [object[]] $Rows = @()
+    )
+    $component = 'Serve-subprocess config transport (configured vs effective)'
+    if (-not $Determinable) {
+        $why = if ([string]::IsNullOrWhiteSpace($Reason)) { 'the manifest or the knob values could not be read in this context.' } else { $Reason }
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('not determined -- ' + $why) `
+                -Remediation 'Run the doctor from inside an enabled Claude Code session, with CLAUDE_PLUGIN_ROOT pointing at the plugin tree.')
+    }
+    $rows = @($Rows)
+    if ($rows.Count -eq 0) {
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail 'no serve-subprocess knobs were enumerated, so nothing could be compared.' `
+                -Remediation 'Confirm the plugin tree is intact (scripts/pses-serve-shim.ps1 and .claude-plugin/plugin.json).')
+    }
+    $lines = @($rows | ForEach-Object {
+            $cfg = if ([string]::IsNullOrWhiteSpace([string]$_.Configured)) { '(unset)' } else { [string]$_.Configured }
+            ('' + $_.Key + ': configured=' + $cfg + ' effective=' + [string]$_.Effective +
+             $(if ($_.Mapped) { '' } else { ' [NO TRANSPORT]' }))
+        })
+    $detail = ($lines -join '; ')
+
+    # The one fail-worthy state: a knob the user SET that has no way to reach the subprocess.
+    $broken = @($rows | Where-Object { -not $_.Mapped -and -not [string]::IsNullOrWhiteSpace([string]$_.Configured) })
+    if ($broken.Count -gt 0) {
+        $names = (@($broken | ForEach-Object { [string]$_.Key }) -join ', ')
+        return (New-DoctorResult -Status fail -Component $component `
+                -Detail ('CONFIGURED BUT NOT DELIVERED -- ' + $names + ' is set, but .claude-plugin/plugin.json declares no ${user_config.*} mapping for it in lspServers.powershell.env, so the serve subprocess will use the shipped default instead. ' + $detail) `
+                -Remediation ('Add "CLAUDE_PLUGIN_OPTION_<KEY>": "${user_config.<key>}" to lspServers.powershell.env in .claude-plugin/plugin.json for: ' + $names + '. The environment variables Claude Code exports to hooks do NOT reach LSP server subprocesses; the server env block is the supported transport.'))
+    }
+    $divergent = @($rows | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Configured) -and ([string]$_.Configured -ne [string]$_.Effective) })
+    if ($divergent.Count -gt 0) {
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('configured and effective DIVERGE for: ' + (@($divergent | ForEach-Object { [string]$_.Key }) -join ', ') + '. ' + $detail) `
+                -Remediation 'Check the value is one this build recognizes (see docs/configuration.md); an unrecognized value degrades to the documented default rather than failing loudly.')
+    }
+    return (New-DoctorResult -Status pass -Component $component `
+            -Detail ('every knob the serve subprocess reads has a transport into it, and configured matches effective. ' + $detail))
+}
+
 # ===========================================================================
 # Live probes -- the environment-dependent half. Kept OUT of the pure functions so
 # the decision logic stays unit-testable; these are exercised by the end-to-end run.
@@ -983,6 +1050,79 @@ function Get-DoctorOrgPolicyObservation {
             DegradeReason = ''
             Reason = ('the shipped org-policy reader threw: ' + $_.Exception.Message) }
     }
+}
+
+function Get-DoctorServeTransportObservation {
+    # Resolve what Test-DoctorServeTransport decides on (dispatch 000233).
+    #
+    # The knob list is the set the LSP serve subprocess actually reads, and it is DERIVED from
+    # the shim's source rather than typed here -- the same reason the ps_host observation calls
+    # the shipped reader instead of re-implementing it. A knob added to the shim tomorrow shows
+    # up in the doctor without anyone remembering to add it.
+    #
+    # CONFIGURED is read through the SHIPPED reader (Get-PluginOption), so profile resolution
+    # and env-name normalization apply here exactly as on the live path. EFFECTIVE is what the
+    # serve subprocess would resolve: the configured value when the manifest carries a
+    # ${user_config.*} mapping for that knob, and the shipped default when it does not.
+    $obsReason = ''
+    $obsRows = @()
+    try {
+        $manifestPath = Get-PluginManifestPath
+        if ([string]::IsNullOrWhiteSpace($manifestPath) -or -not (Test-Path -LiteralPath $manifestPath)) {
+            return @{ Determinable = $false; Reason = 'the plugin manifest (.claude-plugin/plugin.json) could not be located.'; Rows = @() }
+        }
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $envBlock = $null
+        if ($manifest.lspServers -and $manifest.lspServers.powershell) { $envBlock = $manifest.lspServers.powershell.env }
+
+        $shimPath = Join-Path $PSScriptRoot 'pses-serve-shim.ps1'
+        if (-not (Test-Path -LiteralPath $shimPath)) {
+            return @{ Determinable = $false; Reason = 'the serve shim (scripts/pses-serve-shim.ps1) is not present in this tree.'; Rows = @() }
+        }
+        # Derive the knobs and their shipped defaults from the shim's own reader calls.
+        $shimText = [System.IO.File]::ReadAllText($shimPath)
+        $knobs = New-Object System.Collections.Generic.List[object]
+        foreach ($m in [regex]::Matches($shimText, "Get-PluginOptionProvenance\s+-Key\s+'([^']+)'\s+-Default\s+'([^']*)'")) {
+            $knobs.Add(@{ Key = $m.Groups[1].Value; Default = $m.Groups[2].Value })
+        }
+        foreach ($m in [regex]::Matches($shimText, "Get-PluginOption\s+'([^']+)'\s+'([^']*)'")) {
+            if (-not (($knobs.ToArray() | ForEach-Object { $_.Key }) -contains $m.Groups[1].Value)) {
+                $knobs.Add(@{ Key = $m.Groups[1].Value; Default = $m.Groups[2].Value })
+            }
+        }
+        if ($knobs.Count -eq 0) {
+            return @{ Determinable = $false; Reason = 'no knob reads could be derived from the serve shim.'; Rows = @() }
+        }
+
+        $rows = New-Object System.Collections.Generic.List[object]
+        foreach ($k in $knobs) {
+            $key = [string]$k.Key
+            $configured = Get-PluginOption $key ''
+            $mapped = $false
+            if ($null -ne $envBlock) {
+                $target = ($key -replace '_', '').ToLowerInvariant()
+                foreach ($p in $envBlock.PSObject.Properties) {
+                    $n = [string]$p.Name
+                    if (-not $n.StartsWith('CLAUDE_PLUGIN_OPTION_', [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+                    if ((($n.Substring('CLAUDE_PLUGIN_OPTION_'.Length)) -replace '_', '').ToLowerInvariant() -ne $target) { continue }
+                    if ([string]$p.Value -match ('^\$\{user_config\.' + [regex]::Escape($key) + '\}$')) { $mapped = $true; break }
+                }
+            }
+            $effective = if ($mapped -and -not [string]::IsNullOrWhiteSpace($configured)) { $configured } else { [string]$k.Default }
+            $rows.Add(@{ Key = $key; Configured = $configured; Mapped = $mapped; Effective = $effective })
+        }
+        # .ToArray(), NOT @($rows). The array-subexpression idiom throws
+        # "System.ArgumentException: Argument types do not match" on a raw
+        # System.Collections.Generic.List[object]; .ToArray() hands back a real object[].
+        # Found by RUNNING the check rather than reading it -- the defect surfaced only as an
+        # UNKNOWN row in the doctor's own output, which is exactly the shape of silent failure
+        # this check exists to make visible.
+        $obsRows = $rows.ToArray()
+        return @{ Determinable = $true; Reason = ''; Rows = $obsRows }
+    } catch {
+        $obsReason = ('reading the manifest or the shim failed at line ' + $_.InvocationInfo.ScriptLineNumber + ': ' + $_.Exception.Message)
+    }
+    return @{ Determinable = $false; Reason = $obsReason; Rows = $obsRows }
 }
 
 function Get-DoctorPsHostObservation {
@@ -1458,6 +1598,12 @@ function Invoke-Doctor {
     $results += (Test-DoctorPsHost -Determinable $phObs.Determinable -Reason $phObs.Reason `
             -Value $phObs.Value -IsDefault $phObs.IsDefault -Found $phObs.Found `
             -ResolvedPath $phObs.ResolvedPath)
+
+    # 13) serve-subprocess config transport (dispatch 000233). Appended at the END for the same
+    # renumbering reason check 11 records. Cheap: it reads the manifest and the knob values and
+    # spawns nothing.
+    $stObs = Get-DoctorServeTransportObservation
+    $results += (Test-DoctorServeTransport -Determinable $stObs.Determinable -Reason $stObs.Reason -Rows $stObs.Rows)
 
     # 12) native-serve removability (dispatch 000104, the 000103 OQ4). Still OPT-IN via
     # -ProbeNativeServe: it launches PSES via the DIRECT launcher and inspects the init handshake,

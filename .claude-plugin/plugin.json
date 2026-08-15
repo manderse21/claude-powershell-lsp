@@ -149,7 +149,10 @@
       "startupTimeout": 30000,
       "maxRestarts": 3,
       "env": {
-        "PSES_BUNDLE_PATH": "${CLAUDE_PLUGIN_DATA}/PowerShellEditorServices"
+        "PSES_BUNDLE_PATH": "${CLAUDE_PLUGIN_DATA}/PowerShellEditorServices",
+        "CLAUDE_PLUGIN_OPTION_PROFILE": "${user_config.profile}",
+        "CLAUDE_PLUGIN_OPTION_PS_HOST": "${user_config.ps_host}",
+        "CLAUDE_PLUGIN_OPTION_NATIVESERVE": "${user_config.nativeServe}"
       }
     }
   },

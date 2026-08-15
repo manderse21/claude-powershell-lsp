@@ -337,19 +337,67 @@ function Get-ProfileKnobValue {
     return ''
 }
 
-function Get-PluginOption {
-    # Resolve a knob: explicit CLAUDE_PLUGIN_OPTION_<key> value > the active profile's
-    # mapping > $Default. See the precedence note above Get-RawPluginOption.
+function Get-PluginOptionProvenance {
+    # Resolve a knob AND say where the value came from (dispatch 000233).
+    #
+    # WHY THIS EXISTS. Configured state and effective state diverged silently inside the LSP
+    # serve subprocess for the entire life of the `nativeServe` knob: a user could set it, the
+    # shim would resolve `off`, and the only thing the log said was `nativeServe=off` -- which
+    # is indistinguishable from "you never set it". A value without its provenance cannot tell
+    # a user whether their configuration reached the process at all, which is exactly the
+    # question that went unanswered. So the serve log and /doctor now report WHY, not just what.
+    #
+    # Returns a hashtable: Key, Value, Provenance ('env' | 'profile' | 'default'), and the
+    # canonicalized ProfileName that was in force.
+    #
+    # THIS IS THE ONE RESOLVER. Get-PluginOption below is a thin projection of it, so the value
+    # a caller acts on and the provenance a log reports can never disagree -- a second copy of
+    # the precedence chain is precisely where that drift would live.
     param([string]$Key, [string]$Default = '')
+    $profileRaw = Get-RawPluginOption 'profile'
+    $profileName = ConvertTo-ProfileName $profileRaw
     $explicit = Get-RawPluginOption $Key
-    if (-not [string]::IsNullOrWhiteSpace($explicit)) { return $explicit }
+    if (-not [string]::IsNullOrWhiteSpace($explicit)) {
+        return @{ Key = $Key; Value = $explicit; Provenance = 'env'; ProfileName = $profileName }
+    }
     # `profile` itself is never profile-resolved -- that would recurse, and a preset cannot
     # sensibly select itself.
     if (($Key -replace '_', '').ToLowerInvariant() -ne 'profile') {
-        $fromProfile = Get-ProfileKnobValue -ProfileName (Get-RawPluginOption 'profile') -Key $Key
-        if (-not [string]::IsNullOrWhiteSpace($fromProfile)) { return $fromProfile }
+        $fromProfile = Get-ProfileKnobValue -ProfileName $profileRaw -Key $Key
+        if (-not [string]::IsNullOrWhiteSpace($fromProfile)) {
+            return @{ Key = $Key; Value = $fromProfile; Provenance = 'profile'; ProfileName = $profileName }
+        }
     }
-    return $Default
+    return @{ Key = $Key; Value = $Default; Provenance = 'default'; ProfileName = $profileName }
+}
+
+function Get-PluginOption {
+    # Resolve a knob: explicit CLAUDE_PLUGIN_OPTION_<key> value > the active profile's
+    # mapping > $Default. See the precedence note above Get-RawPluginOption.
+    # Delegates to Get-PluginOptionProvenance so exactly one precedence chain exists.
+    param([string]$Key, [string]$Default = '')
+    return (Get-PluginOptionProvenance -Key $Key -Default $Default).Value
+}
+
+function Format-PluginOptionProvenance {
+    # One human-readable line for a resolved knob, for the serve log and /doctor.
+    # It must say WHY, not merely report a value -- including in the DEFAULT case, which is
+    # the case that used to be indistinguishable from a knob that never arrived at all.
+    param($Resolved)
+    if ($null -eq $Resolved) { return 'unresolved' }
+    $v = [string]$Resolved.Value
+    if ([string]::IsNullOrWhiteSpace($v)) { $v = '(empty)' }
+    switch ([string]$Resolved.Provenance) {
+        'env' {
+            return ([string]$Resolved.Key + '=' + $v + ' -- provenance: env (the configured value reached this process through the server env block)')
+        }
+        'profile' {
+            return ([string]$Resolved.Key + '=' + $v + " -- provenance: profile '" + [string]$Resolved.ProfileName + "' (the knob itself is unset here)")
+        }
+        default {
+            return ([string]$Resolved.Key + '=' + $v + " -- provenance: default (nothing configured reached this process, and profile '" + [string]$Resolved.ProfileName + "' does not map this knob)")
+        }
+    }
 }
 
 function Get-PluginOptionInt {

@@ -66,12 +66,31 @@ function Write-ShimLog([string]$m) {
 }
 
 # --- the knob: off (default) = transparent relay; shim = the patching proxy --
-$mode = ConvertTo-NativeServeMode (Get-PluginOption 'nativeServe' 'off')
+#
+# EVERY KNOB THIS SUBPROCESS READS IS LOGGED WITH ITS PROVENANCE (dispatch 000233), including
+# the default case. Until this dispatch the log said only `nativeServe=off`, which is the same
+# line whether the user left the knob alone or set it to `shim` and the value never arrived --
+# and for the whole life of the knob it was always the second. Claude Code does not export
+# CLAUDE_PLUGIN_OPTION_* to LSP server subprocesses (it does to hooks, which is why the daemon
+# path was never affected); the supported transport is the server's own `env` block, and the
+# manifest now uses it. A line that says WHY is what makes a future regression visible on the
+# first launch instead of after a survey.
+$nativeServeResolved = Get-PluginOptionProvenance -Key 'nativeServe' -Default 'off'
+$psHostResolved = Get-PluginOptionProvenance -Key 'ps_host' -Default 'pwsh'
+$profileResolved = Get-PluginOptionProvenance -Key 'profile' -Default 'safe'
+Write-ShimLog ('serve knob ' + (Format-PluginOptionProvenance $profileResolved))
+Write-ShimLog ('serve knob ' + (Format-PluginOptionProvenance $nativeServeResolved))
+Write-ShimLog ('serve knob ' + (Format-PluginOptionProvenance $psHostResolved))
+
+$mode = ConvertTo-NativeServeMode $nativeServeResolved.Value
 $transparent = ($mode -ne 'shim')
 if ($transparent) {
-    Write-ShimLog 'nativeServe=off: transparent relay (no init patch, no interception; today behavior)'
+    Write-ShimLog ('nativeServe=off: transparent relay (no init patch, no interception; today behavior) [configured=' +
+        $(if ([string]::IsNullOrWhiteSpace([string]$nativeServeResolved.Value)) { '(unset)' } else { [string]$nativeServeResolved.Value }) +
+        ' effective=off]')
 } else {
-    Write-ShimLog 'nativeServe=shim: native-serve handshake proxy (init patch + local intercepts)'
+    Write-ShimLog ('nativeServe=shim: native-serve handshake proxy (init patch + local intercepts) [configured=' +
+        [string]$nativeServeResolved.Value + ' effective=shim]')
 }
 
 # --- resolve the PSES child launch (mirrors the daemon's Start-PsesProcess) --
@@ -82,12 +101,20 @@ if (-not (Test-Path -LiteralPath $startScript)) {
     exit 1
 }
 $bundleRoot = Get-PsesBundleRoot
-$hostExe = Resolve-PsHost (Get-PluginOption 'ps_host' 'pwsh')
+$hostExe = Resolve-PsHost $psHostResolved.Value
 if ($null -eq $hostExe) {
     [Console]::Error.WriteLine('No PowerShell host (pwsh/powershell) found to launch PSES.')
     Write-ShimLog 'no PowerShell host found (pwsh/powershell)'
     exit 1
 }
+# ps_host matters even at nativeServe=off: the shim still launches PSES through $hostExe in
+# transparent-relay mode. Log the EFFECTIVE host beside the configured one, because
+# Resolve-PsHost falls through to an available host when the configured one is not on PATH --
+# a silent substitution the user would otherwise have no way to see.
+Write-ShimLog ('PSES host: configured=' +
+    $(if ([string]::IsNullOrWhiteSpace([string]$psHostResolved.Value)) { '(unset)' } else { [string]$psHostResolved.Value }) +
+    ' effective=' + $hostExe +
+    $(if ($hostExe -ne [string]$psHostResolved.Value) { ' (SUBSTITUTED: the configured host did not resolve on PATH)' } else { '' }))
 
 $logBase = Split-Path -Parent $script:ShimLogPath
 if ([string]::IsNullOrWhiteSpace($logBase)) { $logBase = [System.IO.Path]::GetTempPath() }
