@@ -30,9 +30,42 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
-PATCH: **every external GitHub Action is now pinned to an immutable commit SHA, enforced three
-ways.** Build/CI hardening only -- no runtime behavior, no `userConfig` surface, no plugin
-contract, and no diagnostics change.
+PATCH: **`nativeServe` and `ps_host` finally reach the process that acts on them**, and every
+external GitHub Action is now pinned to an immutable commit SHA. No new `userConfig` knob, no knob
+removed or renamed, no default changed, and no diagnostics change.
+
+### Fixed
+
+**Setting `nativeServe` or `ps_host` had no effect on the LSP serve subprocess** (dispatch 000233).
+Both knobs resolve through `Get-PluginOption`, which reads the environment variable
+`CLAUDE_PLUGIN_OPTION_<KEY>`. Claude Code exports those variables to plugin **hooks** -- which is why
+the diagnostics path was never affected -- but **not** to plugin **LSP server subprocesses**. The
+manifest had never declared the supported alternative, a `${user_config.*}` expansion inside the
+server's own `env` block. So a user could set `nativeServe = "shim"`, the shim would resolve `off`,
+and the log would say `nativeServe=off` -- the same line it prints when the knob was never set at
+all. Native hover / go-to-definition / find-references consequently failed at init for every user
+who opted in, in every release up to and including 1.31.1. `ps_host` was affected identically, and
+it matters even at `nativeServe = off`, because the shim launches PSES through it in
+transparent-relay mode too: the PSES child host was always `pwsh` regardless of what was configured.
+**`ps_host` becoming live is a real behaviour change for anyone who had set it.**
+
+The manifest now maps `nativeServe`, `ps_host` and `profile` into `lspServers.powershell.env`
+through `${user_config.*}` -- the supported transport, and the one Claude Code honours.
+
+**The fix carries a generic invariant, not a three-knob patch.** A new structural regression
+(`tests/PowerShellLsp.ServeUserConfig.Tests.ps1`) parses the serve subprocess's entry point, walks
+its dot-source closure and call graph, **derives** every knob key reachable from it, and asserts each
+has a mapping -- so a knob added to the shim tomorrow is covered with nothing to remember. It is
+demonstrated RED five ways against mutated in-memory copies of the manifest, including a mapping
+whose value is hardcoded rather than an expansion, and one pointing at the wrong knob.
+
+**Observability, so this cannot go silent again.** The serve log now states each knob's effective
+value **and its provenance** -- `env`, `profile`, or `default` -- on every launch, including the
+default case, which is the case that used to be indistinguishable from a knob that never arrived. It
+also logs the effective PSES host and names a substitution when the configured host does not resolve
+on PATH. `/doctor` gains a **configured vs effective** check for the serve subprocess that FAILS when
+a knob is set but the manifest declares no transport for it -- measured RED against the pre-fix
+manifest (`configured=shim effective=off [NO TRANSPORT]`) and GREEN against this one.
 
 ### Security
 
