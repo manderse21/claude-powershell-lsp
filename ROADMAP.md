@@ -37,6 +37,15 @@ Work that is chartered and moving.
 
 - **Doctor and command surface.** Continuing to close the gap between "the plugin is installed"
   and "the user can prove it is working". The lane carries no open ruling.
+- **The daemon surviving a client that walked away.** Chartered and moving. When an edit reaches
+  the client's hard cap the client exits, having already emitted an honest banner; the daemon
+  finishes a moment later and its reply to the departed client raises a broken pipe. The open
+  question this lane exists to answer -- the serve loop's own handler logs that exception, so
+  why does the loop end at all? -- is answered: the failed write leaves the pipe server in a
+  state the loop's next accept refuses, and that refusal lands outside the handler. The work is
+  scoped to daemon lifecycle. Measured against the
+  [post-fix remeasurement](docs/roadmap-ii/POST-FIX-REMEASUREMENT-relaunch-thrash.md) that
+  surfaced it, with the new numbers recorded beside it rather than over it.
 
 ## Next
 
@@ -44,14 +53,6 @@ Queued behind the current work, not started.
 
 - **Agent-facing semantic exposure.** Making more of what PSES already computes reachable by an
   agent, on the surfaces this project already ships.
-- **The daemon should survive a client that walked away.** When an edit reaches the client's hard
-  cap the client exits, having already emitted an honest banner; the daemon finishes a moment
-  later, its reply to the departed client raises a broken pipe, and the daemon exits. Now that the
-  relaunch thrash is gone, this is the binding reason a large-file session still does not converge.
-  The open question a charter would have to answer is already named: the serve loop's own handler
-  logs that exception, so why does the loop end at all? Measured and recorded in the
-  [post-fix remeasurement](docs/roadmap-ii/POST-FIX-REMEASUREMENT-relaunch-thrash.md).
-  **Not chartered** -- naming it here is not a decision to do it.
 - **The measured-baseline follow-through.** Candidate service-level targets have baselines; the
   targets themselves are not ratified.
 
