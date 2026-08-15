@@ -3144,8 +3144,11 @@ function Find-ModuleManifest {
     $full = [System.IO.Path]::GetFullPath($FilePath)
     $dir = [System.IO.Path]::GetDirectoryName($full)
     if ([string]::IsNullOrWhiteSpace($dir)) { return '' }
-    $sep = [System.IO.Path]::DirectorySeparatorChar
-    $alt = [System.IO.Path]::AltDirectorySeparatorChar
+    # No $sep/$alt here: unlike Resolve-PssaSettingsPath, this walk has no
+    # ProjectRoot to bound against, so it never trims separators -- it ascends
+    # via GetDirectoryName and stops when that returns empty at the filesystem
+    # root. The two variables were carried over with the walking pattern and
+    # were never read (PSUseDeclaredVarsMoreThanAssignments, GH-AUDIT-026).
     $cur = $dir
     while (-not [string]::IsNullOrWhiteSpace($cur)) {
         $candidates = @()
