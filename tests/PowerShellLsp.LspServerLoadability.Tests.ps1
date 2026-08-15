@@ -36,11 +36,28 @@ BeforeAll {
     $script:LslManifest = Get-Content -LiteralPath $script:LslManifestPath -Raw | ConvertFrom-Json
     $script:LslTroubleshootingPath = Join-Path $script:LslRoot 'docs/troubleshooting.md'
 
-    # The keys a user must type by hand today for the LSP block to load on Claude Code 2.1.233.
+    # The keys a user must type by hand for the LSP block to load on Claude Code 2.1.233.
     # THIS LIST IS THE POINT OF THE BLOCK. Changing the manifest's ${user_config.*} mappings must
     # change this list in the same commit, which is the moment to ask whether the new mapping is
     # worth another mandatory hand-configuration step for every user.
-    $script:LslExpectedRequiredKeys = @('nativeServe', 'profile', 'ps_host')
+    #
+    # IT IS NOW EMPTY, AND THAT IS THE MITIGATION (dispatch 000241). The measured cost of the
+    # three mappings was not "three knobs to configure" -- it was that a user who configured NONE
+    # of them got ZERO LSP servers plus a red startup error, because the throw is per missing key
+    # and the per-plugin catch discards the whole block. The /plugin panel does not rescue this:
+    # it seeds an unset field EMPTY rather than from the declared default, and its submit reducer
+    # SKIPS a blank non-required key whose stored value is undefined -- so opening the panel and
+    # pressing Save writes nothing at all. Every fresh install of the default branch was affected.
+    #
+    # The mappings are therefore SUSPENDED, not abandoned: recorded in scripts/lib/lsp-common.ps1
+    # (Get-ServeTransportSuspension) with the exact condition that lifts them. This list returns
+    # to non-empty the day they are restored, in the same commit.
+    $script:LslExpectedRequiredKeys = @()
+
+    # The suspension, read from the SHIPPED record rather than restated here -- a second copy
+    # would be free to disagree with the one the shim and the doctor act on.
+    . (Join-Path $script:LslRoot 'scripts/lib/lsp-common.ps1')
+    $script:LslSuspendedKeys = @(@(Get-ServeTransportSuspension) | ForEach-Object { [string]$_.Key })
 
     $script:LslUserConfigRefPattern = '\$\{user_config\.([^}]+)\}'
 
@@ -129,6 +146,22 @@ BeforeAll {
         return ($Manifest | ConvertTo-Json -Depth 30 | ConvertFrom-Json)
     }
 
+    # A copy carrying an INJECTED ${user_config.<Key>} reference (dispatch 000241).
+    #
+    # WHY THE TESTS INJECT INSTEAD OF BORROWING. Before the mitigation, the properties about a
+    # "referenced key" could be asserted against whatever the shipped manifest happened to
+    # reference. With the mappings suspended the shipped manifest references NOTHING, so every
+    # such `foreach ($key in $refSet)` would iterate zero times and assert nothing -- passing
+    # loudly while checking less than before. Add-Member (never property assignment) because the
+    # env block no longer carries these names to overwrite.
+    function script:New-LslManifestWithRef {
+        param([string]$Key, [string]$EnvName = 'CLAUDE_PLUGIN_OPTION_PROBE')
+        $copy = script:Copy-LslManifest -Manifest $script:LslManifest
+        $copy.lspServers.powershell.env |
+            Add-Member -NotePropertyName $EnvName -NotePropertyValue ('${user_config.' + $Key + '}') -Force -PassThru | Out-Null
+        return $copy
+    }
+
     $script:LslRefs = script:Get-LslUserConfigRefs -Manifest $script:LslManifest
     $script:LslRefSet = script:New-LslOrdinalSet -Items $script:LslRefs
 }
@@ -183,31 +216,45 @@ Describe 'lspServers userConfig references -- the mandatory-configuration cost i
 
     Context 'the invariants -- these hold whichever mitigation is adjudicated' {
 
+        # These properties are asserted over the shipped reference set PLUS an injected probe, so
+        # they keep checking something when the shipped set is empty. Under the suspension the
+        # shipped set IS empty; the injected half is what stops the block going quietly vacuous,
+        # and it is also exactly the check a restored mapping would have to satisfy.
+
         It 'every referenced key is DECLARED in userConfig, matched ordinally' {
             foreach ($key in $script:LslRefSet) {
                 $entry = script:Get-LslSchemaEntry -Manifest $script:LslManifest -Key $key
                 $entry | Should -Not -BeNullOrEmpty -Because "lspServers references `${user_config.$key} but userConfig declares no key spelled exactly '$key'"
             }
-        }
-
-        It 'every referenced key declares a DEFAULT, so the upstream fix restores its DOCUMENTED value' {
-            # The upstream merge assigns `o.default ?? ""`. A referenced key with no declared
-            # default therefore resolves to an EMPTY STRING once the fix lands -- it loads, but
-            # silently substitutes empty for the value docs/configuration.md promises.
-            foreach ($key in $script:LslRefSet) {
-                $entry = script:Get-LslSchemaEntry -Manifest $script:LslManifest -Key $key
-                $entry.PSObject.Properties.Name | Should -Contain 'default' -Because "$key is referenced from lspServers; with no declared default the upstream merge would hand the serve subprocess an empty value instead of its documented one"
+            # The property is real whether or not the shipped manifest exercises it today.
+            $probe = script:New-LslManifestWithRef -Key 'nativeServe'
+            foreach ($key in (script:Get-LslUserConfigRefs -Manifest $probe)) {
+                (script:Get-LslSchemaEntry -Manifest $probe -Key $key) | Should -Not -BeNullOrEmpty
             }
         }
 
-        It 'no referenced key is REQUIRED-without-a-default -- that pairing stays fatal past the fix' {
+        It 'every SUSPENDED key still declares a DEFAULT, so restoring its mapping restores its DOCUMENTED value' {
+            # The upstream merge assigns `o.default ?? ""`. A referenced key with no declared
+            # default therefore resolves to an EMPTY STRING once the fix lands -- it loads, but
+            # silently substitutes empty for the value docs/configuration.md promises. The keys
+            # this must hold for are now the SUSPENDED ones: they are the mappings that come back.
+            $keys = @($script:LslRefSet) + @($script:LslSuspendedKeys)
+            @($keys).Count | Should -BeGreaterThan 0 -Because 'with neither a reference nor a suspension there is nothing to protect and this invariant has silently stopped meaning anything'
+            foreach ($key in $keys) {
+                $entry = script:Get-LslSchemaEntry -Manifest $script:LslManifest -Key $key
+                $entry | Should -Not -BeNullOrEmpty -Because "'$key' is referenced or suspended but userConfig declares no key spelled exactly that"
+                $entry.PSObject.Properties.Name | Should -Contain 'default' -Because "$key is destined for lspServers; with no declared default the upstream merge would hand the serve subprocess an empty value instead of its documented one"
+            }
+        }
+
+        It 'no referenced or suspended key is REQUIRED-without-a-default -- that pairing stays fatal past the fix' {
             # The upstream merge SKIPS `required` keys that declare no default, so they remain
             # undefined and keep throwing even after the defaults merge is added to the LSP path.
-            foreach ($key in $script:LslRefSet) {
+            foreach ($key in (@($script:LslRefSet) + @($script:LslSuspendedKeys))) {
                 $entry = script:Get-LslSchemaEntry -Manifest $script:LslManifest -Key $key
                 $hasDefault = $entry.PSObject.Properties.Name -ccontains 'default'
                 if ($entry.required) {
-                    $hasDefault | Should -BeTrue -Because "$key is required AND referenced from lspServers; without a default the upstream defaults merge skips it and the whole block still fails to load"
+                    $hasDefault | Should -BeTrue -Because "$key is required AND destined for lspServers; without a default the upstream defaults merge skips it and the whole block still fails to load"
                 }
             }
         }
@@ -218,11 +265,26 @@ Describe 'lspServers userConfig references -- the mandatory-configuration cost i
             ($actual -join ',') | Should -BeExactly ($expected -join ',') -Because 'a new ${user_config.*} mapping makes another knob mandatory for every user until upstream merges schema defaults -- update $LslExpectedRequiredKeys and the troubleshooting entry in the same commit'
         }
 
-        It 'troubleshooting.md names every key a user must set by hand' {
+        It 'the mandatory set is EMPTY, which is the whole mitigation -- a fresh install configures NOTHING' {
+            @($script:LslExpectedRequiredKeys).Count | Should -Be 0 -Because 'any mandatory key means a zero-configuration install gets zero LSP servers plus a red startup error on Claude Code 2.1.233'
+            @($script:LslRefSet).Count | Should -Be 0 -Because 'the shipped lspServers block must carry no ${user_config.*} reference at all while the upstream gate holds'
+        }
+
+        It 'troubleshooting.md names the gate, the symptom, and every suspended key' {
+            # Replaces the old "names every mandatory key" loop, which iterates an EMPTY list
+            # under the mitigation and would assert nothing at all.
             $doc = Get-Content -LiteralPath $script:LslTroubleshootingPath -Raw
-            foreach ($key in $script:LslExpectedRequiredKeys) {
-                $doc | Should -BeLike "*$key*" -Because "a user hitting 'Plugin option `"$key`" isn't set' must find $key named in the troubleshooting entry"
+            $doc | Should -BeLike "*isn't set*" -Because 'a user who saw the error on an older install must still find it named here'
+            $doc | Should -BeLike '*claude-code-lspservers-userconfig-defaults*' -Because 'the troubleshooting entry must point at the upstream record'
+            foreach ($key in $script:LslSuspendedKeys) {
+                $doc | Should -BeLike "*$key*" -Because "$key's transport is suspended; a user who set it and saw no effect must find it named in the troubleshooting entry"
             }
+        }
+
+        It 'troubleshooting.md tells a user that nativeServe=shim cannot take effect under the gate' {
+            $doc = Get-Content -LiteralPath $script:LslTroubleshootingPath -Raw
+            $doc | Should -BeLike '*SUSPENDED*'
+            $doc | Should -BeLike '*nativeServe*'
         }
     }
 
@@ -254,16 +316,61 @@ Describe 'lspServers userConfig references -- the mandatory-configuration cost i
             $merged = script:Merge-LslSchemaDefaults -UserConfigSchema $script:LslManifest.userConfig -StoredOptions @{}
             { script:Resolve-LslUserConfigRefs -Text $envJson -StoredOptions $merged } | Should -Not -Throw -Because 'this is the one-call upstream fix; if it fails here, a referenced key is missing its declared default'
         }
+
+        It 'the RESTORED block -- every suspension mapping put back -- resolves for a zero-config user only AFTER the upstream fix' {
+            # The forward proof, and the reason the suspension can be lifted mechanically: with
+            # the mappings back, the block still THROWS for a user who set nothing (today), and
+            # resolves cleanly under the defaults merge (post-fix). If the second half ever fails,
+            # a suspended key has lost its declared default and restoring it would ship empties.
+            $restored = script:Copy-LslManifest -Manifest $script:LslManifest
+            foreach ($r in @(Get-ServeTransportSuspension)) {
+                $restored.lspServers.powershell.env |
+                    Add-Member -NotePropertyName ([string]$r.EnvName) -NotePropertyValue ([string]$r.Mapping) -Force
+            }
+            $envJson = $restored.lspServers | ConvertTo-Json -Depth 20
+            { script:Resolve-LslUserConfigRefs -Text $envJson -StoredOptions @{} } |
+                Should -Throw -Because 'restoring the mappings before upstream merges defaults would reinstate the zero-configuration failure -- this is what the gate is holding back'
+            $merged = script:Merge-LslSchemaDefaults -UserConfigSchema $restored.userConfig -StoredOptions @{}
+            { script:Resolve-LslUserConfigRefs -Text $envJson -StoredOptions $merged } |
+                Should -Not -Throw -Because 'once the defaults merge lands, restoring every suspension record must produce a block that loads with nothing configured'
+        }
+
+        It 'the shipped block resolves to a CONCRETE launch command, not merely "did not throw"' {
+            # "Does not throw" is satisfied by an empty or malformed block too. Assert the block a
+            # zero-config user actually gets is the one that launches the shim.
+            $envJson = $script:LslManifest.lspServers | ConvertTo-Json -Depth 20
+            $resolved = script:Resolve-LslUserConfigRefs -Text $envJson -StoredOptions @{}
+            $resolved | Should -BeLike '*pses-serve-shim.ps1*'
+            $resolved | Should -BeLike '*PSES_BUNDLE_PATH*'
+            $resolved | Should -Not -BeLike '*user_config*'
+        }
+
+        It 'the non-user_config interpolations survive untouched -- they resolve through a helper that cannot throw' {
+            $env = $script:LslManifest.lspServers.powershell.env
+            [string]$env.PSES_BUNDLE_PATH | Should -BeExactly '${CLAUDE_PLUGIN_DATA}/PowerShellEditorServices'
+            (($script:LslManifest.lspServers.powershell.args) -join ' ') | Should -BeLike '*${CLAUDE_PLUGIN_ROOT}*'
+        }
     }
 
     Context 'anti-vacuity: each invariant is DEMONSTRATED RED by breaking its premise' {
 
-        It 'adding a FOURTH mapping makes the accounted-set check FAIL' {
+        It 'adding ANY mapping makes the accounted-set check FAIL' {
+            # Was "a FOURTH mapping" when three shipped. Under the suspension the accounted set is
+            # empty, so the first mapping is the one that must turn this red -- which is also the
+            # first mapping that would break a zero-configuration install.
             $mutated = script:Copy-LslManifest -Manifest $script:LslManifest
             $mutated.lspServers.powershell.env | Add-Member -NotePropertyName 'CLAUDE_PLUGIN_OPTION_RULESET' -NotePropertyValue '${user_config.ruleset}'
             $actual = @(script:Get-LslUserConfigRefs -Manifest $mutated) | Sort-Object
             $expected = @($script:LslExpectedRequiredKeys) | Sort-Object
             ($actual -join ',') | Should -Not -BeExactly ($expected -join ',')
+        }
+
+        It 'adding ANY mapping makes the zero-configuration prediction go RED' {
+            # The direct guard on the mitigation: one mapping is enough to discard every server.
+            $mutated = script:New-LslManifestWithRef -Key 'ruleset'
+            $envJson = $mutated.lspServers | ConvertTo-Json -Depth 20
+            { script:Resolve-LslUserConfigRefs -Text $envJson -StoredOptions @{} } |
+                Should -Throw -ExpectedMessage '*"ruleset" isn''t set*'
         }
 
         It 'referencing an UNDECLARED key makes the declaration check FAIL' {
@@ -275,8 +382,10 @@ Describe 'lspServers userConfig references -- the mandatory-configuration cost i
         }
 
         It 'a case-mismatched reference does NOT count as declared' {
-            $mutated = script:Copy-LslManifest -Manifest $script:LslManifest
-            $mutated.lspServers.powershell.env.CLAUDE_PLUGIN_OPTION_NATIVESERVE = '${user_config.nativeserve}'
+            # Injects the reference rather than overwriting a shipped one -- the env block no
+            # longer carries CLAUDE_PLUGIN_OPTION_NATIVESERVE to assign over, and a property
+            # assignment against an absent member would throw rather than test anything.
+            $mutated = script:New-LslManifestWithRef -Key 'nativeserve'
             $refs = script:Get-LslUserConfigRefs -Manifest $mutated
             $refs | Should -Contain 'nativeserve'
             (script:Get-LslSchemaEntry -Manifest $mutated -Key 'nativeserve') | Should -BeNullOrEmpty
@@ -286,7 +395,7 @@ Describe 'lspServers userConfig references -- the mandatory-configuration cost i
             # Recorded because it refuted the obvious guess: dropping a default does NOT keep the
             # block failing, it quietly swaps the documented value for an empty one. Different
             # defect, different guard -- which is why the invariant above is worded as it is.
-            $mutated = script:Copy-LslManifest -Manifest $script:LslManifest
+            $mutated = script:New-LslManifestWithRef -Key 'profile'
             $mutated.userConfig.profile.PSObject.Properties.Remove('default')
             $merged = script:Merge-LslSchemaDefaults -UserConfigSchema $mutated.userConfig -StoredOptions @{}
             $merged['profile'] | Should -BeExactly ''
@@ -295,13 +404,46 @@ Describe 'lspServers userConfig references -- the mandatory-configuration cost i
         }
 
         It 'a referenced key marked REQUIRED with no default DOES stay fatal past the upstream fix' {
-            $mutated = script:Copy-LslManifest -Manifest $script:LslManifest
+            $mutated = script:New-LslManifestWithRef -Key 'profile'
             $mutated.userConfig.profile.PSObject.Properties.Remove('default')
             $mutated.userConfig.profile | Add-Member -NotePropertyName 'required' -NotePropertyValue $true
             $merged = script:Merge-LslSchemaDefaults -UserConfigSchema $mutated.userConfig -StoredOptions @{}
             $merged.ContainsKey('profile') | Should -BeFalse
             $envJson = $mutated.lspServers | ConvertTo-Json -Depth 20
             { script:Resolve-LslUserConfigRefs -Text $envJson -StoredOptions $merged } | Should -Throw -ExpectedMessage '*"profile" isn''t set*'
+        }
+    }
+
+    Context 'the suspension record is the restoration instruction (dispatch 000241)' {
+
+        It 'names every knob the shipped manifest stopped mapping, and no others' {
+            @($script:LslSuspendedKeys) | Should -Not -BeNullOrEmpty
+            foreach ($k in @('profile', 'ps_host', 'nativeServe')) {
+                @($script:LslSuspendedKeys) | Should -Contain $k
+            }
+        }
+
+        It "each record's EnvName normalizes to its own Key the way the reader normalizes" {
+            # A record naming CLAUDE_PLUGIN_OPTION_PROFILE for key `ps_host` would restore a
+            # mapping the reader resolves to the WRONG knob -- silently, and only in serve.
+            foreach ($r in @(Get-ServeTransportSuspension)) {
+                $normalized = (([string]$r.EnvName) -replace '^CLAUDE_PLUGIN_OPTION_', '' -replace '_', '').ToLowerInvariant()
+                $target = (([string]$r.Key) -replace '_', '').ToLowerInvariant()
+                $normalized | Should -BeExactly $target
+            }
+        }
+
+        It "each record's Mapping is the supported expansion of its own Key, spelled ordinally" {
+            foreach ($r in @(Get-ServeTransportSuspension)) {
+                [string]$r.Mapping | Should -BeExactly ('${user_config.' + [string]$r.Key + '}')
+            }
+        }
+
+        It 'every suspended key is DECLARED in userConfig, matched ordinally' {
+            foreach ($k in $script:LslSuspendedKeys) {
+                (script:Get-LslSchemaEntry -Manifest $script:LslManifest -Key $k) |
+                    Should -Not -BeNullOrEmpty -Because "'$k' is suspended but userConfig declares no key spelled exactly that -- restoring its mapping would reference an undeclared key"
+            }
         }
     }
 }

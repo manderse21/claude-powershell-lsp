@@ -722,24 +722,59 @@ function Test-DoctorServeTransport {
     }
     $lines = @($rows | ForEach-Object {
             $cfg = if ([string]::IsNullOrWhiteSpace([string]$_.Configured)) { '(unset)' } else { [string]$_.Configured }
-            ('' + $_.Key + ': configured=' + $cfg + ' effective=' + [string]$_.Effective +
-             $(if ($_.Mapped) { '' } else { ' [NO TRANSPORT]' }))
+            $tag = if ($_.Mapped) { '' } elseif ($_.Suspended) { ' [SUSPENDED BY UPSTREAM GATE]' } else { ' [NO TRANSPORT]' }
+            ('' + $_.Key + ': configured=' + $cfg + ' effective=' + [string]$_.Effective + $tag)
         })
     $detail = ($lines -join '; ')
 
-    # The one fail-worthy state: a knob the user SET that has no way to reach the subprocess.
-    $broken = @($rows | Where-Object { -not $_.Mapped -and -not [string]::IsNullOrWhiteSpace([string]$_.Configured) })
-    if ($broken.Count -gt 0) {
-        $names = (@($broken | ForEach-Object { [string]$_.Key }) -join ', ')
+    # THE FORK, AND WHY IT HAS THREE BRANCHES AND NOT TWO (dispatch 000241).
+    #
+    # Before the upstream gate there were two states worth naming: a knob with a transport, and a
+    # knob the user SET that had none -- the second being a real fault, because the user asked for
+    # something the running system silently would not do. The gate introduces a third: a knob
+    # whose mapping was REMOVED ON PURPOSE, because on Claude Code 2.1.233 one unset referenced
+    # key makes the host discard every LSP server this plugin declares.
+    #
+    # Reporting a suspended knob as FAIL would cry wolf on every install that configures one, and
+    # would name a remediation the user cannot perform. Reporting it as PASS would be the silent
+    # divergence dispatch 000233 was raised to kill. So it is neither: it is STATED, with the
+    # upstream condition that lifts it, and the fail-capable branch stays armed for the case it
+    # was built for -- a knob that is unmapped for any reason OTHER than the recorded suspension.
+    $brokenUnsuspended = @($rows | Where-Object {
+            -not $_.Mapped -and -not $_.Suspended -and -not [string]::IsNullOrWhiteSpace([string]$_.Configured)
+        })
+    if ($brokenUnsuspended.Count -gt 0) {
+        $names = (@($brokenUnsuspended | ForEach-Object { [string]$_.Key }) -join ', ')
         return (New-DoctorResult -Status fail -Component $component `
-                -Detail ('CONFIGURED BUT NOT DELIVERED -- ' + $names + ' is set, but .claude-plugin/plugin.json declares no ${user_config.*} mapping for it in lspServers.powershell.env, so the serve subprocess will use the shipped default instead. ' + $detail) `
+                -Detail ('CONFIGURED BUT NOT DELIVERED -- ' + $names + ' is set, but .claude-plugin/plugin.json declares no ${user_config.*} mapping for it in lspServers.powershell.env, and it is not on the recorded upstream-gate suspension list either, so the serve subprocess will use the shipped default instead. ' + $detail) `
                 -Remediation ('Add "CLAUDE_PLUGIN_OPTION_<KEY>": "${user_config.<key>}" to lspServers.powershell.env in .claude-plugin/plugin.json for: ' + $names + '. The environment variables Claude Code exports to hooks do NOT reach LSP server subprocesses; the server env block is the supported transport.'))
+    }
+
+    # A knob the user SET whose transport is suspended: not a fault, but never silent.
+    $suspendedConfigured = @($rows | Where-Object { $_.Suspended -and -not [string]::IsNullOrWhiteSpace([string]$_.Configured) })
+    if ($suspendedConfigured.Count -gt 0) {
+        $names = (@($suspendedConfigured | ForEach-Object { [string]$_.Key }) -join ', ')
+        $rec = @(Get-ServeTransportSuspension)[0]
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail ('SUSPENDED BY UPSTREAM GATE -- you have configured ' + $names + ', and that value is NOT in effect inside the LSP serve subprocess. This is a Claude Code ' + [string]$rec.AffectedVersion + ' defect (' + [string]$rec.Gate + '), not a fault in your configuration: the ${user_config.*} transport dispatch 000233 established is correct and proven, but on this Claude Code one unset referenced key makes the host discard EVERY LSP server this plugin declares, so the mappings are temporarily removed. Diagnostics are unaffected -- they run through the hooks. What is not in effect is the serve subprocess reading these knobs; nativeServe=shim in particular cannot take effect while this holds. ' + $detail) `
+                -Remediation ('No action is available in the plugin. The gate lifts when: ' + [string]$rec.LiftsWhen + ' Tracking and the upstream report: ' + [string]$rec.Reference))
     }
     $divergent = @($rows | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Configured) -and ([string]$_.Configured -ne [string]$_.Effective) })
     if ($divergent.Count -gt 0) {
         return (New-DoctorResult -Status unknown -Component $component `
                 -Detail ('configured and effective DIVERGE for: ' + (@($divergent | ForEach-Object { [string]$_.Key }) -join ', ') + '. ' + $detail) `
                 -Remediation 'Check the value is one this build recognizes (see docs/configuration.md); an unrecognized value degrades to the documented default rather than failing loudly.')
+    }
+    # PASS, but the claim must match what is actually true. With knobs suspended, "every knob has
+    # a transport" is false even when nothing is configured -- so say what holds instead: nothing
+    # the user set is being quietly dropped, and the suspension is still named so it stays
+    # discoverable rather than only appearing once someone trips over it.
+    $suspendedAny = @($rows | Where-Object { $_.Suspended })
+    if ($suspendedAny.Count -gt 0) {
+        $names = (@($suspendedAny | ForEach-Object { [string]$_.Key }) -join ', ')
+        $rec = @(Get-ServeTransportSuspension)[0]
+        return (New-DoctorResult -Status pass -Component $component `
+                -Detail ('nothing you configured is being silently dropped. Transport for ' + $names + ' is SUSPENDED BY UPSTREAM GATE (' + [string]$rec.Gate + ', Claude Code ' + [string]$rec.AffectedVersion + '), and none of those knobs is currently set, so the shipped defaults in effect are also the documented ones. ' + $detail))
     }
     return (New-DoctorResult -Status pass -Component $component `
             -Detail ('every knob the serve subprocess reads has a transport into it, and configured matches effective. ' + $detail))
@@ -1109,7 +1144,16 @@ function Get-DoctorServeTransportObservation {
                 }
             }
             $effective = if ($mapped -and -not [string]::IsNullOrWhiteSpace($configured)) { $configured } else { [string]$k.Default }
-            $rows.Add(@{ Key = $key; Configured = $configured; Mapped = $mapped; Effective = $effective })
+            # SUSPENDED is a THIRD state, distinct from both mapped and merely-unmapped (dispatch
+            # 000241). An unmapped knob is normally a defect -- the user asked for something the
+            # running system will silently not do. A SUSPENDED knob is unmapped ON PURPOSE, because
+            # keeping its mapping made Claude Code 2.1.233 discard every LSP server this plugin
+            # declares. Collapsing the two would either cry wolf on every install that configures
+            # one of them, or blind the check to a genuinely forgotten mapping. The verdict keeps
+            # them apart, and the suspension list is the SHIPPED one -- not a copy.
+            $rows.Add(@{ Key = $key; Configured = $configured; Mapped = $mapped; Effective = $effective
+                    Suspended = [bool](Test-ServeTransportSuspended -Key $key)
+                })
         }
         # .ToArray(), NOT @($rows). The array-subexpression idiom throws
         # "System.ArgumentException: Argument types do not match" on a raw

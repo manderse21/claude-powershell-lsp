@@ -34,8 +34,8 @@ PATCH: **a client that walks away from a reply no longer kills the analyzer daem
 **`nativeServe` / `ps_host` finally reach the process that acts on them**. Every external GitHub
 Action is also pinned to an immutable commit SHA. No new `userConfig` knob, no knob removed or
 renamed, no default changed, and no diagnostics change. **Read [Known issues](#known-issues) before
-tracking this branch** -- the serve-transport fix makes three knobs mandatory hand-configuration on
-Claude Code 2.1.233, and no tagged release is affected.
+tracking this branch** -- on Claude Code 2.1.233 the serve-transport mappings are SUSPENDED behind
+an upstream defect, so `nativeServe = shim` cannot take effect. No tagged release is affected.
 
 ### Fixed
 
@@ -160,25 +160,36 @@ grants, same `!inputs.dry_run` gating, same release gates.
 
 ### Known issues
 
-**On Claude Code 2.1.233 the three mapped knobs must be set EXPLICITLY, or no LSP server loads at
-all.** Claude Code resolves `${user_config.*}` inside `lspServers` against the options a user has
-explicitly set, **ignoring the defaults declared in `userConfig`** -- and one unset key discards
-every LSP server the plugin declares:
+**RESOLVED in this branch -- a zero-configuration install registers its LSP server again.** For a
+window during `[Unreleased]`, tracking this branch on Claude Code 2.1.233 required `profile`,
+`ps_host` and `nativeServe` to be set by hand or **no LSP server loaded at all**:
 
 ```
 Failed to load LSP servers for plugin powershell-lsp: Error: Plugin option "profile" isn't set.
 ```
 
-So the serve-transport fix above carries a cost the fix itself could not have anticipated:
-`profile`, `ps_host` and `nativeServe` became mandatory hand-configuration for anyone tracking this
-branch. **Diagnostics are unaffected** -- they run through the hooks, which resolve options
-normally; what is lost until the keys are set is hover / go-to-definition / find-references. **No
-tagged release is affected**: the mappings landed after `v1.31.1` and are not in it. The workaround
-is in [docs/troubleshooting.md](docs/troubleshooting.md); root cause, the reproducer and the
-proposed upstream fix are in
+Claude Code resolves `${user_config.*}` inside `lspServers` against the options a user has
+explicitly set, **ignoring the defaults declared in `userConfig`** (the sibling MCP path merges
+them), and one unset key discards every LSP server the plugin declares. Opening `/plugin` and
+pressing Save did not help: the panel seeds an unset field **empty** rather than from its declared
+default, and skips blank optional keys on save, so it wrote nothing. **No tagged release was ever
+affected** -- the mappings landed after `v1.31.1` and are not in it.
+
+**What ships now (dispatch 000241):** the `${user_config.*}` mappings are **SUSPENDED** -- removed
+from the manifest, and recorded in `Get-ServeTransportSuspension` (`scripts/lib/lsp-common.ps1`)
+together with the exact condition that restores them, so lifting the gate is a mechanical edit.
+Filed upstream as
+[`anthropics/claude-code#86936`](https://github.com/anthropics/claude-code/issues/86936).
+
+**The remaining limitation, stated plainly:** while the gate holds, `profile`, `ps_host` and
+`nativeServe` are read at their shipped defaults (`safe`, `pwsh`, `off`) **inside the LSP serve
+subprocess**, regardless of what you configure -- so **`nativeServe = shim` cannot take effect**.
+**Diagnostics are unaffected**: they run through the hooks, which do receive plugin options and
+resolve your `profile` normally. `scripts/doctor.ps1` reports this as `SUSPENDED BY UPSTREAM GATE`
+and still FAILs for a knob with genuinely broken transport; the serve log names the gate on every
+launch rather than reporting a bare `provenance: default`. See
+[docs/troubleshooting.md](docs/troubleshooting.md) and
 [docs/upstream/claude-code-lspservers-userconfig-defaults.md](docs/upstream/claude-code-lspservers-userconfig-defaults.md).
-`tests/PowerShellLsp.LspServerLoadability.Tests.ps1` counts the mandatory-configuration cost of
-every such mapping so a fourth cannot be added unnoticed. The mitigation is still being adjudicated.
 
 
 ## [1.31.1] - 2026-08-13

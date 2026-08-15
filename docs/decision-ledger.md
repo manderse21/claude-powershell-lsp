@@ -3291,3 +3291,91 @@ either mitigation. Writing it also refuted a plausible guess: dropping a referen
 default does **not** keep the block failing after the upstream fix -- the merge assigns
 `default ?? ""`, so the knob silently resolves to an empty value instead. Only `required`-without-a
 -default stays fatal. Both behaviors are now pinned as separate tests.
+## Dispatch 000241 -- the lspServers userConfig-defaults gate: mitigation RULED and shipped
+
+**Dispatch 000233 is not reopened.** Its state stays `verified`, its outbox stands as written, and
+its ruling -- that `${user_config.*}` inside `lspServers.<server>.env` is the supported transport
+for a knob the LSP serve subprocess reads -- **stands and remains the intended architecture**. What
+follows suspends the USE of that transport on a Claude Code whose implementation of it is
+defective. The design is untouched; the installed-plugin proof discharged above remains valid.
+
+### Ground truth, re-derived at implementation time
+
+The charter required the defect be re-measured rather than carried forward, because an undocumented
+upstream fix would have changed the whole answer. On 2026-08-15 the live binary still showed the
+asymmetry verbatim -- `zup` passing `$Q(hBe(e))` (stored options only) where the sibling MCP path
+`fRb` returns `$Yd({...i,...s},{...r,...o})` (schema defaults merged), with the interpolator
+throwing on any `undefined` key and the per-plugin catch discarding **every** server the plugin
+declares. `claude --version` reported **2.1.233**, and `npm view @anthropic-ai/claude-code version`
+reported 2.1.233 as the **latest published release** -- so waiting for upstream was never an option.
+
+### The blast-radius question, ANSWERED by measurement
+
+The charter's open question was whether the `/plugin` configuration panel materializes declared
+defaults into stored options -- which would have scoped the defect to hand-edited and headless
+configs. **It does not, on either half of its lifecycle.** The panel is seeded from the same
+defaults-free reader and renders an unset field EMPTY rather than showing its declared default; and
+its submit reducer SKIPS a blank non-required key whose stored value is `undefined`, so opening the
+panel and pressing **Save** without typing writes nothing at all. Corroborated on the proving
+machine, whose stored options held exactly the three hand-set keys, not the twenty declared ones.
+
+**Consequence: every fresh install of the default branch was affected, and walking the panel was
+not a workaround.** This is also what **disqualified pre-authorized option 2** (keep the mappings
+plus a loud failure path), whose stated precondition was that the install flow materializes
+declared defaults.
+
+### The ruling
+
+**Option 1, plus an explicit suspension record.** The three `${user_config.*}` mappings are removed
+from the manifest; everything 000233 shipped that was not the manifest edit is retained -- the
+provenance resolver, the `/doctor` configured-vs-effective check, and the derived-reachability test.
+The side-channel option (a SessionStart-written state file the shim reads, which would have kept
+`nativeServe=shim` working through the gate) was **considered and declined**: it is not the smallest
+mitigation, and it would add a second configuration resolver against 000233's one-resolver property.
+It is recorded as the escalation path if upstream stalls and demand materializes.
+
+**This is a temporary compatibility suspension, not a retreat.** The suspension is recorded
+machine-readably in `Get-ServeTransportSuspension` (`scripts/lib/lsp-common.ps1`), naming for each
+knob the gate, the affected Claude Code version, the exact condition that lifts it, and the precise
+env name and mapping value to restore -- so lifting the gate is a mechanical edit rather than a
+re-derivation. The test suite asserts that replaying every record back into the manifest satisfies
+000233's **original** mapping invariant, which is what keeps that promise honest.
+
+### Keeping configured-vs-effective truthful, which was the whole condition on option 1
+
+The two surfaces know different things, and the mitigation splits the job accordingly:
+
+- **The serve subprocess cannot see what the user configured.** Under the suspension these knobs
+  necessarily resolve `provenance: default` -- a phrase that asserts something about the USER, and
+  the wrong claim here. So the shim now names the gate on every launch, and its `configured=` field
+  says *not transportable* rather than *(unset)*. Emitting the bare default would have restored
+  precisely the silent divergence 000233 was raised to kill.
+- **`/doctor` is hook-adjacent and DOES receive `CLAUDE_PLUGIN_OPTION_*`,** so it reports both
+  branches of the fork. It now distinguishes three states rather than two: mapped; **SUSPENDED BY
+  UPSTREAM GATE** (stated, never a FAIL -- there is no action available to the user); and unmapped
+  for any *other* reason (still a FAIL, so the guard keeps its teeth for a knob added to the shim
+  and forgotten).
+
+### The two test blocks were reconciled, not weakened
+
+They were in genuine tension -- 000233's block required every reachable knob to be mapped, and the
+loadability block counted what each mapping costs. The reachability **derivation** is the durable
+part and is retained; the **mapping requirement** is what the gate suspends. The invariant is now
+"every reachable knob is mapped **or** explicitly suspended", and a reachable knob that is neither
+turns the suite red. `$LslExpectedRequiredKeys` is now empty, which is the mitigation stated as an
+assertion: any non-empty value means a zero-configuration install gets zero LSP servers.
+
+The anti-vacuity controls had to move with their premise. 000233's controls deleted a shipped
+mapping and asserted the check went red; with the mappings suspended there is nothing left to
+delete, and `.Remove()` on an absent property is a silent no-op that would have passed while
+proving nothing. Those controls now run against a **restored** manifest -- the shape the day the
+gate lifts -- and the new accounted-for invariant has controls of its own.
+
+### Filed upstream
+
+[`anthropics/claude-code#86936`](https://github.com/anthropics/claude-code/issues/86936), filed
+2026-08-15 with Mike Andersen's explicit authorization. The report carries the reproducer, the
+MCP-path control, the one-call suggested fix, and the newly-measured configuration-panel behavior.
+**Ordering:** the mitigation shipped first and the report was filed immediately after,
+independently -- 2.1.233 was already the latest release, so filing unblocks no user, while
+marketplace installs track `main` HEAD today. Do not re-file; it advances on #86936.
