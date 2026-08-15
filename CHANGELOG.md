@@ -33,7 +33,9 @@ security/patch re-pin with no behavior change ships as a PATCH.
 PATCH: **a client that walks away from a reply no longer kills the analyzer daemon**, and
 **`nativeServe` / `ps_host` finally reach the process that acts on them**. Every external GitHub
 Action is also pinned to an immutable commit SHA. No new `userConfig` knob, no knob removed or
-renamed, no default changed, and no diagnostics change.
+renamed, no default changed, and no diagnostics change. **Read [Known issues](#known-issues) before
+tracking this branch** -- the serve-transport fix makes three knobs mandatory hand-configuration on
+Claude Code 2.1.233, and no tagged release is affected.
 
 ### Fixed
 
@@ -100,6 +102,13 @@ on PATH. `/doctor` gains a **configured vs effective** check for the serve subpr
 a knob is set but the manifest declares no transport for it -- measured RED against the pre-fix
 manifest (`configured=shim effective=off [NO TRANSPORT]`) and GREEN against this one.
 
+**The transport is now PROVEN end-to-end against a real installed plugin** (dispatch 000233's
+blocked acceptance criterion, discharged 2026-08-15). A marketplace install of this branch
+registered its LSP server, answered `documentSymbol` / `hover` / `goToDefinition` against
+`demo.ps1`, produced the expected `PSUseApprovedVerbs` diagnostic, and logged all three knobs with
+`provenance: env` and `configured=shim effective=shim`. Details in
+[docs/decision-ledger.md](docs/decision-ledger.md).
+
 **A release test encoded the dependency version instead of the invariant** (dispatch 000240).
 `tests/PowerShellLsp.Release.Tests.ps1` asserted the literal `actions/attest-build-provenance@v3`,
 so a clean Dependabot major bump failed a *structural* release test although nothing structural
@@ -148,6 +157,28 @@ unchanged: `actions/attest` auto-generates a SLSA build-provenance predicate whe
 and no predicate input is supplied, which is exactly how this pipeline calls it. Same two
 subjects (source archive + CycloneDX SBOM), same `id-token: write` / `attestations: write`
 grants, same `!inputs.dry_run` gating, same release gates.
+
+### Known issues
+
+**On Claude Code 2.1.233 the three mapped knobs must be set EXPLICITLY, or no LSP server loads at
+all.** Claude Code resolves `${user_config.*}` inside `lspServers` against the options a user has
+explicitly set, **ignoring the defaults declared in `userConfig`** -- and one unset key discards
+every LSP server the plugin declares:
+
+```
+Failed to load LSP servers for plugin powershell-lsp: Error: Plugin option "profile" isn't set.
+```
+
+So the serve-transport fix above carries a cost the fix itself could not have anticipated:
+`profile`, `ps_host` and `nativeServe` became mandatory hand-configuration for anyone tracking this
+branch. **Diagnostics are unaffected** -- they run through the hooks, which resolve options
+normally; what is lost until the keys are set is hover / go-to-definition / find-references. **No
+tagged release is affected**: the mappings landed after `v1.31.1` and are not in it. The workaround
+is in [docs/troubleshooting.md](docs/troubleshooting.md); root cause, the reproducer and the
+proposed upstream fix are in
+[docs/upstream/claude-code-lspservers-userconfig-defaults.md](docs/upstream/claude-code-lspservers-userconfig-defaults.md).
+`tests/PowerShellLsp.LspServerLoadability.Tests.ps1` counts the mandatory-configuration cost of
+every such mapping so a fourth cannot be added unnoticed. The mitigation is still being adjudicated.
 
 
 ## [1.31.1] - 2026-08-13
