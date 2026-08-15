@@ -52,16 +52,26 @@ Describe 'Daemon serve loop survives an abandoned reply -- the mechanism (dispat
         . (Join-Path $script:DsPluginRoot 'scripts/lib/lsp-common.ps1')
 
         # Read PipeStream's private state field, so the RED can be ATTRIBUTED to the state
-        # transition rather than merely correlated with it. Best-effort: a runtime that
-        # renames the field yields 'unknown' and only the observable assertions carry.
+        # transition rather than merely correlated with it.
+        #
+        # DIAGNOSTIC ONLY, and every assertion below is written so that it still means
+        # something when this returns 'unknown'. The field is named `_state` on .NET (pwsh 7)
+        # and `m_state` on .NET Framework (Windows PowerShell 5.1), and a future runtime is
+        # free to rename it again -- so a test that asserted on this value would be asserting
+        # on a private implementation detail of the BCL. Both names are tried; the observable
+        # accept outcome is what the guards actually key on.
         function script:Get-PipeInternalState {
             param($Server)
-            try {
-                $t = $Server.GetType()
-                $f = $t.GetField('_state', [Reflection.BindingFlags]'NonPublic,Instance')
-                while ($null -eq $f -and $null -ne $t.BaseType) { $t = $t.BaseType; $f = $t.GetField('_state', [Reflection.BindingFlags]'NonPublic,Instance') }
-                if ($null -ne $f) { return [string]$f.GetValue($Server) }
-            } catch { }
+            foreach ($name in @('_state', 'm_state')) {
+                try {
+                    $t = $Server.GetType()
+                    while ($null -ne $t) {
+                        $f = $t.GetField($name, [Reflection.BindingFlags]'NonPublic,Instance')
+                        if ($null -ne $f) { return [string]$f.GetValue($Server) }
+                        $t = $t.BaseType
+                    }
+                } catch { }
+            }
             return 'unknown'
         }
 
@@ -174,7 +184,14 @@ Describe 'Daemon serve loop survives an abandoned reply -- the mechanism (dispat
     Context 'RED -- the pre-fix shape leaves the daemon unable to serve the next client' {
 
         It 'the IsConnected-guarded Disconnect does NOT return the stream to a usable state' {
-            $script:RedStateAfterFinally | Should -Not -BeExactly 'Disconnected' -Because 'the guard skips, so the stream is left exactly as the failed write left it'
+            # Keyed on the OBSERVABLE outcome, because the private state field is not a stable
+            # cross-runtime surface: a "not Disconnected" assertion would pass vacuously on any
+            # host where the field cannot be read. The internal state is reported for the
+            # reader and only asserted where it is genuinely knowable.
+            $script:RedAccept.CanAccept | Should -BeFalse -Because 'the guard skips, so the stream is left exactly as the failed write left it'
+            if ($script:RedStateAfterFinally -ne 'unknown') {
+                $script:RedStateAfterFinally | Should -Not -BeExactly 'Disconnected'
+            }
             Write-Host "  RED state after the pre-fix finally: $($script:RedStateAfterFinally)"
         }
 
@@ -192,8 +209,15 @@ Describe 'Daemon serve loop survives an abandoned reply -- the mechanism (dispat
             Write-Host "  GREEN reset reason: $($script:GreenReset.Reason)"
         }
 
-        It 'the stream is Disconnected afterwards, not left Broken' {
-            $script:GreenStateAfterFinally | Should -BeExactly 'Disconnected'
+        It 'the stream is left in a reusable state, not Broken' {
+            # Same discipline as its RED twin: the observable outcome is the assertion, and the
+            # private state field is asserted only where the runtime exposes it under a name
+            # this test knows (`_state` on .NET, `m_state` on .NET Framework).
+            $script:GreenAccept.CanAccept | Should -BeTrue
+            if ($script:GreenStateAfterFinally -ne 'unknown') {
+                $script:GreenStateAfterFinally | Should -BeExactly 'Disconnected'
+            }
+            Write-Host "  GREEN state after the fixed finally: $($script:GreenStateAfterFinally)"
         }
 
         It 'and the NEXT accept SUCCEEDS -- one abandoned reply is one discarded write' {
@@ -287,11 +311,15 @@ Describe 'Integration: the real daemon survives an abandoned reply (dispatch 000
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
         $psi.CreateNoWindow = $true
-        foreach ($a in @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $daemon,
-                '-SessionId', $script:DsSid, '-PsHost', 'pwsh', '-DataRoot', $script:DsDataRoot,
-                '-IdleTtlMin', '5')) {
-            [void]$psi.ArgumentList.Add($a)
-        }
+        # Add-ProcessArguments, NOT $psi.ArgumentList.Add. ProcessStartInfo.ArgumentList does
+        # not exist on .NET Framework, so on the windows-powershell leg $psi.ArgumentList is
+        # $null and the .Add() throws "You cannot call a method on a null-valued expression"
+        # inside BeforeAll -- which fails the whole Describe rather than one It. The shipped
+        # helper (scripts/lib/lsp-common.ps1) already handles both hosts and is dot-sourced
+        # above; every other integration block in this suite uses it for the same reason.
+        Add-ProcessArguments $psi @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $daemon,
+            '-SessionId', $script:DsSid, '-PsHost', 'pwsh', '-DataRoot', $script:DsDataRoot,
+            '-IdleTtlMin', '5')
         $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $script:DsDataRoot
         $script:DsProc = [System.Diagnostics.Process]::Start($psi)
         $null = $script:DsProc.StandardOutput.ReadToEndAsync()
