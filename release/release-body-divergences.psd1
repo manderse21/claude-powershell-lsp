@@ -66,5 +66,20 @@ correction is applied, and that is the maintainer's gate.
 '@
         }
 
+
+        @{
+            Tag             = 'v1.18.1'
+            Since           = '2026-08-15'
+            PublishedSha256 = 'e3edd3cd08543ecd4e45d3caf21462658595048a9942ef9f6d6b89e15cf68c45'
+            Reason = @'
+This release was published RETROACTIVELY on 2026-08-15 (GH-AUDIT-024, commit
+576cae8) to close a gap in the published history. Its body opens with a
+prepended banner explaining the retroactive publication, which the CHANGELOG
+entry it was cut from does not and never will carry. The two texts cannot be
+made to agree without rewriting the shipped banner, which this project does
+not do. Not tracked as debt to fix -- the divergence is permanent by
+construction, the same shape as the v1.29.0 and v1.27.1 rows above.
+'@
+        }
     )
 }
