@@ -95,32 +95,14 @@ human-readable text report.
 ```powershell
 # Scan a directory, emit SARIF for code scanning (the default format):
 pwsh -File scripts/lsp-scan.ps1 ./src -OutputPath results.sarif
-
-# Scan a single file, human-readable text:
-pwsh -File scripts/lsp-scan.ps1 ./build.ps1 -Format text
-
-# Fail the build (exit 2) if any warning-or-worse finding is present:
-pwsh -File scripts/lsp-scan.ps1 ./src -Format text -FailOn warning
 ```
 
-**One engine, in-agent and in-CI.** The scan is a *sibling* invocation of the exact path the
-PostToolUse hook uses -- same warm daemon, same `scripts/lsp-client.ps1`, same pinned
-SHA-256-verified analyzer -- so a finding is identical whether it surfaces while Claude edits or
-in your CI. A test (`tests/PowerShellLsp.SarifScan.Tests.ps1`) runs the whole correctness corpus
-through the scan entry point and asserts its findings match the in-agent snapshots exactly.
+The scan is a *sibling* invocation of the exact path the PostToolUse hook uses, so a finding is
+identical whether it surfaces while Claude edits or in your CI.
 
-Only `.ps1` / `.psm1` / `.psd1` are scanned; a directory recurses by default (`-NoRecurse` limits
-to the top level). Severity maps honestly to SARIF's four levels (Error -> `error`, Warning ->
-`warning`, Information and Hint -> `note`; nothing maps to `none`, and an unknown severity maps to
-`warning` so a finding is never silently dropped). Exit codes: `0` completed, `2` `-FailOn`
-threshold met, `3` usage error, `4` scan incomplete (an unanalyzed file is never reported clean).
-
-**This repository scans itself.** `.github/workflows/powershell-lsp-code-scanning.yml` uploads
-SARIF to GitHub code scanning on every push to `main`, weekly, and on demand -- a separate
-workflow from the CI legs, so it can never turn a merge gate red. Copy it as a starting point;
-two details are deliberate: it scans `scripts/` rather than the repo root (because
-`tests/corpus/samples/` is deliberately-bad code), and it pins `upload-sarif` by **commit SHA**,
-not by tag.
+Full text -- the other invocations, the SARIF severity mapping, the exit codes, and the workflow
+this repository uses to scan itself -- is in
+[docs/repository-scanning.md](docs/repository-scanning.md).
 
 ### Commands
 
@@ -263,26 +245,12 @@ checked" banner, so even the no-pipe case is never silent.
 Measured on `pwsh` 7.6.3, Windows 11 Pro, at the **v1.24.3** build, on 2026-07-17:
 **warm-path latency** (edit -> diagnostic round-trip) has a **median of 2228 ms** and a **p95 of
 2463 ms** over **30 iterations**. A figure without its sample size is not evidence, which is why
-the n travels with it.
+the n travels with it. **Cold-start latency is deliberately not published**, because it is not
+currently measured to publication standard.
 
-**Cold-start latency is not published here, because it is not currently measured to publication
-standard.** The benchmark harness excludes cold start deliberately, so the repository holds no
-cold-start measurement to quote. Cold start *is* threshold-guarded in
-`tests/PowerShellLsp.Benchmark.Tests.ps1`, but a guard threshold is chosen to be generous and is
-not a measurement; publishing it as one would render *not currently measured* as a measurement --
-precisely the failure the plugin's own four-state diagnostic model exists to prevent, applied here
-to the README. Publishing a cold-start number would require a cold-start path in the harness,
-reported with its sample size, host, and build on the same footing as the warm figure above.
-
-A v1.12.0-era note attributed roughly 0.7 s of the warm path to the per-hook `pwsh` process spawn
-that Claude Code pays regardless of plugin code. That attribution has **not** been re-measured
-against the figures above, so it is recorded with its original vintage rather than restated as
-current.
-
-These latencies are **measured and guarded in CI** by a repeatable benchmark harness
-(`tests/PowerShellLsp.Benchmark.Tests.ps1`) on all four CI legs, which emits structured results
-and fails if a median regresses past a threshold. Full numbers and method:
-[docs/benchmarks.md](docs/benchmarks.md).
+Full text -- why the cold-start number is withheld, the un-re-measured v1.12.0 spawn attribution,
+and how CI guards these medians -- is in [docs/performance.md](docs/performance.md); the harness,
+method, and full numbers are in [docs/benchmarks.md](docs/benchmarks.md).
 
 ## How it works (warm-start daemon)
 
@@ -290,80 +258,40 @@ Diagnostics are delivered through a **PostToolUse hook backed by a warm, per-ses
 one PSES stays hot for the whole session, so each edit pays a pipe round-trip instead of a cold
 PSES start.
 
-```text
-SessionStart  -> scripts/session-start.ps1
-                   ensure-pses.ps1   (idempotent PSES bootstrap, pinned tag)
-                   ensure-pssa.ps1   (idempotent PSScriptAnalyzer vendor, pinned)
-                   log sweep, reap OUR stale daemons (recorded pids only, verified)
-                   launch scripts/pses-daemon.ps1  (one warm PSES via -Stdio;
-                     named pipe powershell-lsp-<sessionid>)
-
-PostToolUse   -> scripts/lsp-client.ps1
-                   read hook JSON (session_id, file_path) from stdin
-                   connect to the pipe, request diagnostics for the edited file
-                   daemon: didOpen/didChange -> wait for the SETTLED PSScriptAnalyzer
-                     publish (not the early parser publish) -> debounce
-                   return deduped, severity-sorted diagnostics via additionalContext
-
-SessionEnd    -> scripts/session-end.ps1
-                   pipe {shutdown} -> daemon sends LSP shutdown/exit to PSES, exits
-```
-
-All scripts run `-NoLogo -NoProfile`, write nothing to stdout on the daemon/LSP path, and keep all
-state, logs, and pids under `CLAUDE_PLUGIN_DATA` only. The full flow from edit to banner is in
-[ARCHITECTURE.md](./ARCHITECTURE.md).
+Full text -- the SessionStart / PostToolUse / SessionEnd flow diagram and the stdout and state
+rules that go with it -- is in [docs/warm-daemon.md](docs/warm-daemon.md). The full flow from edit
+to banner is in [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## Why a hook, not native `.lsp.json` registration
 
-Claude Code declares plugin language servers through an inline `lspServers` block in
-`plugin.json`. This plugin carries that block, and as of v1.18.1 the manifest-side blocker that
-kept it from registering is removed -- so native **registration** is no longer the obstacle. The
-plugin still ships diagnostics over a **warm PostToolUse hook** for one reason: **registration is
-restored, but end-to-end serve is not.** Claude Code's LSP client rejects the standard
-server-to-client requests PSES sends during initialization (the `#1359`-class handshake), so on
-the **direct** path init times out and native nav does not serve -- gated upstream, not on this
-plugin's launcher. The opt-in [`nativeServe = shim`](#2-native-code-navigation-opt-in) closes that
-gap locally.
+Native **registration** works as of v1.18.1; end-to-end **serve** does not. Claude Code's LSP
+client rejects the standard server-to-client requests PSES sends during initialization (the
+`#1359`-class handshake), so the direct path times out -- gated upstream, not on this plugin's
+launcher. The opt-in [`nativeServe = shim`](#2-native-code-navigation-opt-in) closes that gap
+locally.
 
-The full history -- the marketplace packaging gap, the registration race, and the two manifest
-fields (`restartOnCrash`, `shutdownTimeout`) that Claude Code's registrar silently drops (now
-CI-guarded) -- plus the 23-probe methodology matrix and the standalone
-[`docs/lsp.json.template`](docs/lsp.json.template), are in
-[`docs/upstream/claude-code-lsp-registration.md`](docs/upstream/claude-code-lsp-registration.md).
-
-> **Heads-up for when serve lands -- duplicate diagnostics.** If native serving ever completes
-> (the upstream init handshake is fixed) while the PostToolUse hook is also enabled, each
-> diagnostic could arrive twice. Use one path or the other.
+Full text -- the registration-versus-serve distinction, the duplicate-diagnostics heads-up for
+when serve lands, and the pointer to the 23-probe methodology matrix -- is in
+[docs/native-registration.md](docs/native-registration.md).
 
 ## Pinned versions
 
-| Component         | Version  | Pinned in                 | Source                                  |
-|-------------------|----------|---------------------------|-----------------------------------------|
-| PSES              | `v4.6.0` | `scripts/ensure-pses.ps1` (`$PsesTag`)     | GitHub release `PowerShellEditorServices.zip` |
-| PSScriptAnalyzer  | `1.25.0` | `scripts/ensure-pssa.ps1` (`$PssaVersion`) | PowerShell Gallery                      |
+Two components are downloaded on first use, each pinned by version **and** SHA-256: PSES `v4.6.0`
+(`scripts/ensure-pses.ps1`) and PSScriptAnalyzer `1.25.0` (`scripts/ensure-pssa.ps1`).
 
-To bump either, change the single pin variable named above and start a fresh session (the
-ensure-step re-vendors at the new version, keyed by a per-version marker). See
-[CHANGELOG](./CHANGELOG.md#versioning) for how a bump maps to SemVer.
-
-In CI the pinned PSScriptAnalyzer `.nupkg` is cached (keyed by the pinned version **and**
-SHA-256), but the integrity pin stays load-bearing on every path: a restored `.nupkg` runs through
-the same SHA-256 verification as a fresh download, and a poisoned or stale entry fails closed. The
-cache is a transport optimization, never a trust shortcut.
+Full text -- the pin table, how to bump either pin, and why the CI `.nupkg` cache is a transport
+optimization and never a trust shortcut -- is in
+[docs/pinned-versions.md](docs/pinned-versions.md); the hash table is in [TRUST.md](./TRUST.md).
 
 ## Platform support
 
 As of 1.1.1 the **hooks require `pwsh` (PowerShell 7)**. Windows PowerShell 5.1 is supported as
-the **PSES child host** (set `ps_host` to `powershell`), not as the hook interpreter.
+the **PSES child host** (set `ps_host` to `powershell`), not as the hook interpreter. CI runs the
+Pester suite -- including the full warm-daemon integration suite -- green on a four-leg matrix:
+**Windows `pwsh` 7**, **Windows PowerShell 5.1**, **Ubuntu `pwsh`**, and **macOS `pwsh`**.
 
-CI runs the Pester suite on a four-leg matrix: **Windows `pwsh` 7**, **Windows PowerShell 5.1**,
-**Ubuntu `pwsh`**, and (as of 1.3.0) **macOS `pwsh`**. The full warm-daemon **integration suite**
-runs and is **green on all four legs**, so the Linux and macOS daemon paths are CI-verified, not
-merely authored. The 5.1 leg's distinct value is exercising the **shared-library surface under
-5.1** -- file-URI casing, BOM-tolerant stdin, the `ArgumentList`-vs-quoted-`.Arguments` split, and
-the config-env fallback. The scripts are cross-platform: paths go through `Join-Path`, the single
-Windows-only call is guarded behind `Test-OnWindows` with Linux `/proc` and macOS `ps` fallbacks,
-and the transport is `System.IO.Pipes`.
+Full text -- what each leg proves and how the scripts stay cross-platform -- is in
+[docs/platform-support.md](docs/platform-support.md).
 
 ## Diagnostic-correctness corpus
 
@@ -414,30 +342,12 @@ form that still works **outside** a session, where the slash command does not ex
 pwsh -File scripts/doctor.ps1   # out-of-session (several checks then report UNKNOWN)
 ```
 
-It verifies, in order: PowerShell 7 (`pwsh`) is present and new enough; the plugin is enabled; the
-PSES bundle and PSScriptAnalyzer finished bootstrapping; the first-run download hosts are
-reachable; the **warm per-session daemon** is alive and answering on its named pipe; **which rule
-set is actually active** here and which config layer won it; whether a **real diagnostic is
-observed end-to-end**; and whether **native navigation** is on. Each check reports `PASS`, a
-specific failure with the fix, or an honest `UNKNOWN` when it genuinely cannot determine (run
-outside a Claude Code session it cannot see the plugin data directory, so several checks report
-`UNKNOWN`; run it from inside an enabled session for a definitive result).
+Each check reports `PASS`, a specific failure with the fix, or an honest `UNKNOWN` when it
+genuinely cannot determine. The doctor is **report-only**: it never downloads, repairs, runs the
+bootstrap, or starts/restarts anything.
 
-The last three answer questions the others structurally cannot. The daemon check's liveness ping is
-answered *without* touching the language server, so a daemon can be alive, answering, and analyzing
-nothing -- the **end-to-end check** closes that by sending a synthetic file with a deliberate defect
-through the same warm daemon your edits use and requiring the expected finding back. It is the one
-check that can report a `FAIL` for a *settled* analysis that produced nothing, because "analyzed,
-clean" when nothing was analyzed is the failure this plugin exists to prevent. The probe writes only
-to a temp directory, never starts a daemon, and leaves nothing behind. The **active ruleset** check
-explains the most common confusion -- you set `ruleset = base`, see nothing new, and a repo-local
-`PSScriptAnalyzerSettings.psd1` was legitimately winning all along.
-
-The daemon check **observes only** -- it never starts, restarts, or kills the daemon -- and it is
-honest about the auto-relaunch design: **no daemon running** reports `PASS` (one auto-relaunches
-on your next edit), while a daemon that is alive but parked `unavailable` / `degraded`, or alive
-but not answering its pipe, is a `FAIL` with the restart remedy. The doctor is **report-only**: it
-never downloads, repairs, runs the bootstrap, or starts/restarts anything.
+Full text -- every check in order, why the end-to-end and active-ruleset checks exist, and the
+observe-only daemon-check contract -- is in [docs/preflight-doctor.md](docs/preflight-doctor.md).
 
 **Common symptoms** -- `'pwsh' is not recognized`, a leftover user-level PSES hook doubling up,
 `Executable not found in $PATH` in the `/plugin` Errors tab, no diagnostics at all, a failing
@@ -476,7 +386,10 @@ gh attestation verify powershell-lsp-1.17.0.tar.gz --repo manderse21/claude-powe
 **source archive** -- it proves the release came untampered from this repository's pipeline. It is
 **not** Windows Authenticode and does **not** assert a Windows verified-publisher identity (no
 SmartScreen reputation, no signed-script trust); Authenticode signing is deliberately not pursued
-for a git-distributed plugin. That is the correct boundary here: the integrity of the normal
+for a git-distributed plugin. **If your estate requires signed scripts, sign them with your own
+certificate:** `pwsh -File scripts/sign-plugin.ps1 -Thumbprint <your-code-signing-thumbprint>` --
+see [TRUST.md, "Sign it yourself"](./TRUST.md#sign-it-yourself-the-org-certificate-paved-path).
+That is the correct boundary here: the integrity of the normal
 `/plugin` install path rests on the **git commit and the keyless-signed tag** themselves, not on
 the archive. The step-by-step walkthrough (including verifying the tag with `gitsign`, with sample
 output) is in [SECURITY.md](./SECURITY.md#verifying-release-integrity), and exactly what the
@@ -537,11 +450,38 @@ leg, and version-matched, then cuts the keyless gitsign-signed tag and publishes
 with CHANGELOG-sourced notes, an SBOM, and a provenance attestation. See
 [docs/RELEASING.md](docs/RELEASING.md).
 
+## Where everything lives
+
+This README is the pitch, the quickstart, the honest-status model, and this map. Every deep dive is
+one click away.
+
+| What you want | Where it lives |
+|---|---|
+| Every knob -- allowed values, precedence, guards, edge cases | [docs/configuration.md](docs/configuration.md) |
+| How the warm daemon starts, serves, and shuts down | [docs/warm-daemon.md](docs/warm-daemon.md) |
+| Why a hook rather than native `.lsp.json` registration | [docs/native-registration.md](docs/native-registration.md) |
+| Whole-repository and CI scanning -- SARIF, exit codes, the self-scan workflow | [docs/repository-scanning.md](docs/repository-scanning.md) |
+| Measured latency, and the figure deliberately withheld | [docs/performance.md](docs/performance.md), [docs/benchmarks.md](docs/benchmarks.md) |
+| What the preflight doctor checks, and what it refuses to do | [docs/preflight-doctor.md](docs/preflight-doctor.md) |
+| A specific symptom and its fix | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| Which hosts are supported, and what each CI leg proves | [docs/platform-support.md](docs/platform-support.md) |
+| The pinned components, and how to bump one | [docs/pinned-versions.md](docs/pinned-versions.md) |
+| The quirks that bite when changing the runtime | [docs/DEV_NOTES.md](docs/DEV_NOTES.md) |
+| Dogfood capture and the offline review tool | [docs/dogfood.md](docs/dogfood.md) |
+| What runs locally, what is downloaded, the signing posture | [TRUST.md](./TRUST.md), [docs/trust.md](docs/trust.md) |
+| How a diagnostic flows from edit to banner | [ARCHITECTURE.md](./ARCHITECTURE.md) |
+| What is frozen in 1.x, and what a change costs | [CONTRACT.md](./CONTRACT.md) |
+| What changed, and when | [CHANGELOG.md](./CHANGELOG.md) |
+| What is next, blocked, and deferred | [ROADMAP.md](./ROADMAP.md) |
+| Why a decision was made (or declined) | [docs/decision-ledger.md](docs/decision-ledger.md) |
+| How a release is cut, and what provenance covers | [docs/RELEASING.md](docs/RELEASING.md) |
+| The single-maintainer bus factor and the fork path | [CONTINUITY.md](./CONTINUITY.md) |
+
 ## Contributing and development
 
 Contributions are welcome. Start with **[CONTRIBUTING.md](./CONTRIBUTING.md)** (prerequisites, how
 to run the suite, the test story), **[ARCHITECTURE.md](./ARCHITECTURE.md)** (how a diagnostic flows
-from edit to banner), and **[DEV_NOTES.md](./DEV_NOTES.md)** (the quirks that bite). What is next,
+from edit to banner), and **[docs/DEV_NOTES.md](docs/DEV_NOTES.md)** (the quirks that bite). What is next,
 blocked, and deferred is in **[ROADMAP.md](./ROADMAP.md)**. Found a false positive? The
 [report-a-false-positive form](./.github/ISSUE_TEMPLATE/false_positive_report.yml) feeds it
 straight into the correctness corpus. The single-maintainer bus factor and the open-source fork

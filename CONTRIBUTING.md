@@ -7,7 +7,7 @@ narrowly-scoped changes are the easiest to accept.
 ## Before you start
 
 - Read [ARCHITECTURE.md](./ARCHITECTURE.md) for how a diagnostic flows from edit to
-  banner, and [DEV_NOTES.md](./DEV_NOTES.md) for the quirks that bite (ASCII discipline,
+  banner, and [docs/DEV_NOTES.md](./docs/DEV_NOTES.md) for the quirks that bite (ASCII discipline,
   the 5.1 traps, the pipe-first daemon, the tool-derived corpus).
 - Read [CONTRACT.md](./CONTRACT.md) if your change touches a `userConfig` knob or a
   diagnostics status token -- those surfaces are frozen and drift-guarded.
