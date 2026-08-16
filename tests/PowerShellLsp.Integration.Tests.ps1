@@ -2496,7 +2496,14 @@ Describe 'Integration: poisoned PSSA .nupkg cache FAILS CLOSED on restore (dispa
 
     It 'refuses the poisoned cache: non-zero exit + a hash-mismatch integrity message on stderr' {
         $script:C_Result.ExitCode | Should -Not -Be 0
-        $script:C_Result.Err | Should -Match 'integrity check failed \(hash mismatch\); refusing unverified package'
+        # 000244 widened this message to NAME the source layer that produced the bad bytes
+        # ("...for the cache source..."), because "refresh your mirror" and "your bundle is
+        # corrupt" are different admin actions. Both load-bearing halves are still asserted
+        # separately, so the guard did not weaken when the wording grew.
+        $script:C_Result.Err | Should -Match 'integrity check failed \(hash mismatch\)'
+        $script:C_Result.Err | Should -Match 'refusing unverified package'
+        # ...and the layer it names for a poisoned CACHE must be the cache, not a guess.
+        $script:C_Result.Err | Should -Match 'for the cache source'
     }
     It 'does NOT install the unverified bytes: no vendored PSScriptAnalyzer manifest, no .ok marker' {
         $manifest = Get-ChildItem -LiteralPath $script:C_Modules -Recurse -Filter 'PSScriptAnalyzer.psd1' -File -ErrorAction SilentlyContinue
