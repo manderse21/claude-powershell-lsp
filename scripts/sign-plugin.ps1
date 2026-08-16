@@ -117,6 +117,25 @@ function Write-Line {
     Write-Host $Message
 }
 
+function Write-FatalError {
+    # EVERY operator-facing message -- including the failures -- goes to the SAME stream as the
+    # report, and the EXIT CODE is the contract. Two reasons, both learned the hard way:
+    #
+    #   1. This script sets $ErrorActionPreference = 'Stop', which makes Write-Error TERMINATING.
+    #      An `exit 1` written after one is dead code: the script dies through the error path
+    #      instead, so the exit code it meant to return was never the one it actually returned.
+    #   2. On Windows PowerShell 5.1 a caller that captures this script's stderr with `2>&1` gets
+    #      an ErrorRecord, not a line of text, and that record THROWS in the caller when its own
+    #      preference is Stop. PowerShell 7 does not behave that way, so the split-stream design
+    #      passed three legs and failed only 5.1 -- exactly the asymmetry this repository exists
+    #      to catch.
+    param([Parameter(Mandatory)][string] $Message)
+    Write-Line
+    Write-Line ('  ERROR: ' + $Message)
+    Write-Line
+    exit 1
+}
+
 function Get-SigningSurfaceFile {
     # DERIVE the surface from the live tree. Walks each root recursively and keeps .ps1 and
     # .psm1. Returns objects carrying the absolute path and a display path relative to the
@@ -288,8 +307,7 @@ if (-not (Test-SignOnWindows)) {
 
 if ([string]::IsNullOrWhiteSpace($PluginRoot)) { $PluginRoot = (Split-Path -Parent $PSScriptRoot) }
 if (-not (Test-Path -LiteralPath $PluginRoot -PathType Container)) {
-    Write-Error ('sign-plugin: -PluginRoot does not name a directory: ' + $PluginRoot)
-    exit 1
+    Write-FatalError ('-PluginRoot does not name a directory: ' + $PluginRoot)
 }
 $PluginRoot = (Resolve-Path -LiteralPath $PluginRoot).ProviderPath
 
@@ -320,10 +338,8 @@ Write-Line ('  files found : ' + @($files).Count)
 if (@($files).Count -eq 0) {
     # A zero-file surface must never report success: an empty sweep is the shape in which
     # "every file is signed" is true and meaningless.
-    Write-Line
-    Write-Error ('sign-plugin: the surface is EMPTY -- no .ps1 or .psm1 found under ' +
-                 (@($roots) -join '; ') + '. Point -PluginRoot at an installed plugin copy, or pass -Path.')
-    exit 1
+    Write-FatalError ('the surface is EMPTY -- no .ps1 or .psm1 found under ' +
+                    (@($roots) -join '; ') + '. Point -PluginRoot at an installed plugin copy, or pass -Path.')
 }
 
 # --- verify-only path ------------------------------------------------------
@@ -349,24 +365,18 @@ if ($VerifyOnly) {
 try {
     $resolved = Resolve-SigningCertificate -Thumbprint $Thumbprint -PfxPath $PfxPath -PfxPassword $PfxPassword
 } catch {
-    Write-Line
-    Write-Error ('sign-plugin: ' + $_.Exception.Message)
-    exit 1
+    Write-FatalError ($_.Exception.Message)
 }
 $cert = $resolved.Certificate
 
 if (-not $cert.HasPrivateKey) {
-    Write-Line
-    Write-Error ('sign-plugin: the certificate ' + $cert.Thumbprint + ' has no accessible private key, so it cannot sign. ' +
-                 'Import the PFX (private key included) into your certificate store, or pass -PfxPath.')
-    exit 1
+    Write-FatalError ('the certificate ' + $cert.Thumbprint + ' has no accessible private key, so it cannot sign. ' +
+                    'Import the PFX (private key included) into your certificate store, or pass -PfxPath.')
 }
 if (-not (Test-CodeSigningEku -Certificate $cert)) {
-    Write-Line
-    Write-Error ('sign-plugin: the certificate ' + $cert.Thumbprint + ' does not carry the Code Signing EKU ' +
-                 '(1.3.6.1.5.5.7.3.3). Windows will refuse signatures made with it. Use your organization''s ' +
-                 'code-signing certificate.')
-    exit 1
+    Write-FatalError ('the certificate ' + $cert.Thumbprint + ' does not carry the Code Signing EKU ' +
+                    '(1.3.6.1.5.5.7.3.3). Windows will refuse signatures made with it. Use your organization''s ' +
+                    'code-signing certificate.')
 }
 
 Write-Line ('  certificate : ' + $cert.Subject)

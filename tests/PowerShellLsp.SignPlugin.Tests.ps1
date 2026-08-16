@@ -65,9 +65,22 @@ BeforeAll {
         # lines. Out-String is given a wide -Width on purpose: at the default console width it
         # wraps, and a wrapped line defeats a per-line needle for reasons that have nothing to
         # do with the behavior under test.
+        #
+        # $ErrorActionPreference is forced to Continue for the duration of the call. On Windows
+        # PowerShell 5.1, `2>&1` on a NATIVE command turns each stderr line into an ErrorRecord
+        # rather than a string, and an ErrorRecord arriving while the preference is Stop THROWS
+        # in this caller -- so the helper writing a single line to stderr would abort the test
+        # instead of being captured and asserted on. PowerShell 7 does not behave that way,
+        # which is precisely how a split-stream design can pass three legs and fail only 5.1.
         param([Parameter(Mandatory)][AllowEmptyCollection()][string[]] $Argument)
         $all = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:SpScript) + $Argument
-        $raw = (& $script:SpHost @all 2>&1 | Out-String -Width 500)
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $raw = (& $script:SpHost @all 2>&1 | Out-String -Width 500)
+        } finally {
+            $ErrorActionPreference = $prev
+        }
         return [pscustomobject]@{
             ExitCode = $LASTEXITCODE
             Text     = $raw
@@ -163,6 +176,31 @@ Describe 'sign-plugin.ps1 -- the file itself (every leg)' {
                 $_.ParameterName -ieq 'Recurse' }).Count -gt 0)
         }, $true))
         @($recursiveWalks).Count | Should -BeGreaterThan 0
+    }
+
+    It 'routes every failure through the exit code, never through a terminating Write-Error' {
+        # The helper sets $ErrorActionPreference = 'Stop', which makes Write-Error TERMINATING --
+        # so an `exit <n>` written after one is dead code and the intended exit status is never
+        # the one returned. It also splits the report across stdout and stderr, which on Windows
+        # PowerShell 5.1 turns a captured line into a throwing ErrorRecord in the caller. Both
+        # are structural, so this is asserted structurally rather than left to a behavior test
+        # that only fires on one leg.
+        $parsed = Get-SpParseResult -FilePath $script:SpScript
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:SpScript, [ref]$null, [ref]$null)
+        @($parsed.Errors).Count | Should -Be 0
+        $writeErrors = @($ast.FindAll({
+            param($n)
+            ($n -is [System.Management.Automation.Language.CommandAst]) -and
+            (([string]$n.GetCommandName()) -ieq 'Write-Error')
+        }, $true))
+        @($writeErrors).Count | Should -Be 0
+
+        # And the exits it does take are a bounded, documented set: 0 success, 1 fail-closed,
+        # 2 wrong host. A payload floor keeps this from passing over a script with no exits.
+        $exits = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.ExitStatementAst] }, $true))
+        @($exits).Count | Should -BeGreaterThan 3
+        $codes = @($exits | ForEach-Object { [string]$_.Pipeline.Extent.Text } | Select-Object -Unique | Sort-Object)
+        $codes -join ',' | Should -BeExactly '0,1,2'
     }
 
     It 'is wired into no runtime entry point (it is operator tooling, invoked by an admin)' {
