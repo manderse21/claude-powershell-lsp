@@ -131,6 +131,57 @@ download cannot complete (offline / proxy) does it fall back to `Save-Module`, w
 on the PowerShell Gallery's own publisher/catalog integrity. A hash **mismatch** never
 falls back -- it fails closed.
 
+### Where the bytes may come from (sources are transport, pins are trust)
+
+The URLs above are the **default** source, not the only permitted one. An administrator may
+point the plugin at an internal mirror or at artifacts pre-staged on local disk, and one
+source has always existed for CI: a pinned-`.nupkg` cache directory
+(`POWERSHELL_LSP_PSSA_CACHE`). Full resolution order, per artifact, first hit wins:
+
+| Order | Layer | Configured by |
+|---|---|---|
+| 1 | Internal HTTPS mirror | `POWERSHELL_LSP_ARTIFACT_MIRROR_BASE` |
+| 2 | Pre-staged local bundle | `POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR` |
+| 3 | The default download in the table above (for PSScriptAnalyzer, via the `POWERSHELL_LSP_PSSA_CACHE` cache when set) | -- |
+
+**This adds no trust and removes none.** Whichever layer supplies an artifact, it is verified
+against the **same SHA-256 pin** by the same `Test-PinnedFileHash` call before it is used. The
+pins in the two `ensure-*` scripts remain the **only trust root**; a mirror, a bundle, and a
+cache are transport, and none of them can become a trust root. Three properties make that
+checkable rather than merely asserted:
+
+- **A pin mismatch on any layer fails closed, and never falls through to another layer.** A
+  tampered mirror artifact fails exactly as a tampered download does. Falling through would let
+  anyone controlling one layer force a downgrade onto the next, and would turn a tamper signal
+  into a retry. The failure banner **names the layer** that produced the bad bytes.
+- **Nothing in a bundle is a trust input.** The bundle's `MANIFEST.txt` documents the pins for a
+  human; the bootstrap verifies against its own copy of them and never reads the manifest to
+  decide anything. A manifest that could override a pin would be precisely the shortcut this
+  design refuses.
+- **With no source configured, behavior is byte-for-byte unchanged** -- no extra network call
+  and no extra disk read. The "no network access at all after first-run bootstrap" property
+  above is unaffected in every configuration: these layers change *where* the one-time
+  first-run fetch may be satisfied from, never *whether* later sessions reach the network.
+
+The one acquisition route these pins do **not** gate is the `Save-Module` fallback named just
+above, which rests on the Gallery's publisher/catalog integrity instead. It is reported
+distinctly by `/doctor` (as `gallery-fallback`) rather than being presented as a pinned source.
+
+**Offline installation is two independently verifiable artifacts, not one.** Every release
+publishes `powershell-lsp-airgap-<version>.zip` -- the two pinned dependencies plus a manifest of
+their pins -- covered by the same SLSA provenance attestation as the source archive. It
+deliberately does **not** contain the plugin's own source, which is already published as its own
+attested asset; bundling a second copy would create two attested paths to the same bytes. An
+air-gapped administrator therefore transfers **the plugin source** (a clone, or
+`powershell-lsp-<version>.tar.gz`) **and this bundle**, verifying each:
+
+```
+gh attestation verify powershell-lsp-airgap-<version>.zip --repo manderse21/claude-powershell-lsp
+```
+
+Setup, including how to stage a bundle fleet-wide, is in
+[docs/configuration.md](docs/configuration.md#offline-and-air-gapped-installation).
+
 ## Supply-chain artifacts: SBOM + build provenance
 
 Every tagged release publishes, on the GitHub Release:

@@ -76,7 +76,11 @@ Real work that is deliberately not moving, each waiting on a named thing rather 
   outputs waits on real efficacy data existing and on a real consumer to read it.
 - **Enterprise control plane.** Policy distribution and fleet rollup, continuing the shipped
   `orgPolicy` knob. **Demand-paced:** one slice per real adoption signal, never built ahead of a
-  consumer.
+  consumer. An adoption signal arrived -- a corporate-IT review ranked runtime dependency
+  downloads with no offline path as the top tractable adoption blocker -- and the offline /
+  air-gapped bootstrap slice answers it: layered artifact sources feeding the existing pin check,
+  and an attested airgap bundle. The lane stays demand-paced; the next slice waits on the next
+  signal, as this one did.
 - **Scale and robustness.** A performance harness and characterized very-large-repo behavior.
   **On-demand:** it moves when a real scale problem is reported.
 - **Deeper rule curation and fix-suggestion quality.** Paced by the dogfood log and gated on real

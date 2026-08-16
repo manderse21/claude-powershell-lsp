@@ -22,6 +22,27 @@ section below.
   hooks launch under PowerShell 7. Install it (`winget install Microsoft.PowerShell`)
   -- Windows PowerShell 5.1 alone cannot launch the hooks. (`ps_host` only selects the
   PSES *child* host, not the hook interpreter.)
+- **Bootstrap fails with `integrity check FAILED for the mirror source` (or `bundle`):**
+  the artifact that layer served does not match the pinned SHA-256, so it was refused. This
+  **fails closed on purpose** and deliberately does **not** fall through to another source --
+  a mismatch is a tamper signal, not a reason to retry elsewhere. Usually the mirror or bundle
+  is **stale** after a pin bump: re-stage it from the `powershell-lsp-airgap-<version>.zip`
+  asset for the version you are running. Check with `/doctor` ("Offline readiness"), which
+  hashes staged artifacts against the pins and names the offending file.
+- **`Offline readiness` reports the bundle is missing an artifact:** the directory
+  `POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR` points at does not hold every pinned file. Filenames are
+  version-qualified (`PowerShellEditorServices-v4.6.0.zip`,
+  `PSScriptAnalyzer-1.25.0.nupkg`), so a bundle staged for an older pin will not satisfy a newer
+  one. Unpack the current release's airgap bundle into that directory.
+- **A configured mirror or bundle is ignored entirely:** the value was refused as unusable
+  rather than silently used. `POWERSHELL_LSP_ARTIFACT_MIRROR_BASE` must be an `https://` URL;
+  `POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR` must be an **absolute** path to a directory that exists.
+  `/doctor` names the exact reason. Note these are environment variables, **not** `/plugin`
+  config knobs -- setting them in the config panel does nothing.
+- **Air-gapped install still reaches for the network:** a layer *miss* (a 404ing mirror, or a
+  bundle that lacks the file) legitimately falls through to the default download. Confirm the
+  staged filenames match exactly, then re-check `/doctor` -- "Artifact source" reports which
+  layer actually produced the installed dependencies.
 - **A leftover user-level PSES hook fires alongside the plugin (duplicate or
   conflicting diagnostics):** if you previously wired a PowerShell diagnostics hook
   directly in `~/.claude/settings.json` (a pre-plugin setup), remove it -- the plugin
