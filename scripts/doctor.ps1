@@ -269,6 +269,137 @@ function Test-DoctorPssa {
             -Remediation 'Start a fresh session so ensure-pssa re-vendors the analyzer; see logs/ensure-pssa.log (README: Diagnostics status, "degraded").')
 }
 
+function Get-DoctorMarkerLayer {
+    # Read the artifact-source layer an ensure-script recorded in its install marker (000244).
+    # Returns '' for every ambiguous outcome -- absent marker, empty marker (every marker written
+    # before 000244), unreadable file -- so the caller reports an honest UNKNOWN instead of
+    # turning a read failure into a claim about provenance.
+    #
+    # The value is CONSTRAINED to the known layer vocabulary. A marker is a file under a
+    # user-writable data directory; echoing arbitrary content of it into the doctor's output
+    # would let that file dictate what the diagnostic says.
+    param([string] $MarkerPath)
+    try {
+        if ([string]::IsNullOrWhiteSpace($MarkerPath)) { return '' }
+        if (-not (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) { return '' }
+        $raw = (Get-Content -LiteralPath $MarkerPath -Raw -ErrorAction Stop)
+        if ($null -eq $raw) { return '' }
+        $value = $raw.Trim()
+        $known = @('mirror', 'bundle', 'cache', 'download', 'gallery-fallback')
+        if ($known -contains $value) { return $value }
+        return ''
+    } catch { return '' }
+}
+
+function Test-DoctorArtifactSource {
+    # Check: WHICH artifact source layer produced the installed dependencies (dispatch 000244).
+    #
+    # PASS ON ANY LAYER is the whole design. This check does not have an opinion about which
+    # source is better -- mirror, bundle, cache and download all feed the identical SHA-256 pin
+    # gate, so an install is exactly as trustworthy whichever one produced it. What the check
+    # exists to do is ANSWER THE QUESTION "where did these bytes come from?", which before 000244
+    # nothing on the machine could answer at all.
+    #
+    # It reads the layer RECORDED IN THE MARKER at install time, never today's environment. The
+    # env vars can change after an install, and re-deriving provenance from current configuration
+    # would confidently describe an install that never happened that way.
+    #
+    #   data root unknown (outside a session)          -> UNKNOWN
+    #   no layer recorded on either marker             -> UNKNOWN (pre-000244 markers, or nothing
+    #                                                     bootstrapped) -- never a fabricated PASS
+    #   any layer recorded                             -> PASS, naming each component's layer
+    param([bool] $DataRootKnown, [string] $PsesLayer = '', [string] $PssaLayer = '')
+    $component = 'Artifact source'
+    if (-not $DataRootKnown) {
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail 'cannot locate the plugin data directory (CLAUDE_PLUGIN_DATA is not set), so the installed artifacts'' source is indeterminate.' `
+                -Remediation 'Run this doctor from inside a Claude Code session for a definitive check.')
+    }
+    $known = @()
+    if (-not [string]::IsNullOrWhiteSpace($PsesLayer)) { $known += ('PSES from ' + $PsesLayer) }
+    if (-not [string]::IsNullOrWhiteSpace($PssaLayer)) { $known += ('PSScriptAnalyzer from ' + $PssaLayer) }
+    if ($known.Count -eq 0) {
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail 'no install marker records an artifact source; the markers predate this feature, or nothing has been bootstrapped yet.' `
+                -Remediation 'Start a fresh session to re-run the bootstrap, which records the source it resolved.')
+    }
+    # The Gallery fallback is the one acquisition route the SHA-256 pin does NOT gate (it rests on
+    # the Gallery''s publisher/catalog integrity instead). It is still a real, working install, so
+    # it PASSES -- but the detail says so plainly rather than letting a green tick imply the pin
+    # verified it. See TRUST.md, "What it downloads".
+    $detail = ($known -join '; ') + '.'
+    if ($PssaLayer -eq 'gallery-fallback') {
+        $detail += ' NOTE: the gallery-fallback route is not SHA-256 pin-gated -- it relies on the PowerShell Gallery''s own publisher/catalog integrity.'
+    }
+    return (New-DoctorResult -Status pass -Component $component -Detail $detail)
+}
+
+function Test-DoctorOfflineReadiness {
+    # Check: could this machine bootstrap with no internet access (dispatch 000244)?
+    #
+    # THE HONEST-VERDICT RULE that shapes every branch below: only a BUNDLE can be proven ready
+    # by this check, because proving readiness means hashing the artifacts against the pins, and
+    # only a bundle''s artifacts are on local disk. A mirror would have to be DOWNLOADED to be
+    # hashed, and a doctor that pulls tens of megabytes is not a doctor. So a configured mirror
+    # that is well-formed yields UNKNOWN with the reason stated, never a PASS that would claim a
+    # verification this check did not perform.
+    #
+    #   neither source configured                      -> UNKNOWN (the default; nothing to say)
+    #   configured but unusable (bad scheme/path)      -> FAIL (a deliberate setting that cannot work)
+    #   bundle holds both artifacts, both pin-valid    -> PASS
+    #   bundle missing an artifact                     -> FAIL, naming which
+    #   bundle artifact present but pin-INVALID        -> FAIL, loudly (stale or tampered)
+    #   only a mirror, well-formed                     -> UNKNOWN, saying why it cannot be proven
+    param(
+        [bool] $MirrorConfigured, [bool] $MirrorValid, [string] $MirrorReason = '',
+        [bool] $BundleConfigured, [bool] $BundleValid, [string] $BundleReason = '',
+        [object[]] $BundleArtifacts = @()
+    )
+    $component = 'Offline readiness'
+    $remediate = 'See docs/configuration.md, "Offline and air-gapped installation", for POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR and POWERSHELL_LSP_ARTIFACT_MIRROR_BASE.'
+
+    if (-not $MirrorConfigured -and -not $BundleConfigured) {
+        return (New-DoctorResult -Status unknown -Component $component `
+                -Detail 'no offline artifact source is configured, so this machine bootstraps from the default download and offline readiness is not established.' `
+                -Remediation $remediate)
+    }
+    if ($BundleConfigured -and -not $BundleValid) {
+        return (New-DoctorResult -Status fail -Component $component `
+                -Detail ('POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR is set but unusable -- ' + $BundleReason + '.') `
+                -Remediation $remediate)
+    }
+    if ($MirrorConfigured -and -not $MirrorValid) {
+        return (New-DoctorResult -Status fail -Component $component `
+                -Detail ('POWERSHELL_LSP_ARTIFACT_MIRROR_BASE is set but unusable -- ' + $MirrorReason + '.') `
+                -Remediation $remediate)
+    }
+    if ($BundleConfigured -and $BundleValid) {
+        $missing = @(); $invalid = @(); $ok = @()
+        foreach ($a in $BundleArtifacts) {
+            if (-not $a.Present) { $missing += $a.Name }
+            elseif (-not $a.PinValid) { $invalid += $a.Name }
+            else { $ok += $a.Name }
+        }
+        if ($invalid.Count -gt 0) {
+            return (New-DoctorResult -Status fail -Component $component `
+                    -Detail ('a staged bundle artifact does NOT match its SHA-256 pin: ' + ($invalid -join ', ') +
+                        '. Bootstrap would FAIL CLOSED against it rather than use it, and would not fall through to another source.') `
+                    -Remediation 'Re-stage the bundle from the airgap release asset for the version you are running; a pin mismatch means the staged bytes are stale or tampered.')
+        }
+        if ($missing.Count -gt 0) {
+            return (New-DoctorResult -Status fail -Component $component `
+                    -Detail ('the configured bundle directory is missing: ' + ($missing -join ', ') + '.') `
+                    -Remediation 'Unpack the powershell-lsp-airgap-<version>.zip release asset into the bundle directory so it holds every pinned artifact.')
+        }
+        return (New-DoctorResult -Status pass -Component $component `
+                -Detail ('the configured bundle holds every pinned artifact and each matches its SHA-256 pin (' + ($ok -join ', ') +
+                    '); this machine can bootstrap with no network access.'))
+    }
+    return (New-DoctorResult -Status unknown -Component $component `
+            -Detail 'a mirror is configured and well-formed, but offline readiness cannot be PROVEN here: verifying a mirror means hashing artifacts against the pins, which would require downloading them. Bootstrap still verifies every byte it fetches.' `
+            -Remediation 'To make offline readiness locally verifiable, also stage a bundle with POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR.')
+}
+
 function Test-DoctorHosts {
     # Check 5: the first-run download hosts are reachable. $HostProbes is an array of
     # [pscustomobject]@{ Host=<name>; Reachable=$true|$false|$null }; $null means the probe
@@ -1569,6 +1700,48 @@ function Invoke-Doctor {
         $pssaImportable = Test-DoctorPssaImportableProbe -VendorDir $vendorDir -PinVersion $pssaPin
     }
     $results += (Test-DoctorPssa -DataRootKnown $dataRootKnown -MarkerPresent $pssaMarker -Importable $pssaImportable -PinVersion $pssaPin)
+
+    # 4a/4b) artifact source + offline readiness (dispatch 000244). The IMPURE half lives here,
+    # matching every other check in this file: read the world, then hand plain values to a pure
+    # decider. Both deciders are unit-testable without a data root, a bundle, or a network.
+    $psesLayer = ''
+    $pssaLayer = ''
+    if ($dataRootKnown) {
+        if (-not [string]::IsNullOrWhiteSpace($psesPin)) {
+            $psesLayer = Get-DoctorMarkerLayer -MarkerPath (Join-Path $dataRoot ('pses-' + $psesPin + '.ok'))
+        }
+        if (-not [string]::IsNullOrWhiteSpace($pssaPin)) {
+            $pssaLayer = Get-DoctorMarkerLayer -MarkerPath (Join-Path $vendorDir ('.pssa-' + $pssaPin + '.ok'))
+        }
+    }
+    $results += (Test-DoctorArtifactSource -DataRootKnown $dataRootKnown -PsesLayer $psesLayer -PssaLayer $pssaLayer)
+
+    # Pins are read from the ensure-scripts by the same non-executing reader the version pins use,
+    # so the readiness check hashes against exactly what the bootstrap would demand -- never a
+    # second copy of a hash that could drift from the scripts.
+    $srcSettings = Get-ArtifactSourceSettings
+    $bundleArtifacts = @()
+    if ($srcSettings.BundleValid) {
+        $wanted = @(
+            [pscustomobject]@{ Name = (Get-PinnedArtifactFileName -Component 'pses' -Version $psesPin)
+                Sha = (Get-DoctorPin -ScriptPath (Join-Path $scriptsDir 'ensure-pses.ps1') -VarName 'PsesSha256') }
+            [pscustomobject]@{ Name = (Get-PinnedArtifactFileName -Component 'pssa' -Version $pssaPin)
+                Sha = (Get-DoctorPin -ScriptPath (Join-Path $scriptsDir 'ensure-pssa.ps1') -VarName 'PssaSha256') }
+        )
+        foreach ($w in $wanted) {
+            $staged = Join-Path $srcSettings.BundleDir $w.Name
+            $present = Test-Path -LiteralPath $staged -PathType Leaf
+            $bundleArtifacts += [pscustomobject]@{
+                Name     = $w.Name
+                Present  = $present
+                PinValid = $(if ($present) { Test-PinnedFileHash -Path $staged -ExpectedSha256 $w.Sha } else { $false })
+            }
+        }
+    }
+    $results += (Test-DoctorOfflineReadiness `
+            -MirrorConfigured $srcSettings.MirrorConfigured -MirrorValid $srcSettings.MirrorValid -MirrorReason $srcSettings.MirrorReason `
+            -BundleConfigured $srcSettings.BundleConfigured -BundleValid $srcSettings.BundleValid -BundleReason $srcSettings.BundleReason `
+            -BundleArtifacts $bundleArtifacts)
 
     # 5) first-run download hosts reachable (hosts read single-source from the bootstrap scripts)
     $hostNames = @()
