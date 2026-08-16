@@ -636,7 +636,7 @@ Describe 'E2 -- the probe REFUSES to sample while a caller-supplied busy probe r
     # does. So the probe now takes a caller-supplied busy check, runs it FIRST, and refuses to
     # sample when it reports activity.
     #
-    # THE PROBE STAYS HUB-AGNOSTIC. It is public GPLv3 and must not learn what a claim or a
+    # THE PROBE STAYS HUB-AGNOSTIC. It is public Apache-2.0 and must not learn what a claim or a
     # dispatch is: it reads an exit code and whether anything was emitted, and nothing else. The
     # caller's specific busy check lives in comment-based help as a local EXAMPLE. The last test
     # in this block asserts that separation from the source rather than trusting it.

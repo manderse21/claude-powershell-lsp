@@ -62,7 +62,7 @@ function Get-PinnedValue {
 $plugin = (Get-Content -LiteralPath $pluginJsonPath -Raw) | ConvertFrom-Json
 $pluginName = [string] $plugin.name
 $pluginVersion = if ([string]::IsNullOrWhiteSpace($Version)) { [string] $plugin.version } else { $Version.Trim().TrimStart('v', 'V') }
-$pluginLicense = [string] $plugin.license   # SPDX id, e.g. GPL-3.0-or-later
+$pluginLicense = [string] $plugin.license   # SPDX id, e.g. Apache-2.0
 
 # --- pinned downloaded dependencies (single-sourced from the ensure-* scripts) --------
 $psesTag = Get-PinnedValue -FilePath $psesScript -VarName 'PsesTag'        # e.g. v4.6.0

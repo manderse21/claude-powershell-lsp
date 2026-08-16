@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/manderse21/claude-powershell-lsp/actions/workflows/powershell-lsp-ci.yml/badge.svg)](https://github.com/manderse21/claude-powershell-lsp/actions/workflows/powershell-lsp-ci.yml)
 [![version](https://img.shields.io/github/v/tag/manderse21/claude-powershell-lsp?sort=semver&label=version&color=blue)](https://github.com/manderse21/claude-powershell-lsp/tags)
-[![license: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](./LICENSE)
+[![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
 [![SBOM: CycloneDX](https://img.shields.io/badge/SBOM-CycloneDX-brightgreen)](./TRUST.md#supply-chain-artifacts-sbom--build-provenance)
 [![corpus false-positive rate: 0%](https://img.shields.io/badge/corpus%20false--positive%20rate-0%25-brightgreen)](#diagnostic-correctness-corpus)
 [![release signing: Sigstore](https://img.shields.io/badge/release%20signing-Sigstore%20keyless-brightgreen)](./TRUST.md#signing-posture)
@@ -544,7 +544,7 @@ to run the suite, the test story), **[ARCHITECTURE.md](./ARCHITECTURE.md)** (how
 from edit to banner), and **[DEV_NOTES.md](./DEV_NOTES.md)** (the quirks that bite). What is next,
 blocked, and deferred is in **[ROADMAP.md](./ROADMAP.md)**. Found a false positive? The
 [report-a-false-positive form](./.github/ISSUE_TEMPLATE/false_positive_report.yml) feeds it
-straight into the correctness corpus. The single-maintainer bus factor and the GPLv3 continuity
+straight into the correctness corpus. The single-maintainer bus factor and the open-source fork
 path are stated honestly in **[CONTINUITY.md](./CONTINUITY.md)**.
 
 **Git hooks (contributors).** This repo ships a tracked pre-push guard that refuses a direct push
@@ -556,12 +556,20 @@ from linked worktrees too. A deliberate one-off is allowed and audited:
 
 ## License
 
-[GPL-3.0-or-later](https://spdx.org/licenses/GPL-3.0-or-later.html) (GPLv3). See [LICENSE](./LICENSE).
+[Apache-2.0](https://spdx.org/licenses/Apache-2.0.html). See [LICENSE](./LICENSE) and
+[NOTICE](./NOTICE).
 
-The change to GPLv3 is **forward-only**, effective from **v1.6.1**. Prior releases (v1.0 through
-v1.6.0) remain under the MIT license they shipped with -- that grant is irrevocable and is not
-affected by this change.
+The change to Apache-2.0 is **forward-only**, effective from the next release. **Every previously
+published release keeps the license it shipped under, and those grants are irrevocable:** v1.0
+through v1.6.0 remain MIT; v1.6.1 through the current release remain `GPL-3.0-or-later`. Nothing
+here revokes, rescinds, or diminishes a grant already made -- if you are using a release published
+before this change, your existing license is untouched.
+
+Apache-2.0 is a **permissive** license, not copyleft. It adds an explicit patent grant and the
+NOTICE-propagation mechanics that enterprise license allow-lists are written around; it does not
+require a downstream fork to publish its changes, which GPLv3 did. See
+[CONTINUITY.md](./CONTINUITY.md#the-fork-path-apache-20) for what that means for the fork path.
 
 PowerShell Editor Services and PSScriptAnalyzer are **downloaded at install time** (not bundled in
-this repository) and remain under their own MIT licenses (Microsoft); MIT is GPL-compatible. See
-[THIRD-PARTY-LICENSES.md](./THIRD-PARTY-LICENSES.md).
+this repository) and remain under their own MIT licenses (Microsoft); MIT is Apache-2.0-compatible.
+See [THIRD-PARTY-LICENSES.md](./THIRD-PARTY-LICENSES.md).

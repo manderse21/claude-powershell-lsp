@@ -5,7 +5,7 @@
   "version": "1.31.2",
   "description": "Real-time PowerShell diagnostics in Claude Code: as Claude edits a .ps1/.psm1/.psd1, it runs PowerShell Editor Services + PSScriptAnalyzer over that file and surfaces syntax errors and lint fixes inline. Hover, go-to-definition, and find-references serve natively through an opt-in handshake shim (userConfig nativeServe, off by default).",
   "author": { "name": "Mike Andersen" },
-  "license": "GPL-3.0-or-later",
+  "license": "Apache-2.0",
   "keywords": ["powershell", "lsp", "editor-services", "diagnostics", "psscriptanalyzer", "claude-code", "linter"],
   "defaultEnabled": false,
   "commands": "./commands",

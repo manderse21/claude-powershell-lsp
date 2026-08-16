@@ -1,12 +1,13 @@
 # Third-Party Licenses
 
-`powershell-lsp` is licensed under **GPL-3.0-or-later** (see [LICENSE](./LICENSE)). It relies on two
+`powershell-lsp` is licensed under **Apache-2.0** (see [LICENSE](./LICENSE), and [NOTICE](./NOTICE)
+for the attribution notice Apache-2.0 section 4(d) asks redistributors to carry). It relies on two
 external components that it **downloads at install time** -- it does **not** bundle or redistribute
 their source in this repository or in its plugin release. On first run they are fetched into the
 plugin's data directory (`CLAUDE_PLUGIN_DATA`) from their official sources and remain under their own
 licenses; this project does not modify or relicense them.
 
-Both components are **MIT-licensed**, which is compatible with GPL-3.0-or-later. Their license/notice
+Both components are **MIT-licensed**, which is compatible with Apache-2.0. Their license/notice
 files are preserved intact in the installed bundle (asserted by an integration test).
 
 ## PowerShell Editor Services (PSES)
@@ -33,8 +34,8 @@ files are preserved intact in the installed bundle (asserted by an integration t
 
 ## Notes
 
-- MIT-licensed components may be combined with GPL-3.0-or-later software (MIT is a permissive,
-  GPL-compatible license). This file documents that combination and preserves attribution.
+- MIT-licensed components may be combined with Apache-2.0 software (both are permissive licenses,
+  and MIT is Apache-2.0-compatible). This file documents that combination and preserves attribution.
 - The plugin is a **downloader**, not a redistributor: each install fetches these components from
   their official sources, where the upstream MIT notices are included; `ensure-pses` / `ensure-pssa`
   preserve those notices in the installed bundle (an integration test asserts they survive

@@ -109,6 +109,6 @@ serves through the shim on hosts where Claude Code will start the server, with
 the Windows launcher-guard caveat above still open upstream. The diagnostic loop
 does not depend on the native path at all.
 
-GPL-3.0. Source: https://github.com/manderse21/claude-powershell-lsp
+Apache-2.0. Source: https://github.com/manderse21/claude-powershell-lsp
 Feedback and false-positive reports welcome -- there's an issue template that
 feeds reports straight into the correctness corpus.

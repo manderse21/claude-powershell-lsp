@@ -105,10 +105,13 @@ Describe 'New-PluginSbom.ps1 -- CycloneDX SBOM over the plugin + pinned deps (di
         $script:Sbom.bomFormat | Should -BeExactly 'CycloneDX'
         $script:Sbom.specVersion | Should -BeExactly '1.5'
     }
-    It 'names the plugin as the BOM subject, at the manifest version, under GPL-3.0-or-later' {
+    It 'names the plugin as the BOM subject, at the manifest version, under Apache-2.0' {
         $script:Sbom.metadata.component.name | Should -BeExactly 'powershell-lsp'
         $script:Sbom.metadata.component.version | Should -BeExactly $script:ManifestVersion
-        $script:Sbom.metadata.component.licenses[0].license.id | Should -BeExactly 'GPL-3.0-or-later'
+        # Relicensed forward GPL-3.0-or-later -> Apache-2.0 by dispatch 000247. The SBOM reads the id
+        # from plugin.json rather than carrying a literal, so this asserts the manifest is the single
+        # source of truth AND that the emitted value is the one the relicense landed.
+        $script:Sbom.metadata.component.licenses[0].license.id | Should -BeExactly 'Apache-2.0'
     }
     It 'inventories BOTH pinned downloaded dependencies' {
         $names = @($script:Sbom.components.name)

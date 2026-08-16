@@ -115,7 +115,7 @@ verified bundle lands). This is enforced in `scripts/ensure-pses.ps1` and
 | PowerShell Editor Services | `v4.6.0` | `https://github.com/PowerShell/PowerShellEditorServices/releases/download/v4.6.0/PowerShellEditorServices.zip` | `0D91898F73D4FAEB64291336F6386F0C890A933DF012827571ADF7008480A04A` |
 | PSScriptAnalyzer | `1.25.0` | `https://www.powershellgallery.com/api/v2/package/PSScriptAnalyzer/1.25.0` | `14E634C828EB98EFB9F40B2918BA90F139ED5ECCDF663A2A747736D996995D60` |
 
-Both are Microsoft open-source projects under the MIT license (MIT is GPL-compatible; see
+Both are Microsoft open-source projects under the MIT license (MIT is Apache-2.0-compatible; see
 [THIRD-PARTY-LICENSES.md](./THIRD-PARTY-LICENSES.md)). The pins live in single variables
 (`$PsesTag` / `$PsesSha256` in `ensure-pses.ps1`; `$PssaVersion` / `$PssaSha256` in
 `ensure-pssa.ps1`); a bump recomputes the hash with `Get-FileHash`. To verify a pin
@@ -407,17 +407,26 @@ only**; it never bypasses, disables, or modifies any control. See README
   ([SECURITY.md](./SECURITY.md)) keep the project auditable and reproducible by others even
   with one maintainer. Organizations with a hard bus-factor bar should weigh this
   accordingly.
-- **License: GPLv3.** The plugin is [GPL-3.0-or-later](https://spdx.org/licenses/GPL-3.0-or-later.html),
-  forward-only from v1.6.1; prior releases (v1.0 through v1.6.0) remain under their original
-  MIT grant, which is irrevocable. See [LICENSE](./LICENSE) and [README.md](./README.md#license).
+- **License: Apache-2.0.** The plugin is [Apache-2.0](https://spdx.org/licenses/Apache-2.0.html),
+  forward-only from the next release. **Every previously published release keeps the license it
+  shipped under, and those grants are irrevocable:** v1.6.1 through the current release remain
+  `GPL-3.0-or-later`, and v1.0 through v1.6.0 remain under their original MIT grant. See
+  [LICENSE](./LICENSE), [NOTICE](./NOTICE), and [README.md](./README.md#license).
+- **What the move to Apache-2.0 changes.** It adds an **explicit patent grant** (section 3) and
+  the NOTICE-propagation mechanics (section 4(d)) that enterprise license allow-lists are written
+  around. It also drops copyleft: a downstream fork is no longer obliged to publish its changes.
+  Both directions are stated so an adopter can weigh them, rather than only the favourable one.
 - **Contributions / DCO-CLA.** There is no CLA. Contributions are accepted under the
-  project's GPLv3 license; contributors are asked to certify origin via a **Developer
+  project's Apache-2.0 license; contributors are asked to certify origin via a **Developer
   Certificate of Origin** sign-off (`git commit -s`). No copyright assignment is requested
   or required.
 - **Relicensing.** The maintainer does not collect a CLA and therefore **cannot
-  unilaterally relicense third-party contributions** away from GPLv3; any relicensing would
-  require the agreement of all copyright holders. This is a deliberate guarantee to
-  adopters that the open-source grant cannot be quietly revoked.
+  unilaterally relicense third-party contributions**; any such relicensing would require the
+  agreement of all copyright holders. The 2026-08-16 move from `GPL-3.0-or-later` to Apache-2.0
+  was made by the **sole copyright holder** over work he authored, which is why it needed no
+  such agreement -- the same mechanics as the MIT-to-GPLv3 move at v1.6.1. It is a
+  forward-only grant change: it adds a new grant for future releases and revokes none of the
+  grants already made.
 
 ## Honest limits
 
