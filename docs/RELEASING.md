@@ -488,3 +488,27 @@ presents to Fulcio -- so signing added **no new permission and no new secret**. 
 whole point: if signing ever appeared to need a stored signing key, that would be the rejected
 key-custody path, not this one.) The workflow uses only the ephemeral, job-scoped `GITHUB_TOKEN`
 -- no personal access token and no repository secret is referenced or exposed.
+
+## Tag and Release history: which tags have a Release, and why
+
+GitHub Releases begin at **v1.17.0** (2026-06-26) and run continuously from there. Every tag from
+v1.17.0 onward has a published Release. The fifteen tags before it -- v1.1.0 through v1.16.0 --
+deliberately do not, and that boundary is intentional rather than an oversight.
+
+v1.16.0 was the *community-release readiness bundle* (broaden corpus, trust badges, onboarding,
+contributor docs, positioning). v1.17.0 was the first version cut after the project became
+community-facing, and the first to get a Release page. Everything earlier is pre-publication
+development history: those tags remain fetchable and every one of them is described in
+`CHANGELOG.md`. Manufacturing fifteen retroactive Release pages would assert a public release
+history that never existed, and would bury the real one under it.
+
+The one genuine gap was **v1.18.1** -- a patch tag *inside* the published era whose Release was
+never cut, because `powershell-lsp-release.yml` is `workflow_dispatch` and the manual step was
+missed. It has since been published retroactively, is labelled as such, and deliberately carries
+no build assets: a retroactive Release cannot reproduce the pipeline's OIDC-bound provenance
+attestation or the gitsign signature on the tag (see "Provenance: what it covers (and what it
+does not)" above). Its notes are reconstructed from the tag annotation and `CHANGELOG.md`.
+
+**Going forward:** every tag cut from v1.17.0 onward gets a Release from the pipeline. A tag that
+is deliberately *not* a public release -- a checkpoint, a rescue tag, a diagnostic ref -- should
+say so in its annotation, so the distinction stays legible without needing this note.
