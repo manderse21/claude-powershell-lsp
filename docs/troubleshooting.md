@@ -43,6 +43,34 @@ section below.
   bundle that lacks the file) legitimately falls through to the default download. Confirm the
   staged filenames match exactly, then re-check `/doctor` -- "Artifact source" reports which
   layer actually produced the installed dependencies.
+- **Hooks fail with `File ... cannot be loaded. The file ... is not digitally signed`, or
+  `UnauthorizedAccess` / `PSSecurityException` on a `scripts/*.ps1` path:** the machine's
+  execution policy is `AllSigned` and the plugin's scripts arrive unsigned over `git clone`, as
+  this repository ships them. The `-ExecutionPolicy Bypass` on every hook entry point does not
+  help here and is not meant to: when the policy comes from **Group Policy**, PowerShell ignores
+  the command-line flag. Confirm with `Get-ExecutionPolicy -List` -- a `MachinePolicy` or
+  `UserPolicy` row reading `AllSigned` is the case. **The fix is to sign the scripts with your
+  own code-signing certificate**, which your policy already trusts:
+  `pwsh -File scripts/sign-plugin.ps1 -Thumbprint <your-thumbprint>` (run by an administrator,
+  against the installed copy). The full paved path -- what it covers, what it does not, and the
+  air-gapped variant -- is in
+  [TRUST.md, "Sign it yourself"](../TRUST.md#sign-it-yourself-the-org-certificate-paved-path).
+  Re-run it after every plugin upgrade: an upgrade replaces the files with unsigned copies.
+- **Diagnostics worked, then stopped after a plugin upgrade on an AllSigned machine:** expected,
+  and it is the signatures rather than the plugin. An upgrade replaces `scripts/` with fresh
+  unsigned files, so the signatures you applied are gone.
+  `pwsh -File scripts/sign-plugin.ps1 -VerifyOnly` reports the current state per file without
+  changing anything; re-sign to restore it.
+- **`sign-plugin.ps1` prints `FAILED CLOSED` with every file reporting `UnknownError`:** the
+  signing succeeded but **this machine does not trust the certificate's root**, so Windows cannot
+  build a chain and refuses to call the signature `Valid`. This is common when signing from a
+  build box that is outside the estate. Verify on a machine that trusts your organization root --
+  the target estate does. A status of `Unreadable` means something different: Windows could not
+  read a signature back at all, which is usually a read-only file, a file held open, or AV
+  quarantining it mid-run.
+- **`sign-plugin.ps1` exits 2 saying the host is not Windows:** correct behavior, not a fault.
+  Authenticode is a Windows construct and the policies it satisfies are Windows policies, so the
+  script refuses the host rather than half-running. Run it on the managed Windows machine.
 - **A leftover user-level PSES hook fires alongside the plugin (duplicate or
   conflicting diagnostics):** if you previously wired a PowerShell diagnostics hook
   directly in `~/.claude/settings.json` (a pre-plugin setup), remove it -- the plugin
@@ -127,7 +155,7 @@ uncertain case gets an honest "here is how to check" pointer, never a guessed co
 
 | Control | How it is detected | Confidence | Banner names / fix |
 |---------|--------------------|------------|--------------------|
-| **ExecutionPolicy** (Group Policy) | `Get-ExecutionPolicy -List` shows `MachinePolicy`/`UserPolicy` = `AllSigned`/`RemoteSigned` (a command-line `-Bypass` is ignored when the policy is from GPO) | likely | the policy + scope. Fix: an admin allow-lists / signs the scripts, or adjusts the policy. |
+| **ExecutionPolicy** (Group Policy) | `Get-ExecutionPolicy -List` shows `MachinePolicy`/`UserPolicy` = `AllSigned`/`RemoteSigned` (a command-line `-Bypass` is ignored when the policy is from GPO) | likely | the policy + scope. Fix: an admin signs the scripts with the org certificate (`scripts/sign-plugin.ps1`; see [TRUST.md](../TRUST.md#sign-it-yourself-the-org-certificate-paved-path)), allow-lists them, or adjusts the policy. |
 | **Constrained Language Mode** | the session `LanguageMode` is `ConstrainedLanguage` | likely | CLM. The plugin's .NET-using bootstrap cannot run under it. Fix: sign + policy-trust the plugin (admin). |
 | **App Control / WDAC** | a CodeIntegrity Operational event **3077** (enforced) or **3076** (audit) names a plugin component | confirmed / likely | the control + event id. Fix: an admin adds an allow rule. |
 | **Microsoft Defender ASR** | a Defender Operational event **1121** (block) or **1122** (audit) names a plugin component | confirmed / likely | the rule family + event id. Fix: an admin reviews / allows the rule. |

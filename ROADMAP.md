@@ -109,6 +109,7 @@ These are settled decisions, not backlog. Each is recorded with its reasoning in
 | Flipping the broader ruleset on by default | a missing finding beats a wrong finding; `ruleset = base` is the opt-in |
 | Reducing documentation volume | documentation is **restructured**, not reduced |
 | Surfacing security-classifier verdicts in the doctor | declined-final; the live named diagnosis it reached for already ships on the bootstrap-failure banner, at the moment of failure |
+| Publisher Authenticode signing of the scripts | for a git-distributed plugin the trust boundary is the keyless-signed tag and the commit it names, not a Windows publisher identity; the enterprise-preferred answer is the estate signing with **its own** root, which its policy already trusts, so `scripts/sign-plugin.ps1` ships that paved path instead |
 
 ## Top risks
 
