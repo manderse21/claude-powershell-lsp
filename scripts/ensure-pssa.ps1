@@ -97,6 +97,11 @@ if ((Test-Path -LiteralPath $marker) -and (Test-PssaImportable)) {
 New-Item -ItemType Directory -Force -Path $vendorDir | Out-Null
 Write-Log ('vendoring PSScriptAnalyzer ' + $PssaVersion)
 $installed = $false
+# Declared BEFORE the try (dispatch 000244), the same StrictMode discipline ensure-pses.ps1
+# applies to its staging paths: Method 1 can throw before the layering block runs, and the
+# marker write and the Method 2 fallback below both read this. Referencing an unset variable
+# under Set-StrictMode -Version Latest is a terminating error, so it is initialized here once.
+$sourceLayer = ''
 
 # Method 1 (PRIMARY, hash-verified -- dispatch 000046 Gap B L2): download the pinned .nupkg,
 # verify it against $PssaSha256, then expand. The VERIFIED path is primary on purpose so the
@@ -121,16 +126,36 @@ try {
     $nupkg = Join-Path $tmp 'pssa.zip'
     $url = 'https://www.powershellgallery.com/api/v2/package/PSScriptAnalyzer/' + $PssaVersion
 
+    # SOURCE LAYERING (dispatch 000244): mirror -> bundle -> [the existing 000049 cache ->
+    # download]. This EXTENDS the 000049 pattern rather than replacing it: the cache and its
+    # bounded retry keep their exact behavior and simply become the innermost layer, reached
+    # only when neither 000244 source resolved. With neither new env var set, nothing below
+    # this block observes any difference and acquisition is byte-identical to pre-000244.
+    #
+    # The 000049 invariants are the reason this composes safely, and they now govern four
+    # sources instead of two: VERIFY ON EVERY HIT (every layer feeds the one Test-PinnedFileHash
+    # gate below), and the pin stays the ONLY trust root.
+    $artifactName = Get-PinnedArtifactFileName -Component 'pssa' -Version $PssaVersion
+    $sourced = Resolve-PinnedArtifactSource -FileName $artifactName -Destination $nupkg
+    foreach ($note in $sourced.Notes) { Write-Log ('artifact-source: ' + $note) }
+    if ($sourced.Resolved) {
+        $sourceLayer = $sourced.Layer
+        Write-Log ('artifact-source: resolved from ' + $sourceLayer + ' (' + $sourced.Source +
+            '); pin is still verified before use')
+    }
+
     # CACHE LOOKUP (000049): restore the pinned .nupkg from the cache on a HIT so the Gallery is
     # contacted ONLY on a miss. The restored bytes are NOT trusted here -- they are copied into the
     # SAME $nupkg the verify runs on and then pass through the identical Test-PinnedFileHash gate
     # below (invariant 1). A copy failure simply falls through to the download (treat as a miss).
+    # 000244: skipped entirely when a mirror or bundle already produced the artifact.
     $cachedNupkg = Get-PssaCachedNupkgPath
     $fromCache = $false
-    if (-not [string]::IsNullOrWhiteSpace($cachedNupkg) -and (Test-Path -LiteralPath $cachedNupkg -PathType Leaf)) {
+    if (-not $sourced.Resolved -and -not [string]::IsNullOrWhiteSpace($cachedNupkg) -and (Test-Path -LiteralPath $cachedNupkg -PathType Leaf)) {
         try {
             Copy-Item -LiteralPath $cachedNupkg -Destination $nupkg -Force
             $fromCache = $true
+            $sourceLayer = 'cache'
             Write-Log ('cache HIT: restored pinned .nupkg from ' + $cachedNupkg + ' (pin still verified before use)')
         } catch {
             $fromCache = $false
@@ -143,7 +168,8 @@ try {
     # this loop only re-attempts a failed/transient DOWNLOAD before giving up to the Save-Module
     # fallback. Backoff: 2s, then 4s (last attempt does not sleep). The Gallery is never contacted
     # on a cache hit.
-    if (-not $fromCache) {
+    if (-not $sourced.Resolved -and -not $fromCache) {
+        $sourceLayer = 'download'
         $downloaded = $false
         $lastDownloadError = ''
         for ($attempt = 1; $attempt -le 3; $attempt++) {
@@ -168,14 +194,18 @@ try {
     if (-not (Test-PinnedFileHash -Path $nupkg -ExpectedSha256 $PssaSha256)) {
         $actualHash = ''
         try { $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $nupkg -ErrorAction Stop).Hash } catch { }
-        $srcLabel = if ($fromCache) { 'cached' } else { 'downloaded' }
+        # 000244: the label is now the resolved LAYER (mirror / bundle / cache / download) rather
+        # than the two-valued cached-or-downloaded. A tampered mirror artifact must fail exactly
+        # like a tampered download -- same gate, same exit -- and the only thing that may differ
+        # is which layer the banner NAMES, because that is what tells the admin what to go fix.
         Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Log ('PSSA .nupkg integrity check FAILED (' + $srcLabel + ') -- refusing unverified package. expected ' +
+        Write-Log ('PSSA .nupkg integrity check FAILED (' + $sourceLayer + ') -- refusing unverified package. expected ' +
             $PssaSha256 + ' got ' + $actualHash)
         # FAIL CLOSED: a tamper signal must NOT fall back to an unverified install. Exit loud so
         # SessionStart surfaces the honest 'unavailable' surface; the hook itself still exits 0.
         [Console]::Error.WriteLine('ensure-pssa: PSScriptAnalyzer ' + $PssaVersion +
-            ' integrity check failed (hash mismatch); refusing unverified package; see ' + $log)
+            ' integrity check failed (hash mismatch) for the ' + $sourceLayer +
+            ' source; refusing unverified package; see ' + $log)
         exit 1
     }
 
@@ -183,7 +213,12 @@ try {
     # hit. Only on a miss -- a hit already holds the verified bytes. Best-effort: a populate failure
     # is non-fatal (the install proceeds; the next run simply re-downloads). Only verified bytes are
     # ever written to the cache.
-    if (-not $fromCache -and -not [string]::IsNullOrWhiteSpace($cachedNupkg)) {
+    # 000244: TIGHTENED from `-not $fromCache` to an explicit download test. Those were the same
+    # condition when download was the only alternative to a cache hit; with mirror and bundle
+    # layers they are not, and the loose form would start copying mirror/bundle bytes into a CI
+    # cache that 000049 defined as holding only artifacts this script itself downloaded. The
+    # populate stays exactly what it was: after a VERIFIED download, on the miss path only.
+    if ($sourceLayer -eq 'download' -and -not [string]::IsNullOrWhiteSpace($cachedNupkg)) {
         try {
             $cacheDir = Split-Path -Parent $cachedNupkg
             if (-not [string]::IsNullOrWhiteSpace($cacheDir) -and -not (Test-Path -LiteralPath $cacheDir)) {
@@ -237,7 +272,17 @@ if (-not $installed) {
     }
     try {
         Save-Module -Name PSScriptAnalyzer -RequiredVersion $PssaVersion -Path $vendorDir -Repository PSGallery -Force -ErrorAction Stop
-        if (Test-PssaImportable) { $installed = $true; Write-Log 'Save-Module fallback succeeded.' }
+        if (Test-PssaImportable) {
+            $installed = $true
+            # 000244: label this path DISTINCTLY, and never as one of the pinned layers. This is
+            # the one acquisition route in either ensure-script whose bytes the SHA-256 pin does
+            # NOT gate -- it rests on the Gallery's own publisher/catalog integrity instead (see
+            # TRUST.md). Recording it as 'gallery-fallback' means the doctor's artifact-source
+            # check reports the honest thing rather than implying a pin verified this install.
+            # PRE-EXISTING and deliberately NOT changed here: closing that gap is its own dispatch.
+            $sourceLayer = 'gallery-fallback'
+            Write-Log 'Save-Module fallback succeeded.'
+        }
         else { Write-Log 'Save-Module fallback ran but module not importable.' }
     } catch {
         Write-Log ('Save-Module fallback failed: ' + $_.Exception.Message)
@@ -250,5 +295,11 @@ if (-not $installed) {
     exit 1
 }
 
-New-Item -ItemType File -Force -Path $marker | Out-Null
-Write-Log ('PSSA ' + $PssaVersion + ' vendored at ' + (Find-PssaManifest $vendorDir).FullName)
+# RECORD THE RESOLVED LAYER IN THE MARKER (dispatch 000244), matching ensure-pses.ps1: the
+# doctor reports where THIS install came from rather than re-deriving a guess from whatever the
+# environment happens to say later. Only the marker's EXISTENCE gates the fast path above, so
+# giving it content changes no control flow, and a marker written by an older version simply
+# carries no layer -- which the doctor reports as unrecorded instead of inventing an answer.
+Set-Content -LiteralPath $marker -Value $sourceLayer -Encoding ascii -Force
+Write-Log ('PSSA ' + $PssaVersion + ' vendored at ' + (Find-PssaManifest $vendorDir).FullName +
+    ' (source: ' + $sourceLayer + ')')

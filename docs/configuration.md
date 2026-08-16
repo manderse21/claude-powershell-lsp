@@ -12,6 +12,11 @@ Set these via the `/plugin` config UI for `powershell-lsp`, or leave the default
 exactly today's shipped behavior; `recommended` and `strict` are curated presets over everything
 below. Any knob you set explicitly always wins over the profile.
 
+**Administrators:** the offline / air-gapped artifact sources are configured by **environment
+variable, not by a knob**, and are documented separately in
+[Offline and air-gapped installation](#offline-and-air-gapped-installation) at the end of this
+page. They are not part of the `userConfig` surface below.
+
 The knobs, in manifest order:
 
 - [`profile`](#profile) -- one preset over all the knobs below
@@ -523,6 +528,113 @@ View a summary with `scripts/show-stats.ps1`.
 > logs stay under your plugin data directory and are never transmitted, but sanitize paths
 > before sharing a log for a bug report.
 
+
+---
+
+## Offline and air-gapped installation
+
+**These two settings are NOT `userConfig` knobs, and that is deliberate.** They are environment
+variables, they do not appear in the `/plugin` config panel, and they are not part of the frozen
+1.x knob surface in [CONTRACT.md](../CONTRACT.md) -- the twenty knobs above are still the whole
+of it. Everything in this section is administrator plumbing.
+
+**Why the split.** Every `POWERSHELL_LSP_*` variable this project has is infrastructure (the
+PSScriptAnalyzer download cache, the SARIF artifact directory, the push guard); every `userConfig`
+knob is user-facing diagnostics behavior. An artifact source is the first kind, not the second.
+It is also the kind an organization has to deploy *to a fleet* -- via GPO, Intune, or machine-scope
+environment -- which a per-user config panel cannot do, and it is read during **bootstrap**, before
+any of the diagnostics surface exists.
+
+### The problem these solve
+
+The plugin downloads two pinned dependencies on first use (see
+[TRUST.md](../TRUST.md#what-it-downloads-pinned-versions-and-pinned-hashes)). A machine with no
+egress therefore has no first-bootstrap path at all. These variables add **places the bytes may
+come from**. They do not add anything the plugin *trusts*.
+
+> **The governing rule: a source is a transport optimization, never a trust shortcut.** Whichever
+> layer supplies an artifact, it passes the **same SHA-256 pin check** as a fresh download before
+> it is used, and a mismatch **fails closed**. The pins in `scripts/ensure-pses.ps1` and
+> `scripts/ensure-pssa.ps1` remain the only trust root. A mirror or a bundle is not a trust root
+> and cannot become one.
+
+### Resolution order
+
+Each artifact is resolved by trying, in order, and taking the **first layer that yields it**:
+
+| Order | Layer | Set by |
+|---|---|---|
+| 1 | Internal HTTPS mirror | `POWERSHELL_LSP_ARTIFACT_MIRROR_BASE` |
+| 2 | Pre-staged local bundle | `POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR` |
+| 3 | The default upstream download | -- (unchanged; for PSScriptAnalyzer this still includes the existing `POWERSHELL_LSP_PSSA_CACHE` cache) |
+
+**With neither variable set, nothing changes.** No network call, no disk read, no behavior
+difference: acquisition is byte-for-byte what it was before this feature existed.
+
+Two consequences are worth stating explicitly, because they are the difference between a source
+layer and a trust layer:
+
+- **A pin mismatch on any layer fails closed and is never retried against another layer.** If your
+  mirror serves a corrupt or stale artifact, bootstrap refuses it and says so -- it does **not**
+  quietly fall through to the internet. Falling through would let whoever controls one layer force
+  a downgrade onto another, and would turn a tamper signal into a retry.
+- **A layer *miss* is not a failure.** A mirror that 404s, or a bundle that does not hold the file,
+  simply falls through to the next layer.
+
+### `POWERSHELL_LSP_ARTIFACT_MIRROR_BASE`
+
+**What it does.** An **HTTPS base URL** for an internal mirror holding the pinned artifacts. The
+filename is appended to it, so `https://mirror.corp.example/powershell-lsp` is fetched as
+`https://mirror.corp.example/powershell-lsp/PowerShellEditorServices-v4.6.0.zip`.
+
+**Type:** absolute `https://` URL. **Default:** empty (no mirror). A trailing slash is optional.
+
+A value that is not `https://` is **refused and reported**, not silently ignored -- a typo should
+surface as a named banner rather than an inexplicable fall-through to the internet. Plain HTTP
+would not actually break integrity (the pin is the trust root, which is the whole design), but the
+layer is specified as an HTTPS mirror and refusing an unexpected scheme is the safe direction.
+
+### `POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR`
+
+**What it does.** An **absolute path** to a directory holding the pinned artifacts already staged
+on local disk. This is the true air-gap path: with a valid bundle, a machine bootstraps with no
+network access at all.
+
+**Type:** absolute directory path. **Default:** empty (no bundle). A relative path is refused (it
+would resolve against whatever directory Claude Code happened to launch in -- the same reasoning as
+[`settingsPath`](#settingspath)).
+
+**How to stage one.** Every release publishes `powershell-lsp-airgap-<version>.zip`. Unpack it and
+point the variable at the result:
+
+```powershell
+# Verify the bundle before you trust it, then stage it.
+gh attestation verify powershell-lsp-airgap-1.31.2.zip --repo manderse21/claude-powershell-lsp
+Expand-Archive powershell-lsp-airgap-1.31.2.zip -DestinationPath C:\ProgramData\powershell-lsp\artifacts
+[Environment]::SetEnvironmentVariable(
+    'POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR', 'C:\ProgramData\powershell-lsp\artifacts', 'Machine')
+```
+
+The bundle carries the two dependencies and a `MANIFEST.txt` listing both pins. It deliberately
+does **not** carry the plugin's own source: that is already its own independently attested release
+asset, so the offline install path is **two** verifiable artifacts -- the plugin source (a clone,
+or `powershell-lsp-<version>.tar.gz`) and this bundle -- each with its own `gh attestation verify`.
+Nesting one inside the other would create two attested paths to the same bytes.
+
+Expect to re-stage when the pins are bumped: the filenames are version-qualified, so a new pin
+looks for a file the old bundle does not contain. A **stale artifact under a re-used filename**
+fails closed loudly rather than being silently substituted.
+
+### Checking it worked
+
+`/doctor` reports two things about this path:
+
+- **Artifact source** -- which layer actually produced the installed dependencies, read from what
+  the bootstrap recorded at install time (not from what the environment says now).
+- **Offline readiness** -- whether a configured bundle holds every pinned artifact and each one
+  matches its pin. It reports an honest **unknown** when nothing is configured, and also when only
+  a *mirror* is configured: proving a mirror would mean downloading the artifacts to hash them, and
+  this check will not claim a verification it did not perform.
 
 ---
 

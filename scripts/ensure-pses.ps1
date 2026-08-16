@@ -22,11 +22,16 @@ if ([string]::IsNullOrWhiteSpace($dataRoot)) {
     return
 }
 
-$bundleDir = Join-Path $dataRoot 'PowerShellEditorServices'
+# RENAMED from $bundleDir (dispatch 000244). This is the INSTALL DESTINATION -- where the
+# verified module lands. Since 000244 "bundle" also names an artifact SOURCE (a pre-staged
+# directory an admin points POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR at), and one word meaning both
+# the place bytes come FROM and the place they go TO is exactly the confusion that produces a
+# wrong edit later.
+$installDir = Join-Path $dataRoot 'PowerShellEditorServices'
 $marker = Join-Path $dataRoot ('pses-' + $PsesTag + '.ok')
 # The launcher (pses-stdio.ps1) starts this exact path; gate the no-op fast path on
 # the start script actually being present, not just on the bundle directory existing.
-$startScript = Join-Path $bundleDir 'PowerShellEditorServices/Start-EditorServices.ps1'
+$startScript = Join-Path $installDir 'PowerShellEditorServices/Start-EditorServices.ps1'
 
 if ((Test-Path -LiteralPath $startScript) -and (Test-Path -LiteralPath $marker)) {
     return
@@ -43,21 +48,42 @@ function Write-Log([string]$m) {
 # catch can always clean them up (StrictMode: referencing an unset var would throw).
 $tmpZip = Join-Path $dataRoot ('pses-' + $PsesTag + '.zip')
 $extractRoot = Join-Path $dataRoot ('pses-extract-' + $PsesTag)
-$backupDir = $bundleDir + '.old-' + $PsesTag
+$backupDir = $installDir + '.old-' + $PsesTag
 $url = 'https://github.com/PowerShell/PowerShellEditorServices/releases/download/' + $PsesTag + '/PowerShellEditorServices.zip'
 
 try {
     Write-Log ('Bootstrapping PSES ' + $PsesTag)
 
     # NON-DESTRUCTIVE (000024): download + extract + VERIFY entirely in a temp staging area
-    # FIRST. Do not touch the live $bundleDir until a verified-good module is in hand, so a
+    # FIRST. Do not touch the live $installDir until a verified-good module is in hand, so a
     # failed re-bootstrap (offline / proxy / corrupt zip) leaves the PRIOR working bundle
     # intact rather than deleting it before a single-attempt download (the old :34-35 hazard).
     if (Test-Path -LiteralPath $tmpZip) { Remove-Item -LiteralPath $tmpZip -Force -ErrorAction SilentlyContinue }
     if (Test-Path -LiteralPath $extractRoot) { Remove-Item -LiteralPath $extractRoot -Recurse -Force }
 
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri $url -OutFile $tmpZip -UseBasicParsing
+    # SOURCE LAYERING (dispatch 000244): mirror -> bundle -> this script's own download. The
+    # FIRST layer that yields the archive wins, and the pin check on the very next lines then
+    # runs on it byte-for-byte identically regardless of which layer that was -- the resolver
+    # deliberately does NOT verify anything itself, so exactly one gate exists per artifact.
+    #
+    # This is the layer ensure-pssa has had since 000049 (its pinned-.nupkg cache) and PSES has
+    # not: until now this script had a single unlayered download, no retry and no fallback. The
+    # asymmetry is preserved on purpose -- nothing here adds a retry or a fallback, only sources.
+    #
+    # With NEITHER env var set, Resolve-PinnedArtifactSource returns unresolved without touching
+    # the network or the disk, and the download below runs exactly as it did pre-000244.
+    $artifactName = Get-PinnedArtifactFileName -Component 'pses' -Version $PsesTag
+    $sourced = Resolve-PinnedArtifactSource -FileName $artifactName -Destination $tmpZip
+    foreach ($note in $sourced.Notes) { Write-Log ('artifact-source: ' + $note) }
+    $sourceLayer = 'download'
+    if ($sourced.Resolved) {
+        $sourceLayer = $sourced.Layer
+        Write-Log ('artifact-source: resolved from ' + $sourceLayer + ' (' + $sourced.Source +
+            '); pin is still verified before use')
+    } else {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $url -OutFile $tmpZip -UseBasicParsing
+    }
 
     # WS2 (dispatch 000046, Gap B L2): FAIL CLOSED on a hash mismatch. Verify the downloaded
     # archive against the pinned SHA-256 BEFORE extracting or swapping. A mismatch means the
@@ -69,8 +95,14 @@ try {
     if (-not (Test-PinnedFileHash -Path $tmpZip -ExpectedSha256 $PsesSha256)) {
         $actualHash = ''
         try { $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $tmpZip -ErrorAction Stop).Hash } catch { }
-        throw ('PSES archive integrity check FAILED -- refusing unverified bundle. Expected SHA-256 ' +
-            $PsesSha256 + ' but got ' + $actualHash + '. The download does not match the pinned ' + $PsesTag + ' artifact.')
+        # NAME THE LAYER (000244). A mismatch fails CLOSED here and is NEVER retried against
+        # another source: falling through would let whoever controls one layer force a
+        # downgrade onto the next, and would turn a tamper signal into a retry. Saying WHICH
+        # layer produced the bad bytes is what makes the banner actionable -- "refresh your
+        # mirror" and "your bundle is corrupt" are different admin actions.
+        throw ('PSES archive integrity check FAILED for the ' + $sourceLayer + ' source -- refusing ' +
+            'unverified bundle. Expected SHA-256 ' + $PsesSha256 + ' but got ' + $actualHash +
+            '. The artifact from the ' + $sourceLayer + ' source does not match the pinned ' + $PsesTag + ' artifact.')
     }
 
     Expand-Archive -LiteralPath $tmpZip -DestinationPath $extractRoot -Force
@@ -79,9 +111,9 @@ try {
     # release zip extracts to a top-level 'PowerShellEditorServices' folder that IS
     # the module itself -- Start-EditorServices.ps1 and PowerShellEditorServices.psd1
     # live directly inside it. We want that module to land at
-    # $bundleDir/PowerShellEditorServices so that $bundleDir is a valid
+    # $installDir/PowerShellEditorServices so that $installDir is a valid
     # -BundledModulesPath and the start script resolves at
-    # $bundleDir/PowerShellEditorServices/Start-EditorServices.ps1. Locate the module
+    # $installDir/PowerShellEditorServices/Start-EditorServices.ps1. Locate the module
     # by finding Start-EditorServices.ps1 (shallowest match) rather than assuming a
     # fixed nesting depth. This locate doubles as the download VERIFY -- a partial or
     # wrong archive yields no match and throws BEFORE any destructive swap.
@@ -93,12 +125,12 @@ try {
 
     # SWAP -- only now, with a verified-good module staged. Rename any existing bundle aside,
     # build the new one, then drop the old. On a swap failure restore the prior bundle, so the
-    # user is never left with NO bundle. ($bundleDir is absent only for the few local FS ops
+    # user is never left with NO bundle. ($installDir is absent only for the few local FS ops
     # between rename and move, and only after a verified download -- never on a network miss.)
     if (Test-Path -LiteralPath $backupDir) { Remove-Item -LiteralPath $backupDir -Recurse -Force }
-    if (Test-Path -LiteralPath $bundleDir) { Rename-Item -LiteralPath $bundleDir -NewName (Split-Path -Leaf $backupDir) }
+    if (Test-Path -LiteralPath $installDir) { Rename-Item -LiteralPath $installDir -NewName (Split-Path -Leaf $backupDir) }
     try {
-        New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
+        New-Item -ItemType Directory -Force -Path $installDir | Out-Null
         # MIT-notice preservation (dispatch 000029): the PSES release zip carries its MIT LICENSE +
         # NOTICE.txt at the distribution root (siblings of the PowerShellEditorServices module dir).
         # The module-only move below would drop them, leaving the installed bundle with NO upstream
@@ -107,16 +139,16 @@ try {
         # change (the daemon reads the same module byte-for-byte); best-effort, so a missing or
         # uncopyable notice never aborts the install (the swap is already complete).
         $psesNoticeRoot = $startLeaf.Directory.Parent.FullName
-        Move-Item -LiteralPath $startLeaf.Directory.FullName -Destination (Join-Path $bundleDir 'PowerShellEditorServices')
+        Move-Item -LiteralPath $startLeaf.Directory.FullName -Destination (Join-Path $installDir 'PowerShellEditorServices')
         foreach ($noticeName in @('LICENSE', 'NOTICE.txt')) {
             $noticeSrc = Join-Path $psesNoticeRoot $noticeName
             if (Test-Path -LiteralPath $noticeSrc -PathType Leaf) {
-                Copy-Item -LiteralPath $noticeSrc -Destination (Join-Path $bundleDir $noticeName) -Force -ErrorAction SilentlyContinue
+                Copy-Item -LiteralPath $noticeSrc -Destination (Join-Path $installDir $noticeName) -Force -ErrorAction SilentlyContinue
             }
         }
     } catch {
-        if (Test-Path -LiteralPath $bundleDir) { Remove-Item -LiteralPath $bundleDir -Recurse -Force -ErrorAction SilentlyContinue }
-        if (Test-Path -LiteralPath $backupDir) { Rename-Item -LiteralPath $backupDir -NewName (Split-Path -Leaf $bundleDir) }
+        if (Test-Path -LiteralPath $installDir) { Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $backupDir) { Rename-Item -LiteralPath $backupDir -NewName (Split-Path -Leaf $installDir) }
         throw
     }
     if (Test-Path -LiteralPath $backupDir) { Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue }
@@ -124,8 +156,15 @@ try {
     Remove-Item -LiteralPath $tmpZip -Force -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $extractRoot) { Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue }
 
-    New-Item -ItemType File -Force -Path $marker | Out-Null
-    Write-Log 'PSES bootstrap complete.'
+    # RECORD THE RESOLVED LAYER IN THE MARKER (dispatch 000244) so the doctor's artifact-source
+    # check can report where THIS install actually came from instead of re-deriving a guess from
+    # current configuration -- the env vars may have changed since the install, and a check that
+    # reads today's config to describe yesterday's install would state a falsehood confidently.
+    # The marker's EXISTENCE is still the only thing the fast path above tests, so writing
+    # content to it changes no control flow; a marker left by an older version simply has no
+    # layer recorded and the doctor reports that honestly rather than inventing one.
+    Set-Content -LiteralPath $marker -Value $sourceLayer -Encoding ascii -Force
+    Write-Log ('PSES bootstrap complete (source: ' + $sourceLayer + ').')
 }
 catch {
     $msg = $_.Exception.Message

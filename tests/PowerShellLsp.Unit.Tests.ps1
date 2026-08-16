@@ -1952,8 +1952,13 @@ Describe 'PSSA .nupkg cache is verify-gated and pin-bound (dispatch 000049)' {
     It 'INVARIANT 1: exactly ONE pin-verify gate guards the install, and a mismatch fails closed' {
         # One Test-PinnedFileHash call over $nupkg guards both the cache-hit and download paths; the
         # cache hit does NOT add a second, weaker path. The mismatch branch refuses (fail closed).
+        # 000244 added mirror and bundle layers ahead of the cache. The invariant is UNCHANGED and
+        # now covers four sources instead of two: still exactly ONE gate over $nupkg, and every
+        # layer feeds it. The failure message grew to name the offending layer, so the two
+        # load-bearing halves are asserted separately rather than as one brittle sentence.
         @([regex]::Matches($script:EnsurePssaSrc, 'Test-PinnedFileHash -Path \$nupkg')).Count | Should -Be 1
-        $script:EnsurePssaSrc | Should -Match 'integrity check failed \(hash mismatch\); refusing unverified package'
+        $script:EnsurePssaSrc | Should -Match 'integrity check failed \(hash mismatch\)'
+        $script:EnsurePssaSrc | Should -Match 'refusing unverified package'
     }
     It 'INVARIANT 2: the cache filename binds to BOTH the pinned version and the SHA-256' {
         # A pin bump (version OR hash) yields a different filename -> a guaranteed miss, never a stale
@@ -1963,8 +1968,12 @@ Describe 'PSSA .nupkg cache is verify-gated and pin-bound (dispatch 000049)' {
     It 'is OFF by default: gated on POWERSHELL_LSP_PSSA_CACHE, and the Gallery is reached only on a miss' {
         # When the env var is unset there is no cache and acquisition is byte-identical to 000047.
         $script:EnsurePssaSrc | Should -Match 'POWERSHELL_LSP_PSSA_CACHE'
-        # the network fetch is gated behind the cache-miss guard
-        $guardIdx = $script:EnsurePssaSrc.IndexOf('if (-not $fromCache)')
+        # The network fetch is gated behind the cache-miss guard. 000244 WIDENED that guard --
+        # the Gallery is now also skipped when a mirror or bundle already resolved the artifact
+        # -- so the anchor moved from `if (-not $fromCache)` to the widened condition. The
+        # property under test is unchanged and strictly stronger: strictly fewer paths reach the
+        # Gallery than before.
+        $guardIdx = $script:EnsurePssaSrc.IndexOf('if (-not $sourced.Resolved -and -not $fromCache)')
         $downloadIdx = $script:EnsurePssaSrc.IndexOf('Invoke-WebRequest')
         $guardIdx | Should -BeGreaterThan 0
         $downloadIdx | Should -BeGreaterThan $guardIdx

@@ -113,6 +113,154 @@ function Test-PinnedFileHash {
     return [string]::Equals($actual, $ExpectedSha256, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+# --- artifact-source layering (dispatch 000244) -----------------------------
+# The two pinned artifacts may be resolved from more than one PLACE without changing what
+# is TRUSTED. Resolution order is mirror -> bundle -> the caller's own default download.
+# The FIRST layer that yields the artifact wins, and that artifact then passes the caller's
+# EXISTING Test-PinnedFileHash gate byte-for-byte identically, whichever layer produced it.
+#
+# THE GOVERNING PRINCIPLE, inherited verbatim from the 000049 pinned-.nupkg cache: a source
+# is a TRANSPORT OPTIMIZATION, NEVER A TRUST SHORTCUT. The pins in the ensure-scripts remain
+# the only trust root. A mirror or a bundle is not a trust root and cannot become one -- it
+# changes which bytes are OFFERED, never whether they are BELIEVED.
+#
+# TWO CONSEQUENCES, both deliberate:
+#   1. A pin MISMATCH from any layer FAILS CLOSED in the caller. It does NOT fall through to
+#      the next layer. Falling through would let anyone who controls one layer force a
+#      downgrade onto another, and it would turn a tamper signal into a retry. This is the
+#      000049 cache rule exactly (a poisoned cache entry exits 1; it never self-heals).
+#   2. A layer MISS -- not configured, or configured but the artifact is absent -- is NOT a
+#      failure. It falls through to the next layer. That is what makes an UNSET configuration
+#      byte-identical to pre-000244 behavior: with neither variable set this resolver returns
+#      unresolved immediately, having touched no network and no disk.
+#
+# WHY ENVIRONMENT VARIABLES AND NOT userConfig KNOBS (ruled by Mike, dispatch 000244). Every
+# POWERSHELL_LSP_* variable in this project is infrastructure/admin plumbing (the PSSA cache,
+# the SARIF artifact dir, the dogfood log, the push guard); every userConfig knob is user-facing
+# diagnostics behavior. A mirror base and a staged bundle directory are fleet plumbing set once
+# by IT, and the env surface is the fleet-DEPLOYABLE one (GPO, Intune, machine scope) -- which
+# a per-user /plugin config panel is not. They therefore add NO CONTRACT.md frozen surface.
+
+function Get-PinnedArtifactFileName {
+    # THE single source of truth for what a staged artifact is CALLED. The ensure-scripts, the
+    # release bundle builder, the doctor's offline-readiness check, and the Pester suite all
+    # derive the name here rather than each spelling it out -- the same one-place-for-one-fact
+    # rule that keeps the SBOM from disagreeing with what the tool downloads.
+    #
+    # Names are VERSION-QUALIFIED because upstream's own names are not sufficient: the PSES
+    # release asset is a bare 'PowerShellEditorServices.zip' (identical across every tag), and
+    # the PSSA Gallery URL carries no filename at all. An admin mirroring two versions needs
+    # them to be distinguishable on disk.
+    #
+    # The pin hash is deliberately NOT in the name, which is where this departs from the 000049
+    # cache. That cache binds the SHA into its filename so a re-pin is a guaranteed MISS and
+    # self-heals by re-downloading. A mirror has no such self-healing to protect: on a hash-only
+    # re-pin a stale mirrored artifact FAILS CLOSED loudly and tells the admin to refresh the
+    # mirror, which is the outcome an operator wants over a silent substitution.
+    param([ValidateSet('pses', 'pssa')][string]$Component, [string]$Version)
+    if ($Component -eq 'pses') { return ('PowerShellEditorServices-' + $Version + '.zip') }
+    return ('PSScriptAnalyzer-' + $Version + '.nupkg')
+}
+
+function Get-ArtifactSourceSettings {
+    # The two configured layers, TOGETHER WITH whether each is configured -- the
+    # Get-PluginDataRootResolution provenance shape, for the same reason: a caller that finds
+    # nothing must be able to tell "no mirror is configured" from "the mirror had no such file".
+    #
+    # MirrorBase is accepted ONLY over https. The pin is the trust root, so a plaintext mirror
+    # would not actually break integrity -- but the layer is specified as an HTTPS mirror, and
+    # refusing an unexpected scheme is the fail-closed direction. A non-https value is reported
+    # as configured-but-INVALID rather than silently ignored, so a typo surfaces as a named
+    # banner instead of an inexplicable fall-through to the internet.
+    $mirror = $env:POWERSHELL_LSP_ARTIFACT_MIRROR_BASE
+    $bundle = $env:POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR
+    $mirrorSet = -not [string]::IsNullOrWhiteSpace($mirror)
+    $bundleSet = -not [string]::IsNullOrWhiteSpace($bundle)
+    $mirrorValid = $false
+    $mirrorReason = ''
+    if ($mirrorSet) {
+        $mirror = $mirror.Trim().TrimEnd('/')
+        if ($mirror -match '^https://') { $mirrorValid = $true }
+        else { $mirrorReason = 'not an https:// URL' }
+    }
+    $bundleValid = $false
+    $bundleReason = ''
+    if ($bundleSet) {
+        $bundle = $bundle.Trim()
+        if (-not [System.IO.Path]::IsPathRooted($bundle)) { $bundleReason = 'not an absolute path' }
+        elseif (-not (Test-Path -LiteralPath $bundle -PathType Container)) { $bundleReason = 'directory does not exist' }
+        else { $bundleValid = $true }
+    }
+    return [pscustomobject]@{
+        MirrorBase       = $(if ($mirrorSet) { $mirror } else { '' })
+        MirrorConfigured = $mirrorSet
+        MirrorValid      = $mirrorValid
+        MirrorReason     = $mirrorReason
+        BundleDir        = $(if ($bundleSet) { $bundle } else { '' })
+        BundleConfigured = $bundleSet
+        BundleValid      = $bundleValid
+        BundleReason     = $bundleReason
+        AnyConfigured    = ($mirrorSet -or $bundleSet)
+    }
+}
+
+function Resolve-PinnedArtifactSource {
+    # Try mirror, then bundle, placing the artifact at $Destination. Returns WHICH layer
+    # produced it so the caller can name the layer in its log, its failure banner, and the
+    # doctor's artifact-source check -- never a bare boolean, which would leave a reader unable
+    # to say where the bytes came from.
+    #
+    # This function does NOT verify the pin. Verification stays in the caller, on the caller's
+    # existing Test-PinnedFileHash line, precisely so there is exactly ONE gate per artifact
+    # and no layer can acquire a second, weaker one. A $true Resolved here means only "bytes
+    # were placed at $Destination", never "bytes were trusted".
+    param([string]$FileName, [string]$Destination)
+
+    $notes = @()
+    $settings = Get-ArtifactSourceSettings
+
+    if ($settings.MirrorConfigured -and -not $settings.MirrorValid) {
+        $notes += ('mirror configured but unusable (' + $settings.MirrorReason + '); skipping layer')
+    }
+    if ($settings.BundleConfigured -and -not $settings.BundleValid) {
+        $notes += ('bundle configured but unusable (' + $settings.BundleReason + '); skipping layer')
+    }
+
+    # LAYER 1 -- mirror. Same filenames as the bundle, over an internal HTTPS base URL.
+    if ($settings.MirrorValid) {
+        $url = $settings.MirrorBase + '/' + $FileName
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $url -OutFile $Destination -UseBasicParsing
+            if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+                return [pscustomobject]@{ Layer = 'mirror'; Resolved = $true; Source = $url; Notes = $notes }
+            }
+            $notes += ('mirror fetch produced no file: ' + $url)
+        } catch {
+            # A MISS, not a tamper signal -- fall through to the next layer. An unreachable or
+            # 404ing mirror must not strand a machine that also has a bundle or the internet.
+            $notes += ('mirror miss (' + $_.Exception.Message + '): ' + $url)
+        }
+    }
+
+    # LAYER 2 -- bundle. Pre-staged artifacts on local disk; the air-gapped path.
+    if ($settings.BundleValid) {
+        $staged = Join-Path $settings.BundleDir $FileName
+        if (Test-Path -LiteralPath $staged -PathType Leaf) {
+            try {
+                Copy-Item -LiteralPath $staged -Destination $Destination -Force
+                return [pscustomobject]@{ Layer = 'bundle'; Resolved = $true; Source = $staged; Notes = $notes }
+            } catch {
+                $notes += ('bundle copy failed (' + $_.Exception.Message + '): ' + $staged)
+            }
+        } else {
+            $notes += ('bundle configured but artifact missing: ' + $staged)
+        }
+    }
+
+    return [pscustomobject]@{ Layer = ''; Resolved = $false; Source = ''; Notes = $notes }
+}
+
 # --- plugin version: single source of truth is the manifest (dispatch 000025) ----
 # The host/client version stamps (pses-stdio HostVersion, daemon HostVersion, the LSP
 # clientInfo.version) and the startup log line all read the version from
