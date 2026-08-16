@@ -30,12 +30,14 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+
+## [1.31.2] - 2026-08-15
 PATCH: **a client that walks away from a reply no longer kills the analyzer daemon**, and
 **`nativeServe` / `ps_host` finally reach the process that acts on them**. Every external GitHub
 Action is also pinned to an immutable commit SHA. No new `userConfig` knob, no knob removed or
 renamed, no default changed, and no diagnostics change. **Read [Known issues](#known-issues) before
-tracking this branch** -- on Claude Code 2.1.233 the serve-transport mappings are SUSPENDED behind
-an upstream defect, so `nativeServe = shim` cannot take effect. No tagged release is affected.
+upgrading** -- on Claude Code 2.1.233 the serve-transport mappings are SUSPENDED behind an upstream
+defect, so `nativeServe = shim` cannot take effect. No tagged release is affected.
 
 ### Fixed
 
@@ -103,10 +105,10 @@ a knob is set but the manifest declares no transport for it -- measured RED agai
 manifest (`configured=shim effective=off [NO TRANSPORT]`) and GREEN against this one.
 
 **The transport is now PROVEN end-to-end against a real installed plugin** (dispatch 000233's
-blocked acceptance criterion, discharged 2026-08-15). A marketplace install of this branch
-registered its LSP server, answered `documentSymbol` / `hover` / `goToDefinition` against
-`demo.ps1`, produced the expected `PSUseApprovedVerbs` diagnostic, and logged all three knobs with
-`provenance: env` and `configured=shim effective=shim`. Details in
+blocked acceptance criterion, discharged 2026-08-15). A marketplace install carrying the
+`${user_config.*}` mappings registered its LSP server, answered `documentSymbol` / `hover` /
+`goToDefinition` against `demo.ps1`, produced the expected `PSUseApprovedVerbs` diagnostic, and
+logged all three knobs with `provenance: env` and `configured=shim effective=shim`. Details in
 [docs/decision-ledger.md](docs/decision-ledger.md).
 
 **A release test encoded the dependency version instead of the invariant** (dispatch 000240).
@@ -160,9 +162,9 @@ grants, same `!inputs.dry_run` gating, same release gates.
 
 ### Known issues
 
-**RESOLVED in this branch -- a zero-configuration install registers its LSP server again.** For a
-window during `[Unreleased]`, tracking this branch on Claude Code 2.1.233 required `profile`,
-`ps_host` and `nativeServe` to be set by hand or **no LSP server loaded at all**:
+**RESOLVED in this release -- a zero-configuration install registers its LSP server again.** For a
+window before this release, tracking `main` on Claude Code 2.1.233 required `profile`, `ps_host`
+and `nativeServe` to be set by hand or **no LSP server loaded at all**:
 
 ```
 Failed to load LSP servers for plugin powershell-lsp: Error: Plugin option "profile" isn't set.
@@ -175,10 +177,10 @@ pressing Save did not help: the panel seeds an unset field **empty** rather than
 default, and skips blank optional keys on save, so it wrote nothing. **No tagged release was ever
 affected** -- the mappings landed after `v1.31.1` and are not in it.
 
-**What ships now (dispatch 000241):** the `${user_config.*}` mappings are **SUSPENDED** -- removed
-from the manifest, and recorded in `Get-ServeTransportSuspension` (`scripts/lib/lsp-common.ps1`)
-together with the exact condition that restores them, so lifting the gate is a mechanical edit.
-Filed upstream as
+**What ships in this release (dispatch 000241):** the `${user_config.*}` mappings are
+**SUSPENDED** -- removed from the manifest, and recorded in `Get-ServeTransportSuspension`
+(`scripts/lib/lsp-common.ps1`) together with the exact condition that restores them, so lifting
+the gate is a mechanical edit. Filed upstream as
 [`anthropics/claude-code#86936`](https://github.com/anthropics/claude-code/issues/86936).
 
 **The remaining limitation, stated plainly:** while the gate holds, `profile`, `ps_host` and
