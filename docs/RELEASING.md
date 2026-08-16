@@ -272,7 +272,42 @@ transparency log, no stored key); a GitHub release whose body is taken verbatim 
 changelog entry for that version, without retyping; a source archive that contains the exact
 released tree; a Software Bill of Materials in CycloneDX format listing the plugin together
 with its two pinned downloaded dependencies, PowerShell Editor Services and PSScriptAnalyzer;
-and a build-provenance attestation that covers the archive and the bill of materials.
+an **airgap bundle** (`powershell-lsp-airgap-<version>.zip`, below); and a build-provenance
+attestation that covers the archive, the bill of materials, and the airgap bundle.
+
+### The airgap bundle asset
+
+`powershell-lsp-airgap-<version>.zip` carries the **two pinned downloaded dependencies** -- the
+PSES release zip and the PSScriptAnalyzer `.nupkg` -- plus a `MANIFEST.txt` listing both pins. It
+exists so a machine with no egress has a first-bootstrap path at all; an administrator stages it
+once and points `POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR` at it (see
+[docs/configuration.md](configuration.md#offline-and-air-gapped-installation)).
+
+**What its attestation covers, stated exactly.** The SLSA build-provenance attestation covers the
+zip **as published** -- it attests that this repository's release workflow produced those exact
+bytes at that exact commit, the same claim it makes about the source archive. It does **not**
+attest the upstream dependencies themselves; those are vouched for by the **SHA-256 pins**, which
+`release/New-AirgapBundle.ps1` verifies before packing and which the plugin verifies again at
+bootstrap. Provenance answers "did this project build this zip?"; the pins answer "are these the
+right dependency bytes?" Both are needed and neither substitutes for the other.
+
+**It deliberately excludes the plugin's own source.** That is already published as its own
+attested asset, so the offline path is **two** independently verifiable artifacts -- source plus
+bundle -- each with its own `gh attestation verify`. Nesting a second copy of the source here
+would create two attested paths to the same bytes that can disagree, and would place content
+nothing reads inside a security artifact.
+
+**The bundle is built on a dry run too, and it is the only asset that is.** A rehearsal cannot
+exercise the attestation -- that needs the server-issued OIDC token, exactly as with the
+provenance and the gitsign signature (see
+[What only proves out on the first real release](#what-only-proves-out-on-the-first-real-release)).
+What a rehearsal *can* prove is that the bundle **assembles**: the pins resolve out of the
+`ensure-*` scripts, both artifacts download, both hash-verify against those pins, the manifest
+generates, and the zip writes and reads back with non-empty entries. That check runs on every dry
+run and uploads nothing. The attestation's *coverage* is additionally asserted as workflow text in
+`tests/PowerShellLsp.Release.Tests.ps1`, so a subject dropped from the attestation fails CI rather
+than being discovered after a release. Live `gh attestation verify` on the bundle proves out on
+the first real release that carries it.
 
 A `cosign` signature over the source archive was evaluated and deliberately not added: the
 build-provenance attestation already covers that archive with a Sigstore-backed claim STRONGER
@@ -281,13 +316,16 @@ separate signature over the same bytes would be redundant. The net-new signature
 which nothing previously signed. Authenticode / Windows publisher signing of the scripts is
 deliberately out of scope for a git-distributed plugin (see TRUST.md, "Signing posture").
 
-The two release helpers are single-sourced and locally runnable:
+The release helpers are single-sourced and locally runnable:
 
 - [`release/Get-ChangelogEntry.ps1`](../release/Get-ChangelogEntry.ps1) extracts the release
   notes from the CHANGELOG (the same body the pipeline publishes).
 - [`release/New-PluginSbom.ps1`](../release/New-PluginSbom.ps1) generates the CycloneDX SBOM,
   reading the dependency versions straight from `scripts/ensure-pses.ps1` and
   `scripts/ensure-pssa.ps1` so the SBOM can never disagree with what the tool downloads.
+- [`release/New-AirgapBundle.ps1`](../release/New-AirgapBundle.ps1) builds the airgap bundle,
+  reading the pins from those same two scripts for the same reason, and refusing to pack any
+  artifact that does not match its pin. `-VerifyOnly` checks assembly without writing a zip.
 
 ## Rehearse with a dry run
 

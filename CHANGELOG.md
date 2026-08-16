@@ -31,6 +31,39 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+MINOR: **offline / air-gapped bootstrap.** The two pinned dependencies can now be resolved from an
+internal HTTPS mirror or a pre-staged local bundle instead of only from their upstream URLs, so a
+machine with no egress has a first-bootstrap path at all. **No `userConfig` knob was added** -- the
+frozen 1.x knob surface in `CONTRACT.md` is unchanged. Both settings are environment variables,
+because they are fleet plumbing an organization deploys by GPO / Intune / machine scope and are read
+during bootstrap, before any diagnostics surface exists.
+
+- **Two new environment variables**, tried in order and then falling through to the existing
+  download: `POWERSHELL_LSP_ARTIFACT_MIRROR_BASE` (an HTTPS base URL) and
+  `POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR` (an absolute path to staged artifacts). See
+  [docs/configuration.md](docs/configuration.md#offline-and-air-gapped-installation).
+- **Sources are transport; pins are trust.** Whichever layer supplies an artifact, it passes the
+  *same* SHA-256 pin check before use, and a mismatch **fails closed and never falls through to
+  another layer** -- falling through would let whoever controls one layer force a downgrade onto
+  the next. The failure banner names the layer that produced the bad bytes. The pins in the
+  `ensure-*` scripts remain the only trust root.
+- **With neither variable set, behavior is byte-for-byte unchanged**: no extra network call and no
+  extra disk read. The existing `POWERSHELL_LSP_PSSA_CACHE` cache keeps its exact 000049 behavior
+  as the innermost layer.
+- **New release asset** `powershell-lsp-airgap-<version>.zip` -- the two pinned dependencies plus a
+  manifest of their pins -- covered by the same SLSA provenance attestation as the source archive.
+  It deliberately does not contain the plugin's own source, which is already its own attested
+  asset; the offline path is two independently verifiable artifacts, each with its own
+  `gh attestation verify`.
+- **`/doctor` gains two checks:** *Artifact source* (which layer produced the installed
+  dependencies, read from what the bootstrap recorded at install time) and *Offline readiness*
+  (whether a staged bundle holds every pinned artifact and each matches its pin). Offline readiness
+  reports an honest `unknown` for a mirror-only setup rather than claiming a verification it did
+  not perform -- proving a mirror would mean downloading it.
+- TRUST.md now also discloses the pre-existing `POWERSHELL_LSP_PSSA_CACHE` layer, which its
+  downloads section had not previously named, and reports the unpinned `Save-Module` fallback
+  distinctly (`gallery-fallback`) rather than as a pinned source.
+
 ## [1.31.2] - 2026-08-15
 PATCH: **a client that walks away from a reply no longer kills the analyzer daemon**, and
 **`nativeServe` / `ps_host` finally reach the process that acts on them**. Every external GitHub

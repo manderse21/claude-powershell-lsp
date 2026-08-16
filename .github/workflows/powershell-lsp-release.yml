@@ -358,6 +358,42 @@ jobs:
           Get-ChildItem "powershell-lsp-$v.tar.gz", "powershell-lsp-$v.cdx.json", "release-notes.md" |
             Select-Object Name, Length | Format-Table | Out-String | Write-Host
 
+      # The offline / air-gapped bundle (dispatch 000244): the two PINNED downloaded
+      # dependencies plus a manifest of their pins, so an admin behind an air gap stages one
+      # asset instead of having no first-bootstrap path at all.
+      #
+      # THIS STEP RUNS ON A DRY RUN TOO, and it is the only asset step that does. That is
+      # deliberate and it is what the amended acceptance for this dispatch rests on. The
+      # attestation cannot be exercised in a rehearsal -- it needs a server-issued OIDC token,
+      # exactly as RELEASING.md has always said of the provenance and the gitsign signature --
+      # so what a rehearsal CAN prove is that the bundle ASSEMBLES: the pins resolve out of the
+      # ensure-scripts, both artifacts download, both hash-verify against those pins, the
+      # manifest generates, and the zip writes. A rehearsal that skipped this would discover a
+      # broken bundle only on the producing run, which is the failure the rehearsal exists to
+      # prevent. Nothing is uploaded or attested here on a dry run.
+      - name: Build the airgap bundle (also on dry run -- proves assembly)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $v = '${{ steps.resolve.outputs.version }}'
+          & ./release/New-AirgapBundle.ps1 -Version $v -OutFile "powershell-lsp-airgap-$v.zip"
+          if ($LASTEXITCODE -ne 0) { throw "New-AirgapBundle failed ($LASTEXITCODE)" }
+
+          # Re-open the written zip and confirm it holds every artifact the manifest names, at
+          # the byte length staged. Building a zip and never reading it back is how a truncated
+          # or empty archive ships green.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path "powershell-lsp-airgap-$v.zip"))
+          try {
+            $names = @($zip.Entries | ForEach-Object { $_.FullName })
+            Write-Host ('bundle contains: ' + ($names -join ', '))
+            if ($names -notcontains 'MANIFEST.txt') { throw 'airgap bundle is missing MANIFEST.txt' }
+            foreach ($e in $zip.Entries) {
+              if ($e.Length -le 0) { throw ('airgap bundle entry is empty: ' + $e.FullName) }
+            }
+            if ($names.Count -lt 3) { throw ('airgap bundle has too few entries: ' + $names.Count) }
+          } finally { $zip.Dispose() }
+
       # SLSA build provenance over the release archive + the CycloneDX SBOM.
       #
       # WHY actions/attest AND NOT actions/attest-build-provenance. Upstream made
@@ -371,7 +407,7 @@ jobs:
       # predicate -- whenever no sbom-path and no predicate input is supplied, which is exactly
       # this call. So the predicate type, the subjects, the OIDC identity, the attestations:
       # write grant and the dry-run gating are all unchanged; only one wrapper hop is removed.
-      - name: Attest build provenance (archive + SBOM)
+      - name: Attest build provenance (archive + SBOM + airgap bundle)
         if: ${{ !inputs.dry_run }}
         env:
           # Carried over verbatim from the attest-build-provenance wrapper so the migration
@@ -382,6 +418,7 @@ jobs:
           subject-path: |
             powershell-lsp-${{ steps.resolve.outputs.version }}.tar.gz
             powershell-lsp-${{ steps.resolve.outputs.version }}.cdx.json
+            powershell-lsp-airgap-${{ steps.resolve.outputs.version }}.zip
 
       - name: Install gitsign (keyless tag signing, pinned)
         if: ${{ !inputs.dry_run }}
@@ -436,7 +473,7 @@ jobs:
           git push origin "refs/tags/$TAG"
           echo "Cut gitsign-signed tag $TAG on $TARGET (keyless via GitHub OIDC, Rekor-logged) and pushed."
 
-      - name: Create the GitHub Release (CHANGELOG notes + SBOM + provenance-attested archive)
+      - name: Create the GitHub Release (CHANGELOG notes + SBOM + airgap bundle + provenance-attested archive)
         if: ${{ !inputs.dry_run }}
         shell: bash
         env:
@@ -450,7 +487,8 @@ jobs:
             --notes-file release-notes.md \
             --target "${{ steps.resolve.outputs.target }}" \
             "powershell-lsp-$V.tar.gz" \
-            "powershell-lsp-$V.cdx.json"
+            "powershell-lsp-$V.cdx.json" \
+            "powershell-lsp-airgap-$V.zip"
           echo "Created GitHub Release $TAG."
 
       - name: Dry-run summary (no tag cut, no release created)
@@ -458,3 +496,4 @@ jobs:
         run: |
           echo "DRY RUN complete: every precondition validated for ${{ steps.resolve.outputs.tag }} on commit ${{ steps.resolve.outputs.target }}."
           echo "No tag was cut and no release was created. Re-run with dry_run=false to publish."
+          echo "The airgap bundle WAS built and its contents verified against the pins (assembly proven); it was not uploaded or attested."

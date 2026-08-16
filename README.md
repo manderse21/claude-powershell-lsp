@@ -142,10 +142,14 @@ Checked in order by the [Quick start](#quick-start) below.
 
 - [ ] **PowerShell 7+ (`pwsh`) on your PATH.** As of 1.1.1 the plugin's hooks launch under
   `pwsh`; Windows PowerShell 5.1 alone cannot bootstrap them. Check with `pwsh -v`.
-- [ ] **Internet access on the first enabled session.** PSES and PSScriptAnalyzer are downloaded
-  on first use, not vendored (see [Pinned versions](#pinned-versions)). The download is idempotent
-  and marker-gated. Offline or behind a proxy, the first run surfaces an honest `unavailable`
-  banner instead of failing silently (see [Diagnostics status](#diagnostics-status)).
+- [ ] **Internet access on the first enabled session -- or a configured offline source.** PSES and
+  PSScriptAnalyzer are downloaded on first use, not vendored (see
+  [Pinned versions](#pinned-versions)). The download is idempotent and marker-gated. On a machine
+  with no egress, point the plugin at an internal mirror or a pre-staged bundle instead --
+  see [Offline and air-gapped installation](docs/configuration.md#offline-and-air-gapped-installation);
+  every source is verified against the same SHA-256 pin. With neither configured and no internet,
+  the first run surfaces an honest `unavailable` banner instead of failing silently (see
+  [Diagnostics status](#diagnostics-status)).
 - [ ] **On managed / locked-down Windows,** a security control (WDAC / AppLocker / ExecutionPolicy
   / Constrained Language Mode) can block a downloaded component; it then reads as `unavailable`
   rather than crashing. See [Troubleshooting](#troubleshooting).

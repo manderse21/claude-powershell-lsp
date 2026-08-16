@@ -43,12 +43,17 @@ present rather than a status badge.
 | **R2-07** | Stop the busy-vs-unreachable relaunch thrash on the edit path | 000225 | **HUMAN-GATED** | Chartered under D3 against the T4 red. Delivered, merged, released in v1.31.1, and remeasured against the fixed build: the thrash is gone and every remaining relaunch now follows a real daemon death. What remains is a maintainer decision on the successor the remeasurement isolated -- see the PENDING-MIKE row for the daemon-exit charter, which this program does **not** charter | [`POST-FIX-REMEASUREMENT-relaunch-thrash.md`](POST-FIX-REMEASUREMENT-relaunch-thrash.md); manderse21/claude-powershell-lsp#153, merge `bdd78f1`; dispatches 000229 and 000231; D3 |
 | **R2-08** | Developer-experience journey audit, install through upgrade | 000228 | **HUMAN-GATED** | Delivered and merged. Findings only; nothing fixed. Triage against the D7 taxonomy is Mike's | [`DX-AUDIT.md`](DX-AUDIT.md); manderse21/claude-powershell-lsp#152, merge `c4fc5ce`; D7 |
 | **R2-14** | Governance surface | 000227 | **HUMAN-GATED** | Delivered and merged, which ratified the four proposals. CODEOWNERS ships **inert** by design: enabling `require_code_owner_reviews` would deadlock the repository until a second maintainer exists | [`GOVERNANCE-SURFACE.md`](GOVERNANCE-SURFACE.md); manderse21/claude-powershell-lsp#150, merge `5d8ac83` |
+| **R2-15** | Offline / air-gapped bootstrap: layered artifact sources + attested airgap bundle | 000244 | **HUMAN-GATED** | A slice of the Arc D lane below, whose gate -- one slice per real adoption signal -- is satisfied by the corporate-IT review of 2026-08-15 that ranked no-offline-path as the top tractable adoption blocker. Delivered via manderse21/claude-powershell-lsp#176; what remains is the maintainer's call on when it rides a release | [`TRUST.md`](../../TRUST.md) trust-model section; [`configuration.md`](../configuration.md#offline-and-air-gapped-installation); `release/New-AirgapBundle.ps1`; manderse21/claude-powershell-lsp#176 (merge SHA lands with the next edit that touches this file) |
 
 **Identifier gaps.** R2-03 and R2-09 through R2-13 do not appear in this repository or in the
 dispatch hub at write time. They are recorded as absent, not as unstarted: nothing is known about
 whether those identifiers were ever assigned. The `Wave A` docs/upstream true-up (dispatch 000224,
 manderse21/claude-powershell-lsp#148, merge `cfd2409`) carries no R2 number in any artifact and is
 listed here for completeness rather than given one.
+
+**R2-15 was minted fresh rather than filling a gap** (dispatch 000244). Reusing R2-03 or any of
+R2-09 through R2-13 would assert that the identifier was free, which is exactly the thing the
+paragraph above records as unknown. A new identifier costs nothing and claims nothing.
 
 ### Standing arcs, carried forward
 
@@ -59,7 +64,7 @@ These predate Roadmap II and keep their pacing. `ROADMAP.md` states them at head
 | Native code navigation, end to end | **GATED** | Registration works; serve does not on the direct path. The opt-in `nativeServe = shim` closes it locally; removing the shim waits on the upstream fix ([`CURRENT-STATE.md`](CURRENT-STATE.md) section 7) |
 | Corpus commons (Arc B) | **GATED** | See R2-05: the audit gate has passed; the relicensing decision has not been made |
 | Attested diagnostics (Arc C) | **GATED** | Waits on real efficacy data existing and on a real consumer to read it |
-| Enterprise control plane (Arc D) | **DEMAND-PACED** | One slice per real adoption signal, never built ahead of a consumer |
+| Enterprise control plane (Arc D) | **DEMAND-PACED** | One slice per real adoption signal, never built ahead of a consumer. The gate has been met once and the lane keeps its pacing: the 2026-08-15 corporate-IT review was the signal, and R2-15 above is the slice built against it |
 | Scale and robustness (Arc E) | **DEMAND-PACED** | Moves when a real scale problem is reported |
 | Deeper rule curation and fix-suggestion quality | **DEMAND-PACED** | Paced by the dogfood log and gated on real interactive usage; the machinery already ships |
 | A custom-rule seam (Pillar H) | **DECLINED** | Declined pending demand. Real user demand reopens it; nothing else does |
