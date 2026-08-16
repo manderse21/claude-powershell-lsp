@@ -3560,3 +3560,46 @@ API or behavior change) -- the significance is legal, and it is carried in this 
 version digit." The precedent is unambiguous, so no adjudication was required. The `[Unreleased]`
 band is already MINOR for the air-gapped bootstrap; the relicense rides that class rather than
 raising it.
+
+## Dispatch 000249 -- the `Save-Module` gallery fallback: a RECOMMENDATION on the table, AWAITING A RULING
+
+**Status: AWAITING MIKE'S RULING. Nothing is decided and nothing in the code has moved.** This
+entry records what the adjudication docket *proposes*, so the question is findable in the ledger
+rather than only in an outbox -- it does **not** record a decision, and no ruling is attributed to
+anyone. Source: the dispatch 000249 outbox,
+`projects/powershell-lsp/outbox/000249-save-module-gallery-fallback-adjudication-docket-assembled.md`
+in the strategic-dispatch hub, assembled 2026-08-16 as **findings only, zero mutation**. That
+document states its own standing plainly: "THE RULING ASKED FOR (Mike disposes; this docket
+proposes)."
+
+**What is proposed.** **Option B -- remove Method 2**, the `Save-Module` gallery fallback in
+`scripts/ensure-pssa.ps1`, shipped as **deprecate-then-remove**: announce it in one release's
+CHANGELOG and delete it in a later one. The docket's reasons, in the order it says the evidence
+supports them:
+
+1. **The route has never been observed to work.** Zero successful fallback installs across the
+   whole local log corpus; nine reached-and-failed. *(Bounded: local evidence only.)*
+2. **It is not origin-diverse.** Both acquisition routes terminate at `www.powershellgallery.com`,
+   so the outage the fallback exists to survive is largely the outage it shares.
+3. **Its stated justification does not hold.** Microsoft documents that `Save-Module` validates no
+   signature, so "publisher/catalog integrity" describes controls this path never invokes.
+4. **Removal retires three threat rows** (T1.2, T1.4, T1.5) and eliminates the plugin's only
+   persistent write outside its own data directory.
+5. **000244 already did the structural work that makes removal safe.** With mirror, bundle and
+   cache in front of the download, the pre-000244 argument -- that the fallback is the only thing
+   between a flaky CDN and a broken install -- no longer holds.
+
+**Where the docket's evidence stops, and it stops there deliberately.** It did **not** measure
+whether PackageManagement's client succeeds where `Invoke-WebRequest` fails behind a corporate
+proxy. That is the one scenario in which removal genuinely costs a user something, and it is
+**unmeasured**. If that risk is weighted heavily, the docket's stated second choice is **A2** --
+verify the delivered Authenticode signature after `Save-Module` -- and explicitly **not** Option C
+(keep as is), because C leaves the standing disclosure overstating what the code performs.
+
+**The demand signal, named in advance.** Deprecate-then-remove is proposed precisely because the
+**announced deprecation window** converts that unmeasured proxy risk into a period in which anyone
+actually relying on the route can say so. **A user reporting that the `Save-Module` fallback is
+what vendors PSScriptAnalyzer on their estate is the demand signal** -- and, should the question be
+declined rather than actioned, it is the thing that would reopen it. This mirrors the custom-rule
+seam's "declined pending demand" shape already in the ROADMAP declines table, with one difference
+that matters: **that item is declined; this one is not decided at all.**
