@@ -161,6 +161,33 @@ during bootstrap, before any diagnostics surface exists.
   downloads section had not previously named, and reports the unpinned `Save-Module` fallback
   distinctly (`gallery-fallback`) rather than as a pinned source.
 
+### Authenticode: the publisher certificate stays declined, the org-signing path ships
+
+MINOR: **`scripts/sign-plugin.ps1`** (dispatch 000248) -- one command for an `AllSigned` / WDAC
+estate to sign the plugin's executable script surface with **its own** code-signing certificate,
+which its policy already trusts. This **records the publisher-Authenticode decline** where
+evaluators look for settled decisions (`ROADMAP.md`, the declines table) rather than reversing it:
+for a git-distributed plugin the trust boundary remains the keyless-signed tag and the commit it
+names.
+
+- **Operator tooling, not a runtime path.** No hook, no bootstrap and no `/doctor` check invokes
+  it; an administrator runs it deliberately, and a test asserts no entry point references it. The
+  frozen 1.x `userConfig` knob surface is unchanged.
+- **The surface is derived live**, never from a list in the script: every `.ps1` and `.psm1` under
+  `scripts/`, which is exactly what the four manifest entry points launch, dot-source or import.
+  A certificate arrives by `-Thumbprint` (store lookup) or `-PfxPath`; `-TimestampServer` is a
+  parameter and `-NoTimestamp` is the air-gapped variant.
+- **The verify sweep is the gate, and it fails closed.** After signing it re-reads every file with
+  `Get-AuthenticodeSignature` and prints that sweep, exiting non-zero unless every file reports
+  `Valid`. That is deliberate: `Set-AuthenticodeSignature` does not raise an error for a file it
+  declines to sign and returns the same status for a real signature as for a silent no-op, so
+  neither its return value nor a `try`/`catch` can be trusted as the proof.
+- **Script signing and artifact pinning stay separate layers.** The downloaded PSES and
+  PSScriptAnalyzer components are not signed by this and never will be -- they remain covered by
+  their pinned SHA-256 hashes. TRUST.md states the boundary, and `docs/troubleshooting.md` gains
+  the `AllSigned` symptoms with their remediation.
+- Windows-only by nature: on any other host it names the reason and exits without reading a file.
+
 ## [1.31.2] - 2026-08-15
 PATCH: **a client that walks away from a reply no longer kills the analyzer daemon**, and
 **`nativeServe` / `ps_host` finally reach the process that acts on them**. Every external GitHub
