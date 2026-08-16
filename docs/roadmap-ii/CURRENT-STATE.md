@@ -429,7 +429,7 @@ Recorded as observed state, with no remedy proposed.
   here. This is maintainer-held knowledge.
 - **Five gates are human-only:** accept, merge, the `verified` flip, tag, and the
   product/positioning/sequencing calls (`ROADMAP.md:159-162`).
-- **Bus factor is single-person**, with the GPLv3 continuity path documented in
+- **Bus factor is single-person**, with the Apache-2.0 continuity path documented in
   `docs/CONTINUITY.md` (`ROADMAP.md:133-134`).
 - **Upstream posting is maintainer-gated.** `docs/upstream/claude-code-userconfig-enum.md` states
   that filing is Mike Andersen's gate and that no agent files, comments on, or transmits anything

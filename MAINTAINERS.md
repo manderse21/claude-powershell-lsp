@@ -4,7 +4,7 @@
 
 `powershell-lsp` is currently maintained by **one person, Mike Andersen** (GitHub
 `manderse21`). That single-maintainer bus factor is a real adoption risk and is stated
-honestly, with its mitigations and the guaranteed GPLv3 fork path, in
+honestly, with its mitigations and the guaranteed Apache-2.0 fork path, in
 [CONTINUITY.md](./CONTINUITY.md) (posture) and
 [docs/CONTINUITY.md](./docs/CONTINUITY.md) (per-surface failure and recovery). This file is
 the practical on-ramp for a **second maintainer**: what access is needed, how to run a release

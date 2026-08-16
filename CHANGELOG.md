@@ -31,6 +31,73 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+### Relicensed FORWARD from GPLv3 to Apache-2.0 -- ZERO code or runtime change
+
+**License change only** (dispatch 000247, ruled by Mike Andersen 2026-08-16). No `.ps1` behavior
+moved, no knob changed, no dependency was added. **This is a PATCH-class change by SemVer**, on the
+v1.6.1 precedent: that entry classed the MIT-to-GPLv3 move as "a PATCH by SemVer (no API or behavior
+change) -- the significance is legal, and it is carried in this entry, not in the version digit."
+The same holds here. The `[Unreleased]` band is already MINOR for the air-gapped bootstrap below;
+the relicense does not raise that class, it rides it.
+
+#### Why
+
+The 2026-08-15 corporate-IT review ranked GPLv3 as the number-one enterprise-adoption blocker after
+the offline path (which dispatch 000244 closed). Three reasons of record:
+
+1. **Enterprise allow-lists are written around Apache-2.0.** Its explicit patent grant (section 3)
+   and NOTICE mechanics (section 4(d)) are what those lists key on, and enterprise adoption is the
+   active demand signal.
+2. **The relicense is uniquely cheap here.** As sole copyright holder, this is a forward-only grant
+   change requiring no CLA archaeology -- exactly the mechanics of the MIT-to-GPLv3 move at v1.6.1.
+3. **Nothing already granted is taken back.** See the forward-only section below.
+
+#### Changed
+
+- **`LICENSE`** is now the verbatim canonical Apache License 2.0 text, fetched from
+  <https://www.apache.org/licenses/LICENSE-2.0.txt> and **byte-verified**: 11,358 bytes, 202 lines,
+  LF, no BOM, ASCII-only, SHA-256
+  `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`. Not hand-typed or
+  paraphrased, and the appendix boilerplate is left **unfilled** so the file stays byte-identical to
+  the canonical source -- the copyright attribution lives in `NOTICE`, which is what Apache-2.0
+  section 4(d) is for.
+- **`NOTICE`** (new) names the project and the copyright holder, **Mike Andersen**, and states the
+  downloader-not-redistributor posture for the two pinned Microsoft dependencies.
+- **SPDX id `Apache-2.0`** is declared across the same authoritative sites the v1.6.1 drift-guard
+  established: `LICENSE`, `.claude-plugin/plugin.json` (`license`), and the README License section.
+  (`marketplace.json` still carries **no** `license` field -- the Claude Code marketplace schema has
+  none -- and its absence is still asserted.) The drift-guard suite moved with the id and gained two
+  assertions: that the outgoing GPLv3 body is **gone** rather than merely joined by the new one, and
+  that `NOTICE` exists and names the project and copyright holder.
+- **`THIRD-PARTY-LICENSES.md`** is unchanged in substance: PSES and PSScriptAnalyzer are still MIT
+  (Microsoft), still **downloaded at install time** rather than bundled, and still not relicensed by
+  this project. Only the compatibility sentence moved (MIT is Apache-2.0-compatible).
+
+#### Forward-only -- prior releases keep the license they shipped under
+
+This license change is **forward-only and does not reach backward**. **Every previously published
+release keeps the license it shipped under, and those grants are irrevocable:** v1.0 through v1.6.0
+remain **MIT**, and v1.6.1 through the current release remain **`GPL-3.0-or-later`**. Those grants
+are **not** revoked, rescinded, or diminished here -- anyone using one of those releases keeps
+exactly the rights it was published with. From the next release forward the project is `Apache-2.0`.
+
+#### What genuinely changes for adopters: copyleft is dropped
+
+Stated plainly rather than only in its favourable direction. Under `GPL-3.0-or-later`, anyone who
+distributed a modified version had to keep it open under the same terms. **Apache-2.0 is permissive
+and does not require that** -- a downstream fork may keep its changes closed. The continuity docs
+described the fork path as a *copyleft-backed* guarantee, so they were corrected rather than merely
+find-and-replaced: the fork path itself survives intact (the grant is irrevocable and no CLA is
+collected), but the obligation for derivatives to come back does not, and now says so. See
+[CONTINUITY.md](CONTINUITY.md#the-fork-path-apache-20) and [TRUST.md](TRUST.md).
+
+#### Not legal advice
+
+This is the standard mechanical way to perform a forward license change, not legal advice. A
+human/legal sanity check on the exact license text and third-party attribution remains advisable.
+
+### Offline / air-gapped bootstrap
+
 MINOR: **offline / air-gapped bootstrap.** The two pinned dependencies can now be resolved from an
 internal HTTPS mirror or a pre-staged local bundle instead of only from their upstream URLs, so a
 machine with no egress has a first-bootstrap path at all. **No `userConfig` knob was added** -- the

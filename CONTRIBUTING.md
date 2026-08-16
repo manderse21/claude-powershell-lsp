@@ -109,11 +109,13 @@ recommended but is a separate repo-settings change, not part of the hook.
 
 ## Sign-offs and licensing
 
-- The project is **[GPL-3.0-or-later](./LICENSE)**; contributions are accepted under it.
+- The project is **[Apache-2.0](./LICENSE)**; contributions are accepted under it. Under
+  Apache-2.0 section 5, a contribution you deliberately submit for inclusion is submitted under
+  the terms of the License -- so a DCO sign-off is all that is asked, exactly as before.
 - There is **no CLA** and no copyright assignment. Certify the origin of your work with a
   **Developer Certificate of Origin** sign-off -- commit with `git commit -s`, which adds a
   `Signed-off-by:` line. Because no CLA is collected, the project cannot unilaterally
-  relicense your contribution away from GPLv3 -- a deliberate guarantee to adopters.
+  relicense your contribution away from Apache-2.0 -- a deliberate guarantee to adopters.
 
 ## Opening a pull request
 

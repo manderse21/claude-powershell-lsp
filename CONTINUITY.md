@@ -40,17 +40,26 @@ Even with no maintainer activity, the shipped artifacts remain auditable and rep
   vulnerability reporting independent of any single person's inbox.
 - **The full source and history**, under an irrevocable open-source license (below).
 
-## The fork path (GPLv3)
+## The fork path (Apache-2.0)
 
-The plugin is **[GPL-3.0-or-later](./LICENSE)** (forward-only from v1.6.1; v1.0-v1.6.0
-remain under their original, irrevocable MIT grant). Two consequences for continuity:
+The plugin is **[Apache-2.0](./LICENSE)** (forward-only from the next release). Every
+previously published release keeps the license it shipped under, and those grants are
+irrevocable: v1.0-v1.6.0 remain MIT, v1.6.1 through the current release remain
+`GPL-3.0-or-later`. Three consequences for continuity:
 
-- **Anyone may fork and continue the project** under GPLv3 at any time. The open-source
-  grant cannot be revoked.
+- **Anyone may fork and continue the project** under Apache-2.0 at any time. The
+  open-source grant cannot be revoked.
 - **No CLA is collected**, so no party -- including the original maintainer -- can
-  unilaterally relicense contributions away from GPLv3; that would require the agreement of
-  all copyright holders. The community's ability to carry the project forward is therefore
-  structurally protected, not dependent on goodwill.
+  unilaterally relicense someone else's contribution; that would require the agreement of
+  all copyright holders. The community's ability to carry the project forward does not
+  depend on the maintainer's goodwill.
+- **Apache-2.0 is permissive, not copyleft, and this is a real change from the previous
+  posture.** Under `GPL-3.0-or-later` a fork that distributed a modified version had to
+  keep it open under the same terms. Apache-2.0 does not require that: a fork may keep its
+  changes closed. What the fork path guarantees is that the *existing* work can always be
+  taken forward -- not that every derivative comes back. Anyone whose continuity plan
+  depended on the copyleft obligation specifically should note that it applies to releases
+  up to and including the last `GPL-3.0-or-later` one, and not to later ones.
 
 A fork needs only the repository contents and this documentation. It would, of course,
 publish under its own name, its own marketplace entry, and its own signing identity.
@@ -87,6 +96,6 @@ gitsign-signed tag), so no signing certificate or key exists to hold, store, or 
 Authenticode is deliberately not pursued (see [TRUST.md](./TRUST.md#signing-posture)). The keyless
 model removes the cert-custody concern entirely rather than answering it.
 
-Until the items above are decided, the GPLv3 fork path is the guaranteed continuity mechanism:
-the project can always be carried forward by the community, even if no individual handoff
-is arranged.
+Until the items above are decided, the Apache-2.0 fork path is the guaranteed continuity
+mechanism: the project can always be carried forward by the community, even if no individual
+handoff is arranged.

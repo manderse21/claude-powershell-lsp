@@ -29,4 +29,4 @@ Content in the OASIS `sarif-spec` repository is contributed by OASIS TC Members 
 governed by the OASIS Intellectual Property Rights (IPR) Policy under RF on RAND Terms
 Mode -- see <https://www.oasis-open.org/policies-guidelines/ipr>. SARIF 2.1.0 is an
 OASIS Standard. This schema retains those upstream OASIS terms; it is NOT relicensed
-under this project's GPL-3.0-or-later license, which covers the plugin's own source.
+under this project's Apache-2.0 license, which covers the plugin's own source.

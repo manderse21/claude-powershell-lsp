@@ -2,7 +2,7 @@
 
 This is the **operational** companion to the top-level [CONTINUITY.md](../CONTINUITY.md).
 That document states the posture: the single-maintainer adoption risk, what survives without
-the maintainer, the GPLv3 fork guarantee, and the key-custody levers. This document is the
+the maintainer, the Apache-2.0 fork guarantee, and the key-custody levers. This document is the
 working detail behind it: for **each operational surface**, what actually breaks if the sole
 maintainer disappears tomorrow, and the concrete recovery path a qualified stranger would
 take. The canonical release procedure lives in exactly one place --
@@ -30,8 +30,9 @@ means the sole GitHub account `manderse21` (verified-from-disk: named in
 ### Source and history
 
 - **What breaks:** nothing. The full source and git history are public and under an irrevocable
-  open-source license (verified-from-disk: [LICENSE](../LICENSE), GPL-3.0-or-later forward from
-  v1.6.1; v1.0-v1.6.0 remain under their irrevocable MIT grant).
+  open-source license (verified-from-disk: [LICENSE](../LICENSE), Apache-2.0 forward from the next
+  release; v1.6.1 through the current release remain GPL-3.0-or-later, and v1.0-v1.6.0 remain under
+  their irrevocable MIT grant).
 - **Recovery:** a successor or fork needs nothing from the maintainer to obtain the code -- clone
   or fork the public repository. This surface has no single point of failure.
 
@@ -43,7 +44,7 @@ means the sole GitHub account `manderse21` (verified-from-disk: named in
   genuinely maintainer-held lever.
 - **Recovery, two paths:** (1) transfer of repo admin to a successor account, if one has been
   designated (see the open item on a backup administrator in
-  [CONTINUITY.md](../CONTINUITY.md)); or (2) a **GPLv3 fork** that publishes under its own name,
+  [CONTINUITY.md](../CONTINUITY.md)); or (2) an **Apache-2.0 fork** that publishes under its own name,
   its own marketplace entry, and its own signing identity. Path (2) is always available and needs
   no cooperation from the original maintainer.
 
@@ -96,13 +97,20 @@ build-provenance attestation, the keyless-signed tags, and the documented disclo
 is the same set enumerated in the posture overview ([CONTINUITY.md](../CONTINUITY.md)); it is
 restated here only as the backdrop to the per-surface recovery paths above.
 
-## The guaranteed floor: the GPLv3 fork path
+## The guaranteed floor: the Apache-2.0 fork path
 
-Whatever is or is not decided about a successor account, the **GPLv3 fork path is the guaranteed
+Whatever is or is not decided about a successor account, the **Apache-2.0 fork path is the guaranteed
 continuity mechanism** (verified-from-disk: [LICENSE](../LICENSE), fork discussion in
 [CONTINUITY.md](../CONTINUITY.md)). The open-source grant cannot be revoked, and no CLA is
-collected, so the community's ability to carry the project forward is structurally protected rather
-than dependent on goodwill. A fork needs only the repository contents and this documentation.
+collected, so the community's ability to carry the project forward does not depend on the
+maintainer's goodwill. A fork needs only the repository contents and this documentation.
+
+**What the floor does and does not promise, post-relicense.** Apache-2.0 is permissive: it
+guarantees that the existing work can always be taken forward, but -- unlike the
+`GPL-3.0-or-later` posture it replaces -- it does **not** oblige a fork to publish its changes.
+The copyleft obligation still attaches to releases up to and including the last
+`GPL-3.0-or-later` one; it does not attach to later ones. See the fork-path section in
+[CONTINUITY.md](../CONTINUITY.md).
 
 ## Recovery drills a successor can run today
 

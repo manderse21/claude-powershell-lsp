@@ -1,0 +1,18 @@
+powershell-lsp
+Copyright 2026 Mike Andersen
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this software except in compliance with the License. A copy of the License
+is distributed with this software in the file LICENSE, and is also available at
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+This product does not bundle or redistribute third-party source. PowerShell
+Editor Services and PSScriptAnalyzer (both Copyright (c) Microsoft Corporation,
+MIT) are downloaded at install time from their official sources and remain under
+their own licenses; their notices travel inside the downloaded bundles. See
+THIRD-PARTY-LICENSES.md.

@@ -2243,7 +2243,7 @@ Describe 'Integration: auto-relaunch the idle-stopped daemon (dispatch 000030)' 
 }
 
 Describe 'Third-party MIT notices are preserved in the installed bundle (dispatch 000029)' -Skip:$script:SkipIntegration {
-    # GPL-correctness: the plugin DOWNLOADS PSES + PSScriptAnalyzer (MIT, Microsoft) at install. MIT
+    # License-correctness: the plugin DOWNLOADS PSES + PSScriptAnalyzer (MIT, Microsoft) at install. MIT
     # requires the notice 'in all copies', so the installed bundle must retain each dep's LICENSE /
     # notice. The 000029 ensure-pses fix preserves the PSES release-root LICENSE + NOTICE.txt (the
     # module-only move had dropped them -- a real pre-existing MIT violation the extraction check

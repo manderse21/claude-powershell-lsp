@@ -112,7 +112,7 @@ These are settled decisions, not backlog. Each is recorded with its reasoning in
 
 ## Top risks
 
-- **Single-maintainer bus factor.** Stated plainly, with the GPLv3 continuity path, in
+- **Single-maintainer bus factor.** Stated plainly, with the Apache-2.0 continuity path, in
   [CONTINUITY.md](./CONTINUITY.md).
 - **Upstream dependence.** The native navigation tier depends on Claude Code's LSP client and on
   PSES; both have open upstream issues this project can file against but cannot fix.

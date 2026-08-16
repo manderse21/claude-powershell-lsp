@@ -2768,11 +2768,17 @@ Describe 'lspServers manifest declares only registrar-supported fields (dispatch
 Describe 'License metadata is single-sourced and consistent (dispatch 000029)' {
     # The 000027 docs-honesty / single-source discipline applied to the LICENSE: the SPDX id has ONE
     # source of truth -- plugin.json's `license` (the same manifest the version stamp reads, 000025) --
-    # and the other declaration sites must agree. The LICENSE body is the GPLv3 text the SPDX id names,
-    # and the README declares the same id. marketplace.json carries NO license field (the Claude Code
-    # marketplace schema has none; an added value is silently ignored), so its ABSENCE is asserted
+    # and the other declaration sites must agree. The LICENSE body is the Apache-2.0 text the SPDX id
+    # names, and the README declares the same id. marketplace.json carries NO license field (the Claude
+    # Code marketplace schema has none; an added value is silently ignored), so its ABSENCE is asserted
     # rather than letting a misleading/ignored declaration drift in. Adversarial control: change the
     # README SPDX id (or plugin.json's license) out of sync and the consistency assertions go RED.
+    #
+    # Dispatch 000247 relicensed the project FORWARD from GPL-3.0-or-later to Apache-2.0 (ruled by Mike
+    # 2026-08-16). The id and body assertions moved with it -- this block is the drift-guard that makes
+    # the lockstep enforceable rather than a promise. NOTICE is asserted here too: under Apache-2.0 it
+    # is part of the license surface (section 4(d) requires redistributors to carry it), not an
+    # optional courtesy file, so its ABSENCE would be a licensing defect and not merely a missing doc.
     BeforeAll {
         $script:Lic_Root        = Split-Path -Parent $PSScriptRoot
         $script:Lic_Manifest    = (Get-Content -LiteralPath (Join-Path $script:Lic_Root '.claude-plugin/plugin.json') -Raw | ConvertFrom-Json)
@@ -2780,15 +2786,26 @@ Describe 'License metadata is single-sourced and consistent (dispatch 000029)' {
         $script:Lic_LicenseText = Get-Content -LiteralPath (Join-Path $script:Lic_Root 'LICENSE') -Raw
         $script:Lic_Readme      = Get-Content -LiteralPath (Join-Path $script:Lic_Root 'README.md') -Raw
         $script:Lic_Market      = (Get-Content -LiteralPath (Join-Path $script:Lic_Root '.claude-plugin/marketplace.json') -Raw | ConvertFrom-Json)
+        $script:Lic_NoticePath  = Join-Path $script:Lic_Root 'NOTICE'
     }
     It 'plugin.json declares a non-empty SPDX license -- the single source of truth' {
         $script:Lic_Spdx | Should -Not -BeNullOrEmpty
-        $script:Lic_Spdx | Should -Match '^GPL-3\.0-(or-later|only)$'
+        $script:Lic_Spdx | Should -BeExactly 'Apache-2.0'
     }
-    It 'LICENSE is the GPLv3 body the SPDX id names' {
-        $script:Lic_Spdx | Should -Match '^GPL-3\.0'
-        $script:Lic_LicenseText | Should -Match 'GNU GENERAL PUBLIC LICENSE'
-        $script:Lic_LicenseText | Should -Match 'Version 3, 29 June 2007'
+    It 'LICENSE is the Apache-2.0 body the SPDX id names' {
+        $script:Lic_Spdx | Should -BeExactly 'Apache-2.0'
+        $script:Lic_LicenseText | Should -Match 'Apache License'
+        $script:Lic_LicenseText | Should -Match 'Version 2\.0, January 2004'
+        # The outgoing body must be GONE, not merely joined by the new one -- a LICENSE holding both
+        # would satisfy every positive assertion above while declaring two incompatible licenses.
+        $script:Lic_LicenseText | Should -Not -Match 'GNU GENERAL PUBLIC LICENSE'
+    }
+    It 'NOTICE exists and names the project and the copyright holder (Apache-2.0 section 4(d))' {
+        Test-Path -LiteralPath $script:Lic_NoticePath -PathType Leaf | Should -BeTrue
+        $notice = Get-Content -LiteralPath $script:Lic_NoticePath -Raw
+        $notice | Should -Match 'powershell-lsp'
+        $notice | Should -Match 'Mike Andersen'
+        $notice | Should -Match 'Apache License, Version 2\.0'
     }
     It 'README declares the SAME SPDX id as plugin.json (no drift)' {
         $script:Lic_Readme | Should -Match ([regex]::Escape($script:Lic_Spdx))

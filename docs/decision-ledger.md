@@ -6,7 +6,11 @@ public view -- what is next, what is blocked, what is deferred -- is [ROADMAP.md
 which links here for the reasoning behind each line. (Split out of `ROADMAP-powershell-lsp.md` by
 dispatch 000166 leg B6b; a pointer stub remains at the old path so prior links resolve.)
 
-Status as of 2026-08-16. Plugin's current release: **v1.31.2**, GPL-3.0-or-later. Every fact in
+Status as of 2026-08-16. Plugin's current release: **v1.31.2**, GPL-3.0-or-later -- that is the
+license v1.31.2 shipped under and it does not change, but the **repository** relicensed forward to
+**Apache-2.0** on 2026-08-16 (dispatch 000247, entry at the end of this file), so the next release
+ships Apache-2.0. (That clause is 000247's; the 000245 derivation claim that follows covers the rest
+of this paragraph.) Every fact in
 this paragraph was DERIVED live at run time by dispatch 000245, each with its deriving command
 named inline -- re-run rather than carried across from the header this pass replaces, on the
 standing reason 000195 leg A gave: a header's own version claim is the fact likeliest to have gone
@@ -3441,3 +3445,118 @@ MCP-path control, the one-call suggested fix, and the newly-measured configurati
 **Ordering:** the mitigation shipped first and the report was filed immediately after,
 independently -- 2.1.233 was already the latest release, so filing unblocks no user, while
 marketplace installs track `main` HEAD today. Do not re-file; it advances on #86936.
+
+## Dispatch 000247 -- relicensed FORWARD to Apache-2.0, RULED by Mike 2026-08-16
+
+**The ruling.** Mike Andersen ruled on 2026-08-16 that the project relicenses **forward-only** from
+`GPL-3.0-or-later` to **Apache-2.0**. This is the second forward license change in the project's
+history and was executed on the same mechanics as the first (MIT -> GPLv3 at v1.6.1, dispatch
+000029), which is the in-repo precedent this entry is measured against throughout.
+
+### The three reasons of record
+
+1. **Enterprise allow-lists are written around Apache-2.0.** The explicit patent grant (section 3)
+   and the NOTICE mechanics (section 4(d)) are what those lists key on, and enterprise adoption is
+   the active demand signal. The **2026-08-15 corporate-IT review ranked GPLv3 as adoption-blocker
+   number one** once the offline path -- blocker zero -- was closed by dispatch 000244.
+2. **Sole copyright holder, so no CLA archaeology.** The change is a forward-only grant change over
+   work a single human rightsholder authored. No contributor agreement had to be gathered, and no
+   contribution had to be relicensed by a third party. This is exactly what made the v1.6.1 move
+   cheap, and it is the same fact Roadmap II gate D1 recorded as making a relicense *possible*
+   later without deciding to do one.
+3. **Every previously published release keeps its grant.** `GPL-3.0-or-later` grants already made
+   are not, and cannot be, revoked. The relicense adds a grant going forward; it removes none.
+
+### The forward-only boundary, stated exactly
+
+Three bands, not two -- the project has now relicensed twice, so the naive "prior releases were
+MIT" sentence the v1.6.1 entry could write is no longer sufficient:
+
+| Band | License | Status |
+|------|---------|--------|
+| v1.0 -- v1.6.0 | MIT | irrevocable; untouched by both relicenses |
+| v1.6.1 -- current release (v1.31.2 at ruling time) | `GPL-3.0-or-later` | irrevocable; untouched by this relicense |
+| next release forward | `Apache-2.0` | this ruling |
+
+Every doc that stated the boundary as a single "forward from v1.6.1; prior releases are MIT" pair
+was corrected to carry all three bands, rather than having its version numbers swapped.
+
+### What the charter did not anticipate, found by the live census and RULED here
+
+The charter named seven anchor paths. A live grep for the outgoing identifier returned **23 files /
+217 occurrences**, and three classes of site sat outside the anchor list:
+
+- **The drift-guard is executable, not prose.** `tests/PowerShellLsp.Unit.Tests.ps1` asserted the
+  SPDX id matches `^GPL-3\.0-(or-later|only)$` and that the LICENSE body contains
+  `GNU GENERAL PUBLIC LICENSE`; `tests/PowerShellLsp.Release.Tests.ps1` asserted the SBOM subject
+  license id is exactly `GPL-3.0-or-later`. These are **statements of the project license that
+  happen to be code**, and the charter's "no code behavior changes" line does not reach them: they
+  are the enforcement half of the same single-source lockstep the sweep exists to maintain, and
+  leaving them would have turned the suite red on an otherwise docs-only change. They moved with
+  the id and gained two assertions -- that the outgoing GPLv3 body is **absent** rather than merely
+  joined by the incoming one (a LICENSE holding both would have satisfied every positive assertion
+  while declaring two incompatible licenses), and that `NOTICE` exists and names project and holder.
+- **The bus-factor mitigation was built on copyleft, and a find-and-replace would have made it
+  lie.** `CONTINUITY.md`, `docs/CONTINUITY.md`, `MAINTAINERS.md`, `TRUST.md`, `ROADMAP.md`,
+  `CONTRIBUTING.md` and `GOVERNANCE-SURFACE.md` all sold a "guaranteed GPLv3 fork path" under which
+  the community's position was "structurally protected." Under Apache-2.0 the fork path **survives
+  in full** -- the grant is irrevocable, no CLA is collected, and a fork needs nothing from the
+  maintainer -- but the copyleft obligation that a derivative come back **does not**. Swapping the
+  license name in those sentences would have preserved a promise the license no longer makes. They
+  were rewritten to keep the guarantee that is still true and to **state the loss explicitly**,
+  including in `TRUST.md`'s honest-limits register. This is the one place the relicense costs an
+  adopter something, and it is now written where an adopter reads rather than only here.
+- **Line-range citations decay when the cited file grows.** `GOVERNANCE-SURFACE.md` cited
+  `docs/CONTINUITY.md:23-105` and `CONTINUITY.md:58-92`. Editing those two files moved every line
+  after the edit, so the citations were re-derived from disk (`23-113` and `67-101`) rather than
+  left to rot. A relicense sweep that matches only the license identifier does not see this class
+  of breakage at all.
+
+### Deliberately NOT changed, and why
+
+- **`docs/roadmap-ii/CORPUS-PROVENANCE-AUDIT.md` (142 occurrences) is untouched.** Its License
+  column reads `GPL-3.0-or-later (repo-wide)` for all 137 corpus rows, and that is now stale on the
+  working tree. This is **known and deferred, not missed**: corpus fixture licensing and the corpus
+  commons un-gate are their own dispatch, explicitly gated on this one merging, and this dispatch's
+  charter forbids touching corpus files, fixtures, or their licensing. **This creates a real
+  tension with the charter's own acceptance criterion** ("a live grep for the outgoing identifier
+  returns zero hits outside CHANGELOG history, the decision ledger, and release-history documents"),
+  which that audit satisfies none of. The tension is resolved in favour of the explicit `do_not`,
+  and recorded here so the corpus dispatch inherits the item rather than rediscovering it. The same
+  reasoning covers the `PROGRAM.md` R2-05 row, whose "GPL-vs-permissive relicensing decision" is the
+  corpus question and not this one.
+- **Historical records stay true.** The v1.6.1 CHANGELOG entry, this ledger's "licensing MIT ->
+  GPLv3" arc line, and the D1 rider recording that corpus files "take GPL-3.0-or-later by repo-wide
+  inheritance" all describe what was true when written, and are left exactly as written. The D1
+  rider's *premise* -- repo-wide GPL inheritance -- is what this ruling changes; the rider itself is
+  a ratified record and is not edited to match.
+- **No per-file SPDX headers were added.** The repo has **no** per-file header convention: a live
+  grep for `SPDX-License-Identifier` returns zero hits across every tracked `.ps1`, `.psm1`, `.psd1`
+  and every other tracked file. Per the charter, the LICENSE + NOTICE + manifest + doc surface is
+  therefore the whole change.
+
+### The LICENSE body is byte-verified, and the appendix was deliberately left unfilled
+
+`LICENSE` is the canonical text from <https://www.apache.org/licenses/LICENSE-2.0.txt>: **11,358
+bytes, 202 lines, LF, no BOM, zero non-ASCII bytes, SHA-256
+`cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`**. The charter permitted filling
+in the appendix `[yyyy]` / `[name of copyright owner]` boilerplate; it was **declined**, so the file
+stays byte-identical to the canonical source and the strongest available verification claim -- "this
+is the unmodified upstream text, and here is its hash" -- stays checkable by anyone with `curl` and
+`Get-FileHash`. The copyright attribution lives in `NOTICE`, the file Apache-2.0 section 4(d)
+designates for it.
+
+The hash is recorded **here and in the CHANGELOG**, following the v1.6.1 precedent, rather than
+asserted by a test against the worktree file. A byte-exact hash of a checked-out text file is a
+**checkout** property, not a repository property: `core.autocrlf` on a Windows leg would rewrite the
+line endings and turn that assertion red across the four-leg matrix while nothing was actually
+wrong. The suite therefore asserts the license *body* (canonical strings present, outgoing body
+absent) and leaves the byte fact to the written record.
+
+### Semver class
+
+**PATCH**, on the v1.6.1 precedent, which classed the MIT-to-GPLv3 move as "a PATCH by SemVer (no
+API or behavior change) -- the significance is legal, and it is carried in this entry, not in the
+version digit." The precedent is unambiguous, so no adjudication was required. The `[Unreleased]`
+band is already MINOR for the air-gapped bootstrap; the relicense rides that class rather than
+raising it.

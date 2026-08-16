@@ -32,7 +32,7 @@ inventory the additions extend; none of it is restated in the new files.**
 | How is a vulnerability reported? | GitHub Private Vulnerability Reporting, with public issues explicitly refused; the issue chooser routes to the same place | `SECURITY.md:19-37`; `.github/ISSUE_TEMPLATE/config.yml:3-5` |
 | What happens after a report? | Acknowledgement best-effort within **7 days**; coordinated disclosure; credit; no bounty | `SECURITY.md:62-72` |
 | Which versions get security fixes? | Latest release only; backporting is not promised | `SECURITY.md:7-17` |
-| What if the maintainer disappears? | Per-surface failure and recovery, a keyless-custody story with nothing to hand off, and a guaranteed GPLv3 fork floor | `docs/CONTINUITY.md:23-105`; `CONTINUITY.md:58-92` |
+| What if the maintainer disappears? | Per-surface failure and recovery, a keyless-custody story with nothing to hand off, and a guaranteed Apache-2.0 fork floor | `docs/CONTINUITY.md:23-113`; `CONTINUITY.md:67-101` |
 
 Two further facts that bound anything written about support:
 
