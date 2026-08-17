@@ -1,5 +1,11 @@
 # Claude Code drops a plugin's `lspServers` when a `${user_config.*}` key is unset
 
+**Status re-derived: 2026-08-17 via gh; live state wins over this file.**
+
+`anthropics/claude-code#86936` -- **OPEN**, last updated 2026-08-15T15:54:30Z, re-derived live
+with `gh issue view 86936 --repo anthropics/claude-code --json state,title,updatedAt`. The
+downstream suspension recorded below therefore still stands.
+
 ## ALREADY FILED AS #86936 -- DO NOT FILE THIS
 
 **This report is filed upstream as

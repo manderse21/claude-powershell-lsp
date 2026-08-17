@@ -35,22 +35,19 @@ what PSES already computes in a form an agent can consume, not growing an analys
 
 Work that is chartered and moving.
 
-- **Doctor and command surface.** Continuing to close the gap between "the plugin is installed"
-  and "the user can prove it is working". The lane carries no open ruling.
-- **The daemon surviving a client that walked away.** Chartered and moving. When an edit reaches
-  the client's hard cap the client exits, having already emitted an honest banner; the daemon
-  finishes a moment later and its reply to the departed client raises a broken pipe. The open
-  question this lane exists to answer -- the serve loop's own handler logs that exception, so
-  why does the loop end at all? -- is answered: the failed write leaves the pipe server in a
-  state the loop's next accept refuses, and that refusal lands outside the handler. The work is
-  scoped to daemon lifecycle. Measured against the
-  [post-fix remeasurement](docs/roadmap-ii/POST-FIX-REMEASUREMENT-relaunch-thrash.md) that
-  surfaced it, with the new numbers recorded beside it rather than over it.
+**Nothing is.** The lane is empty rather than padded, which is a statement about the present and
+not a gap to be filled. The work that last held it -- the daemon surviving a client that walked
+away -- is root-caused, fixed and shipped, and no successor to it has been chartered. What has
+momentum but is not started is under **Next**; the paced lanes further down each name the
+specific thing they wait on.
 
 ## Next
 
-Queued behind the current work, not started.
+Queued, not started.
 
+- **Doctor and command surface.** Closing the gap between "the plugin is installed" and "the user
+  can prove it is working". Queued rather than moving: the lane carries no open ruling and no
+  chartered work.
 - **Agent-facing semantic exposure.** Making more of what PSES already computes reachable by an
   agent, on the surfaces this project already ships.
 - **The measured-baseline follow-through.** Candidate service-level targets have baselines; the
@@ -62,13 +59,21 @@ Real work that is deliberately not moving, each waiting on a named thing rather 
 
 - **Native code navigation, end to end.** Registration works. **Serve** does not, on the direct
   path: Claude Code's LSP client rejects the standard server-to-client requests PSES sends during
-  initialization. The opt-in `nativeServe = shim` closes that gap locally and is shipped, so this
-  is un-gated *in practice* -- but the shim is a workaround, and removing it waits on the upstream
-  fix. A separate upstream Windows regression
+  initialization. The opt-in `nativeServe = shim` closes that gap locally and is shipped -- but
+  the shim is a workaround, and removing it waits on the upstream fix. **The shim's own
+  configuration transport is currently suspended**, so this lane is gated twice over rather than
+  un-gated in practice: on an affected client the `${user_config.*}` mappings that carry
+  `nativeServe` into the serve subprocess are withdrawn, because one unset declared key makes the
+  client discard *every* server the plugin declares, and a zero-configuration install must keep
+  working. The suspension is deliberate, mechanical to reverse, and its un-gate condition is
+  recorded with the removed mappings in `Get-ServeTransportSuspension`
+  (`scripts/lib/lsp-common.ps1`); it lifts on
+  [anthropics/claude-code#86936](https://github.com/anthropics/claude-code/issues/86936). A
+  separate upstream Windows regression
   ([anthropics/claude-code#73961](https://github.com/anthropics/claude-code/issues/73961)), which
   had blocked the native tier from starting at all on Windows, is fixed and closed upstream, so
-  what still gates this item is the client's handling of those initialization requests rather than
-  that regression.
+  what still gates this item is the client's handling of those initialization requests and the
+  interpolation defect above, rather than that regression.
 - **Corpus commons.** The licensing and provenance audit that gated publishing the correctness
   oracle as a community benchmark has **passed**. What remains is a licensing decision at
   activation, not an audit.
