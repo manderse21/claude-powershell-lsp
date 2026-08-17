@@ -501,5 +501,12 @@ only**; it never bypasses, disables, or modifies any control. See README
   your machines, and this project still asserts no publisher identity of its own.
 - **NOT independently security-audited.** No third party has performed a security audit of
   this code. Treat this document and the open source as the basis for your own review.
+- **The published correctness corpus attests to diagnostics, not to security.** The corpus
+  ([docs/corpus.md](docs/corpus.md)) is a measured, reproducible claim that the findings this tool
+  *reports* are correct on a curated sample -- nothing more. It does **not** attest that the plugin
+  is safe to run, that its supply chain is sound, or that any rule set is complete; those are the
+  subject of this document and of the [threat model](docs/roadmap-ii/THREAT-MODEL.md). Its own
+  provenance audit is mechanical, not legal advice, and its stated limits travel with it rather
+  than being summarized away.
 - Claims in this document are verifiable against the named files and the published release
   artifacts; nothing here asserts a control, signature, or audit the project does not have.

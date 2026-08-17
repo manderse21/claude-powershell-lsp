@@ -3604,6 +3604,115 @@ declined rather than actioned, it is the thing that would reopen it. This mirror
 seam's "declined pending demand" shape already in the ROADMAP declines table, with one difference
 that matters: **that item is declined; this one is not decided at all.**
 
+## Dispatch 000251 -- corpus commons UN-GATED: the corpus publishes under Apache-2.0
+
+**The ruling of record.** Corpus fixtures and every corpus-surface file publish under the
+**project license, Apache-2.0** -- one license across the repository, with no second licensing
+regime to explain. This closes the last thing holding the Arc B corpus-commons gate.
+
+This entry records a decision that is now **landed**, not one awaiting a ruling. It
+cross-references the entry above it in this ledger -- *"Dispatch 000247 -- relicensed FORWARD to
+Apache-2.0, RULED by Mike 2026-08-16"* -- which relicensed the repository forward to Apache-2.0 and
+is the precondition this dispatch was hard-gated on.
+
+### Why this was a decision and not an obstruction
+
+The D1 gate decision recorded the Arc B licensing gate as **PASS** and deferred "the
+GPL-vs-permissive relicensing decision" to Arc B activation. The provenance audit
+(`docs/roadmap-ii/CORPUS-PROVENANCE-AUDIT.md`, dispatch 000222) had already established the fact
+that makes the choice free: **all 137 files in the audited surface are authored in this repository,
+with zero derived from an external source and zero unresolved.** There is no third-party
+rightsholder to clear anywhere in the surface, so relicensing the corpus required no one's
+permission.
+
+The 000247 relicense then chose Apache-2.0 for the repository as a whole. Taking the same license
+for the corpus is the option that adds no new surface to explain:
+
+- **A benchmark corpus wants to be permissive**, so a consumer can vendor cases into a
+  differently-licensed test suite without inheriting a copyleft obligation. Apache-2.0 delivers
+  that, plus an explicit patent grant.
+- **A second license would have to be justified, propagated, and defended.** A CC0 or MIT carve-out
+  for `tests/corpus/` would mean two regimes in one tree, a boundary a consumer has to reason about
+  before copying a file, and a per-file header convention this repository does not have -- a live
+  grep for `SPDX-License-Identifier` still returns zero hits across every tracked file. The
+  simplification is the point.
+
+### The precondition, checked and recorded
+
+The dispatch was hard-gated on the relicense being **merged to main** before any work started.
+Checked first, before anything else: `LICENSE` on `origin/main` (`276b795`) reads the Apache
+License 2.0, blob `d645695`. The gate opened rather than being assumed open.
+
+### Zero drift between the audited surface and disk
+
+Publishing on an audited set is only meaningful if the set has not moved since the audit. It has
+not. The audit's 137-row per-file table was compared file-for-file against `git ls-files` over the
+same coverage boundary: **identical, 137 for 137**. A `git diff` of that boundary between the
+audit's derivation commit `7f34277` and this dispatch's HEAD reports **no change at all** -- not an
+add, a delete, a rename, or an edit. The empty diff was falsified against a positive control
+(`README.md` and `LICENSE`, which the same command correctly reports as modified), so it is a real
+negative rather than a pathspec that matched nothing.
+
+### What was deliberately NOT changed, and why
+
+- **The provenance audit's 137-row License column stays `GPL-3.0-or-later (repo-wide)`.** Dispatch
+  000247 recorded this as "known and deferred, not missed" and handed the item to this dispatch.
+  Inheriting it does **not** mean rewriting it. That column is a **finding derived at
+  `7f34277` on 2026-08-12**, when the repository was in fact GPL-3.0-or-later; overwriting it with
+  the current identifier would falsify a dated record of what an instrument observed. The audit's
+  substantive finding -- that no corpus file carries a per-file license header, and each is
+  therefore covered by the repository `LICENSE` and nothing else -- is unchanged and remains true
+  under Apache-2.0. A dated note now heads that document and its License-column legend, pointing
+  forward to this entry. This follows the same principle 000247 applied to the D1 rider and the
+  v1.6.1 CHANGELOG entry: **historical records stay true.**
+- **The D1 rider is not edited.** Its premise -- repo-wide GPL inheritance -- is what 000247
+  changed; the rider itself is a ratified record.
+- **No corpus fixture content, count, or measurement script was touched.** This dispatch publishes
+  the surface; it does not alter it.
+- **`tests/doc-claims.psd1` was not edited**, and no guarded claim was disturbed.
+
+### Finding 1 of the audit, resolved by naming the population
+
+The audit's Finding 1 recorded that this ledger's own statement of the Arc B contingency (the
+parenthetical at lines 1366-1367, *"the oracle mixes repo scripts with installed-module
+scripts"*) describes a **different population** from `tests/corpus/` -- the ad-hoc false-positive
+survey set, which this ledger settles elsewhere as **machine state** that has never been committed.
+`ROADMAP.md` states the same gate without the parenthetical, and only that wording matches the
+population that could actually be published.
+
+That ambiguity is resolved here by stating the scope the ruling covers, rather than by editing the
+earlier record: **this ruling covers the 137-file committed corpus surface enumerated by the
+audit's coverage boundary, and nothing else.** The installed-module scripts the parenthetical
+worried about were never in the repository, are not published by this dispatch, and are not
+licensed by it.
+
+### The corpus is consumable, not announced
+
+The deliverable is the repository being ready for an outside consumer to use, cite, and reproduce:
+`docs/corpus.md` states the license, the provenance result, the derivation invariant, the
+measurement definitions, the exact steps to reproduce the numbers from a clean clone, a citation
+form, and the limits the corpus does **not** cover. `README.md` and `TRUST.md` point at it.
+
+**Nothing was published externally.** No announcement, no submission to any list, benchmark site,
+or third-party channel, and no new repository. External publishing is a maintainer action and
+remains one; this dispatch deliberately stops at making the corpus consumable where it already
+lives.
+
+### One number is published unguarded, and it is flagged rather than smoothed
+
+`docs/corpus.md` states the **137-file** audited surface count. The doc-claims registry guards the
+README's scored denominators; it does not guard this number, and this dispatch is forbidden from
+adding a registry row. The page therefore publishes the count **with the `git ls-files` command
+that derives it** and an as-of stamp, and the scored denominators are **not** restated on that page
+at all -- they are read from the guarded README section instead. That is the honest treatment
+available under the constraint, and the residual risk is named here rather than left implicit: if
+the surface grows, that count can go stale exactly the way the README's clean-fixture count once
+did. Registering it is a one-row follow-on for a dispatch permitted to touch the registry.
+
+### Semver class
+
+**PATCH.** Documentation and a licensing statement; no API, knob, or behavior change. The corpus
+files themselves are byte-identical.
 ## Dispatch 000257 leg C -- Arc C attested diagnostics: RULED by Mike 2026-08-17 -- DECLINE to build now, and re-gate
 
 **Status: RULED by Mike 2026-08-17 -- decline to build; keep gated, gate re-scoped.** Source: the dispatch 000257 outbox, leg C (absorbs 000252), assembled as findings only. The docket mapped four of five candidate attestation claims to a named, currently OPEN threat (ruleset identity and policy layer to T4.1/T4.2, engine versions to T1.4/T1.5, input hash partially to T3.2), which is a stronger mapping than the horizon framing implied and is worth keeping on record. It does not change the ruling.
