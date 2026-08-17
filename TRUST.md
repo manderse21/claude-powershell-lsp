@@ -275,7 +275,9 @@ it was not added.
   as a **git-cloned plugin**, not a Windows `.exe` or installer, so a Windows Trusted-Root publisher
   signature is **moot** for this distribution model. On a machine that requires signed scripts (GPO
   `AllSigned`, or WDAC / AppLocker that trusts only signed code), the plugin is **blocked** until you
-  allow-list it by path or hash (below); it tells you which control blocked it (see
+  either allow-list it by path or hash (below) or sign it with your own code-signing certificate
+  (see [Sign it yourself](#sign-it-yourself-the-org-certificate-paved-path), which is the path this
+  project recommends for such an estate); it tells you which control blocked it (see
   [Honest degradation](#honest-degradation-the-l3-behavior)) and never tries to get around it.
 - **The `/plugin` clone-based install path is not covered by an artifact signature.** Claude Code
   installs the plugin by copying its **source from git**, not by downloading the signed release
@@ -303,10 +305,72 @@ path was **declined / adoption-gated**; the keyless Sigstore approach above is t
 project adopted instead. The paid like-for-like, **Azure Trusted Signing**, is gated on a qualifying
 US / CA legal entity and is not pursued today.)
 
+## Sign it yourself: the org-certificate paved path
+
+The decline above is a decision about **who signs**, not a dead end. A managed estate whose
+ExecutionPolicy is `AllSigned`, or whose WDAC / AppLocker policy trusts only signed code, will
+not run unsigned scripts -- and a command-line `-ExecutionPolicy Bypass` is **ignored** when the
+policy comes from Group Policy, so nothing in the plugin gets around it (see
+[Why ExecutionPolicy Bypass appears in every hook entry point](#why-executionpolicy-bypass-appears-in-every-hook-entry-point)).
+The answer for such an estate is not a publisher certificate it has no reason to trust. It is the
+estate signing with **its own** code-signing certificate, which its policy already trusts. The
+plugin ships that as one command:
+
+```
+# By thumbprint, from Cert:\CurrentUser\My or Cert:\LocalMachine\My:
+pwsh -File scripts/sign-plugin.ps1 -Thumbprint <your-code-signing-thumbprint>
+
+# Or from a PFX:
+pwsh -File scripts/sign-plugin.ps1 -PfxPath C:\certs\org-signing.pfx -PfxPassword (Read-Host -AsSecureString)
+
+# Report the current state and change nothing:
+pwsh -File scripts/sign-plugin.ps1 -VerifyOnly
+```
+
+Point it at an **installed** copy with `-PluginRoot` (the plugin cache path `CLAUDE_PLUGIN_ROOT`
+resolves to) when you are signing from an admin workstation rather than in place.
+
+**What it covers.** Every `.ps1` and `.psm1` under `scripts/`, **enumerated live from the tree it
+is run against** rather than from a list in the script -- the executable surface, which is exactly
+the set the four manifest entry points launch or that those entry points dot-source and import. It
+signs, then **re-reads every file with `Get-AuthenticodeSignature` and prints that sweep**, and it
+**fails closed** on anything that does not come back `Valid`. The read-back is the proof and the
+signing call is not: `Set-AuthenticodeSignature` does not raise an error for a file it declines to
+sign, and returns the same status for a real signature as for a silent no-op.
+
+**What it does NOT cover, and must not be read as covering:**
+
+- **The downloaded components under `CLAUDE_PLUGIN_DATA`** -- the PSES bundle and the vendored
+  PSScriptAnalyzer. Those are third-party artifacts this project does not author and will not
+  re-sign; they are covered by the **pinned SHA-256 hashes** described in
+  [What it downloads](#what-it-downloads-pinned-versions-and-pinned-hashes). Script signing and
+  artifact pinning are **different layers and stay different**: a signature says who vouched for
+  the bytes, a pin says the bytes are the exact ones this repository vouched for. Signing the
+  scripts changes neither the pins nor what they guarantee.
+- **`.psd1` data files.** `about_Signing` lists `.psd1` among the types PowerShell will *validate*
+  a signature on, which is not the same as the set it *refuses to load unsigned*. Measured under
+  process-scope `AllSigned` on Windows PowerShell 5.1, an unsigned `.psd1` loads through every
+  path this plugin uses -- `Import-PowerShellDataFile` (the shipped rulesets),
+  `Import-LocalizedData`, and `Import-Module` of a manifest. What `AllSigned` blocks is the
+  `.psm1` or `.ps1` a manifest chains to through `RootModule` / `ScriptsToProcess`, and those
+  **are** in the covered surface.
+- **The plugin after its next upgrade.** An upgrade replaces these files with unsigned copies.
+  Re-run the command after every upgrade; `-VerifyOnly` is the check.
+
+**Two operational notes.** An air-gapped estate signs with `-NoTimestamp`; the trade-off is real
+and worth stating -- without a countersignature the signatures become invalid the day the signing
+certificate expires, so the estate re-signs on certificate renewal rather than only on upgrade.
+And signing **changes the files' bytes**, so any hash-based allow rule you generated below must be
+regenerated afterwards -- or replaced with a publisher rule, which is the simpler policy once the
+files carry your own signature.
+
 ## Allow-listing on managed Windows
 
-Because the plugin's scripts are deliberately not Authenticode-signed (see
-[Signing posture](#signing-posture)), allow-list it by **path** or by **hash**. Its two
+Because the plugin's scripts are deliberately not Authenticode-signed as shipped (see
+[Signing posture](#signing-posture)), allow-list it by **path** or by **hash** -- or sign it with
+your own certificate first (see
+[Sign it yourself](#sign-it-yourself-the-org-certificate-paved-path)) and allow-list by publisher.
+Its two
 trust surfaces are (1) the plugin scripts in the Claude Code plugin cache
 (`%USERPROFILE%\.claude\plugins\...\powershell-lsp\`, exposed to the scripts as
 `CLAUDE_PLUGIN_ROOT`) and (2) the downloaded components under `CLAUDE_PLUGIN_DATA`
@@ -430,8 +494,11 @@ only**; it never bypasses, disables, or modifies any control. See README
 
 ## Honest limits
 
-- **Scripts are NOT Authenticode-signed** -- a deliberate choice for a git-distributed plugin;
-  release tags ARE keyless-signed via Sigstore (see [Signing posture](#signing-posture)).
+- **Scripts are NOT Authenticode-signed as shipped** -- a deliberate choice for a git-distributed
+  plugin; release tags ARE keyless-signed via Sigstore (see [Signing posture](#signing-posture)).
+  An estate that requires signed scripts signs them with its own certificate in one command (see
+  [Sign it yourself](#sign-it-yourself-the-org-certificate-paved-path)); that is your signature on
+  your machines, and this project still asserts no publisher identity of its own.
 - **NOT independently security-audited.** No third party has performed a security audit of
   this code. Treat this document and the open source as the basis for your own review.
 - Claims in this document are verifiable against the named files and the published release
