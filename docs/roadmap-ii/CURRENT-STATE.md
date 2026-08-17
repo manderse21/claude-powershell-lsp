@@ -175,7 +175,7 @@ Stated as measured facts about each capability's evidence, not as scores or grad
 | False-positive bar | Measured 0% false-positive / 100% true-positive under the default config, guarded on all four CI legs; snapshots are tool-derived, never hand-authored | `VERIFICATION_SURFACE.md` "Corpus false-positive guard" |
 | Cross-platform coverage | 4 CI legs green as a release gate precondition | CI matrix; release gate 4 |
 | Release provenance | Keyless signed tags, SLSA build provenance on both assets, CycloneDX 1.5 SBOM generated from the real pins | `docs/trust.md` section headings; `VERIFICATION_SURFACE.md` "Dependency pins + SBOM" |
-| Native code navigation | Registration works; **serve does not on the direct path**; the opt-in `nativeServe = shim` closes it locally and ships | `ROADMAP.md:94-100` |
+| Native code navigation | Registration works; **serve does not on the direct path**; the opt-in `nativeServe = shim` closes it locally and ships, but its `${user_config.*}` transport is **suspended** on an affected client, so the knob is shipped-and-configured yet not in effect there | `ROADMAP.md` "Gated and paced", native code navigation; `Get-ServeTransportSuspension` in `scripts/lib/lsp-common.ps1` |
 | Per-rule efficacy ledger | Machinery ships (`scripts/rule-efficacy-ledger.ps1`, 897 lines, last commit `e24b09b` 2026-08-09); **its input data is the gap in section 10** | file; section 10 |
 | Enterprise policy distribution | One knob ships (`orgPolicy`); no distribution or rollup mechanism exists | `plugin.json` userConfig; `ROADMAP.md:109-111` |
 
@@ -185,7 +185,13 @@ Recorded from the repository's own statements and from the derivations above.
 
 - **Serve on the direct native path does not work.** Claude Code's LSP client rejects the
   server-to-client requests PSES sends during initialization. The shipped `nativeServe = shim`
-  is a workaround, not a fix (`ROADMAP.md:94-100`).
+  is a workaround, not a fix (`ROADMAP.md`, "Gated and paced").
+- **The shim's configuration transport is separately suspended.** On an affected client the
+  `${user_config.*}` mappings that carry `nativeServe` into the serve subprocess are withdrawn,
+  because one unset declared key makes the client discard every server the plugin declares. The
+  knob is therefore shipped and settable yet not in effect on that client. The removed mappings
+  and the exact un-gate condition are recorded in `Get-ServeTransportSuspension`
+  (`scripts/lib/lsp-common.ps1`); the upstream defect is tracked in section 7.
 - **A second upstream Windows defect had blocked the native tier from starting at all** under some
   Claude Code versions. It is **fixed and closed upstream** as of the write-time re-check recorded
   in section 7, so it is history rather than a current limitation.
@@ -217,6 +223,32 @@ number,title,state,stateReason,createdAt,updatedAt,closedAt,comments,labels`.
 "last activity" timestamp in the table is the maintainer's own edit or comment, not an upstream
 reply. The most recent activity of any kind across all four was 2026-07-06 -- **37 days before this
 derivation**.
+
+### Write-time re-check, 2026-08-17 (dispatch 000257)
+
+**No upstream state changed since the 2026-08-13 re-check below, and a sixth item now belongs on
+this list.** The tables above and below are left as the derivations they were; this is the newer
+state recorded beside them, not an edit to either. Re-derived with `gh issue view <n> --repo
+<repo> --json state,title,updatedAt`, query timestamp **2026-08-17T15:13:32Z**:
+
+| Issue | State at re-check | Last activity | Change since 2026-08-13 |
+|---|---|---|---|
+| `anthropics/claude-plugins-official#1359` | **OPEN** | 2026-08-13T16:10:59Z | none |
+| `anthropics/claude-code#66987` | **CLOSED** | 2026-08-13T16:09:48Z | none |
+| `anthropics/claude-code#73961` | **CLOSED** | 2026-08-13T16:08:43Z | none |
+| `anthropics/claude-code#74289` | **OPEN** | 2026-08-13T18:32:37Z | none |
+| `anthropics/claude-code#86551` | **OPEN** | 2026-08-13T23:54:28Z | none |
+| `anthropics/claude-code#86936` | **OPEN** | 2026-08-15T15:54:30Z | **new to this list** |
+
+**#86936 is the sixth**, filed 2026-08-15 and not present in either table above: Claude Code's
+LSP loader interpolates `${user_config.*}` against stored options only, so one unset declared key
+makes it discard every server the plugin declares. It is the gate on the serve-transport
+suspension recorded in section 6 and in `Get-ServeTransportSuspension`; its internal record is
+[`docs/upstream/claude-code-lspservers-userconfig-defaults.md`](../upstream/claude-code-lspservers-userconfig-defaults.md).
+
+**#1359 still gates native serve**, unchanged: it remains open with no upstream-side movement
+since 2026-08-13, so the `nativeServe = shim` workaround stays load-bearing -- and, per section 6,
+that shim's own configuration transport is now separately suspended behind #86936.
 
 ### Write-time re-check, 2026-08-13 (dispatch 000235)
 
