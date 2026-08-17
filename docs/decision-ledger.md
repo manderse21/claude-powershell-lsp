@@ -3561,9 +3561,9 @@ version digit." The precedent is unambiguous, so no adjudication was required. T
 band is already MINOR for the air-gapped bootstrap; the relicense rides that class rather than
 raising it.
 
-## Dispatch 000249 -- the `Save-Module` gallery fallback: a RECOMMENDATION on the table, AWAITING A RULING
+## Dispatch 000249 -- the `Save-Module` gallery fallback: RULED by Mike 2026-08-17 -- remove Method 2 (Option B), deprecate-then-remove
 
-**Status: AWAITING MIKE'S RULING. Nothing is decided and nothing in the code has moved.** This
+**Status: RULED by Mike 2026-08-17 -- Option B, remove Method 2, shipped as deprecate-then-remove.** The recommendation below is now the decision; the reasoning it records stands unchanged. The proxy-behind-corporate-firewall scenario the docket left unmeasured is carried by the deprecation window: the announced window is the period in which any user who relies on the `Save-Module` route can report it, and such a report is the signal that would pause removal. Method 2 is announced in one release's CHANGELOG and deleted in a later one; on removal, threat rows T1.2, T1.4 and T1.5 retire and the plugin keeps no persistent write outside its own data directory. The follow-up build dispatch is chartered separately. This
 entry records what the adjudication docket *proposes*, so the question is findable in the ledger
 rather than only in an outbox -- it does **not** record a decision, and no ruling is attributed to
 anyone. Source: the dispatch 000249 outbox,
@@ -3603,3 +3603,50 @@ what vendors PSScriptAnalyzer on their estate is the demand signal** -- and, sho
 declined rather than actioned, it is the thing that would reopen it. This mirrors the custom-rule
 seam's "declined pending demand" shape already in the ROADMAP declines table, with one difference
 that matters: **that item is declined; this one is not decided at all.**
+
+## Dispatch 000257 leg C -- Arc C attested diagnostics: RULED by Mike 2026-08-17 -- DECLINE to build now, and re-gate
+
+**Status: RULED by Mike 2026-08-17 -- decline to build; keep gated, gate re-scoped.** Source: the dispatch 000257 outbox, leg C (absorbs 000252), assembled as findings only. The docket mapped four of five candidate attestation claims to a named, currently OPEN threat (ruleset identity and policy layer to T4.1/T4.2, engine versions to T1.4/T1.5, input hash partially to T3.2), which is a stronger mapping than the horizon framing implied and is worth keeping on record. It does not change the ruling.
+
+### Why decline now
+Two independent gates are unmet. There is no demand: no issue, discussion or feedback row in the repository asks for attested diagnostics, and the one adjacent adoption signal -- the 2026-08-15 corporate-IT review -- named offline bootstrap and the GPLv3 licence as its blockers, both since answered (000244, 000247), and said nothing about attesting scan output. And there is barely any subject to attest: leg F measured the efficacy channel Arc C would sign at six canonical-checkout rows lifetime, zero in the last nine days across four released versions. Building any of the three costed options today would ship a proof nobody has asked to verify, about findings the project scarcely collects.
+
+### The re-gate
+The recorded gate was "real efficacy data existing and a real consumer to read it." It is sharpened: the activating signal is **a named consumer that actually verifies**, not data volume alone. Volume can never trip this gate; only a real reader does. This converts Arc C from a vague horizon item into a precisely-gated one at zero build cost.
+
+## Dispatch 000257 leg D -- Arc D enterprise control plane: RULED by Mike 2026-08-17 -- CHARTER the policy-integrity verification slice
+
+**Status: RULED by Mike 2026-08-17 -- charter one slice: policy-integrity verification. The lane otherwise stays demand-paced.** Source: the dispatch 000257 outbox, leg D (absorbs 000253), findings only. The docket derived the shipped enterprise surface from disk: `orgPolicy` is the outermost layer of the settings precedence chain and governs exactly one thing, `ExcludeRules`, applied as a final subtractive drop. Its coverage table found central suppression and offline distribution already covered, and five needs uncovered.
+
+### Why this slice, and only this one
+Of the five uncovered needs, policy-integrity verification (T4.1) is the only one whose demand evidence is **in-repo** rather than inherited: the org policy file is read with no integrity check, so write access to that file is control over enforcement. It closes a named OPEN threat, and it has **zero CONTRACT.md freeze exposure** -- a hash or signature check beside the existing path knob adds no userConfig key, so the `.strict()` manifest schema is untouched. Everything ranked above it in adoption impact (central distribution, fleet visibility, audit trail) rests on the unverified-inherited corporate-IT citation or on no on-disk demand at all; the lane's gate is one slice per real signal, and an in-repo OPEN threat-model finding is that signal. The remaining four needs stay demand-paced, their absence of demand recorded as a finding, not filled in. The follow-up build dispatch is chartered separately.
+
+## Dispatch 000257 leg E -- LSP test-harness census: RULED by Mike 2026-08-17 -- do NOT build a shared harness; restore the dropped rationale
+
+**Status: RULED by Mike 2026-08-17 -- do not build tests/Harness/; the one real defect is documentary and gets a documentary fix.** Source: the dispatch 000257 outbox, leg E (absorbs 000255), findings only. The census counted 59 launch sites and 152 wait sites outside the existing seams.
+
+### Why not build
+The sharpest duplication pair, `ModuleAwareness` and `ReferenceSurfacing`, carries 37 byte-identical lines -- and **zero behavioural drift**: every constant matches (150 x 400 ms readiness poll, 45000 ms round-trip cap, 60000 ms shared-helper timeout). Copies that stay in lockstep across independent suites without a shared abstraction are demonstrably cheap here; extracting a harness would churn four working files to solve a problem the evidence says the project does not have, and would have to clear Pester 5.7.1-on-5.1, the exact host-divergence class the leg F phantom proved this codebase is exposed to. The one place a shared class would earn its keep -- the wait/readiness loop -- already exists as `Wait-DaemonRequestReady`, and the copies consume it.
+
+### The proportionate fix
+The measured defect is documentary: the `ReferenceSurfacing` copy dropped the rationale comment explaining that its request retries until a clean settled pass, so a silent case is proven silent on a real analysis and never trivially on an unsettled one. The loop shape survived the copy; the reason for the shape did not. Restore that one sentence and treat it as the thing to keep in sync. Folded into the next docs-touching change; no standalone dispatch required.
+
+## Dispatch 000257 leg A -- Arc E scale and robustness: RULED by Mike 2026-08-17 -- PARK, with a named scale signal
+
+**Status: RULED by Mike 2026-08-17 -- park; activate on a real >5000 ms edit report.** Source: the dispatch 000257 outbox, leg A (absorbs 000254), a measured baseline taken on a swept, non-degraded machine (zero statusline shells, 11 pct CPU; the sweep selector was proven live before its zero was reported).
+
+### Why park
+The floors are healthy. Sustained behaviour is flat -- twenty back-to-back edits drift 1.1 ms (0.18 pct) between the first five and the last five. No measurement approached the 5000 ms edit-path cap; the cold path at 5385 ms is cap-dominated, not startup-dominated, and lowering it would trade honesty for speed. Both remaining gap classes (daemon-exit on a departed client, relaunch thrash) are already fixed. The one number that could justify work is large-file variance -- 2011 ms mean at 247 KB, sd 1154 -- and it is bounded by a corpus that cannot exercise it: the largest corpus file is 24.8 KB, so the corpus does not contain the case Arc E is about.
+
+### The gate
+The honest first step is a signal definition, not a fix. Arc E activates when a real repository reports an edit that exceeds the 5000 ms cap. Environmental hardening was considered and set aside: the environment measured clean, so hardening it would optimise a problem this machine does not have.
+
+## Dispatch 000257 leg G -- agent-facing PSES exposure: RULED by Mike 2026-08-17 -- CHARTER the codeAction fix-text slice; the rest stays queued
+
+**Status: RULED by Mike 2026-08-17 -- charter one slice: a richer textDocument/codeAction payload on the existing hook. The interactive-editor capabilities stay queued behind their upstream gates.** Source: the dispatch 000257 outbox, leg G, findings only. Derived from the vendored PSES v4.6.0 binary: of sixteen LSP-facing handlers, the plugin surfaces two capabilities today -- diagnostics and code actions.
+
+### Why this slice
+It is the highest value-to-cost item on the board. The codeAction handler is already wired and already called (3 sites), so surfacing the fix **text** for findings the hook already reports -- not merely that a code action exists -- is a payload change on a live call, not a new capability integration. It carries **zero CONTRACT.md freeze exposure** (no new userConfig key), it is **not** blocked behind the native-serve gap or `#86936` because it rides the daemon pipe the hook already uses, and it is positional-safe in the way that matters: it enriches a finding the agent is already shown at a location already reported, rather than answering a new positional query that could be confidently wrong against stale line numbers. It serves the North Star directly -- an agent told how to fix a finding can act, where an agent told only that one exists must re-derive the fix. The follow-up build dispatch is chartered separately.
+
+### What stays queued, and behind what
+Hover and definition are positional and would be confidently wrong against an agent's stale line numbers, so they wait. The interactive-editor surfaces (completion, signature help, semantic tokens, folding, code lens) unblock only when a real LSP client consumes this server, gated on `anthropics/claude-plugins-official#1359` and, for configuration transport, `anthropics/claude-code#86936`, both OPEN as of 2026-08-17. Declining to build the rest now is a fully successful outcome of the survey.
