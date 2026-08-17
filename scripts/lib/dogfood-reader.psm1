@@ -117,15 +117,46 @@ function Read-DogfoodAnnotations {
 # compute the summary. The schema coupling (which fields a capture record carries) lives here.
 # ===========================================================================
 
+# THE EMPTY-COLLECTION GUARD (dispatch 000258) -- why every [object[]] param below opens with
+#     $items = @()
+#     if ($null -ne $X) { $items = @($X) }
+# instead of the bare `@($X)` it used to use.
+#
+# A function that emits nothing returns AutomationNull, not an empty array. Read-DogfoodLog
+# honestly returns @() for a missing log (line 88), and that becomes AutomationNull. Held in a
+# VARIABLE it behaves: `@($var).Count` is 0, which is why this survived review for so long. But
+# BOUND TO A TYPED [object[]] PARAMETER, AutomationNull converts to a real $null -- and `@($null)`
+# is a ONE-ELEMENT array holding $null. The loop body then runs once on a null record, which is
+# how a provably missing capture log rendered as `shapes: 1 distinct` (dispatch 000257 leg F).
+#
+# It is HOST-DIVERGENT: the unroll fires under pwsh 7 and not under Windows PowerShell 5.1, so the
+# suite's 5.1 leg structurally cannot see it. That is why the guard is written out at every site
+# rather than left to the host.
+#
+# THE GUARD IS A STATEMENT, NOT AN IF-EXPRESSION, AND THAT DISTINCTION IS THE WHOLE POINT.
+# 000257 leg F proposed `$x = if ($null -eq $R) { @() } else { @($R) }`. That shape is ITSELF
+# defective: assigning an if-EXPRESSION captures the branch's PIPELINE OUTPUT, and a branch whose
+# body is `@()` emits nothing -- so the guard hands back the very AutomationNull it meant to
+# remove, and the next `$x.Count` throws under StrictMode. Measured, pwsh 7.6.3:
+#   $a = if ($true) { @() } else { @(1,2) }        -> $null -eq $a is True,  $a.Count THROWS
+#   $b = @(); if ($false) { $b = @(1,2) }          -> $null -eq $b is False, $b.Count is 0
+# `$x = @()` is a direct ARRAY-LITERAL assignment and is always a real zero-length object[]; only
+# a function, pipeline, or if-EXPRESSION branch emitting nothing produces AutomationNull.
+#
+# For the same reason the guard is INLINE rather than a shared helper: a helper returning @() would
+# return AutomationNull to its caller and reintroduce the hazard one call deeper.
+
 function Get-DogfoodShapes {
     # Collapse capture records to DISTINCT shapes keyed by the shape-hash. Each shape carries a
     # representative occurrence (the FIRST seen: file/line/col/ruleId/source/severity/message/
     # snippet) plus the occurrence count -- frequency is the signal the quality wave ranks on.
     # Records missing a hash are bucketed by a synthetic key so nothing is silently dropped.
     param([object[]] $Records)
+    $items = @()                                                   # empty-collection guard (000258)
+    if ($null -ne $Records) { $items = @($Records) }
     $order = New-Object System.Collections.Generic.List[string]
     $byHash = @{}
-    foreach ($r in @($Records)) {
+    foreach ($r in $items) {
         $h = [string](Get-Prop $r 'hash')
         if ([string]::IsNullOrWhiteSpace($h)) { $h = '(no-hash)' }
         if (-not $byHash.ContainsKey($h)) {
@@ -154,7 +185,9 @@ function Get-DogfoodPendingShapes {
     # Shapes whose hash carries NO verdict yet -- the resumable work-list. Order preserved.
     param([object[]] $Shapes, [hashtable] $Annotations)
     $ann = if ($null -eq $Annotations) { @{} } else { $Annotations }
-    return @(@($Shapes) | Where-Object { -not $ann.ContainsKey([string]$_.hash) })
+    $items = @()                                                   # empty-collection guard (000258)
+    if ($null -ne $Shapes) { $items = @($Shapes) }
+    return @($items | Where-Object { -not $ann.ContainsKey([string]$_.hash) })
 }
 
 function Get-DogfoodSummary {
@@ -167,7 +200,13 @@ function Get-DogfoodSummary {
     #     ACTIONABLE verdicts (false-positive / noisy / bad-fix), the wave's prioritized input.
     param([object[]] $Shapes, [hashtable] $Annotations)
     $ann = if ($null -eq $Annotations) { @{} } else { $Annotations }
-    $shapes = @($Shapes)
+    # Empty-collection guard (000258). The holding variable is NOT named $shapes: PowerShell
+    # variable names are CASE-INSENSITIVE, so `$shapes = @()` would overwrite the PARAMETER
+    # $Shapes before the next line could read it, and every non-empty log would summarize as
+    # zero. Guard into a distinct name first, then hand it to $shapes in one assignment.
+    $inShapes = @()
+    if ($null -ne $Shapes) { $inShapes = @($Shapes) }
+    $shapes = $inShapes
 
     $totalShapes = $shapes.Count
     $totalOcc = 0; foreach ($s in $shapes) { $totalOcc += [int]$s.count }
@@ -265,7 +304,9 @@ function Get-DogfoodSourceSplit {
         $out[$b] = [pscustomobject]@{ occurrences = 0; shapes = 0 }
         $seen[$b] = @{}
     }
-    foreach ($r in @($Records)) {
+    $items = @()                                                   # empty-collection guard (000258)
+    if ($null -ne $Records) { $items = @($Records) }
+    foreach ($r in $items) {
         $bucket = Get-DogfoodSourceBucket -File ([string](Get-Prop $r 'file'))
         $out[$bucket].occurrences++
         $h = [string](Get-Prop $r 'hash')
@@ -487,7 +528,8 @@ function Select-DogfoodCacheVersion {
     # deterministically and DISCOVERED from disk, never hardcoded -- so a fresh install at any future
     # version resolves with no code change. Returns the chosen .Path, or '' for no candidates. Pure.
     param([object[]] $Candidates)
-    $c = @($Candidates)
+    $c = @()                                                       # empty-collection guard (000258)
+    if ($null -ne $Candidates) { $c = @($Candidates) }
     if ($c.Count -eq 0) { return '' }
     $sorted = @($c | Sort-Object `
             @{ Expression = { ConvertTo-CacheVersionKey ([string]$_.Version) }; Descending = $true }, `

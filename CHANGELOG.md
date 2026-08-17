@@ -31,6 +31,33 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+### Fixed: the dogfood reader counted an EMPTY capture log as ONE phantom shape
+
+**Bug fix** (dispatch 000258, found by dispatch 000257 leg F). **PATCH-class by SemVer**: no
+public API change, no schema change, no `userConfig` knob, and no behavior change for any
+non-empty log -- only the empty case stops lying.
+
+`scripts/review-dogfood.ps1 -Summary -Path <NONEXISTENT>` reported `shapes: 1 distinct
+occurrences: 1` for a file that provably did not exist. `Read-DogfoodLog` was honest -- it
+returned `@()` -- but a function that emits nothing returns **AutomationNull**, and binding that
+to a typed `[object[]]` parameter converts it to a real `$null`. Since `@($null)` is a
+**one-element array**, every reader that looped over the bare `@($Param)` ran its body once on a
+null record and fabricated one `(no-hash)` shape. Guards now normalize at all five `[object[]]`
+boundaries in `scripts/lib/dogfood-reader.psm1`: `Get-DogfoodShapes`, `Get-DogfoodPendingShapes`,
+`Get-DogfoodSummary`, `Get-DogfoodSourceSplit`, and `Select-DogfoodCacheVersion`. The last three
+did not miscount but **threw** under `StrictMode` on the phantom null.
+
+**It was host-divergent**, which is why the suite never caught it: the unroll fires under pwsh 7
+and not under Windows PowerShell 5.1, so the 5.1 CI leg structurally could not see it.
+
+**Re-derive any cached accrual figure rather than trusting it.** The reader's empty-log floor was
+1 occurrence under pwsh, so an empty log and a genuine one-row log rendered byte-identically, and
+every affected reading was inflated by exactly one at the low end -- the end that matters. In the
+dispatch 000256 / 000257 leg F accrual survey the `-Source checkout` reading of **1
+`other-genuine` occurrence was entirely phantom**; true checkout-source accrual was **0**. The
+per-version cache totals in that survey (297 occurrences across seven version directories) were
+read per-record and are unaffected.
+
 ### README restructured and `DEV_NOTES.md` moved under `docs/` -- documentation RESTRUCTURED, not reduced
 
 **Documentation only** (dispatch 000250). No `.ps1` behavior moved, no knob changed, no test

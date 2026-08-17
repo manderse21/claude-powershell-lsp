@@ -783,6 +783,116 @@ Describe 'Dogfood annotation/review tool (dispatch 000043)' {
         }
     }
 
+    Context 'an EMPTY world reads as ZERO shapes (dispatch 000258 phantom-shape regression)' {
+        # THE DEFECT (found by dispatch 000257 leg F). A function emitting nothing returns
+        # AutomationNull, not an empty array. Read-DogfoodLog honestly returns @() for a missing
+        # log; bound to a typed [object[]] parameter that AutomationNull converts to a real $null,
+        # and `@($null)` is a ONE-ELEMENT array holding $null. Every reader that looped over the
+        # bare `@($Param)` therefore fabricated one '(no-hash)' shape out of an EMPTY world -- a
+        # provably missing capture log rendered as `shapes: 1 distinct`, so every accrual figure
+        # derived from the reader read exactly one high at the low end, which is the end that
+        # matters. The guards live at each [object[]] boundary in lib/dogfood-reader.psm1.
+        #
+        # RED CONTROL: revert any single guard to the bare `@($Param)` and that function's
+        # assertion below goes RED -- measured 1 (or a throw) instead of 0 under pwsh 7.6.3.
+        #
+        # HOST-DIVERGENCE, stated so a green 5.1 leg is not misread as proof: the unroll fires
+        # under pwsh 7 and NOT under Windows PowerShell 5.1. On the 5.1 legs these assertions
+        # pass both before and after the fix -- they still pin the contract there, but the defect
+        # they guard is only OBSERVABLE on the 7.x legs. A CI board that is green on 5.1 alone
+        # has not exercised this regression.
+
+        It 'Get-DogfoodShapes yields ZERO shapes for a NULL Records input' {
+            @(Get-DogfoodShapes -Records $null).Count | Should -Be 0
+        }
+        It 'Get-DogfoodShapes yields ZERO shapes for a MISSING log file' {
+            $missing = Join-Path $script:DfDir 'no-such-capture.jsonl'
+            Test-Path -LiteralPath $missing | Should -BeFalse -Because 'this case IS a missing file'
+            @(Get-DogfoodShapes -Records (Read-DogfoodLog -LogPath $missing)).Count | Should -Be 0
+        }
+        It 'Get-DogfoodShapes yields ZERO shapes for a ZERO-BYTE log file' {
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($script:DfLog, '', $enc)
+            (Get-Item -LiteralPath $script:DfLog).Length | Should -Be 0
+            $records = Read-DogfoodLog -LogPath $script:DfLog
+            @(Get-DogfoodShapes -Records $records).Count | Should -Be 0
+        }
+        It 'Get-DogfoodShapes yields ZERO shapes for a WHITESPACE-ONLY log file' {
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($script:DfLog, "   `n`n  `n", $enc)
+            # Non-empty on disk -- so this is genuinely the whitespace case, not the zero-byte one.
+            (Get-Item -LiteralPath $script:DfLog).Length | Should -BeGreaterThan 0
+            $records = Read-DogfoodLog -LogPath $script:DfLog
+            @(Get-DogfoodShapes -Records $records).Count | Should -Be 0
+        }
+
+        It 'the whole shaping path reports totalShapes 0 for each empty case' {
+            # The acceptance shape: totalShapes 0 AND an empty shapes array, for all four inputs.
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            $zero = Join-Path $script:DfDir 'zero.jsonl'
+            [System.IO.File]::WriteAllText($zero, '', $enc)
+            $ws = Join-Path $script:DfDir 'ws.jsonl'
+            [System.IO.File]::WriteAllText($ws, "   `n`n  `n", $enc)
+            $cases = @{
+                'missing'    = (Join-Path $script:DfDir 'no-such-capture.jsonl')
+                'zero-byte'  = $zero
+                'whitespace' = $ws
+            }
+            foreach ($name in $cases.Keys) {
+                $records = Read-DogfoodLog -LogPath $cases[$name]
+                $shapes = Get-DogfoodShapes -Records $records
+                $summary = Get-DogfoodSummary -Shapes $shapes -Annotations @{}
+                @($shapes).Count | Should -Be 0 -Because "$name must shape to an EMPTY array"
+                $summary.totalShapes | Should -Be 0 -Because "$name must summarize to ZERO shapes"
+                $summary.totalOccurrences | Should -Be 0 -Because "$name has no occurrences"
+            }
+            # The null input takes the same path without a file behind it.
+            $nullShapes = Get-DogfoodShapes -Records $null
+            (Get-DogfoodSummary -Shapes $nullShapes -Annotations @{}).totalShapes |
+                Should -Be 0 -Because 'a null Records input must summarize to ZERO shapes'
+        }
+
+        It 'every OTHER [object[]] reader boundary also survives a null (the caller-sweep class)' {
+            # Same defect class, same file. Before the fix these did not merely miscount: under
+            # StrictMode Get-DogfoodSummary and Get-DogfoodPendingShapes THREW on the phantom null
+            # element ("The property 'count'/'hash' cannot be found on this object") and
+            # Select-DogfoodCacheVersion threw "Index was outside the bounds of the array".
+            (Get-DogfoodSourceSplit -Records $null)['other-genuine'].occurrences | Should -Be 0
+            (Get-DogfoodSourceSplit -Records $null)['canonical-checkout'].occurrences | Should -Be 0
+            (Get-DogfoodSourceSplit -Records $null)['synthetic'].occurrences | Should -Be 0
+            (Get-DogfoodSummary -Shapes $null -Annotations @{}).totalShapes | Should -Be 0
+            @(Get-DogfoodPendingShapes -Shapes $null -Annotations @{}).Count | Should -Be 0
+            Select-DogfoodCacheVersion -Candidates $null | Should -BeExactly ''
+        }
+
+        It 'a NON-EMPTY log is UNCHANGED by the guards (the control that keeps this honest)' {
+            # Without this control every assertion above is satisfiable by a reader that returns
+            # zero for EVERYTHING. It also pins the case-collision trap the guard itself can walk
+            # into: PowerShell variable names are case-INSENSITIVE, so writing the guard as
+            # `$shapes = @()` inside Get-DogfoodSummary would clobber its own $Shapes PARAMETER
+            # and silently summarize every non-empty log as zero. That regression is invisible to
+            # the empty cases and shows up only here.
+            Write-DfLog -LogPath $script:DfLog -Entries @(
+                (New-DfEntry -Hash 'h-x' -RuleId 'PSAvoidUsingCmdletAliases'),
+                (New-DfEntry -Hash 'h-y' -RuleId 'PSUseApprovedVerbs'),
+                (New-DfEntry -Hash 'h-x' -RuleId 'PSAvoidUsingCmdletAliases'))
+            $records = Read-DogfoodLog -LogPath $script:DfLog
+            @($records).Count | Should -Be 3 -Because 'the control needs a genuinely non-empty log'
+            $shapes = Get-DogfoodShapes -Records $records
+            @($shapes).Count | Should -Be 2                       # two distinct hashes
+            $summary = Get-DogfoodSummary -Shapes $shapes -Annotations @{}
+            $summary.totalShapes | Should -Be 2
+            $summary.totalOccurrences | Should -Be 3              # h-x twice, h-y once
+            @(Get-DogfoodPendingShapes -Shapes $shapes -Annotations @{}).Count | Should -Be 2
+            $split = Get-DogfoodSourceSplit -Records $records
+            $occ = 0
+            foreach ($b in @('canonical-checkout', 'other-genuine', 'synthetic')) {
+                $occ += [int]$split[$b].occurrences
+            }
+            $occ | Should -Be 3 -Because 'the source split counts every record exactly once'
+        }
+    }
+
     Context 'Get-DogfoodPendingShapes -- resumability' {
         It 'excludes shapes whose hash already carries a verdict' {
             Write-DfLog -LogPath $script:DfLog -Entries @((New-DfEntry -Hash 'h-a'), (New-DfEntry -Hash 'h-b'))
