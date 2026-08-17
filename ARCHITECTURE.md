@@ -3,14 +3,16 @@
 How `powershell-lsp` turns an edit to a `.ps1` / `.psm1` / `.psd1` file into a
 PowerShell diagnostic in Claude Code's context. This is the map a contributor needs
 before touching the runtime. The user-facing summary lives in
-[README.md](./README.md#how-it-works-warm-start-daemon); the frozen public surface (the
+[README.md](./README.md#how-it-works-warm-start-daemon), with its full text in
+[docs/warm-daemon.md](./docs/warm-daemon.md); the frozen public surface (the
 things a change must not break without a MAJOR bump) is in [CONTRACT.md](./CONTRACT.md).
 
 ## The one-paragraph model
 
 Claude Code can declare a plugin language server through native LSP registration, but
 that path has been unreliable for plugin-provided servers (the full story is in the
-README, [Why a hook, not native registration](./README.md#why-a-hook-not-native-lspjson-registration)).
+README, [Why a hook, not native registration](./README.md#why-a-hook-not-native-lspjson-registration),
+with its full text in [docs/native-registration.md](./docs/native-registration.md)).
 So this plugin does **not** depend on it. Diagnostics ride a **PostToolUse hook backed
 by a warm, per-session PSES daemon**: one PowerShell Editor Services process stays hot
 for the whole Claude Code session, so each edit pays a local named-pipe round-trip

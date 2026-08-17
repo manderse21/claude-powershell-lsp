@@ -31,6 +31,36 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+### README restructured and `DEV_NOTES.md` moved under `docs/` -- documentation RESTRUCTURED, not reduced
+
+**Documentation only** (dispatch 000250). No `.ps1` behavior moved, no knob changed, no test
+changed. **PATCH-class by SemVer**: a docs change with no user-visible contract change.
+
+Seven deep-dive sections left the README for per-topic pages under `docs/`, matching the existing
+`docs/` convention. **Every heading stays where it was**, now carrying a one-line pointer, so every
+anchor written before this change -- in `ARCHITECTURE.md`, `docs/DEV_NOTES.md`, the issue-template
+chooser, and any external post -- still resolves:
+
+| Left the README | Now lives in |
+|---|---|
+| How it works (warm-start daemon) | [`docs/warm-daemon.md`](docs/warm-daemon.md) |
+| Why a hook, not native `.lsp.json` registration | [`docs/native-registration.md`](docs/native-registration.md) |
+| Repository and CI validation | [`docs/repository-scanning.md`](docs/repository-scanning.md) |
+| Performance | [`docs/performance.md`](docs/performance.md) |
+| The preflight doctor deep-dive | [`docs/preflight-doctor.md`](docs/preflight-doctor.md) |
+| Platform support | [`docs/platform-support.md`](docs/platform-support.md) |
+| Pinned versions | [`docs/pinned-versions.md`](docs/pinned-versions.md) |
+
+`DEV_NOTES.md` moved to [`docs/DEV_NOTES.md`](docs/DEV_NOTES.md), leaving a root stub on the
+`ROADMAP-powershell-lsp.md` precedent so old links resolve. `MAINTAINERS.md` **stays at root**: it
+is a GitHub-recognized root convention and `docs/roadmap-ii/GOVERNANCE-SURFACE.md` cites it by line
+range, which a move would silently decay.
+
+A **Where everything lives** link map was added to the README, so every moved deep-dive is one
+click from the top level. Nothing was deleted or summarized down: all 111 relocated README lines
+are present verbatim in their destination pages, and the four README / doc-claims drift guards are
+green with unchanged pass counts.
+
 ### Relicensed FORWARD from GPLv3 to Apache-2.0 -- ZERO code or runtime change
 
 **License change only** (dispatch 000247, ruled by Mike Andersen 2026-08-16). No `.ps1` behavior
