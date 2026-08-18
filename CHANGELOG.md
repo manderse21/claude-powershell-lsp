@@ -31,6 +31,32 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+### Added: OPTIONAL integrity verification for the `orgPolicy` file
+
+**New capability** (dispatch 000259, chartered by dispatch 000257 leg D; threat T4.1).
+**MINOR-class by SemVer**: a new backward-compatible capability. **No new `userConfig` knob**, no
+change to the `.strict()` manifest schema, and no change to `CONTRACT.md`'s frozen surface.
+
+`orgPolicy` is the outermost layer of the settings precedence chain, and its `ExcludeRules` are
+applied as a final subtractive drop that **no local setting can re-add**. It was read with no
+integrity check, so write access to that file was equivalent to control over what the analyzer
+enforces fleet-wide -- a named OPEN item in the threat model.
+
+An organization can now pin the file by dropping a **`<policy>.sha256` companion beside it**. The
+artifact is **discovered from the existing policy path**, never configured, which is what keeps
+this at zero contract exposure -- there is no new knob to add. The companion accepts a bare
+64-character hex digest or the `sha256sum` shape (`<hash> *<name>`).
+
+When the companion is present the policy must hash to it **before any exclusion is lifted**. When
+it is absent, nothing is checked and behavior is **byte-for-byte** what it was before, so the
+feature is purely opt-in and no existing deployment changes.
+
+A failed gate degrades on exactly the road every other `orgPolicy` failure already travels
+(**fail open, but never silently**): no exclusions applied, exactly **one** warning to
+`logs/lsp-client.log`. A companion that is unreadable or carries no digest degrades the same way
+rather than passing -- an expectation that cannot be checked is unmet, not absent, because a gate
+that waves through what it cannot verify is not a gate.
+
 ### Fixed: the dogfood reader counted an EMPTY capture log as ONE phantom shape
 
 **Bug fix** (dispatch 000258, found by dispatch 000257 leg F). **PATCH-class by SemVer**: no

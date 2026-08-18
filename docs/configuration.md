@@ -230,6 +230,34 @@ parses in PowerShell's **restricted** language mode -- data only, no commands, n
 policy file containing a command invocation fails to parse (and degrades as above) rather than
 running it.
 
+**Optional integrity verification.** Because this layer's `ExcludeRules` cannot be re-enabled
+locally, whoever can **write** the policy file controls what the analyzer enforces fleet-wide. If
+you want that file pinned, drop a **`.sha256` companion beside it** -- same name, plus the
+extension:
+
+```
+\\share\pssa\PSScriptAnalyzerSettings.psd1
+\\share\pssa\PSScriptAnalyzerSettings.psd1.sha256
+```
+
+The companion holds the expected SHA-256 of the policy file, either as a bare 64-character hex
+digest or in the familiar `sha256sum` shape (`<hash> *<filename>`). Generate it with:
+
+```powershell
+(Get-FileHash -Algorithm SHA256 -LiteralPath '\\share\pssa\PSScriptAnalyzerSettings.psd1').Hash |
+    Set-Content -LiteralPath '\\share\pssa\PSScriptAnalyzerSettings.psd1.sha256'
+```
+
+When the companion is present the policy must hash to it **before any exclusion is lifted**. A
+mismatch -- or a companion that is unreadable or declares no digest -- applies **no** exclusions
+and writes exactly **one** warning, exactly like every other failure above. An expectation that
+cannot be checked is treated as unmet rather than waved through, because a gate that passes what
+it cannot verify is not a gate.
+
+There is **no knob for this**: the companion is discovered from the policy path itself. When no
+`.sha256` file is present nothing is checked and behavior is byte-for-byte what it was before the
+feature existed, so this is purely opt-in and existing deployments are unaffected.
+
 Parse errors are never dropped: an `ExcludeRules` list names PSScriptAnalyzer rules, and a syntax
 error is not a rule. Rule names match **case-insensitively**, as PSScriptAnalyzer's own do. Empty
 (the default) reads no file, applies no filter, and leaves the diagnostics surface byte-for-byte
