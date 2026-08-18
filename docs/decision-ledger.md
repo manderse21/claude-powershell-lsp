@@ -3650,3 +3650,62 @@ It is the highest value-to-cost item on the board. The codeAction handler is alr
 
 ### What stays queued, and behind what
 Hover and definition are positional and would be confidently wrong against an agent's stale line numbers, so they wait. The interactive-editor surfaces (completion, signature help, semantic tokens, folding, code lens) unblock only when a real LSP client consumes this server, gated on `anthropics/claude-plugins-official#1359` and, for configuration transport, `anthropics/claude-code#86936`, both OPEN as of 2026-08-17. Declining to build the rest now is a fully successful outcome of the survey.
+
+## Dispatch 000262 -- the relaunch: RULED by Mike 2026-08-17 -- it COMPLETES the findability goal
+
+**Status: RULED by Mike 2026-08-17 -- the relaunch completes the 2026-07-05 findability goal
+rather than replacing it, and its pitch is substance rather than conventional marketing copy.**
+Source: dispatch 000262, chartered as a planning docket, findings only. **This entry is an
+append, per this file's standing convention.** The 2026-07-05 findability-goal entry earlier in
+this file (section "Goal (Mike, confirmed)") is untouched and stays exactly as written -- which is
+the ruling's own point, not merely the convention's.
+
+### The ruling, in Mike's framing
+
+The relaunch **completes** the findability goal. It does not supersede it, retire it, or admit it
+was wrong: findability was the right first goal, was acted on -- the r/PowerShell and r/ClaudeCode
+posts went live 2026-07-05 -- and stays true. What the relaunch adds is the second half of the
+same goal, reaching the channels the first pass did not.
+
+The pitch is **evidentiary discipline itself**, presented outward rather than invented for the
+occasion. In Mike's words: **"We deal with facts, not fluff."** Every claim the relaunch makes
+must trace to something reproducible in this repository. The three practices that already produce
+that property are the marketing case: corpus statistics recomputed on every CI run rather than
+asserted; a decision ledger that records declines as carefully as wins; and RED controls that
+prove a check can fail before anyone trusts it green. Nothing goes out that a reader cannot
+re-derive.
+
+### Why this was chartered as findings-only
+
+The relaunch is a product and positioning call, which `ROADMAP.md`'s "Operating posture" names
+explicitly as a human gate, and the project's survey-first doctrine says findings precede fixes,
+each in its own dispatch. 000262 therefore prepared everything preparable without making the call
+-- the roadmap language, the channel research, and a white-paper outline with real citations --
+so that when the gate is met, publishing is a light edit against fresh material rather than a cold
+start under time pressure. **Nothing was published, submitted, or commented anywhere.** External
+publishing remains Mike's gate without exception, and the gate reading as met would not change
+that: the trigger is his hand, not a dispatch's discovery of readiness.
+
+### What landed, and the gate's first reading
+
+`ROADMAP.md` gains one additive section, "The relaunch -- substance as the pitch", placed
+immediately after North Star and carrying the approved text verbatim. Its gate: the relaunch
+triggers when the Next lane is empty AND every item in Gated and paced is either upstream-blocked
+with a named external issue number or demand-paced with no live signal recorded.
+
+**Derived 2026-08-17, the gate is NOT met, and it fails on both arms.** Next carries three items,
+so arm 1 fails outright; arm 2 fails on two of six Gated-and-paced items -- corpus commons, whose
+gating audit has passed so it waits on a licensing decision rather than on an upstream or on
+demand, and the enterprise control plane, which is demand-paced but has a live signal recorded and
+a slice chartered off it. The per-item derivation is in `docs/roadmap-ii/RELAUNCH-PLAN.md`, which
+also carries the channel plan; the paper's structure and citations are in
+`docs/roadmap-ii/WHITE-PAPER-OUTLINE.md`. Both are findings documents.
+
+### One defect in the approved text, preserved rather than fixed
+
+The gate sentence reads "the Next lane **above** is empty", but the same charter fixed the
+section's placement immediately after North Star -- which puts Next **below** it. The charter
+required the approved text be copied exactly and forbade improving it, so it was copied exactly
+and the discrepancy is recorded here and in `RELAUNCH-PLAN.md` (finding F1) instead of being
+silently corrected. It is directional wording only: both lanes are named by heading, so the gate
+stays checkable as written. The one-word fix is available whenever Mike wants it.

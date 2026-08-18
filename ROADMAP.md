@@ -31,6 +31,26 @@ PowerShell Editor Services, not a re-implementation of it -- so capability work 
 what PSES already computes in a form an agent can consume, not growing an analysis engine. And a
 **custom-rule seam is declined pending demand**; see the declines table below.
 
+## The relaunch -- substance as the pitch
+
+Findability was the right first goal (2026-07-05) and stays exactly true; this is its
+completion, not a departure from it. The relaunch's entire pitch is the thing this project
+already does that most tooling doesn't: every claim it makes is checkable. The corpus
+false-positive rate isn't asserted, it's recomputed on every CI run. Every design decision is
+on record with its reasoning and its declines, not just its wins. Every dispatch ships with
+re-runnable proof, including RED controls that demonstrate a check can actually fail before
+anyone trusts it green. The white paper and the launch content are a presentation of that
+evidentiary discipline as the marketing case itself -- no claim goes out that doesn't trace to
+something reproducible in the repo.
+
+**Gate: the relaunch triggers when the Next lane above is empty AND every item in Gated and
+Paced is either upstream-blocked (names a real external issue number) or demand-paced with no
+live signal recorded.** Not before. Chartered as a planning docket first (dispatch 000262):
+a channel plan, a white-paper outline grounded in what actually ships, and a launch sequence
+-- findings only, no publishing, until the gate above is met and Mike triggers it by hand.
+External publishing stays Mike's gate always, same as every prior launch action in this
+project's history.
+
 ## Now
 
 Work that is chartered and moving.
