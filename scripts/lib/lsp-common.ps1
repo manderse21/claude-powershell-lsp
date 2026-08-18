@@ -872,11 +872,57 @@ function Resolve-PssaSettingsPath {
 # gated on the knob being set -- so with `orgPolicy` unset the surfaced bytes are identical
 # to the pre-layer build.
 
+function Test-OrgPolicyIntegrity {
+    # The org policy INTEGRITY gate (dispatch 000259, threat T4.1). Returns '' when the policy
+    # at $PolicyPath may be trusted -- either because no integrity artifact sits beside it (the
+    # gate is OPT-IN, and absent means "exactly as before"), or because one does and the file
+    # hashes to it. Returns a degrade REASON otherwise, and the caller then applies NO
+    # exclusions and logs that reason exactly once, like every other orgPolicy degrade.
+    #
+    # WHY THIS EXISTS: orgPolicy is the outermost precedence layer and its ExcludeRules are a
+    # final subtractive drop no local setting can re-add, so whoever can WRITE that file
+    # controls what the analyzer enforces fleet-wide. Reading it with no integrity check makes
+    # write access to a share equal to control over enforcement.
+    #
+    # The artifact is DISCOVERED FROM THE POLICY PATH, never configured: '<policy>.sha256'
+    # beside the policy file. That discovery is what keeps this slice at ZERO freeze exposure --
+    # it adds no userConfig key, so the .strict() manifest schema is untouched.
+    #
+    # Accepts a bare 64-character hex digest or the 'sha256sum' shape ('<hash> *<name>'): the
+    # first stand-alone 64-hex token wins. The boundary guards matter -- without them a 65-char
+    # run of hex would silently match on its first 64 characters, which is a malformed
+    # expectation reported as a satisfied one.
+    #
+    # A malformed or unreadable sidecar DEGRADES rather than passing. An unsatisfiable
+    # expectation is not an absent one: a gate that waves through what it cannot check is not a
+    # gate. Absence is the ONLY thing that means "no gate," and absence is unambiguous.
+    #
+    # Adversarial control: return '' on a mismatch and 'a TAMPERED policy applies no exclusions'
+    # goes RED; treat a malformed sidecar as absent and 'an unsatisfiable expectation degrades'
+    # goes RED; drop the boundary guards and 'a 65-hex-char digest is malformed' goes RED.
+    param([string]$PolicyPath)
+    $sidecar = $PolicyPath + '.sha256'
+    if (-not (Test-Path -LiteralPath $sidecar -PathType Leaf)) { return '' }
+    $raw = ''
+    try {
+        $raw = [string](Get-Content -LiteralPath $sidecar -Raw -ErrorAction Stop)
+    } catch {
+        return 'orgPolicy integrity file could not be read; no org exclusions applied: ' + $sidecar
+    }
+    $m = [regex]::Match($raw, '(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])')
+    if (-not $m.Success) {
+        return 'orgPolicy integrity file declares no SHA-256 digest; no org exclusions ' +
+            'applied: ' + $sidecar
+    }
+    if (Test-PinnedFileHash -Path $PolicyPath -ExpectedSha256 $m.Value) { return '' }
+    return 'orgPolicy integrity check FAILED; no org exclusions applied: ' + $PolicyPath
+}
+
 function Import-OrgPolicyExcludes {
     # Read the ExcludeRules of the org settings .psd1 at $Path as a trimmed, de-duplicated
     # string[] of rule codes. @() means "no org constraint" -- and @() is also the answer for
-    # EVERY failure: relative path, missing file, unreadable file, unparseable data, or a
-    # shape that carries no rule list.
+    # EVERY failure: relative path, missing file, unreadable file, unparseable data, a shape
+    # that carries no rule list, or (dispatch 000259) a FAILED integrity gate.
     #
     # FAIL-OPEN is the load-bearing invariant: an org policy that cannot be read must never
     # break the user's edit (the hook never fails). But a policy that silently stops enforcing
@@ -899,9 +945,17 @@ function Import-OrgPolicyExcludes {
     # (which is silently ignored) a relative org path IS a warned degrade: silence is exactly
     # the failure mode an enforcement layer cannot afford.
     #
+    # INTEGRITY (dispatch 000259, threat T4.1): when a '<policy>.sha256' artifact sits beside
+    # the policy, the file must hash to it before ANY exclusion is lifted -- see
+    # Test-OrgPolicyIntegrity. A failed gate is just another degrade and travels the same
+    # fail-open-but-never-silent road as the cases above: @() plus exactly ONE warning. With no
+    # artifact present nothing is checked and the behavior is byte-for-byte pre-gate, so this
+    # is opt-in and adds no userConfig key.
+    #
     # Adversarial control: drop the [string] type test and 'ignores non-string entries' goes
     # RED; drop the try/catch and 'an unparseable policy degrades without throwing' goes RED;
-    # accept a relative path and 'a relative path is a warned degrade' goes RED.
+    # accept a relative path and 'a relative path is a warned degrade' goes RED; parse the
+    # policy regardless of $reason and 'a TAMPERED policy applies no exclusions' goes RED.
     param([string]$Path, [ref]$WarningOut)
     if ([string]::IsNullOrWhiteSpace($Path)) { return @() }
     $reason = ''
@@ -914,6 +968,13 @@ function Import-OrgPolicyExcludes {
             if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
                 $reason = 'orgPolicy file not found; no org exclusions applied: ' + $full
             } else {
+                # Integrity gate (dispatch 000259) -- evaluated BEFORE the policy is parsed and
+                # before any exclusion is lifted, so an unverified policy never reaches the
+                # filter. With no '<policy>.sha256' beside the file this returns '' and the
+                # read below is byte-for-byte the pre-gate path; the gate is pure opt-in.
+                $reason = Test-OrgPolicyIntegrity -PolicyPath $full
+            }
+            if ($reason -eq '') {
                 $data = Import-PowerShellDataFile -LiteralPath $full
                 if ($null -ne $data -and $data.ContainsKey('ExcludeRules')) {
                     $seen = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)

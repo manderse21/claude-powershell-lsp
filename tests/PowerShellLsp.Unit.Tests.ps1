@@ -4881,6 +4881,123 @@ Describe 'Org policy -- fail-open degrade (dispatch 000142)' {
     }
 }
 
+Describe 'Org policy -- integrity gate (dispatch 000259, threat T4.1)' {
+    # orgPolicy is the outermost precedence layer and its ExcludeRules are a final subtractive
+    # drop no local setting can re-add, so WRITE access to the policy file is control over what
+    # the analyzer enforces fleet-wide. The gate closes that: a '<policy>.sha256' artifact
+    # DISCOVERED from the policy path (never configured -- no new userConfig key) must be
+    # satisfied before any exclusion is lifted.
+    #
+    # The three chartered cases are the first three Its: satisfied, violated, absent. The rest
+    # pin the degrade shape, which is the half an integrity gate gets wrong: a gate that waves
+    # through what it cannot check is not a gate.
+
+    BeforeEach {
+        $script:OP_Dir = Join-Path $TestDrive `
+            ('opi-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Path $script:OP_Dir -Force | Out-Null
+        $script:OP_Policy = Join-Path $script:OP_Dir 'PSScriptAnalyzerSettings.psd1'
+        Set-Content -LiteralPath $script:OP_Policy -Encoding ascii `
+            -Value "@{ ExcludeRules = @('PSUseApprovedVerbs') }"
+        $script:OP_Sidecar = $script:OP_Policy + '.sha256'
+    }
+
+    It 'integrity SATISFIED: the org exclusions are applied exactly as before the gate' {
+        Set-Content -LiteralPath $script:OP_Sidecar -Encoding ascii `
+            -Value (Get-FileHash -Algorithm SHA256 -LiteralPath $script:OP_Policy).Hash
+        $w = ''
+        @(Import-OrgPolicyExcludes -Path $script:OP_Policy -WarningOut ([ref]$w)) |
+            Should -Be @('PSUseApprovedVerbs')
+        $w | Should -BeExactly ''                      # a verified policy warns about nothing
+    }
+
+    It 'integrity VIOLATED: NO exclusions, and the ONE warning names the failure in the log' {
+        # The acceptance proof reads the warning TEXT rather than merely asserting the exclusion
+        # list is empty -- @() is also what a perfectly valid no-op policy returns, so absence of
+        # exclusions alone cannot tell enforcement-stopped from nothing-to-enforce.
+        Set-Content -LiteralPath $script:OP_Sidecar -Encoding ascii `
+            -Value (Get-FileHash -Algorithm SHA256 -LiteralPath $script:OP_Policy).Hash
+        Set-Content -LiteralPath $script:OP_Policy -Encoding ascii `
+            -Value "@{ ExcludeRules = @('PSUseApprovedVerbs', 'PSAvoidUsingWriteHost') }"
+        $w = ''
+        @(Import-OrgPolicyExcludes -Path $script:OP_Policy -WarningOut ([ref]$w)).Count |
+            Should -Be 0
+        $w | Should -Match 'integrity check FAILED'
+        $w | Should -Match 'no org exclusions applied'
+        @($w -split "`n").Count | Should -Be 1         # exactly ONE warning, not a stream
+    }
+
+    It 'integrity artifact ABSENT: behavior is unchanged -- exclusions applied, nothing warned' {
+        # Pure opt-in. This is the byte-for-byte pre-slice path, and it is the case that must
+        # hold for every existing deployment that never adds a digest.
+        Test-Path -LiteralPath $script:OP_Sidecar | Should -BeFalse
+        $w = ''
+        @(Import-OrgPolicyExcludes -Path $script:OP_Policy -WarningOut ([ref]$w)) |
+            Should -Be @('PSUseApprovedVerbs')
+        $w | Should -BeExactly ''
+    }
+
+    It 'accepts the sha256sum shape (<hash> *<name>), not just a bare digest' {
+        $h = (Get-FileHash -Algorithm SHA256 -LiteralPath $script:OP_Policy).Hash
+        Set-Content -LiteralPath $script:OP_Sidecar -Encoding ascii `
+            -Value ($h + ' *PSScriptAnalyzerSettings.psd1')
+        $w = ''
+        @(Import-OrgPolicyExcludes -Path $script:OP_Policy -WarningOut ([ref]$w)) |
+            Should -Be @('PSUseApprovedVerbs')
+        $w | Should -BeExactly ''
+    }
+
+    It 'a sidecar declaring NO digest is UNSATISFIABLE and degrades, not treated as absent' {
+        Set-Content -LiteralPath $script:OP_Sidecar -Encoding ascii -Value 'not a hash at all'
+        $w = ''
+        @(Import-OrgPolicyExcludes -Path $script:OP_Policy -WarningOut ([ref]$w)).Count |
+            Should -Be 0
+        $w | Should -Match 'declares no SHA-256 digest'
+    }
+
+    It 'a 65-hex-character run is MALFORMED, not a digest matched on its first 64 characters' {
+        # The boundary-guard RED control. Without the (?<!hex)/(?!hex) lookarounds the regex would
+        # match the first 64 characters of an over-long run, reporting a malformed expectation as
+        # a satisfied one -- the exact direction an integrity gate must never fail in.
+        $h = (Get-FileHash -Algorithm SHA256 -LiteralPath $script:OP_Policy).Hash
+        Set-Content -LiteralPath $script:OP_Sidecar -Encoding ascii -Value ($h + 'a')
+        $w = ''
+        @(Import-OrgPolicyExcludes -Path $script:OP_Policy -WarningOut ([ref]$w)).Count |
+            Should -Be 0
+        $w | Should -Match 'declares no SHA-256 digest'
+    }
+
+    It 'the gate NEVER throws -- fail-open survives every sidecar shape' {
+        foreach ($v in @('', '   ', 'zz', ('0' * 64), "`0bad")) {
+            Set-Content -LiteralPath $script:OP_Sidecar -Encoding ascii -Value $v
+            $sink = ''
+            { @(Import-OrgPolicyExcludes -Path $script:OP_Policy `
+                        -WarningOut ([ref]$sink)) } | Should -Not -Throw
+        }
+    }
+
+    It 'a digest that is well-formed but WRONG fails the gate (not merely a parse guard)' {
+        # Distinguishes "cannot read the expectation" from "read it and it did not match": a
+        # gate that only caught malformed sidecars would pass every tampered policy.
+        Set-Content -LiteralPath $script:OP_Sidecar -Encoding ascii -Value ('0' * 64)
+        $w = ''
+        @(Import-OrgPolicyExcludes -Path $script:OP_Policy -WarningOut ([ref]$w)).Count |
+            Should -Be 0
+        $w | Should -Match 'integrity check FAILED'
+    }
+
+    It 'Test-OrgPolicyIntegrity returns EMPTY for absent and satisfied, non-empty otherwise' {
+        # The unit-level contract behind the caller-level cases above, asserted directly so a
+        # future caller refactor cannot silently invert the sense of the return value.
+        (Test-OrgPolicyIntegrity -PolicyPath $script:OP_Policy) | Should -BeExactly ''
+        Set-Content -LiteralPath $script:OP_Sidecar -Encoding ascii `
+            -Value (Get-FileHash -Algorithm SHA256 -LiteralPath $script:OP_Policy).Hash
+        (Test-OrgPolicyIntegrity -PolicyPath $script:OP_Policy) | Should -BeExactly ''
+        Set-Content -LiteralPath $script:OP_Sidecar -Encoding ascii -Value ('f' * 64)
+        (Test-OrgPolicyIntegrity -PolicyPath $script:OP_Policy) | Should -Not -BeNullOrEmpty
+    }
+}
+
 Describe 'Test-DaemonPipePresent -- the busy-vs-unreachable discriminator (dispatch 000225)' {
     # The whole 000225 fix rests on one claim: a pipe that EXISTS is distinguishable from one that
     # does not, cheaply and read-only, from inside the client process. These assert that claim
