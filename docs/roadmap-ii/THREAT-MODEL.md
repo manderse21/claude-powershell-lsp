@@ -328,12 +328,24 @@ destination ACLs, and aborts rather than tearing (`scripts/lib/lsp-common.ps1:38
 
 ### B4 -- site policy to enforcement layer
 
-**T4.1 Tampered or substituted org policy.** **OPEN.** The policy file is read from an absolute path
-with no integrity check -- no hash, no signature, no ACL assertion
-(`scripts/lib/lsp-common.ps1:619-641`). Anyone who can write the file can alter which findings the
-organization suppresses. The absolute-path requirement (`:620-621`) removes the
-resolve-against-current-directory hijack, and restricted-mode parsing (`:627`) removes code
-execution, but the *contents* are trusted as delivered. No fix is proposed here.
+**T4.1 Tampered or substituted org policy.** *Mitigated where opted in; OPEN by default.* The policy
+file is read from an absolute path, and its *contents* were trusted as delivered -- no hash, no
+signature, no ACL assertion -- so anyone who could write the file could alter which findings the
+organization suppresses. The absolute-path requirement removes the resolve-against-current-directory
+hijack, and restricted-mode parsing removes code execution, but neither speaks to content.
+
+Dispatch 000259 adds an **opt-in integrity gate** (`scripts/lib/lsp-common.ps1:875-919`, called at
+`:975` before any exclusion is lifted): a `<policy>.sha256` companion discovered from the policy path
+itself. When present, the policy must hash to it or **no exclusions are applied** and exactly one
+warning is logged, on the same degrade road as T4.2. The artifact is discovered, never configured, so
+this adds no `userConfig` key.
+
+**Two residuals are deliberate and remain OPEN.** First, the gate is **opt-in**: a deployment that
+ships no companion is byte-for-byte unprotected, exactly as before, which is the price of not
+breaking every existing install. Second, an adversary who can write the policy can usually write the
+*directory*, and therefore the companion too -- so the gate raises the bar from "edit one file" to
+"edit two files in the same place" rather than closing the threat outright. Closing it properly needs
+a signature verified against a trust anchor the attacker cannot rewrite; that is not built here.
 
 **T4.2 Silent non-enforcement.** *Mitigated to a warning, and fail-open by design.* Every degrade --
 relative path, missing file, unreadable file, unparseable data -- yields `@()`, meaning no
@@ -605,7 +617,7 @@ Consolidated for the gate review. Each is stated as observed; none carries a pro
 | T1.5 | B1 | Blocking the primary fetch without corrupting it steers acquisition to the unpinned fallback | OPEN |
 | T2.3 | B2 | The plugin tree, documented as read-only, is written at runtime by the capture log | OPEN |
 | T3.2 | B3 | Repo-local settings file is handed to PSES unread; upstream handling of a hostile settings file not derived | OPEN / unknown |
-| T4.1 | B4 | Org policy file is read with no integrity check -- write access to it is control over enforcement | OPEN |
+| T4.1 | B4 | Org policy file content was trusted as delivered; an opt-in `<policy>.sha256` gate now pins it, but only where opted in and only against an attacker who cannot also rewrite the companion | mitigated (opt-in) / residual OPEN |
 | T4.2 | B4 | Fail-open by design: making the policy unreachable disables exclusions, signalled only in a log line | OPEN (designed trade-off) |
 | T5.1 | B5 | Daemon pipe is created with no explicit `PipeSecurity` and no `CurrentUserOnly`; effective DACL not measured | unknown |
 | T6.1 | B6 | Capture log records absolute paths and verbatim source lines, ungated by any knob | OPEN |
