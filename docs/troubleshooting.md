@@ -5,7 +5,16 @@ bootstrap health in one place and prints a named fix-list. It is summarized in
 [README, Troubleshooting](../README.md#troubleshooting):
 
 ```
-pwsh -File scripts/doctor.ps1
+/powershell-lsp:doctor          # inside an enabled session -- preferred, needs no path
+pwsh -File scripts/doctor.ps1   # out-of-session, from the root of a local clone
+```
+
+The raw path is relative to **the plugin tree**, not your working directory. If you installed with
+`/plugin` there is no `scripts/` beside your project and pwsh exits **64** with a usage error before
+the doctor runs; point it at the marketplace cache instead, naming the version explicitly:
+
+```
+pwsh -File ~/.claude/plugins/cache/claude-powershell-lsp/powershell-lsp/<version>/scripts/doctor.ps1
 ```
 
 The doctor is **report-only**: it never downloads, repairs, runs the bootstrap, or starts/restarts

@@ -552,6 +552,14 @@ case-insensitively: `true` / `1` / `yes` / `on` enable; `false` / `0` / `no` / `
 It is **observe-only**: it never changes the diagnostics output. The log rotates (about 5 MB).
 View a summary with `scripts/show-stats.ps1`.
 
+> **What `totalMs` does NOT include.** The stopwatch starts inside the already-running client
+> process, so `totalMs` excludes the per-edit `pwsh` spawn, the dot-source of the shared library,
+> and the option reads that precede it. That segment is real time you wait and it is **not small**:
+> measured at a **931 ms** median, **45% on top of the recorded figure**
+> (`docs/roadmap-ii/SLO-BASELINES.md`, finding 1). Treat `totalMs` as *analysis round-trip inside
+> the client*, not as end-to-end per-edit latency -- an SLO written against it understates what a
+> user actually experiences by nearly a second.
+
 > **Privacy note.** Each timing line records the **absolute path** of the analyzed file. All
 > logs stay under your plugin data directory and are never transmitted, but sanitize paths
 > before sharing a log for a bug report.

@@ -233,7 +233,12 @@ function Test-DoctorPses {
     if (-not $DataRootKnown) {
         return (New-DoctorResult -Status unknown -Component $component `
                 -Detail 'cannot locate the plugin data directory (CLAUDE_PLUGIN_DATA is not set), so the bundle state is indeterminate.' `
-                -Remediation 'Run this doctor from inside a Claude Code session (where CLAUDE_PLUGIN_DATA is set) for a definitive check.')
+                -Remediation ('CLAUDE_PLUGIN_DATA is unset in THIS shell. Claude Code ' +
+                    'exports it to the plugin''s own hooks -- NOT to tool shells or a ' +
+                    'directly-invoked script -- so merely being inside a session does not ' +
+                    'set it, and re-running here will not either. Set it to the plugin data ' +
+                    'directory (the one holding session/ and logs/) and re-run, or run ' +
+                    '/powershell-lsp:doctor so the check runs as the plugin.'))
     }
     if ($MarkerPresent -and $StartScriptPresent) {
         return (New-DoctorResult -Status pass -Component $component `
@@ -257,7 +262,12 @@ function Test-DoctorPssa {
     if (-not $DataRootKnown) {
         return (New-DoctorResult -Status unknown -Component $component `
                 -Detail 'cannot locate the plugin data directory (CLAUDE_PLUGIN_DATA is not set), so the analyzer state is indeterminate.' `
-                -Remediation 'Run this doctor from inside a Claude Code session for a definitive check.')
+                -Remediation ('CLAUDE_PLUGIN_DATA is unset in THIS shell. Claude Code ' +
+                    'exports it to the plugin''s own hooks -- NOT to tool shells or a ' +
+                    'directly-invoked script -- so merely being inside a session does not ' +
+                    'set it, and re-running here will not either. Set it to the plugin data ' +
+                    'directory (the one holding session/ and logs/) and re-run, or run ' +
+                    '/powershell-lsp:doctor so the check runs as the plugin.'))
     }
     if ($MarkerPresent -and $Importable) {
         return (New-DoctorResult -Status pass -Component $component `
@@ -313,7 +323,12 @@ function Test-DoctorArtifactSource {
     if (-not $DataRootKnown) {
         return (New-DoctorResult -Status unknown -Component $component `
                 -Detail 'cannot locate the plugin data directory (CLAUDE_PLUGIN_DATA is not set), so the installed artifacts'' source is indeterminate.' `
-                -Remediation 'Run this doctor from inside a Claude Code session for a definitive check.')
+                -Remediation ('CLAUDE_PLUGIN_DATA is unset in THIS shell. Claude Code ' +
+                    'exports it to the plugin''s own hooks -- NOT to tool shells or a ' +
+                    'directly-invoked script -- so merely being inside a session does not ' +
+                    'set it, and re-running here will not either. Set it to the plugin data ' +
+                    'directory (the one holding session/ and logs/) and re-run, or run ' +
+                    '/powershell-lsp:doctor so the check runs as the plugin.'))
     }
     $known = @()
     if (-not [string]::IsNullOrWhiteSpace($PsesLayer)) { $known += ('PSES from ' + $PsesLayer) }
@@ -466,12 +481,23 @@ function Test-DoctorDaemon {
     if (-not $DataRootKnown) {
         return (New-DoctorResult -Status unknown -Component $component `
                 -Detail 'cannot locate the plugin data directory (CLAUDE_PLUGIN_DATA is not set), so the warm daemon cannot be discovered from outside a session.' `
-                -Remediation 'Run this doctor from inside a Claude Code session (where CLAUDE_PLUGIN_DATA is set) for a definitive runtime check.')
+                -Remediation ('CLAUDE_PLUGIN_DATA is unset in THIS shell. Claude Code ' +
+                    'exports it to the plugin''s own hooks -- NOT to tool shells or a ' +
+                    'directly-invoked script -- so merely being inside a session does not ' +
+                    'set it, and re-running here will not either. Set it to the plugin data ' +
+                    'directory (the one holding session/ and logs/) and re-run, or run ' +
+                    '/powershell-lsp:doctor so the check runs as the plugin.'))
     }
     if (-not $Determinable) {
         return (New-DoctorResult -Status unknown -Component $component `
                 -Detail ('found ' + $LiveCount + ' live daemons but no session id, so which one serves THIS session cannot be determined from outside it.') `
-                -Remediation 'Re-run with -SessionId <session-id> (or from a context that sets CLAUDE_SESSION_ID) to scope the check to this session.')
+                -Remediation ('Re-run with -SessionId <session-id> to scope the check. ' +
+                    'The ids are the file names under the session/ directory of the plugin ' +
+                    'data directory: each live daemon writes <session-id>.json there, ' +
+                    'carrying its pid, pipe, state and heartbeat -- match on those to pick ' +
+                    'the right one. Do NOT expect CLAUDE_SESSION_ID to be set: Claude Code ' +
+                    'passes the session id only on hook stdin, never to a directly-invoked ' +
+                    'doctor.'))
     }
     if (-not $DaemonPresent) {
         # The benign 000030 case: a $null/absent daemon auto-relaunches on the next edit, so
@@ -1864,7 +1890,8 @@ function Format-DoctorReport {
     if ([string]::IsNullOrWhiteSpace($Provenance)) { $Provenance = Get-DoctorProvenanceHeader }
     $lines = @()
     $lines += 'powershell-lsp doctor -- preflight self-check (report-only)'
-    $lines += ('  version: ' + $Version)
+    $lines += ('  version: ' + $Version +
+        '   (this tree; a live daemon may be older -- see logs/pses-daemon.log)')
     $lines += ('  provenance floor: ' + $Provenance)
     $lines += ''
     foreach ($r in $Results) {
@@ -1907,7 +1934,8 @@ function Format-DoctorSummary {
     if ([string]::IsNullOrWhiteSpace($Provenance)) { $Provenance = Get-DoctorProvenanceHeader }
     $lines = @()
     $lines += 'powershell-lsp status -- ' + @($Results).Count + ' checks (report-only)'
-    $lines += ('  version: ' + $Version)
+    $lines += ('  version: ' + $Version +
+        '   (this tree; a live daemon may be older -- see logs/pses-daemon.log)')
     $lines += ('  provenance floor: ' + $Provenance)
     $lines += ''
     foreach ($r in $Results) {
