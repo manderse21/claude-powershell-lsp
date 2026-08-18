@@ -136,6 +136,17 @@ foreach ($stage in @(
     Write-Host ('  {0,-12} {1,-10} {2,-10} {3}' -f $stage.name, $p50, $p95, @($vals).Count)
 }
 
+# THE TOTAL ROW'S BOUNDARY, stated where the number is actually read (dispatch 000265, O1).
+# totalMs's stopwatch starts inside the ALREADY-RUNNING client process, so this table cannot see
+# the per-edit pwsh spawn, the dot-source of the shared library, or the option reads that precede
+# it -- a 931 ms / 45% median gap (docs/roadmap-ii/SLO-BASELINES.md, finding 1). Printed for the
+# same reason as the fallback-root message above: an instrument that will not name its own
+# boundary invites the reader to assume it has none, and here that understates the wait by ~45%.
+Write-Host ''
+Write-Host '  NOTE: total = analysis round-trip INSIDE the client, NOT end-to-end per-edit wall.'
+Write-Host '    It excludes the pwsh spawn + dot-source + option reads before the stopwatch starts'
+Write-Host '    -- about 931 ms (45%) more at the median. See docs/configuration.md#enablestats.'
+
 # --- record / correction counts --------------------------------------------
 $recVals = Get-NumField $records 'records'
 $corrVals = Get-NumField $records 'corrections'

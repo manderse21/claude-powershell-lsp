@@ -3145,7 +3145,15 @@ Describe 'Preflight doctor -- daemon/pipe health (dispatch 000037)' {
             # standalone run cannot see the daemon, so the honest answer is UNKNOWN, never a verdict.
             $r = Test-DoctorDaemon -DataRootKnown $false -Determinable $false -DaemonPresent $false
             $r.Status | Should -Be 'unknown'
-            $r.Remediation | Should -Match 'inside a Claude Code session'
+            # The remedy must NAME the missing input and give an executable instruction.
+            $r.Remediation | Should -Match 'CLAUDE_PLUGIN_DATA is unset'
+            $r.Remediation | Should -Match 'Set it to the plugin data directory'
+            # REGRESSION GUARD for D3 (dispatch 000265). The old remedy read "Run this doctor
+            # from inside a Claude Code session (where CLAUDE_PLUGIN_DATA is set)". A tool shell
+            # inside a live, plugin-enabled session carries NEITHER CLAUDE_PLUGIN_DATA nor
+            # CLAUDE_PLUGIN_ROOT, so that sentence returned the user to the state that produced
+            # the message. Asserting its ABSENCE is what stops it being reinstated as a "fix".
+            $r.Remediation | Should -Not -Match 'Run this doctor from inside a Claude Code session'
         }
         It 'UNKNOWN (ambiguous) when several daemons are live and no session id disambiguates' {
             # Adversarial control: guessing one of N live daemons would be a misleading PASS/FAIL.

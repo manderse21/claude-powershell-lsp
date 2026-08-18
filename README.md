@@ -151,8 +151,11 @@ diagnostic. A few of its steps are deliberate, documented here rather than remov
   enabling alone does not load them.
 - **The first enabled session does the rest itself.** Its `SessionStart` hook downloads PSES and
   vendors PSScriptAnalyzer (both idempotent and marker-gated), then launches one warm daemon for
-  the session. The first edit may briefly read `incomplete` while PSES finishes starting, then
-  settles on the next edit (see [Diagnostics status](#diagnostics-status)).
+  the session. Early edits read `incomplete` while PSES finishes starting, and settle once it
+  reports ready. **No fixed number of edits is enforced** -- an edit reads `incomplete` whenever
+  it arrives before PSES is ready, so how many you see depends on how fast you edit and how
+  loaded the machine is. On a quiet host it is typically one. See
+  [Diagnostics status](#diagnostics-status) for how to tell startup from a stall.
 - **Run the doctor (step 3).** `/powershell-lsp:doctor` is the in-session form and needs no paths;
   the raw `scripts/doctor.ps1` invocation under [Troubleshooting](#troubleshooting) is for the
   out-of-session case, where the slash command is not available. It turns the worst onboarding
@@ -237,8 +240,45 @@ clean" when it was not actually analyzed. The wording is owned in one place
 
 `incomplete` (transient) and `unavailable` (permanent for the session) are deliberately distinct,
 with distinct remedies. When the daemon is unreachable entirely -- no pipe at all -- the
-PostToolUse client surfaces its own honest "analyzer was not reachable -- this edit was NOT
-checked" banner, so even the no-pipe case is never silent.
+PostToolUse client surfaces its own honest banner, so even the no-pipe case is never silent.
+There are **two** such banners, and they carry **opposite** remedies, so read which one you got.
+Both are prefixed `PowerShell diagnostics unavailable for <path>: ` and continue:
+
+**Case 1 -- wait.** The client relaunched the daemon itself; your next edit gets it.
+
+```
+the analyzer had stopped (e.g. after idle) and is being restarted -- this edit was NOT checked; your next edit should be.
+```
+
+**Case 2 -- act.** The relaunch was suppressed or failed, so nothing will fix it on its own.
+
+```
+the analyzer was not reachable and could not be restarted automatically -- this edit was NOT checked. Start a new session to restart it.
+```
+
+The phrase `could not be restarted automatically` appears in **only** the second, so searching your
+transcript for it is what tells the act case from the wait case.
+
+### Repeated `incomplete`: starting up, stalling, or broken?
+
+The `incomplete` banner is **byte-identical every time it fires**, so several in a row do not
+themselves tell you which of three different things is happening. The daemon log distinguishes
+them precisely. Look in `logs/pses-daemon.log` under your plugin data directory:
+
+- **`... while not ready (state=initializing)`** -- PSES is still starting. **Wait**: it settles
+  by itself once PSES reports ready. This is the cold-start case.
+- **`... while not ready (state=respawning)`** -- PSES died and is being re-spawned. **Wait**:
+  the re-spawn is automatic.
+- **No `while not ready` line at all** for those edits -- PSES *is* ready, so the analysis itself
+  is not converging. This is the large-file case, and it will **not** settle on its own. The lever
+  is [`timeoutMs`](docs/configuration.md#timeoutms): the largest files need roughly 6-7 s of
+  analysis against a 5000 ms default.
+- **`... while unavailable (permanent)`** -- PSES could not start for this session at all. This
+  surfaces the distinct `unavailable` banner rather than `incomplete`; fix the install and start a
+  fresh session.
+
+The **absence** of the `while not ready` line is the load-bearing signal: it is what separates
+*still starting* (which ends by itself) from *will never settle on this file* (which does not).
 
 ## Performance
 
@@ -339,8 +379,24 @@ form that still works **outside** a session, where the slash command does not ex
 
 ```
 /powershell-lsp:doctor          # inside an enabled Claude Code session
-pwsh -File scripts/doctor.ps1   # out-of-session (several checks then report UNKNOWN)
+pwsh -File scripts/doctor.ps1   # out-of-session, from the root of a local clone
 ```
+
+**The out-of-session form needs the plugin tree's own path.** `scripts/doctor.ps1` is relative to
+the plugin tree, not to your working directory, so it runs as written only from the root of a
+local clone. If you installed with `/plugin`, there is no `scripts/` beside your project and pwsh
+exits **64** with its own usage error before the doctor runs at all. Point it at the marketplace
+cache instead:
+
+```
+pwsh -File ~/.claude/plugins/cache/claude-powershell-lsp/powershell-lsp/<version>/scripts/doctor.ps1
+```
+
+`<version>` is not optional: the cache keeps every installed version side by side, and the highest
+one is not necessarily the one serving a live session (see
+[Which version is actually running](#which-version-is-actually-running)). Prefer the slash command
+whenever a session is available -- it needs no path, and a raw run cannot see the plugin data
+directory, so several checks report `UNKNOWN` rather than a verdict.
 
 Each check reports `PASS`, a specific failure with the fix, or an honest `UNKNOWN` when it
 genuinely cannot determine. The doctor is **report-only**: it never downloads, repairs, runs the
@@ -412,7 +468,10 @@ powershell-lsp doctor -- preflight self-check (report-only)
 check: they contribute nothing to the `of N checks` count and cannot move the exit code.
 
 - **version** is the plugin manifest's version, read at run time -- not a build string and not a
-  guess. It is the same value the plugin stamps into every lifecycle record it writes.
+  guess. It is the same value the plugin stamps into every lifecycle record it writes. It reports
+  **the tree the doctor was run from, not the daemon currently serving your session**; after an
+  upgrade those differ (see
+  [Which version is actually running](#which-version-is-actually-running)).
 - **provenance floor** is the earliest release the plugin's own clearance data can be attributed
   to. It is **window-relative**: the lifecycle log is a rolling family trimmed to the `keepLastN`
   newest files, so the floor names the earliest attributable release among the records **still
@@ -429,6 +488,43 @@ source (`Get-PluginVersion` and `Get-LifecycleProvenanceFloor`), and the `cleara
 floor` that `scripts/rule-efficacy-ledger.ps1` prints comes from that same function, so the
 readout, the ledger and this section cannot disagree. The numbers above are illustrative; yours
 come from your install.
+
+### Which version is actually running
+
+**After an upgrade, the doctor's `version:` line and the daemon serving your session can
+legitimately disagree.** The upgrade replaces the tree on disk, but the daemon already running keeps
+serving the session it started under -- deliberately, because restarting it mid-session would be
+worse. So the doctor can report `1.31.0` with a clean `10 pass, 0 fail` while a `1.30.0` daemon is
+answering your edits, and both statements are true.
+
+The `version:` header reports **the tree**. The authoritative answer for **what is actually live**
+is the daemon's own log, which stamps its version at every start:
+
+```
+[2026-08-18T09:14:02.1234567-04:00] [31428] --- daemon start: powershell-lsp 1.30.0 session=<id> ...
+```
+
+Search for `daemon start:` and read the **last** match in `logs/pses-daemon.log` under your plugin
+data directory (every line carries a timestamp and the daemon pid). If it names a
+lower version than the doctor's header, you have upgraded but not yet restarted; **start a new
+session** and the next daemon comes up on the new tree. The session record itself carries no version
+field, so the log is the only place this is recorded.
+
+### The daemon session file
+
+Each live daemon writes one JSON record at `<CLAUDE_PLUGIN_DATA>/session/<session-id>.json` and
+heartbeats it while it runs. It carries `sessionId`, `pid`, `pipe`, `host`, `state`, `started`,
+`heartbeat` and `psesPid`.
+
+You do not normally need it -- the doctor reads it for you and reports the verdict. It matters in
+the one case the doctor cannot resolve on your behalf: **when more than one Claude Code session is
+live**, the daemon check cannot tell which daemon serves *this* session and reports UNKNOWN. The
+session directory is where the ids are. Listing it shows one file per live daemon; `state` and
+`heartbeat` show which are healthy and current, and the file name is the session id you can pass to
+`scripts/doctor.ps1 -SessionId <session-id>` to scope the check.
+
+It is also the only liveness instrument that exists unconditionally -- it is written whether or not
+anything else is working, which is what makes it useful when the doctor itself cannot answer.
 
 ## Security and trust
 
