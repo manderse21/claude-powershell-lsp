@@ -31,6 +31,19 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.32.0] - 2026-08-19
+MINOR: **the `orgPolicy` file can now be integrity-pinned with a `.sha256` companion**, **the two
+pinned dependencies can be installed from an internal mirror or a pre-staged bundle** so a machine
+with no egress has a first-bootstrap path at all, and **`scripts/sign-plugin.ps1` ships** so an
+`AllSigned` / WDAC estate can sign the plugin's script surface with its own certificate. The project
+is also **relicensed forward to Apache-2.0** -- forward-only, with every previously published release
+keeping the license it shipped under. Two smaller items ride along: an empty dogfood capture log no
+longer reads as one phantom shape, and the README was restructured into per-topic `docs/` pages with
+every heading and anchor preserved. **No new `userConfig` knob, no knob removed, renamed or
+re-defaulted**, and the frozen 1.x knob surface in `CONTRACT.md` is unchanged -- every new capability
+is opt-in, and with neither the companion file nor the offline environment variables set, behavior is
+byte-for-byte what it was.
+
 ### Added: OPTIONAL integrity verification for the `orgPolicy` file
 
 **New capability** (dispatch 000259, chartered by dispatch 000257 leg D; threat T4.1).
@@ -120,7 +133,7 @@ green with unchanged pass counts.
 moved, no knob changed, no dependency was added. **This is a PATCH-class change by SemVer**, on the
 v1.6.1 precedent: that entry classed the MIT-to-GPLv3 move as "a PATCH by SemVer (no API or behavior
 change) -- the significance is legal, and it is carried in this entry, not in the version digit."
-The same holds here. The `[Unreleased]` band is already MINOR for the air-gapped bootstrap below;
+The same holds here. The `1.32.0` band is already MINOR for the air-gapped bootstrap below;
 the relicense does not raise that class, it rides it.
 
 #### Why
@@ -160,9 +173,9 @@ the offline path (which dispatch 000244 closed). Three reasons of record:
 
 This license change is **forward-only and does not reach backward**. **Every previously published
 release keeps the license it shipped under, and those grants are irrevocable:** v1.0 through v1.6.0
-remain **MIT**, and v1.6.1 through the current release remain **`GPL-3.0-or-later`**. Those grants
+remain **MIT**, and v1.6.1 through v1.31.2 remain **`GPL-3.0-or-later`**. Those grants
 are **not** revoked, rescinded, or diminished here -- anyone using one of those releases keeps
-exactly the rights it was published with. From the next release forward the project is `Apache-2.0`.
+exactly the rights it was published with. From this release forward the project is `Apache-2.0`.
 
 #### What genuinely changes for adopters: copyleft is dropped
 
@@ -240,6 +253,58 @@ names.
   their pinned SHA-256 hashes. TRUST.md states the boundary, and `docs/troubleshooting.md` gains
   the `AllSigned` symptoms with their remediation.
 - Windows-only by nature: on any other host it names the reason and exits without reading a file.
+
+### Fixed: diagnostics and docs that named a remedy the reader had already tried
+
+**DX and observability fixes** (dispatch 000265 -- findings D1-D4 and O1-O4 of
+`docs/roadmap-ii/DX-AUDIT.md` section 5, plus a third-party attribution rider). **PATCH-class by
+SemVer**: remedy strings, printed caveats and documentation only -- no runtime behavior, no exit
+code, no ruleset default, no `userConfig` knob, and no change to `CONTRACT.md`'s frozen surface.
+Like the other PATCH-class entries here, it rides the MINOR above without raising it.
+
+The through-line is that several messages were not merely thin but **actively misdirecting** --
+they named a remedy the reader had already tried, or quoted a banner the code does not emit.
+
+- **`scripts/doctor.ps1`'s four `CLAUDE_PLUGIN_DATA`-blind `UNKNOWN` remedies told you to run from
+  inside a session** -- the state you were already in. Claude Code exports that variable to the
+  plugin's own hooks and **not** to tool shells or a directly-invoked script, so re-running changed
+  nothing and the advice read as a defect in the tool. Each now names the missing variable, says why
+  being in a session does not set it, and gives an executable instruction: set it to the data
+  directory holding `session/` and `logs/`, or run `/powershell-lsp:doctor` so the check runs as the
+  plugin. (D3)
+- **The multi-daemon remedy pointed at `CLAUDE_SESSION_ID`**, which the file's own comment says
+  Claude Code never passes to a directly-invoked script. It now points at the `session/` directory,
+  where each live daemon writes `<session-id>.json` carrying its pid, pipe, state and heartbeat --
+  the ids the `-SessionId` parameter actually wants. (O4)
+- **The README quoted a no-pipe banner that ships nowhere.** It now quotes the two banners
+  `scripts/lsp-client.ps1` really emits, verbatim, with the phrase that tells them apart and their
+  opposite remedies -- one says wait, the other says act. (D2)
+- **The out-of-session `/doctor` invocation is relative to the plugin tree**, so a `/plugin` install
+  has no `scripts/` and `pwsh` exits 64. The README and `docs/troubleshooting.md` now say so and
+  give the marketplace cache path. (D1)
+- **`totalMs` is not end-to-end per-edit latency, and now says so where it is read.** Its stopwatch
+  starts inside the already-running client, so it excludes the per-edit `pwsh` spawn, the
+  dot-source of the shared library and the option reads before it -- a **931 ms / 45% median**
+  understatement (`docs/roadmap-ii/SLO-BASELINES.md`, finding 1). Both
+  [docs/configuration.md](docs/configuration.md#enablestats) and `scripts/show-stats.ps1` carry the
+  caveat now, the latter printed beneath the table. An SLO written against the old reading
+  understated the wait by nearly a second. (O1)
+- **The doctor and status version line reports the TREE, not the running daemon**, and now says so;
+  the README explains how to read the live version from `logs/pses-daemon.log`. No new persisted
+  field was added to get there. (O2)
+- **Cold start is bounded honestly** -- no fixed edit count is enforced -- and a new README section
+  separates *starting up* from *stalling* from *broken* using the daemon log line that already
+  distinguishes them. (D4)
+- **The daemon session file is documented in the README**: its fields, and the one case where it
+  matters. It had been a single internal line in `ARCHITECTURE.md`. (O3)
+- **`THIRD-PARTY-LICENSES.md` now covers everything third-party in the tree**, not only what is
+  downloaded. The vendored SARIF 2.1.0 JSON Schema is listed under its OASIS RF-on-RAND terms,
+  cross-referencing `tests/sarif/NOTICE.md`. It is the single item in this repository the project
+  genuinely redistributes, and it is a **test fixture only** -- never loaded, shipped or executed
+  by the plugin runtime.
+
+One unit test pinned the exact D3 string that was removed; its assertion now tracks the corrected
+remedy and adds a regression guard against the old text.
 
 ## [1.31.2] - 2026-08-15
 PATCH: **a client that walks away from a reply no longer kills the analyzer daemon**, and
