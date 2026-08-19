@@ -265,12 +265,13 @@ Like the other PATCH-class entries here, it rides the MINOR above without raisin
 The through-line is that several messages were not merely thin but **actively misdirecting** --
 they named a remedy the reader had already tried, or quoted a banner the code does not emit.
 
-- **The four `CLAUDE_PLUGIN_DATA`-blind `UNKNOWN` remedies told you to run from inside a session**
-  -- the state you were already in. Claude Code exports that variable to the plugin's own hooks and
-  **not** to tool shells or a directly-invoked script, so re-running changed nothing and the advice
-  read as a defect in the tool. Each now names the missing variable, says why being in a session
-  does not set it, and gives an executable instruction: set it to the data directory holding
-  `session/` and `logs/`, or run `/powershell-lsp:doctor` so the check runs as the plugin. (D3)
+- **`scripts/doctor.ps1`'s four `CLAUDE_PLUGIN_DATA`-blind `UNKNOWN` remedies told you to run from
+  inside a session** -- the state you were already in. Claude Code exports that variable to the
+  plugin's own hooks and **not** to tool shells or a directly-invoked script, so re-running changed
+  nothing and the advice read as a defect in the tool. Each now names the missing variable, says why
+  being in a session does not set it, and gives an executable instruction: set it to the data
+  directory holding `session/` and `logs/`, or run `/powershell-lsp:doctor` so the check runs as the
+  plugin. (D3)
 - **The multi-daemon remedy pointed at `CLAUDE_SESSION_ID`**, which the file's own comment says
   Claude Code never passes to a directly-invoked script. It now points at the `session/` directory,
   where each live daemon writes `<session-id>.json` carrying its pid, pipe, state and heartbeat --
