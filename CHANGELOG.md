@@ -254,6 +254,57 @@ names.
   the `AllSigned` symptoms with their remediation.
 - Windows-only by nature: on any other host it names the reason and exits without reading a file.
 
+### Fixed: diagnostics and docs that named a remedy the reader had already tried
+
+**DX and observability fixes** (dispatch 000265 -- findings D1-D4 and O1-O4 of
+`docs/roadmap-ii/DX-AUDIT.md` section 5, plus a third-party attribution rider). **PATCH-class by
+SemVer**: remedy strings, printed caveats and documentation only -- no runtime behavior, no exit
+code, no ruleset default, no `userConfig` knob, and no change to `CONTRACT.md`'s frozen surface.
+Like the other PATCH-class entries here, it rides the MINOR above without raising it.
+
+The through-line is that several messages were not merely thin but **actively misdirecting** --
+they named a remedy the reader had already tried, or quoted a banner the code does not emit.
+
+- **The four `CLAUDE_PLUGIN_DATA`-blind `UNKNOWN` remedies told you to run from inside a session**
+  -- the state you were already in. Claude Code exports that variable to the plugin's own hooks and
+  **not** to tool shells or a directly-invoked script, so re-running changed nothing and the advice
+  read as a defect in the tool. Each now names the missing variable, says why being in a session
+  does not set it, and gives an executable instruction: set it to the data directory holding
+  `session/` and `logs/`, or run `/powershell-lsp:doctor` so the check runs as the plugin. (D3)
+- **The multi-daemon remedy pointed at `CLAUDE_SESSION_ID`**, which the file's own comment says
+  Claude Code never passes to a directly-invoked script. It now points at the `session/` directory,
+  where each live daemon writes `<session-id>.json` carrying its pid, pipe, state and heartbeat --
+  the ids the `-SessionId` parameter actually wants. (O4)
+- **The README quoted a no-pipe banner that ships nowhere.** It now quotes the two banners
+  `scripts/lsp-client.ps1` really emits, verbatim, with the phrase that tells them apart and their
+  opposite remedies -- one says wait, the other says act. (D2)
+- **The out-of-session `/doctor` invocation is relative to the plugin tree**, so a `/plugin` install
+  has no `scripts/` and `pwsh` exits 64. The README and `docs/troubleshooting.md` now say so and
+  give the marketplace cache path. (D1)
+- **`totalMs` is not end-to-end per-edit latency, and now says so where it is read.** Its stopwatch
+  starts inside the already-running client, so it excludes the per-edit `pwsh` spawn, the
+  dot-source of the shared library and the option reads before it -- a **931 ms / 45% median**
+  understatement (`docs/roadmap-ii/SLO-BASELINES.md`, finding 1). Both
+  [docs/configuration.md](docs/configuration.md#enablestats) and `scripts/show-stats.ps1` carry the
+  caveat now, the latter printed beneath the table. An SLO written against the old reading
+  understated the wait by nearly a second. (O1)
+- **The doctor and status version line reports the TREE, not the running daemon**, and now says so;
+  the README explains how to read the live version from `logs/pses-daemon.log`. No new persisted
+  field was added to get there. (O2)
+- **Cold start is bounded honestly** -- no fixed edit count is enforced -- and a new README section
+  separates *starting up* from *stalling* from *broken* using the daemon log line that already
+  distinguishes them. (D4)
+- **The daemon session file is documented in the README**: its fields, and the one case where it
+  matters. It had been a single internal line in `ARCHITECTURE.md`. (O3)
+- **`THIRD-PARTY-LICENSES.md` now covers everything third-party in the tree**, not only what is
+  downloaded. The vendored SARIF 2.1.0 JSON Schema is listed under its OASIS RF-on-RAND terms,
+  cross-referencing `tests/sarif/NOTICE.md`. It is the single item in this repository the project
+  genuinely redistributes, and it is a **test fixture only** -- never loaded, shipped or executed
+  by the plugin runtime.
+
+One unit test pinned the exact D3 string that was removed; its assertion now tracks the corrected
+remedy and adds a regression guard against the old text.
+
 ## [1.31.2] - 2026-08-15
 PATCH: **a client that walks away from a reply no longer kills the analyzer daemon**, and
 **`nativeServe` / `ps_host` finally reach the process that acts on them**. Every external GitHub
