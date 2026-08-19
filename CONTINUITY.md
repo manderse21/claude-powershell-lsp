@@ -42,9 +42,9 @@ Even with no maintainer activity, the shipped artifacts remain auditable and rep
 
 ## The fork path (Apache-2.0)
 
-The plugin is **[Apache-2.0](./LICENSE)** (forward-only from the next release). Every
+The plugin is **[Apache-2.0](./LICENSE)** (forward-only from v1.32.0). Every
 previously published release keeps the license it shipped under, and those grants are
-irrevocable: v1.0-v1.6.0 remain MIT, v1.6.1 through the current release remain
+irrevocable: v1.0-v1.6.0 remain MIT, v1.6.1 through v1.31.2 remain
 `GPL-3.0-or-later`. Three consequences for continuity:
 
 - **Anyone may fork and continue the project** under Apache-2.0 at any time. The

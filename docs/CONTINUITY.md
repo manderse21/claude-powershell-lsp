@@ -30,8 +30,8 @@ means the sole GitHub account `manderse21` (verified-from-disk: named in
 ### Source and history
 
 - **What breaks:** nothing. The full source and git history are public and under an irrevocable
-  open-source license (verified-from-disk: [LICENSE](../LICENSE), Apache-2.0 forward from the next
-  release; v1.6.1 through the current release remain GPL-3.0-or-later, and v1.0-v1.6.0 remain under
+  open-source license (verified-from-disk: [LICENSE](../LICENSE), Apache-2.0 forward from
+  v1.32.0; v1.6.1 through v1.31.2 remain GPL-3.0-or-later, and v1.0-v1.6.0 remain under
   their irrevocable MIT grant).
 - **Recovery:** a successor or fork needs nothing from the maintainer to obtain the code -- clone
   or fork the public repository. This surface has no single point of failure.

@@ -595,9 +595,9 @@ from linked worktrees too. A deliberate one-off is allowed and audited:
 [Apache-2.0](https://spdx.org/licenses/Apache-2.0.html). See [LICENSE](./LICENSE) and
 [NOTICE](./NOTICE).
 
-The change to Apache-2.0 is **forward-only**, effective from the next release. **Every previously
+The change to Apache-2.0 is **forward-only**, effective from v1.32.0. **Every previously
 published release keeps the license it shipped under, and those grants are irrevocable:** v1.0
-through v1.6.0 remain MIT; v1.6.1 through the current release remain `GPL-3.0-or-later`. Nothing
+through v1.6.0 remain MIT; v1.6.1 through v1.31.2 remain `GPL-3.0-or-later`. Nothing
 here revokes, rescinds, or diminishes a grant already made -- if you are using a release published
 before this change, your existing license is untouched.
 
