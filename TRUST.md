@@ -472,8 +472,8 @@ only**; it never bypasses, disables, or modifies any control. See README
   with one maintainer. Organizations with a hard bus-factor bar should weigh this
   accordingly.
 - **License: Apache-2.0.** The plugin is [Apache-2.0](https://spdx.org/licenses/Apache-2.0.html),
-  forward-only from the next release. **Every previously published release keeps the license it
-  shipped under, and those grants are irrevocable:** v1.6.1 through the current release remain
+  forward-only from v1.32.0. **Every previously published release keeps the license it
+  shipped under, and those grants are irrevocable:** v1.6.1 through v1.31.2 remain
   `GPL-3.0-or-later`, and v1.0 through v1.6.0 remain under their original MIT grant. See
   [LICENSE](./LICENSE), [NOTICE](./NOTICE), and [README.md](./README.md#license).
 - **What the move to Apache-2.0 changes.** It adds an **explicit patent grant** (section 3) and

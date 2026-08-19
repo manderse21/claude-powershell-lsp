@@ -376,14 +376,38 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $v = '${{ steps.resolve.outputs.version }}'
-          & ./release/New-AirgapBundle.ps1 -Version $v -OutFile "powershell-lsp-airgap-$v.zip"
-          if ($LASTEXITCODE -ne 0) { throw "New-AirgapBundle failed ($LASTEXITCODE)" }
+          $bundle = "powershell-lsp-airgap-$v.zip"
+
+          # $LASTEXITCODE IS NOT A SIGNAL HERE, and reading it as one failed this step on
+          # every run it ever had. New-AirgapBundle.ps1 is a PowerShell SCRIPT, not a native
+          # command: nothing in it calls `exit`, so it never sets $LASTEXITCODE. In a fresh
+          # pwsh step the variable is UNSET, `$null -ne 0` evaluates TRUE, and the guard threw
+          # unconditionally -- printing "New-AirgapBundle failed ()" with an empty code,
+          # immediately after the script had verified both pins and written the zip. It went
+          # unnoticed because this step is newer than the last release (dispatch 000244 landed
+          # after v1.31.2 shipped) and the suite asserts only that the workflow MENTIONS the
+          # script, never running the step. Found by the dispatch 000267 pre-tag dry run.
+          # The `git archive` guard earlier in this workflow is correct precisely because git
+          # IS a native command and does set $LASTEXITCODE.
+          #
+          # WHAT REPLACES IT, and why this is not just deleting a check that failed.
+          # FAILURE is already caught without a code: $ErrorActionPreference = 'Stop' plus the
+          # script's own throw on a pin mismatch or a failed download terminates this step.
+          # What "it did not throw" CANNOT establish is that the bundle was actually WRITTEN,
+          # so that is asserted positively -- against the artifact, not a phantom exit code.
+          # The zip readback below then proves the artifact holds real content rather than
+          # being truncated or empty. Both halves are falsifiable: remove the zip and the
+          # first throws; empty an entry and the second does.
+          & ./release/New-AirgapBundle.ps1 -Version $v -OutFile $bundle
+          if (-not (Test-Path -LiteralPath $bundle)) {
+            throw "New-AirgapBundle.ps1 returned without writing $bundle"
+          }
 
           # Re-open the written zip and confirm it holds every artifact the manifest names, at
           # the byte length staged. Building a zip and never reading it back is how a truncated
           # or empty archive ships green.
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path "powershell-lsp-airgap-$v.zip"))
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $bundle))
           try {
             $names = @($zip.Entries | ForEach-Object { $_.FullName })
             Write-Host ('bundle contains: ' + ($names -join ', '))
