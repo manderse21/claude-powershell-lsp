@@ -31,6 +31,8 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.32.0] - 2026-08-19
+
 ### Added: OPTIONAL integrity verification for the `orgPolicy` file
 
 **New capability** (dispatch 000259, chartered by dispatch 000257 leg D; threat T4.1).
@@ -120,7 +122,7 @@ green with unchanged pass counts.
 moved, no knob changed, no dependency was added. **This is a PATCH-class change by SemVer**, on the
 v1.6.1 precedent: that entry classed the MIT-to-GPLv3 move as "a PATCH by SemVer (no API or behavior
 change) -- the significance is legal, and it is carried in this entry, not in the version digit."
-The same holds here. The `[Unreleased]` band is already MINOR for the air-gapped bootstrap below;
+The same holds here. The `1.32.0` band is already MINOR for the air-gapped bootstrap below;
 the relicense does not raise that class, it rides it.
 
 #### Why
@@ -160,9 +162,9 @@ the offline path (which dispatch 000244 closed). Three reasons of record:
 
 This license change is **forward-only and does not reach backward**. **Every previously published
 release keeps the license it shipped under, and those grants are irrevocable:** v1.0 through v1.6.0
-remain **MIT**, and v1.6.1 through the current release remain **`GPL-3.0-or-later`**. Those grants
+remain **MIT**, and v1.6.1 through v1.31.2 remain **`GPL-3.0-or-later`**. Those grants
 are **not** revoked, rescinded, or diminished here -- anyone using one of those releases keeps
-exactly the rights it was published with. From the next release forward the project is `Apache-2.0`.
+exactly the rights it was published with. From this release forward the project is `Apache-2.0`.
 
 #### What genuinely changes for adopters: copyleft is dropped
 
