@@ -32,6 +32,17 @@ security/patch re-pin with no behavior change ships as a PATCH.
 ## [Unreleased]
 
 ## [1.32.0] - 2026-08-19
+MINOR: **the `orgPolicy` file can now be integrity-pinned with a `.sha256` companion**, **the two
+pinned dependencies can be installed from an internal mirror or a pre-staged bundle** so a machine
+with no egress has a first-bootstrap path at all, and **`scripts/sign-plugin.ps1` ships** so an
+`AllSigned` / WDAC estate can sign the plugin's script surface with its own certificate. The project
+is also **relicensed forward to Apache-2.0** -- forward-only, with every previously published release
+keeping the license it shipped under. Two smaller items ride along: an empty dogfood capture log no
+longer reads as one phantom shape, and the README was restructured into per-topic `docs/` pages with
+every heading and anchor preserved. **No new `userConfig` knob, no knob removed, renamed or
+re-defaulted**, and the frozen 1.x knob surface in `CONTRACT.md` is unchanged -- every new capability
+is opt-in, and with neither the companion file nor the offline environment variables set, behavior is
+byte-for-byte what it was.
 
 ### Added: OPTIONAL integrity verification for the `orgPolicy` file
 
