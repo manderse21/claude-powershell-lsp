@@ -1,0 +1,167 @@
+{
+  "block": "M2 cold start to first-analysis-ready",
+  "commit": "af6996f971c8e8629a7d005e83f72865f2a66112",
+  "attempted": 10,
+  "converged": 10,
+  "summaries": [
+    {
+      "metric": "sessionstart_hook_wall_ms",
+      "n": 10,
+      "median": 1627.0,
+      "p95": 2078.0,
+      "min": 1505.0,
+      "max": 2078.0,
+      "spread": 573.0
+    },
+    {
+      "metric": "segment_A_pipe_answers_ping_ms",
+      "n": 10,
+      "median": 2265.0,
+      "p95": 2796.0,
+      "min": 2080.0,
+      "max": 2796.0,
+      "spread": 716.0
+    },
+    {
+      "metric": "cold_start_to_first_settled_ms",
+      "n": 10,
+      "median": 6991.5,
+      "p95": 8453.0,
+      "min": 6470.0,
+      "max": 8453.0,
+      "spread": 1983.0
+    },
+    {
+      "metric": "edits_until_first_settled",
+      "n": 10,
+      "median": 2.0,
+      "p95": 2.0,
+      "min": 2.0,
+      "max": 2.0,
+      "spread": 0.0
+    },
+    {
+      "metric": "edits_returned_not_checked",
+      "n": 10,
+      "median": 1.0,
+      "p95": 1.0,
+      "min": 1.0,
+      "max": 1.0,
+      "spread": 0.0
+    }
+  ],
+  "sessions": [
+    {
+      "i": 1,
+      "hookWallMs": 1875,
+      "segAMs": 2595,
+      "coldMs": 7215,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 2,
+      "hookWallMs": 1643,
+      "segAMs": 2230,
+      "coldMs": 6772,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 3,
+      "hookWallMs": 1611,
+      "segAMs": 2422,
+      "coldMs": 7476,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 4,
+      "hookWallMs": 2078,
+      "segAMs": 2796,
+      "coldMs": 7234,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 5,
+      "hookWallMs": 1520,
+      "segAMs": 2080,
+      "coldMs": 6470,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 6,
+      "hookWallMs": 1526,
+      "segAMs": 2089,
+      "coldMs": 6719,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 7,
+      "hookWallMs": 1505,
+      "segAMs": 2125,
+      "coldMs": 6551,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 8,
+      "hookWallMs": 1564,
+      "segAMs": 2256,
+      "coldMs": 8453,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 9,
+      "hookWallMs": 1694,
+      "segAMs": 2404,
+      "coldMs": 7203,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 10,
+      "hookWallMs": 1679,
+      "segAMs": 2274,
+      "coldMs": 6780,
+      "edits": 2,
+      "unchecked": 1
+    }
+  ],
+  "load_before": {
+    "cpu_samples": [
+      9.0,
+      29.0,
+      29.0,
+      31.0,
+      23.0
+    ],
+    "cpu_median": 29.0,
+    "processes": 379
+  },
+  "load_after": {
+    "cpu_samples": [
+      11.0,
+      11.0,
+      17.0,
+      8.0,
+      0.0
+    ],
+    "cpu_median": 11.0,
+    "processes": 384
+  },
+  "head_before": {
+    "origin_main": "af6996f971c8e8629a7d005e83f72865f2a66112",
+    "staged_client_sha256": "a4a9efcd8e1827416267002c112cf0a99121d32be1297843d625dd5545478560",
+    "at": "2026-08-19T12:14:34.5965195-04:00"
+  },
+  "head_after": {
+    "origin_main": "af6996f971c8e8629a7d005e83f72865f2a66112",
+    "staged_client_sha256": "a4a9efcd8e1827416267002c112cf0a99121d32be1297843d625dd5545478560",
+    "at": "2026-08-19T12:16:10.4988512-04:00"
+  }
+}

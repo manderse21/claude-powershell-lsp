@@ -1,0 +1,14 @@
+{
+  "green_passed": true,
+  "green_entries": [
+    "MANIFEST.txt",
+    "PowerShellEditorServices-v4.6.0.zip",
+    "PSScriptAnalyzer-1.25.0.nupkg"
+  ],
+  "red1_threw": true,
+  "red1_message": "New-AirgapBundle.ps1 returned without writing C:\\Users\\mande\\AppData\\Local\\Temp\\psl-267\\guard\\powershell-lsp-airgap-1.32.0.zip",
+  "red2_threw": true,
+  "red2_message": "airgap bundle entry is empty: MANIFEST.txt",
+  "old_guard_on_success": "OLD-GUARD-FIRES",
+  "verdict": "PASS"
+}

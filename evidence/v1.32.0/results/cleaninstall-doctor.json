@@ -1,0 +1,41 @@
+{
+  "gate": "clean install + doctor at C",
+  "commit": "af6996f971c8e8629a7d005e83f72865f2a66112",
+  "plugin_root": "C:\\Users\\mande\\AppData\\Local\\Temp\\psl-267\\root",
+  "data_root": "C:\\Users\\mande\\AppData\\Local\\Temp\\psl-267\\clean\\data",
+  "install": {
+    "exit_code": 0,
+    "wall_ms": 7147,
+    "pses_installed": true,
+    "pssa_vendored": true,
+    "stderr_tail": ""
+  },
+  "analyzer_corroboration": {
+    "specimen": "function Frobnicate-Thing { Get-Process }",
+    "expected_rule": "PSUseApprovedVerbs",
+    "surfaced": true,
+    "edits_needed": 3,
+    "stdout_excerpt": "{\"hookSpecificOutput\":{\"additionalContext\":\"PowerShell diagnostics (1) for C:\\\\Users\\\\mande\\\\AppData\\\\Local\\\\Temp\\\\psl-267\\\\clean\\\\specimen.ps1:\\r\\n  [Warning] line 1, col 10 -- The cmdlet 'Frobnicate-Thing' uses an unapproved verb. (PSScriptAnalyzer/PSUseApprovedVerbs)\\r\\n      why: An unapproved verb makes the command undiscoverable by Get-Command -Verb and makes Import-Module warn on every load. Pick the closest verb from Get-Verb.\",\"hookEventName\":\"PostToolUse\"}}\r"
+  },
+  "doctor": {
+    "exit_code": 0,
+    "wall_ms": 2766,
+    "pass_lines": 14,
+    "unknown_lines": 3,
+    "fail_lines": 2,
+    "fail_excerpt": [
+      "  summary: 12 pass, 0 fail, 2 unknown (of 14 checks)\r",
+      "  failed for a reason its fix does not resolve, a security control on a managed machine\r"
+    ],
+    "unknown_excerpt": [
+      "  UNKNOWN  Offline readiness\r",
+      "  UNKNOWN  PSES child host (ps_host)\r",
+      "  summary: 12 pass, 0 fail, 2 unknown (of 14 checks)\r"
+    ],
+    "summary_tail": [
+      "             ps_host is at its default (\"pwsh\"), so this check defers to the PowerShell 7 (pwsh) host check above rather than deciding the same executable twice. It reports on its own only when ps_host names something else -- the PSES child host is a DISTINCT value from the hook interpreter.\r",
+      "  summary: 12 pass, 0 fail, 2 unknown (of 14 checks)\r"
+    ]
+  },
+  "verdict": "PASS"
+}

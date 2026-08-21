@@ -1,0 +1,224 @@
+{
+  "block": "M3 daemon steady-state memory + M5 sustained-session stability",
+  "commit": "af6996f971c8e8629a7d005e83f72865f2a66112",
+  "priming_edits": 2,
+  "attempted": 120,
+  "kept": 120,
+  "excluded": 0,
+  "run_seconds": 291.9,
+  "first_ready_mem": {
+    "daemon_pid": 7648,
+    "pses_pid": 22164,
+    "daemon_ws_mb": 128.2,
+    "daemon_priv_mb": 58.9,
+    "pses_ws_mb": 148.9,
+    "pses_priv_mb": 58.0
+  },
+  "mem_samples": [
+    {
+      "daemon_pid": 7648,
+      "pses_pid": 22164,
+      "daemon_ws_mb": 139.7,
+      "daemon_priv_mb": 67.7,
+      "pses_ws_mb": 151.4,
+      "pses_priv_mb": 56.9,
+      "edit": 10
+    },
+    {
+      "daemon_pid": 7648,
+      "pses_pid": 22164,
+      "daemon_ws_mb": 153.8,
+      "daemon_priv_mb": 71.6,
+      "pses_ws_mb": 159.7,
+      "pses_priv_mb": 59.1,
+      "edit": 20
+    },
+    {
+      "daemon_pid": 7648,
+      "pses_pid": 22164,
+      "daemon_ws_mb": 162.0,
+      "daemon_priv_mb": 79.4,
+      "pses_ws_mb": 166.2,
+      "pses_priv_mb": 63.3,
+      "edit": 30
+    },
+    {
+      "daemon_pid": 7648,
+      "pses_pid": 22164,
+      "daemon_ws_mb": 154.5,
+      "daemon_priv_mb": 72.6,
+      "pses_ws_mb": 161.2,
+      "pses_priv_mb": 58.8,
+      "edit": 40
+    },
+    {
+      "daemon_pid": 7648,
+      "pses_pid": 22164,
+      "daemon_ws_mb": 154.4,
+      "daemon_priv_mb": 71.6,
+      "pses_ws_mb": 165.6,
+      "pses_priv_mb": 62.6,
+      "edit": 50
+    },
+    {
+      "daemon_pid": 7648,
+      "pses_pid": 22164,
+      "daemon_ws_mb": 156.8,
+      "daemon_priv_mb": 73.3,
+      "pses_ws_mb": 168.0,
+      "pses_priv_mb": 64.1,
+      "edit": 60
+    },
+    {
+      "daemon_pid": 7648,
+      "pses_pid": 22164,
+      "daemon_ws_mb": 157.0,
+      "daemon_priv_mb": 74.0,
+      "pses_ws_mb": 161.6,
+      "pses_priv_mb": 57.7,
+      "edit": 70
+    },
+    {
+      "daemon_pid": 7648,
+      "pses_pid": 22164,
+      "daemon_ws_mb": 157.3,
+      "daemon_priv_mb": 74.2,
+      "pses_ws_mb": 158.6,
+      "pses_priv_mb": 55.4,
+      "edit": 80
+    },
+    {
+      "daemon_pid": 7648,
+      "pses_pid": 22164,
+      "daemon_ws_mb": 156.9,
+      "daemon_priv_mb": 73.9,
+      "pses_ws_mb": 161.6,
+      "pses_priv_mb": 58.5,
+      "edit": 90
+    },
+    {
+      "daemon_pid": 7648,
+      "pses_pid": 22164,
+      "daemon_ws_mb": 156.8,
+      "daemon_priv_mb": 73.8,
+      "pses_ws_mb": 162.2,
+      "pses_priv_mb": 59.0,
+      "edit": 100
+    },
+    {
+      "daemon_pid": 7648,
+      "pses_pid": 22164,
+      "daemon_ws_mb": 156.2,
+      "daemon_priv_mb": 72.9,
+      "pses_ws_mb": 162.1,
+      "pses_priv_mb": 58.6,
+      "edit": 110
+    },
+    {
+      "daemon_pid": 7648,
+      "pses_pid": 22164,
+      "daemon_ws_mb": 155.8,
+      "daemon_priv_mb": 72.0,
+      "pses_ws_mb": 162.1,
+      "pses_priv_mb": 58.6,
+      "edit": 120
+    }
+  ],
+  "mem_summaries": [
+    {
+      "metric": "daemon_working_set_mb",
+      "n": 12,
+      "median": 156.5,
+      "p95": 162.0,
+      "min": 139.7,
+      "max": 162.0,
+      "spread": 22.3
+    },
+    {
+      "metric": "pses_working_set_mb",
+      "n": 12,
+      "median": 161.8,
+      "p95": 168.0,
+      "min": 151.4,
+      "max": 168.0,
+      "spread": 16.6
+    },
+    {
+      "metric": "daemon_private_mb",
+      "n": 12,
+      "median": 73.1,
+      "p95": 79.4,
+      "min": 67.7,
+      "max": 79.4,
+      "spread": 11.7
+    },
+    {
+      "metric": "pses_private_mb",
+      "n": 12,
+      "median": 58.7,
+      "p95": 64.1,
+      "min": 55.4,
+      "max": 64.1,
+      "spread": 8.7
+    }
+  ],
+  "summaries": [
+    {
+      "metric": "end_to_end_wall_ms_whole_run",
+      "n": 120,
+      "median": 2398.5,
+      "p95": 2646.0,
+      "min": 2220.0,
+      "max": 3023.0,
+      "spread": 803.0
+    },
+    {
+      "metric": "daemon_analysisMs_whole_run",
+      "n": 120,
+      "median": 1403.0,
+      "p95": 1421.0,
+      "min": 1360.0,
+      "max": 1433.0,
+      "spread": 73.0
+    }
+  ],
+  "drift": {
+    "first_quartile_wall_median": 2531.0,
+    "last_quartile_wall_median": 2403.5,
+    "first_quartile_analysis_median": 1407.0,
+    "last_quartile_analysis_median": 1403.0
+  },
+  "load_before": {
+    "cpu_samples": [
+      6.0,
+      21.0,
+      22.0,
+      10.0,
+      13.0
+    ],
+    "cpu_median": 13.0,
+    "processes": 392
+  },
+  "load_after": {
+    "cpu_samples": [
+      9.0,
+      9.0,
+      12.0,
+      16.0,
+      7.0
+    ],
+    "cpu_median": 9.0,
+    "processes": 376
+  },
+  "head_before": {
+    "origin_main": "af6996f971c8e8629a7d005e83f72865f2a66112",
+    "staged_client_sha256": "a4a9efcd8e1827416267002c112cf0a99121d32be1297843d625dd5545478560",
+    "at": "2026-08-19T12:16:15.1892514-04:00"
+  },
+  "head_after": {
+    "origin_main": "af6996f971c8e8629a7d005e83f72865f2a66112",
+    "staged_client_sha256": "a4a9efcd8e1827416267002c112cf0a99121d32be1297843d625dd5545478560",
+    "at": "2026-08-19T12:21:19.5196959-04:00"
+  },
+  "scoped_strays_swept": 0
+}
