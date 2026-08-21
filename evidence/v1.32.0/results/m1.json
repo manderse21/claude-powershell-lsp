@@ -1,0 +1,93 @@
+{
+  "block": "M1 warm per-edit settle latency",
+  "commit": "af6996f971c8e8629a7d005e83f72865f2a66112",
+  "fixture": {
+    "bytes": 219,
+    "lines": 7
+  },
+  "priming_edits": 2,
+  "attempted": 30,
+  "kept": 30,
+  "excluded": 0,
+  "exclusions": [],
+  "summaries": [
+    {
+      "metric": "end_to_end_wall_ms",
+      "n": 30,
+      "median": 2503.0,
+      "p95": 2738.0,
+      "min": 2415.0,
+      "max": 2910.0,
+      "spread": 495.0
+    },
+    {
+      "metric": "client_totalMs",
+      "n": 30,
+      "median": 1941.0,
+      "p95": 1998.0,
+      "min": 1898.0,
+      "max": 2071.0,
+      "spread": 173.0
+    },
+    {
+      "metric": "daemon_analysisMs",
+      "n": 30,
+      "median": 1405.0,
+      "p95": 1427.0,
+      "min": 1389.0,
+      "max": 1433.0,
+      "spread": 44.0
+    },
+    {
+      "metric": "client_connectMs",
+      "n": 30,
+      "median": 30.5,
+      "p95": 38.0,
+      "min": 9.0,
+      "max": 40.0,
+      "spread": 31.0
+    },
+    {
+      "metric": "daemon_codeActionMs",
+      "n": 30,
+      "median": 3.0,
+      "p95": 6.0,
+      "min": 2.0,
+      "max": 10.0,
+      "spread": 8.0
+    }
+  ],
+  "load_before": {
+    "cpu_samples": [
+      35.0,
+      32.0,
+      30.0,
+      48.0,
+      28.0
+    ],
+    "cpu_median": 32.0,
+    "processes": 385
+  },
+  "load_after": {
+    "cpu_samples": [
+      23.0,
+      18.0,
+      18.0,
+      14.0,
+      27.0
+    ],
+    "cpu_median": 18.0,
+    "processes": 383
+  },
+  "head_before": {
+    "origin_main": "af6996f971c8e8629a7d005e83f72865f2a66112",
+    "staged_client_sha256": "a4a9efcd8e1827416267002c112cf0a99121d32be1297843d625dd5545478560",
+    "at": "2026-08-19T12:12:59.9946314-04:00"
+  },
+  "head_after": {
+    "origin_main": "af6996f971c8e8629a7d005e83f72865f2a66112",
+    "staged_client_sha256": "a4a9efcd8e1827416267002c112cf0a99121d32be1297843d625dd5545478560",
+    "at": "2026-08-19T12:14:29.6321271-04:00"
+  },
+  "scoped_strays_swept": 0
+}

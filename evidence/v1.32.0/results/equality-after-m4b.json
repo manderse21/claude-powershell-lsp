@@ -1,0 +1,16 @@
+{
+  "label": "after m4b",
+  "commit": "af6996f971c8e8629a7d005e83f72865f2a66112",
+  "expected_files": 423,
+  "tracked_observed": 423,
+  "missing": [],
+  "differing": [],
+  "extra_ignored_byproducts": [
+    "dogfood/diagnostics.jsonl"
+  ],
+  "extra_unexplained": [],
+  "manifest_sha256": "3307d45f0bb0d0b6db3b395a859bf12f593fa047322b5ec6c59860cdfd50ea69",
+  "data_inside_root": false,
+  "excluded_for_data": 0,
+  "equal": true
+}

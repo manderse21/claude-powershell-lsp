@@ -1,0 +1,719 @@
+
+################ GATE: repo gates (corpus + trust/signing/provenance config suites) ################
+GATE repo gates (corpus + trust/signing/provenance config suites) exit=0 elapsed=309.3s
+
+################ GATE: offline / air-gapped bootstrap ################
+GATE offline / air-gapped bootstrap exit=0 elapsed=35.9s
+
+################ GATE: clean install + doctor ################
+GATE clean install + doctor exit=0 elapsed=15.9s
+[post-gates] tracked_at_C=423 tracked_observed=423 missing=0 differing=0 ignored_byproducts=1 unexplained_extra=0 data_inside_root=False manifest_sha256=3307d45f0bb0d0b6db3b395a859bf12f593fa047322b5ec6c59860cdfd50ea69 EQUAL=True
+  ignored byproducts: dogfood/diagnostics.jsonl
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to af6996f971c8e8629a7d005e83f72865f2a66112
+
+================ GATE SUMMARY ================
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+PASS  repo gates (corpus + trust/signing/provenance config suites)  (309.3s)
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+PASS  offline / air-gapped bootstrap  (35.9s)
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'exit' cannot be found on this object. Verify that the property exists.[0m
+[31;1mPropertyNotFoundException: [0mC:\Users\mande\AppData\Local\Temp\psl-267\bin\run-gates.ps1:37[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  37 | [0m     Write-Host (('{0,-6}' -f $(if ([36;1m$r.exit -eq 0[0m) { 'PASS' } else { ' .[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                                    ~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'gate' cannot be found on this object. Verify that the property exists.[0m
+PASS  clean install + doctor  (15.9s)
+PASS  equality proof after all gates
+GATES DONE

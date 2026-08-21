@@ -1,0 +1,124 @@
+--- equality proof: pre-suite ---
+[pre-suite] tracked_at_C=423 tracked_observed=423 missing=0 differing=0 ignored_byproducts=1 unexplained_extra=0 data_inside_root=False manifest_sha256=3307d45f0bb0d0b6db3b395a859bf12f593fa047322b5ec6c59860cdfd50ea69 EQUAL=True
+  ignored byproducts: dogfood/diagnostics.jsonl
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to af6996f971c8e8629a7d005e83f72865f2a66112
+
+================ BLOCK m1 : M1 warm per-edit latency ================
+--- equality proof: before m1 ---
+[before m1] tracked_at_C=423 tracked_observed=423 missing=0 differing=0 ignored_byproducts=1 unexplained_extra=0 data_inside_root=False manifest_sha256=3307d45f0bb0d0b6db3b395a859bf12f593fa047322b5ec6c59860cdfd50ea69 EQUAL=True
+  ignored byproducts: dogfood/diagnostics.jsonl
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to af6996f971c8e8629a7d005e83f72865f2a66112
+M1 bring-up: hookWall=2014 pingMs=2759
+  prime 1: wall=1477 checked=False delta=1
+  prime 2: wall=4036 checked=True delta=1
+  edit 1/30: wall=2738 total=2071 analysis=1433 checked=True
+  edit 2/30: wall=2605 total=1978 analysis=1407 checked=True
+  edit 3/30: wall=2559 total=1953 analysis=1406 checked=True
+  edit 4/30: wall=2468 total=1922 analysis=1427 checked=True
+  edit 5/30: wall=2636 total=1966 analysis=1411 checked=True
+  edit 6/30: wall=2628 total=1938 analysis=1405 checked=True
+  edit 7/30: wall=2488 total=1906 analysis=1405 checked=True
+  edit 8/30: wall=2497 total=1958 analysis=1408 checked=True
+  edit 9/30: wall=2565 total=1955 analysis=1407 checked=True
+  edit 10/30: wall=2476 total=1931 analysis=1405 checked=True
+  edit 11/30: wall=2419 total=1898 analysis=1404 checked=True
+  edit 12/30: wall=2549 total=1958 analysis=1403 checked=True
+  edit 13/30: wall=2506 total=1930 analysis=1405 checked=True
+  edit 14/30: wall=2579 total=1963 analysis=1420 checked=True
+  edit 15/30: wall=2431 total=1905 analysis=1399 checked=True
+  edit 16/30: wall=2523 total=1958 analysis=1403 checked=True
+  edit 17/30: wall=2499 total=1919 analysis=1405 checked=True
+  edit 18/30: wall=2484 total=1918 analysis=1395 checked=True
+  edit 19/30: wall=2467 total=1917 analysis=1404 checked=True
+  edit 20/30: wall=2617 total=1998 analysis=1409 checked=True
+  edit 21/30: wall=2472 total=1915 analysis=1403 checked=True
+  edit 22/30: wall=2415 total=1899 analysis=1404 checked=True
+  edit 23/30: wall=2487 total=1907 analysis=1404 checked=True
+  edit 24/30: wall=2550 total=1976 analysis=1391 checked=True
+  edit 25/30: wall=2910 total=1988 analysis=1405 checked=True
+  edit 26/30: wall=2461 total=1901 analysis=1390 checked=True
+  edit 27/30: wall=2504 total=1949 analysis=1389 checked=True
+  edit 28/30: wall=2618 total=1971 analysis=1390 checked=True
+  edit 29/30: wall=2502 total=1944 analysis=1406 checked=True
+  edit 30/30: wall=2502 total=1930 analysis=1404 checked=True
+wrote C:\Users\mande\AppData\Local\Temp\psl-267\out\m1.json
+BLOCK m1 DONE
+block m1 exit=0 elapsed=93s
+--- equality proof: after m1 ---
+[after m1] tracked_at_C=423 tracked_observed=423 missing=0 differing=0 ignored_byproducts=1 unexplained_extra=0 data_inside_root=False manifest_sha256=3307d45f0bb0d0b6db3b395a859bf12f593fa047322b5ec6c59860cdfd50ea69 EQUAL=True
+  ignored byproducts: dogfood/diagnostics.jsonl
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to af6996f971c8e8629a7d005e83f72865f2a66112
+
+================ BLOCK m2 : M2 cold start ================
+--- equality proof: before m2 ---
+[before m2] tracked_at_C=423 tracked_observed=423 missing=0 differing=0 ignored_byproducts=1 unexplained_extra=0 data_inside_root=False manifest_sha256=3307d45f0bb0d0b6db3b395a859bf12f593fa047322b5ec6c59860cdfd50ea69 EQUAL=True
+  ignored byproducts: dogfood/diagnostics.jsonl
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to af6996f971c8e8629a7d005e83f72865f2a66112
+  M2 session 1/10: segA=2595 cold=7215 edits=2 unchecked=1
+  M2 session 2/10: segA=2230 cold=6772 edits=2 unchecked=1
+  M2 session 3/10: segA=2422 cold=7476 edits=2 unchecked=1
+  M2 session 4/10: segA=2796 cold=7234 edits=2 unchecked=1
+  M2 session 5/10: segA=2080 cold=6470 edits=2 unchecked=1
+  M2 session 6/10: segA=2089 cold=6719 edits=2 unchecked=1
+  M2 session 7/10: segA=2125 cold=6551 edits=2 unchecked=1
+  M2 session 8/10: segA=2256 cold=8453 edits=2 unchecked=1
+  M2 session 9/10: segA=2404 cold=7203 edits=2 unchecked=1
+  M2 session 10/10: segA=2274 cold=6780 edits=2 unchecked=1
+wrote C:\Users\mande\AppData\Local\Temp\psl-267\out\m2.json
+BLOCK m2 DONE
+block m2 exit=0 elapsed=99s
+--- equality proof: after m2 ---
+[after m2] tracked_at_C=423 tracked_observed=423 missing=0 differing=0 ignored_byproducts=1 unexplained_extra=0 data_inside_root=False manifest_sha256=3307d45f0bb0d0b6db3b395a859bf12f593fa047322b5ec6c59860cdfd50ea69 EQUAL=True
+  ignored byproducts: dogfood/diagnostics.jsonl
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to af6996f971c8e8629a7d005e83f72865f2a66112
+
+================ BLOCK m35 : M3/M5 memory + 120-edit stability ================
+--- equality proof: before m35 ---
+[before m35] tracked_at_C=423 tracked_observed=423 missing=0 differing=0 ignored_byproducts=1 unexplained_extra=0 data_inside_root=False manifest_sha256=3307d45f0bb0d0b6db3b395a859bf12f593fa047322b5ec6c59860cdfd50ea69 EQUAL=True
+  ignored byproducts: dogfood/diagnostics.jsonl
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to af6996f971c8e8629a7d005e83f72865f2a66112
+M3/M5 bring-up: hookWall=2041 pingMs=2923
+  M5 edit 10/120: wall=2448 analysis=1407 checked=True daemonWS=139.7
+  M5 edit 20/120: wall=2673 analysis=1405 checked=True daemonWS=153.8
+  M5 edit 30/120: wall=3023 analysis=1403 checked=True daemonWS=162
+  M5 edit 40/120: wall=2657 analysis=1406 checked=True daemonWS=154.5
+  M5 edit 50/120: wall=2319 analysis=1407 checked=True daemonWS=154.4
+  M5 edit 60/120: wall=2241 analysis=1407 checked=True daemonWS=156.8
+  M5 edit 70/120: wall=2297 analysis=1396 checked=True daemonWS=157
+  M5 edit 80/120: wall=2297 analysis=1394 checked=True daemonWS=157.3
+  M5 edit 90/120: wall=2220 analysis=1391 checked=True daemonWS=156.9
+  M5 edit 100/120: wall=2400 analysis=1393 checked=True daemonWS=156.8
+  M5 edit 110/120: wall=2407 analysis=1416 checked=True daemonWS=156.2
+  M5 edit 120/120: wall=2473 analysis=1397 checked=True daemonWS=155.8
+wrote C:\Users\mande\AppData\Local\Temp\psl-267\out\m35.json
+BLOCK m35 DONE
+block m35 exit=0 elapsed=307.6s
+--- equality proof: after m35 ---
+[after m35] tracked_at_C=423 tracked_observed=423 missing=0 differing=0 ignored_byproducts=1 unexplained_extra=0 data_inside_root=False manifest_sha256=3307d45f0bb0d0b6db3b395a859bf12f593fa047322b5ec6c59860cdfd50ea69 EQUAL=True
+  ignored byproducts: dogfood/diagnostics.jsonl
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to af6996f971c8e8629a7d005e83f72865f2a66112
+
+================ BLOCK m4b : M4b large-file convergence ================
+--- equality proof: before m4b ---
+[before m4b] tracked_at_C=423 tracked_observed=423 missing=0 differing=0 ignored_byproducts=1 unexplained_extra=0 data_inside_root=False manifest_sha256=3307d45f0bb0d0b6db3b395a859bf12f593fa047322b5ec6c59860cdfd50ea69 EQUAL=True
+  ignored byproducts: dogfood/diagnostics.jsonl
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to af6996f971c8e8629a7d005e83f72865f2a66112
+  M4b session 1/5: converged=True atEdit=2 ms=14009 unchecked=1/15 daemons=0 relaunch=0
+  M4b session 2/5: converged=True atEdit=2 ms=13350 unchecked=1/15 daemons=0 relaunch=0
+  M4b session 3/5: converged=True atEdit=2 ms=13884 unchecked=1/15 daemons=0 relaunch=0
+  M4b session 4/5: converged=True atEdit=2 ms=13329 unchecked=1/15 daemons=0 relaunch=0
+  M4b session 5/5: converged=True atEdit=2 ms=14062 unchecked=1/15 daemons=0 relaunch=0
+wrote C:\Users\mande\AppData\Local\Temp\psl-267\out\m4b.json
+BLOCK m4b DONE
+block m4b exit=0 elapsed=348.1s
+--- equality proof: after m4b ---
+[after m4b] tracked_at_C=423 tracked_observed=423 missing=0 differing=0 ignored_byproducts=1 unexplained_extra=0 data_inside_root=False manifest_sha256=3307d45f0bb0d0b6db3b395a859bf12f593fa047322b5ec6c59860cdfd50ea69 EQUAL=True
+  ignored byproducts: dogfood/diagnostics.jsonl
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to af6996f971c8e8629a7d005e83f72865f2a66112
+--- equality proof: post-suite ---
+[post-suite] tracked_at_C=423 tracked_observed=423 missing=0 differing=0 ignored_byproducts=1 unexplained_extra=0 data_inside_root=False manifest_sha256=3307d45f0bb0d0b6db3b395a859bf12f593fa047322b5ec6c59860cdfd50ea69 EQUAL=True
+  ignored byproducts: dogfood/diagnostics.jsonl
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to af6996f971c8e8629a7d005e83f72865f2a66112
+data-root witness: logs files before=0 after=0
+QUANT SUITE DONE
+PWSH_EXIT=0

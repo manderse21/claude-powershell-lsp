@@ -1,0 +1,72 @@
+{
+  "commit": "af6996f971c8e8629a7d005e83f72865f2a66112",
+  "worktree": "C:\\Users\\mande\\projects\\work\\nortam\\claude-powershell-lsp\\worktrees\\pslsp-267-freeze",
+  "suites": [
+    {
+      "key": "corpus",
+      "label": "corpus recompute (0-of-N known-good, N-of-N known-bad, expected-rule coverage)",
+      "filter": "*Diagnostic-correctness corpus*",
+      "path": "",
+      "passed": 256,
+      "failed": 0,
+      "skipped": 0,
+      "total": 1988,
+      "wall_s": 283.0,
+      "failures": [],
+      "verdict": "PASS"
+    },
+    {
+      "key": "release",
+      "label": "release workflow + SBOM + provenance CONFIGURATION",
+      "filter": "*",
+      "path": "PowerShellLsp.Release.Tests.ps1",
+      "passed": 69,
+      "failed": 0,
+      "skipped": 0,
+      "total": 69,
+      "wall_s": 10.3,
+      "failures": [],
+      "verdict": "PASS"
+    },
+    {
+      "key": "signplugin",
+      "label": "signing (Authenticode org-signing path)",
+      "filter": "*",
+      "path": "PowerShellLsp.SignPlugin.Tests.ps1",
+      "passed": 13,
+      "failed": 0,
+      "skipped": 2,
+      "total": 15,
+      "wall_s": 10.4,
+      "failures": [],
+      "verdict": "PASS"
+    },
+    {
+      "key": "pinning",
+      "label": "supply chain: GitHub Actions pinned by 40-char SHA",
+      "filter": "*",
+      "path": "PowerShellLsp.ActionPinning.Tests.ps1",
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0,
+      "total": 16,
+      "wall_s": 2.1,
+      "failures": [],
+      "verdict": "PASS"
+    },
+    {
+      "key": "airgap",
+      "label": "offline / air-gapped bootstrap CONTRACT suite (PR #176)",
+      "filter": "*",
+      "path": "PowerShellLsp.AirgapBootstrap.Tests.ps1",
+      "passed": 45,
+      "failed": 0,
+      "skipped": 0,
+      "total": 45,
+      "wall_s": 3.0,
+      "failures": [],
+      "verdict": "PASS"
+    }
+  ],
+  "head_after": "af6996f971c8e8629a7d005e83f72865f2a66112"
+}

@@ -1,0 +1,14 @@
+{
+  "label": "C-prime freeze",
+  "commit": "fb3116cab14cd8afec4e9c64ed0c2e67e76486b3",
+  "expected_files": 423,
+  "tracked_observed": 423,
+  "missing": [],
+  "differing": [],
+  "extra_ignored_byproducts": [],
+  "extra_unexplained": [],
+  "manifest_sha256": "ba60e430d5cb7493cf2ed9f91d27d9cb3eab5fe122dfb05c30caf85fd47a1dd0",
+  "data_inside_root": false,
+  "excluded_for_data": 0,
+  "equal": true
+}

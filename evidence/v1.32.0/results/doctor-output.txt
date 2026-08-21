@@ -1,0 +1,42 @@
+powershell-lsp doctor -- preflight self-check (report-only)
+  version: 1.32.0   (this tree; a live daemon may be older -- see logs/pses-daemon.log)
+  provenance floor: (absent) -- no lifecycle log has been written yet.
+
+  PASS     PowerShell 7 (pwsh) host
+             pwsh 7.6.5.0 is present and satisfies the PowerShell 7+ requirement.
+  PASS     Plugin enabled
+             the plugin is loaded in this Claude Code session (its plugin environment is present).
+  PASS     PSES bundle bootstrapped
+             the PSES v4.6.0 bundle is bootstrapped (marker present and Start-EditorServices.ps1 in place).
+  PASS     PSScriptAnalyzer vendored
+             PSScriptAnalyzer 1.25.0 is vendored and importable.
+  PASS     Artifact source
+             PSES from download; PSScriptAnalyzer from download.
+  UNKNOWN  Offline readiness
+             no offline artifact source is configured, so this machine bootstraps from the default download and offline readiness is not established.
+             fix: See docs/configuration.md, "Offline and air-gapped installation", for POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR and POWERSHELL_LSP_ARTIFACT_MIRROR_BASE.
+  PASS     First-run download hosts reachable
+             reachable on TCP 443: github.com, www.powershellgallery.com.
+  PASS     Warm PSES daemon (runtime)
+             the warm per-session daemon is alive and answered on its named pipe (round-trip ok).
+  PASS     Active ruleset surface
+             ruleset = "pses-default" -- PowerShell Editor Services' own built-in no-settings rule set is active for C:\Users\mande\AppData\Local\Temp\psl-267 (about 15 rules; narrower than the PSScriptAnalyzer CLI default -- PSAvoidUsingWriteHost is NOT among them). Set ruleset = "base", or add a repo-local PSScriptAnalyzerSettings.psd1, to broaden it; see docs/configuration.md#ruleset.
+  PASS     Org policy exclusions
+             orgPolicy is not set -- no org-wide rule exclusions are applied, and every rule the active ruleset surface enables is shown. This is the default; the knob is an enterprise opt-in.
+  PASS     Test diagnostic observed end-to-end
+             a real diagnostic was observed end-to-end in 1641 ms: a synthetic temp file with a deliberate defect returned PSUseApprovedVerbs, through the same warm daemon and pipe your edits use. Diagnostics are genuinely working, not merely installed.
+  PASS     Native-serve status (hover / definition / references)
+             nativeServe = "off" (the default) -- native hover / go-to-definition / find-references do NOT serve; the proxy is a byte-exact pass-through and the navigation tier stays gated on the upstream client init-handshake bug. This is the shipped default, not a fault: the PostToolUse diagnostics hook is independent of this knob and works regardless. Set nativeServe = "shim" to enable navigation (docs/configuration.md#nativeserve). Run with -ProbeNativeServe to also test whether the upstream handshake gate has lifted.
+  UNKNOWN  PSES child host (ps_host)
+             ps_host is at its default ("pwsh"), so this check defers to the PowerShell 7 (pwsh) host check above rather than deciding the same executable twice. It reports on its own only when ps_host names something else -- the PSES child host is a DISTINCT value from the hook interpreter.
+             fix: Nothing to do. Set ps_host only if PSES must run under a different host than pwsh; see docs/configuration.md#ps_host.
+  PASS     Serve-subprocess config transport (configured vs effective)
+             nothing you configured is being silently dropped. Transport for nativeServe, ps_host, profile is SUSPENDED BY UPSTREAM GATE (claude-code-lspservers-userconfig-defaults, Claude Code 2.1.233), and none of those knobs is currently set, so the shipped defaults in effect are also the documented ones. nativeServe: configured=(unset) effective=off [SUSPENDED BY UPSTREAM GATE]; ps_host: configured=(unset) effective=pwsh [SUSPENDED BY UPSTREAM GATE]; profile: configured=(unset) effective=safe [SUSPENDED BY UPSTREAM GATE]
+
+  summary: 12 pass, 0 fail, 2 unknown (of 14 checks)
+
+  Note: this doctor checks prerequisites and bootstrap health only. If a check above
+  failed for a reason its fix does not resolve, a security control on a managed machine
+  (an execution or application-control policy) may be blocking the component. The doctor
+  does NOT probe security controls; see the README Troubleshooting section and the
+  ROADMAP security-block detection work (L3).
