@@ -565,6 +565,7 @@ one click away.
 | The quirks that bite when changing the runtime | [docs/DEV_NOTES.md](docs/DEV_NOTES.md) |
 | Dogfood capture and the offline review tool | [docs/dogfood.md](docs/dogfood.md) |
 | What runs locally, what is downloaded, the signing posture | [TRUST.md](./TRUST.md), [docs/trust.md](docs/trust.md) |
+| The whole system in one document -- design rationale, measured evidence, stated limits | [docs/whitepaper.md](docs/whitepaper.md) |
 | How a diagnostic flows from edit to banner | [ARCHITECTURE.md](./ARCHITECTURE.md) |
 | What is frozen in 1.x, and what a change costs | [CONTRACT.md](./CONTRACT.md) |
 | What changed, and when | [CHANGELOG.md](./CHANGELOG.md) |
