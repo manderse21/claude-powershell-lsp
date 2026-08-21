@@ -1,13 +1,20 @@
 # powershell-lsp: A Status-Honest PowerShell Diagnostics Client for Coding Agents
 
-> **DRAFT (v1.32.0-final) for Mike Andersen's review -- nothing published.** Full paper from the
-> outline ratified by dispatch 000262, finalized against the shipped release **v1.32.0**, tag commit
-> **`fb3116c`** (release identity C'). Every figure was measured against that commit by dispatch
-> 000267 (freeze 1B) and read from its outbox on 2026-08-19; the runtime was proven byte-identical
-> to the measured commit. This version supersedes the earlier v1.31.0-scoped drafts: the release now
-> exists, is Apache-2.0, ships an offline bootstrap, and carries verified SBOM/SLSA/Sigstore
-> attestation, so the version-boundary caveats are gone and the Evidence Snapshot describes one
-> artifact. Nothing here is published; external publishing is the maintainer's gate.
+> **Revision r2 (2026-08-21).** Corrective revision of the v1.32.0 paper. Each substantive change
+> below was verified against the shipped release, `TRUST.md`, the `ensure-*.ps1` sources, and the raw
+> dispatch 000267 measurement artifacts (M1-M4b result JSONs and the equality-proof chain):
+> (1) the PSScriptAnalyzer bootstrap description now states the `Save-Module` fallback, which is
+> Gallery-verified rather than governed by the project SHA-256 pin (sections 4, 6, 10); (2) the
+> status-honesty claim is narrowed from "a result is never silently wrong" to the analyzed-and-clean
+> property it actually supports (Abstract, section 13); (3) `-ExecutionPolicy Bypass` is disclosed
+> (section 9); (4) a measurement-environment exhibit (E3) is added, with the timer method, "spread"
+> (max - min), and p95 (nearest-rank) defined from `measure.ps1`, and with Claude Code recorded as
+> outside the measured path; (5) "no leak" and "the data rules it out" are narrowed to what the runs
+> support (sections 7, 8); (6) external references are cited by URL; (7) the raw measurement set is
+> published at `evidence/v1.32.0/`. Finalized against release **v1.32.0** (tag `fb3116c`);
+> quantitative figures were measured at commit `af6996f` (freeze 1B) and carry forward to `fb3116c`
+> on a runtime tree proven byte-identical (`cprime-verify.json`: 5 non-runtime files changed, equality
+> proof PASS). External publishing is the maintainer's gate.
 >
 > **Claim labels:** **[V]** verified from code/tests/docs, **[M]** measured, **[I]** inferred,
 > **[P]** proposed, **[U]** unverified. A **[U]** claim never appears as fact.
@@ -17,8 +24,8 @@
 | Claim family | Evidence state |
 |---|---|
 | Product behavior, architecture, contract | v1.32.0 / `fb3116c` **[V]** |
-| Performance / SLO figures | Measured at `fb3116c` by dispatch 000267, one desktop-class Windows host **[M]** |
-| Large-file convergence | Measured at `fb3116c`: **5 of 5** sessions converge (the prior non-convergence is resolved) **[M]** |
+| Performance / SLO figures | Measured at `af6996f`, carried to `fb3116c` on a byte-identical runtime; single Windows host (Exhibit E3) **[M]** |
+| Large-file convergence | Measured at freeze 1B: **5 of 5** sessions converge (the prior non-convergence is resolved) **[M]** |
 | Apache-2.0 license | **Shipped in v1.32.0** (first Apache release; earlier tags keep the license they shipped under) **[V]** |
 | Offline / air-gapped bootstrap | **Shipped in v1.32.0**, verified at `fb3116c` **[V][M]** |
 | Supply-chain attestation | SBOM + SLSA provenance + Sigstore-signed tag, all verified bound to `fb3116c` **[V]** |
@@ -27,23 +34,25 @@
 
 ## Abstract
 
-Editor-bound PowerShell tooling is unavailable in the environments where coding agents increasingly
-do their work: headless shells, SSH sessions, CI runners, and containers with no editor process to
-host a language server **[V]**. `powershell-lsp` addresses that gap not by re-implementing analysis
-but by acting as a **client** of PowerShell Editor Services (PSES): as an agent edits a `.ps1`,
-`.psm1`, or `.psd1`, the plugin runs PSES plus PSScriptAnalyzer over that file through a warm
-per-session daemon and returns the result -- syntax errors and lint findings with fix suggestions --
-into the same agent turn that made the edit **[V]**. Its distinguishing property is that a result is
-never silently wrong: every analyzed edit resolves to one of four explicit status tokens, so an
-agent can tell "analyzed and clean" from "not actually analyzed" **[V]**. The diagnostics it reports
-are checked against a curated corpus rather than asserted -- an observed 0% false-positive rate over
-50 known-good cases and 100% coverage over 36 known-bad, recomputed on every CI run and floored so
-the rate cannot be improved by shrinking the oracle **[M]**. The plugin adds no analysis capability
-of its own and inherits PSES's limits. A large-file edit-path non-convergence documented at v1.31.0
-was fixed in the v1.31.1/v1.31.2 daemon-recovery work and verified resolved at the shipped commit
-(5 of 5 sessions converging on a 251 KB file) **[M]**; the paper reports that inversion in full, and
-states plainly that whether the plugin makes an agent write *better* PowerShell remains unmeasured
-**[U]**.
+In the environments where coding agents increasingly work -- headless shells, SSH sessions, CI
+runners, and containers -- editor-integrated PowerShell diagnostics never reach the agent: no editor
+process places a finding into the model's turn **[V]**. The gap is not that analysis cannot run
+headlessly (PSES can, and this plugin runs it that way) but that its results are not surfaced into the
+agent loop. `powershell-lsp` addresses that gap not by re-implementing analysis but by acting as a
+**client** of PowerShell Editor Services (PSES): as an agent edits a `.ps1`, `.psm1`, or `.psd1`, the
+plugin runs PSES plus PSScriptAnalyzer over that file through a warm per-session daemon and returns
+the result -- syntax errors and lint findings with fix suggestions -- into the same agent turn that
+made the edit **[V]**. Its distinguishing property is that an edit which was not successfully analyzed
+is never silently represented as analyzed-and-clean: every analyzed edit resolves to one of four
+explicit status tokens, so an agent can tell "analyzed and clean" from "not actually analyzed"
+**[V]**. The diagnostics it reports are checked against a curated corpus rather than asserted -- an
+observed 0% false-positive rate over 50 known-good cases and 100% coverage over 36 known-bad,
+recomputed on every CI run and floored so the rate cannot be improved by shrinking the oracle **[M]**.
+The plugin adds no analysis capability of its own and inherits PSES's limits. A large-file edit-path
+non-convergence documented at v1.31.0 was fixed in the v1.31.1/v1.31.2 daemon-recovery work and
+verified resolved at the shipped commit (5 of 5 sessions converging on a 251 KB file) **[M]**; the
+paper reports that inversion in full, and states plainly that whether the plugin makes an agent write
+*better* PowerShell remains unmeasured **[U]**.
 
 ## Executive Summary
 
@@ -157,9 +166,10 @@ against stale line numbers they would be confidently wrong, which is worse than 
 The model is one paragraph. Diagnostics ride a PostToolUse hook backed by a warm, per-session PSES
 daemon: one PSES process stays hot for the whole session behind a session-keyed named pipe, so each
 edit pays a local pipe round-trip instead of a cold PSES start **[V]** (`ARCHITECTURE.md`, "The
-one-paragraph model"). Everything runs on the local machine; the only outbound network is a one-time,
-pinned, hash-verified dependency download -- and even that is removable, since v1.32.0 ships an
-offline bundle path (section 10) **[V]**.
+one-paragraph model"). Everything runs on the local machine; the only outbound network is a one-time
+dependency download, pinned and hash-verified on every default path (with one narrow,
+separately-reported PSScriptAnalyzer fallback detailed in section 6) -- and even that is removable,
+since v1.32.0 ships an offline bundle path (section 10) **[V]**.
 
 **Exhibit E1 -- the edit-to-banner lifecycle** (source: `ARCHITECTURE.md`, "The lifecycle").
 
@@ -276,33 +286,69 @@ to the documentation-drift risk named in the roadmap -- the guard is the mitigat
 
 The two downloaded dependencies -- PSES and PSScriptAnalyzer -- are pinned by version **and** verified
 against SHA-256 hashes computed from the real artifacts before use, failing closed on a mismatch
-**[V]** (`TRUST.md`; `THREAT-MODEL.md`, B1). For disconnected estates, v1.32.0 ships an offline bundle
-that satisfies the same pinned, hash-verified bootstrap with no network path (section 10) **[V]**. The
-shipped capability inventory -- what exists today, as distinct from roadmap intent -- is recorded in
-`CURRENT-STATE.md`, section 4 **[V]**.
+**[V]** (`TRUST.md`, "What it downloads"; `THREAT-MODEL.md`, B1). That pin governs every default
+acquisition path -- the internal HTTPS mirror, a pre-staged local bundle, the `.nupkg` cache, and the
+direct download -- each verified against the same pin by `Test-PinnedFileHash` before use; a mismatch
+on any layer fails closed and never falls through to another **[V]**. One acquisition route is **not**
+governed by the project pin: when the verified PSScriptAnalyzer `.nupkg` download cannot complete
+(offline or proxied), the bootstrap falls back to `Save-Module`, which rests on the PowerShell
+Gallery's publisher/catalog integrity rather than the project SHA-256 pin, and is reported distinctly
+by `/doctor` as `gallery-fallback` rather than as a pinned source **[V]** (`TRUST.md`, "What it
+downloads"; `scripts/ensure-pssa.ps1`). A hash **mismatch** never triggers this fallback -- it fails
+closed. For disconnected estates, v1.32.0 ships an offline bundle that satisfies the same pinned,
+hash-verified bootstrap with no network path (section 10) **[V]**. The shipped capability inventory --
+what exists today, as distinct from roadmap intent -- is recorded in `CURRENT-STATE.md`, section 4
+**[V]**.
 
 ## 7. Evaluation
 
 Titled an evaluation rather than an evaluation of "current evidence" because the version drift is
-gone: every figure below was measured at the shipped commit `fb3116c` by dispatch 000267, on one
-desktop-class Windows host, and the runtime was proven byte-identical to that commit. None are adopted
-SLOs -- every candidate target remains unratified **[M]**. The measurement is honest about its host:
-this machine ran quieter than the v1.31.0 baseline (CPU median 9-32% across blocks versus the
-baseline's 31-57%), so the wall-clock *improvements* below are reported but not claimed as the tool
-getting faster; the load-insensitive `analysisMs` segment is the trustworthy comparison, and it is
+gone: every figure below was measured by dispatch 000267 at commit `af6996f` and carries forward to
+the shipped commit `fb3116c` on a runtime tree proven byte-identical (`cprime-verify.json`: the
+`af6996f` -> `fb3116c` diff touched only `release.yml` and four relicense-deixis docs, equality proof
+PASS). Measurement ran on a single Windows host, detailed in Exhibit E3. None are adopted SLOs --
+every candidate target remains unratified **[M]**. The measurement is honest about its host: this
+machine ran quieter than the v1.31.0 baseline (CPU median 9-32% across blocks versus the baseline's
+31-57%), so the wall-clock *improvements* below are reported but not claimed as the tool getting
+faster; the load-insensitive `analysisMs` segment is the trustworthy comparison, and it is
 essentially unchanged **[M]**.
 
-**Exhibit E4 -- warm per-edit latency at `fb3116c`** (N=30, 30 kept, 2 priming edits; source: dispatch
-000267 M1). Unrounded, with spread and the v1.31.0 baseline for context:
+**Exhibit E3 -- measurement environment** (single host; harness: `run-quant.ps1`, `measure.ps1`).
 
-| Segment | median | p95 | spread | v1.31.0 |
-|---|---:|---:|---:|---:|
-| End-to-end wall (what a user pays) | 2503 ms | 2738 ms | 495 ms | 2997 ms |
-| Client `totalMs` (shipped stats log) | 1941 ms | 1998 ms | 173 ms | 2066 ms |
-| Daemon `analysisMs` (settle) | 1405 ms | 1427 ms | 44 ms | 1407 ms |
-| Client `connectMs` | 30.5 ms | 38 ms | 31 ms | 12 ms |
+| Parameter | Value |
+|---|---|
+| Machine | Lenovo ThinkPad (21TB000BUS), single host |
+| CPU | AMD Ryzen AI 7 PRO 350, 8 cores / 16 threads, 2.0 GHz reported base (`Win32_Processor.MaxClockSpeed`) |
+| RAM | 32 GB |
+| OS | Windows 11 Pro, 25H2, build 26200.9168 |
+| Measured PowerShell host | `pwsh` 7.6.5 -- the hook interpreter and, at the default `ps_host = pwsh`, the PSES child host |
+| Windows PowerShell present | 5.1.26100.9168 (not the measured interpreter) |
+| PSES / PSScriptAnalyzer | v4.6.0 / 1.25.0 (pinned; `ensure-pses.ps1`, `ensure-pssa.ps1`) |
+| Power profile | Balanced |
+| Timer | .NET `System.Diagnostics.Stopwatch`, `ElapsedMilliseconds`, integer-truncated (`measure.ps1`) |
+| "spread" | max - min, rounded to 1 decimal (`measure.ps1`) |
+| p95 | nearest-rank, never interpolated (`measure.ps1`) |
+| Repetitions | per block: M1 N=30, M2 N=10, M3/M5 stability 120 edits, M4b 5 cold sessions |
+| Commit | measured at `af6996f`; carried to `fb3116c` on a byte-identical runtime (`cprime-verify.json`) |
+| Claude Code | target integration client (current release 2.1.238); **not in the measured path** -- the harness invokes the plugin hook scripts (`session-start`/`lsp-client`/`session-end`) directly with synthesized PostToolUse stdin (`measure.ps1`, `Invoke-Hook`) |
+| Raw data | `evidence/v1.32.0/` (this repository) |
 
-**Finding 1 -- `analysisMs` is re-measured and unchanged.** 1405 ms at `fb3116c` versus 1407 ms at
+The Claude Code row matters for interpretation: these latencies are the plugin's hook-plus-daemon
+path measured in isolation, not an end-to-end Claude Code session, so they exclude any client-side
+overhead the real agent adds **[M]**.
+
+**Exhibit E4 -- warm per-edit latency at freeze 1B** (N=30, 30 kept, 2 priming edits; source: dispatch
+000267 M1). Unrounded, with min/max/spread (spread = max - min; see E3) and the v1.31.0 baseline for
+context:
+
+| Segment | median | p95 | min | max | spread | v1.31.0 |
+|---|---:|---:|---:|---:|---:|---:|
+| End-to-end wall (what a user pays) | 2503 ms | 2738 ms | 2415 ms | 2910 ms | 495 ms | 2997 ms |
+| Client `totalMs` (shipped stats log) | 1941 ms | 1998 ms | 1898 ms | 2071 ms | 173 ms | 2066 ms |
+| Daemon `analysisMs` (settle) | 1405 ms | 1427 ms | 1389 ms | 1433 ms | 44 ms | 1407 ms |
+| Client `connectMs` | 30.5 ms | 38 ms | 9 ms | 40 ms | 31 ms | 12 ms |
+
+**Finding 1 -- `analysisMs` is re-measured and unchanged.** 1405 ms at freeze 1B versus 1407 ms at
 v1.31.0, inside a 44 ms spread -- the load-insensitive segment, which is why it is the segment the
 paper leans on across hosts **[M]**.
 
@@ -318,10 +364,12 @@ analysis is 6991.5 ms median (spread 1983 ms), against 9523 ms at v1.31.0 **[M]*
 child 161.8 MB), matching the v1.31.0 figure to the megabyte; the pair warms to a plateau rather than
 climbing **[M]**.
 
-**Sustained stability** (N=120 consecutive edits, 291.9 s; source: M5). No edit failed to settle, no
-leak, no slowdown -- both the wall and `analysisMs` medians drifted slightly *faster* over the run
-(-127.5 ms and -4.0 ms, well inside the run's own spread) **[M]**. Honest bound: 291.9 s is not a
-multi-hour session and the 30-minute idle TTL was never exercised **[M]**.
+**Sustained stability** (N=120 consecutive edits, 291.9 s; source: M5). No edit failed to settle, and
+no monotonic working-set growth or slowdown was observed over the run -- both the wall and
+`analysisMs` medians drifted slightly *faster* (-127.5 ms and -4.0 ms, well inside the run's own
+spread), and the working-set pair held the plateau reported under Memory above **[M]**. Honest bound:
+291.9 s is not a multi-hour session and the 30-minute idle TTL was never exercised, so this bounds the
+observed window, not a long-idle leak **[M]**.
 
 Prior latency figures in `docs/benchmarks.md` are historical, measured at different versions with
 different definitions, and are not restated as current **[V][M]**.
@@ -338,26 +386,29 @@ library, and it *grew* to **251,523 bytes / 4,399 lines** at the shipped commit,
 the 219,682-byte / 3,881-line file measured at v1.31.0. So convergence improved on a larger file
 **[M]**.
 
-**Exhibit E5 -- convergence on the large fixture, v1.31.0 vs `fb3116c`** (uniform 15-attempt cap, 5
+**Exhibit E5 -- convergence on the large fixture, v1.31.0 vs freeze 1B** (uniform 15-attempt cap, 5
 independent cold sessions; source: dispatch 000267 M4b).
 
-| Measure | v1.31.0 | `fb3116c` |
+| Measure | v1.31.0 | freeze 1B |
 |---|---:|---:|
 | Sessions converged (uniform cap) | 1 of 5 | **5 of 5** |
 | Cost of convergence (median) | 13 edits / 89,927 ms | **2 edits / 13,623 ms** |
 | Daemons launched per session (median) | 3 | **1** (spread 0) |
 | Auto-relaunches per session (median) | 3 | **0** (spread 0) |
 
-**The mechanism, and why this is not just a quieter machine.** Section 8 of `SLO-BASELINES.md`
-diagnosed a compounding pair: the daemon's 5000 ms settle cap expires, the client concludes
-*unreachable* rather than *busy*, and relaunches the daemon that was doing the work. Two shipped fixes
-in the 1.32.0 band name that exact failure -- v1.31.1 stops a live-but-busy daemon being mistaken for
-an unreachable one and relaunched, and v1.31.2 (dispatch 000237) stops a client that abandons one
-reply from killing the whole daemon, which was the binding reason a large-file session never
-converged once the relaunch thrash began **[V]**. The measurement shows exactly the predicted
-signature: one daemon, zero relaunches, zero unreachable verdicts **[M]**. The ambient-load
-explanation is the weaker one here, and the data rules it out: at v1.31.0 the *lowest*-load session
-(31% CPU) failed while a 43% session converged, so load did not separate the cases then either **[M]**.
+**The mechanism, and why this is not just a quieter machine.** Section 8 of `SLO-BASELINES.md` (the
+v1.31.0-era diagnosis, now being revised since this freeze inverts its headline finding) diagnosed a
+compounding pair: the daemon's 5000 ms settle cap expires, the client concludes *unreachable* rather
+than *busy*, and relaunches the daemon that was doing the work. Two shipped fixes in the 1.32.0 band
+name that exact failure -- v1.31.1 stops a live-but-busy daemon being mistaken for an unreachable one
+and relaunched, and v1.31.2 (dispatch 000237) stops a client that abandons one reply from killing the
+whole daemon, which was the binding reason a large-file session never converged once the relaunch
+thrash began **[V]**. The measurement shows exactly the predicted signature: one daemon, zero
+relaunches, zero unreachable verdicts **[M]**. The ambient-load explanation is the weaker one here,
+and the data do not support a simple CPU-load account: at v1.31.0 the *lowest*-load session (31% CPU)
+failed while a 43% session converged, so load did not separate the cases then either **[M]**. The
+mechanistic signature above -- one daemon, zero relaunches, zero unreachable verdicts, matching the
+two named fixes -- is the load-bearing evidence, not the CPU figures **[M]**.
 
 Once converged, the large file is slower but bounded: end-to-end wall 3741.5 ms median against
 2503 ms for a small file, `analysisMs` 1610.5 ms against 1405 ms (n=70 kept of 75; source: M4) **[M]**.
@@ -377,6 +428,21 @@ verifiable with `gh attestation verify`, and the release tag is keyless-signed v
 transparency-logged Sigstore with no maintainer-held key in the trust path -- all three were verified
 bound to the release commit `fb3116c` at publication **[V]** (dispatch 000267 post-tag verification;
 `TRUST.md`, "Supply-chain artifacts").
+
+**The `-ExecutionPolicy Bypass` on every entry point, disclosed rather than left for a reviewer to
+find.** All four entry points Claude Code launches -- the `lspServers` command and the SessionStart,
+PostToolUse, and SessionEnd hooks -- pass `-ExecutionPolicy Bypass` **[V]** (`TRUST.md`, "Why
+ExecutionPolicy Bypass appears in every hook entry point"). It is a launcher argument for the
+plugin's own tracked scripts, which arrive unsigned over `git clone`, and it is scoped to that one
+`pwsh` process: it sets no machine policy, writes no registry key, and survives nothing past the
+process. It cannot override a Group Policy / MachinePolicy ExecutionPolicy, Constrained Language Mode,
+WDAC / App Control, Defender ASR, or Smart App Control -- PowerShell ignores a command-line `-Bypass`
+under those, so on a locked-down estate the plugin fails and says so rather than quietly winning
+**[V]**. No `Set-ExecutionPolicy` call exists in the tree, and the one policy-aware component
+(`scripts/lib/security-classifier.ps1`) reads control state only to name what blocked a bootstrap,
+never to defeat it -- its contract is, verbatim, "Never bypasses a control" **[V]** (`ARCHITECTURE.md`).
+Estates requiring signed scripts have paste-ready AppLocker / WDAC allow-listing and an org-signing
+path (`TRUST.md`, "Allow-listing on managed Windows").
 
 **Environmental.** For managed Windows estates, the trust document supplies AppLocker and WDAC / App
 Control allow-listing rules and an org-certificate paved path for estates that want their own
@@ -400,8 +466,9 @@ Degradation when analysis cannot run is by design visible, not silent **[V]**.
 
 Install and verify is a documented multi-step path, not a one-liner, and the docs say so: prerequisite
 `pwsh` on PATH plus, for a connected install, internet on the first enabled session for the pinned,
-hash-verified self-download -- or, for a disconnected estate, the offline bundle **[V]** (`README.md`,
-"Quick start"; "Prerequisites").
+hash-verified self-download (with the narrow PSScriptAnalyzer `gallery-fallback` noted in section 6)
+-- or, for a disconnected estate, the offline bundle **[V]** (`README.md`, "Quick start";
+"Prerequisites").
 
 **Enterprise posture, shipped in v1.32.0.** Two named blockers from a 2026-08-15 corporate-IT review
 are closed in the release a reader can download and attest: the plugin is **Apache-2.0** (v1.32.0 is
@@ -431,7 +498,9 @@ weight shifts to the unmeasured efficacy question.
   filling it.
 - **[M]** The baselines are one host, one OS, one PowerShell version, one analyzer pin; not a
   quiet-window measurement and not CI-wired (`SLO-BASELINES.md`, section 10). The measuring host ran
-  quieter than the v1.31.0 baseline, so wall-clock improvements are reported, not claimed.
+  quieter than the v1.31.0 baseline, so wall-clock improvements are reported, not claimed. The
+  reported latencies are the plugin's hook-plus-daemon path in isolation; Claude Code is not in the
+  measured loop (Exhibit E3), so any client-side overhead the real agent adds is not captured.
 - **[M]** The large-file result is resolved at 251 KB but the file-size curve still has few points;
   behavior is uncharacterized between the small fixtures and 251 KB and is not established on other
   hosts.
@@ -458,14 +527,15 @@ Upstream dependencies the project cannot close itself are enumerated in `CURRENT
 
 `powershell-lsp` demonstrates that an agent-facing PowerShell diagnostics layer can be built as an
 honest client of PSES rather than a re-implementation, and that the honesty can be made structural:
-four explicit status tokens so a result is never silently wrong, a curated corpus recomputed and
-floored so a rate cannot be gamed, and a decision record that carries declines with the weight of
-ships. The measured evidence at the shipped commit `fb3116c` supports the diagnostics-correctness and
-status-honesty claims, bounds the latency and memory envelope, and shows a prior large-file
-non-convergence resolved by the daemon-recovery work. What the evidence does not establish is whether
-any of this makes an agent write better PowerShell -- the one question a reader should keep in view,
-because the project's answer so far is to measure what it can and decline the experiment it cannot yet
-run cleanly, which is the same discipline that produced everything else in this paper.
+four explicit status tokens so an edit that was not analyzed is never silently presented as
+analyzed-and-clean, a curated corpus recomputed and floored so a rate cannot be gamed, and a decision
+record that carries declines with the weight of ships. The measured evidence at the shipped commit
+`fb3116c` supports the diagnostics-correctness and status-honesty claims, bounds the latency and
+memory envelope, and shows a prior large-file non-convergence resolved by the daemon-recovery work.
+What the evidence does not establish is whether any of this makes an agent write better PowerShell --
+the one question a reader should keep in view, because the project's answer so far is to measure what
+it can and decline the experiment it cannot yet run cleanly, which is the same discipline that
+produced everything else in this paper.
 
 ## References
 
@@ -473,21 +543,48 @@ In-repo primary sources cited above: `ROADMAP.md`, `README.md`, `ARCHITECTURE.md
 `TRUST.md`, `CONTINUITY.md`, `docs/decision-ledger.md`, `docs/benchmarks.md`,
 `docs/roadmap-ii/SLO-BASELINES.md`, `docs/roadmap-ii/CORPUS-PROVENANCE-AUDIT.md`,
 `docs/roadmap-ii/THREAT-MODEL.md`, `docs/roadmap-ii/CURRENT-STATE.md`, `docs/roadmap-ii/DX-AUDIT.md`,
-`docs/roadmap-ii/PROGRAM.md`. Release evidence: dispatch 000267 (freeze 1B) outbox and its measurement
-artifacts, keyed to commit `fb3116c`. External sources to be cited at finalization by primary URL and
-retrieval date: the upstream issues named in `ROADMAP.md` "Gated and paced," and the LSP and SLSA
-specifications.
+`docs/roadmap-ii/PROGRAM.md`. Release evidence: the raw measurement set is published at
+`evidence/v1.32.0/` in this repository (the M1-M4b result JSONs, the `equality-*` proof chain, the
+harness scripts, and an environment manifest), originating from the dispatch 000267 (freeze 1B) outbox
+and keyed to commit `af6996f` carried to `fb3116c`. External sources: the Language Server Protocol
+specification (https://microsoft.github.io/language-server-protocol/), the SLSA v1.0 specification
+(https://slsa.dev/spec/v1.0/), and the upstream configuration issue that gates native navigation,
+`anthropics/claude-code#86936` (https://github.com/anthropics/claude-code/issues/86936); the full set
+of upstream gates is enumerated in `ROADMAP.md` "Gated and paced."
 
 ## Appendix A -- Reproduction
 
 - Corpus correctness is recomputed and guarded on every CI run
   (`tests/PowerShellLsp.Corpus.Tests.ps1`) **[V]**.
-- The SLO harness for the shipped-commit measurement is preserved in the dispatch 000267 artifacts
-  (`stage-c.ps1`, `prove-equals-c.ps1`, `measure.ps1`, `run-quant.ps1`), including the
-  script-tree-equals-commit proof and the constructed air-gap gate **[V]**.
-- A reader can verify a downloaded release with `gh attestation verify` against the published SBOM and
-  provenance, and confirm the tag with `gitsign verify`; both were verified bound to `fb3116c`
-  (`README.md`, "Verifying your install and a release"; `TRUST.md`) **[V]**.
+- **The measurement pack is published two ways, verifiable against one manifest.** The harness and
+  raw results live in-tree at `evidence/v1.32.0/` and, byte-identical, as an attested release asset
+  (`powershell-lsp-evidence-1.32.0.zip`) on the v1.32.0 release. Under `harness/` the bundle carries
+  the full harness -- the quantitative suite (`run-quant.ps1`, `measure.ps1`, `stage-c.ps1`,
+  `prove-equals-c.ps1`) and the release-gate scripts (`airgap-gate.ps1`, `license-gate.ps1`,
+  `repo-gates.ps1`, `verify-cprime.ps1`, `prove-guard-fix.ps1`, `run-gates.ps1`,
+  `cleaninstall-doctor-gate.ps1`); under `results/` the raw outputs (the M1-M4b JSONs, the
+  `equality-*` proof chain, the gate results, and `doctor-output.txt`); plus a `README.md` and a
+  `SHA256SUMS.txt` over every file **[V]**. The measured commit stamped in each result JSON is
+  `af6996f`; `results/cprime-verify.json` proves the carry-forward to `fb3116c` **[V]**.
+- **Verify the raw evidence, in-tree.** From a checkout of this repository, re-hash the bundle
+  against its own manifest -- on Linux/macOS, `cd evidence/v1.32.0 && sha256sum -c SHA256SUMS.txt`;
+  on Windows PowerShell, read `SHA256SUMS.txt` and compare each line's hash to
+  `Get-FileHash -Algorithm SHA256` of the named file. Any mismatch means the evidence was altered
+  **[V]**.
+- **Verify the same evidence as an attested asset.** Download the release asset and confirm its build
+  provenance, then re-hash it against the identical manifest:
+
+  ```
+  gh release download v1.32.0 --repo manderse21/claude-powershell-lsp --pattern powershell-lsp-evidence-1.32.0.zip
+  gh attestation verify powershell-lsp-evidence-1.32.0.zip --repo manderse21/claude-powershell-lsp
+  ```
+
+  The two roads -- a version-controlled tree and a cryptographically attested asset -- resolve to the
+  same `SHA256SUMS.txt`, so a reader need trust neither the repository state nor the asset alone
+  **[V]**.
+- A reader can likewise verify a downloaded **release** with `gh attestation verify` against the
+  published SBOM and provenance, and confirm the tag with `gitsign verify`; both were verified bound
+  to `fb3116c` (`README.md`, "Verifying your install and a release"; `TRUST.md`) **[V]**.
 
 ## Appendix B -- Open evidence gaps
 
