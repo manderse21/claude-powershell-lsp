@@ -1116,19 +1116,61 @@ function Write-StatsLine {
 # occurrence (two identical diagnostics -> two entries); the hash is an ANALYSIS-time dedup
 # key only.
 #
-# THE NEVER-COMMIT FENCE: the log holds REAL source snippets. It is gitignored and must
-# NEVER be staged, added, or committed (see .gitignore and the README dogfood section).
+# THE NEVER-COMMIT FENCE: the log holds REAL source snippets. Since the T2.3 relocation below
+# it lands under CLAUDE_PLUGIN_DATA -- outside every git tree -- so it is structurally
+# uncommittable rather than merely gitignored. The `/dogfood/` .gitignore entry is retained to
+# keep pre-relocation logs already sitting in a checkout covered.
+
+function Get-DogfoodDir {
+    # The directory the capture log and its rotated members live in.
+    return (Join-Path (Get-PluginDataRoot) 'dogfood')
+}
 
 function Get-DogfoodLogPath {
     # Resolve the dogfood capture log path. Precedence:
     #   1. $env:POWERSHELL_LSP_DOGFOOD_LOG -- an explicit full-path override (a test seam and
     #      an advanced-relocation escape hatch). Honored verbatim.
-    #   2. <plugin-root>/dogfood/diagnostics.jsonl -- the default. The root is resolved the
-    #      SAME way as Get-PluginManifestPath: walk up from this lib's dir (scripts/lib ->
-    #      scripts -> root); fall back to $env:CLAUDE_PLUGIN_ROOT.
-    # Returns '' when the root cannot be resolved -- the caller's append then fails safe and
-    # surfaces nothing. The log lands in whichever plugin tree is running; for dogfooding
-    # that is the dev clone, whose .gitignore covers it.
+    #   2. <data-root>/dogfood/diagnostics.jsonl -- the default.
+    #
+    # T2.3 (threat model section 8, ruled FIX 2026-08-21): this used to resolve under the
+    # PLUGIN ROOT by walking up from this lib's dir. That made the plugin tree -- documented as
+    # read-only by ARCHITECTURE.md ("Where state lives"), by TRUST.md, and by this very file's
+    # own header ("Never under CLAUDE_PLUGIN_ROOT (read-only plugin tree)") -- written at
+    # runtime on every surfaced diagnostic. The contradiction was real in both directions: a
+    # reviewer allow-listing the plugin root by path was told it was read-only, and a reader
+    # looking for captured snippets under the data root would not find them.
+    #
+    # Relocation, not a documentation edit, is the fix that makes all three statements true.
+    #
+    # A SECOND DEFECT CLOSES WITH IT. Under the old resolution the log lived in whichever
+    # plugin tree was running, so every marketplace-cache upgrade started an EMPTY log and
+    # stranded the previous one at <cache>/powershell-lsp/<version>/dogfood/. Accrual for the
+    # rule-curation lane fragmented across version roots by construction. The data root does
+    # not carry a version segment, so captures now accrue in ONE place across upgrades.
+    #
+    # Pre-relocation logs are neither moved nor deleted: Get-LegacyDogfoodLogPath below and the
+    # reader's `cache` source still reach them read-only. A write-time migration was rejected --
+    # this is a fail-safe side channel that must never throw, and copying multi-megabyte user
+    # data on a hook path to satisfy tidiness is the wrong trade (the live dev-clone log
+    # measured 5,279,427 bytes / 10,161 rows on 2026-08-21).
+    $override = $env:POWERSHELL_LSP_DOGFOOD_LOG
+    if (-not [string]::IsNullOrWhiteSpace($override)) { return $override }
+    $dir = ''
+    try { $dir = Get-DogfoodDir } catch { $dir = '' }
+    if ([string]::IsNullOrWhiteSpace($dir)) { return '' }
+    return (Join-Path $dir 'diagnostics.jsonl')
+}
+
+function Get-LegacyDogfoodLogPath {
+    # The PRE-T2.3 capture-log location: <plugin-root>/dogfood/diagnostics.jsonl, with the root
+    # resolved the SAME way as Get-PluginManifestPath (walk up from this lib's dir: scripts/lib
+    # -> scripts -> root; fall back to $env:CLAUDE_PLUGIN_ROOT). Returns '' when the root cannot
+    # be resolved.
+    #
+    # READ-ONLY BY CONTRACT. Nothing writes here any more. It exists so the reader's `checkout`
+    # source keeps reaching a running tree's historical captures instead of reporting a false
+    # zero -- the exact failure mode the reader's own 000088 header warns about. Kept as a
+    # separate function rather than a flag so the write-side resolver has exactly one answer.
     $override = $env:POWERSHELL_LSP_DOGFOOD_LOG
     if (-not [string]::IsNullOrWhiteSpace($override)) { return $override }
     $libDir = $script:LspCommonDir
@@ -1143,6 +1185,101 @@ function Get-DogfoodLogPath {
     }
     if ([string]::IsNullOrWhiteSpace($root)) { return '' }
     return (Join-Path $root 'dogfood/diagnostics.jsonl')
+}
+
+function Get-CaptureLogRotateBytes {
+    # The size at which the capture log rotates (T6.4). Default 8 MB; overridable through
+    # $env:POWERSHELL_LSP_CAPTURE_ROTATE_BYTES, which is a TEST SEAM in the same family as
+    # POWERSHELL_LSP_DOGFOOD_LOG -- deliberately an env var and NOT a userConfig knob, because
+    # the knob names are a drift-guarded public contract and because T6.1 is ACCEPTED-WITH-
+    # RECORD: nothing here may become a gate on the capture channel itself. A non-numeric or
+    # non-positive value falls back to the default rather than disabling the bound.
+    $default = 8MB
+    $raw = $env:POWERSHELL_LSP_CAPTURE_ROTATE_BYTES
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $default }
+    $parsed = 0L
+    if (-not [long]::TryParse($raw, [ref]$parsed)) { return $default }
+    if ($parsed -le 0) { return $default }
+    return $parsed
+}
+
+function Invoke-CaptureLogRotation {
+    # Bound the capture log (T6.4, threat model section 8, ruled FIX 2026-08-21).
+    #
+    # THE FINDING, MEASURED not assumed. session-start.ps1's Invoke-LogSweep bounds only STAMPED
+    # ROLLING FAMILIES -- it derives a stem by collapsing -\d{8}-\d{6}-\d{3} to -STAMP and skips
+    # any name that does not change, which is every single-append log. diagnostics.jsonl is a
+    # single append log, so it was swept by nothing and grew for the life of the install. On
+    # 2026-08-21 the live dev-clone log measured 5,279,427 bytes over 10,161 rows (~520 bytes a
+    # row) with no mechanism that would ever have stopped it.
+    #
+    # THE FIX IS SHAPED LIKE THE SWEEP, not bolted beside it. Rather than truncating the log or
+    # teaching the sweep a second concept, rotation RENAMES the over-cap log to
+    # diagnostics-<yyyyMMdd-HHmmss-fff>.jsonl -- which IS the stamped-family shape the existing
+    # sweep already recognises. The bound then comes from the sweep's own keepLastN, with zero
+    # new retention policy:
+    #
+    #   ceiling = (keepLastN + 1) * rotate-bytes = 11 * 8 MB = 88 MB at the shipped default
+    #
+    # and the ACTIVE log alone holds ~16,100 rows at the measured row size -- more than the
+    # entire historical accrual above -- so the rule-curation lane's window is never narrower
+    # than the history it has ever actually had.
+    #
+    # FAIL-SAFE, like every other capture-path operation: any failure is swallowed and the log
+    # is left exactly as it was. A rotation that threw would be worse than a log that grew.
+    # Returns the rotated path when it rotated, '' otherwise.
+    param([string]$LogPath = '')
+    try {
+        $path = $LogPath
+        if ([string]::IsNullOrWhiteSpace($path)) { $path = Get-DogfoodLogPath }
+        if ([string]::IsNullOrWhiteSpace($path)) { return '' }
+        $item = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+        if ($null -eq $item -or $item.PSIsContainer) { return '' }
+        if ($item.Length -lt (Get-CaptureLogRotateBytes)) { return '' }
+        $dir = Split-Path -Parent $path
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($path)
+        $ext = [System.IO.Path]::GetExtension($path)
+        $stamp = (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
+        $target = Join-Path $dir ($base + '-' + $stamp + $ext)
+        # A same-millisecond collision would make Move-Item throw; step the stamp instead.
+        $n = 0
+        while ((Test-Path -LiteralPath $target) -and $n -lt 1000) {
+            $n++
+            $target = Join-Path $dir ($base + '-' + $stamp.Substring(0, $stamp.Length - 3) + ('{0:D3}' -f ($n % 1000)) + $ext)
+        }
+        if (Test-Path -LiteralPath $target) { return '' }
+        Move-Item -LiteralPath $path -Destination $target -Force -ErrorAction Stop
+        return $target
+    } catch { return '' }
+}
+
+function Get-CaptureLogFamily {
+    # Every retained member of the capture log's rolling family, OLDEST FIRST, ending with the
+    # ACTIVE log. Rotation moves history out of diagnostics.jsonl, so a reader that opened only
+    # that file would report a near-empty corpus the first time a rotation fired -- the same
+    # false-zero shape the reader's own header warns about. This is what keeps the union honest.
+    #
+    # Returns @() when the log's directory does not exist. Never throws.
+    param([string]$LogPath = '')
+    try {
+        $path = $LogPath
+        if ([string]::IsNullOrWhiteSpace($path)) { $path = Get-DogfoodLogPath }
+        if ([string]::IsNullOrWhiteSpace($path)) { return @() }
+        $dir = Split-Path -Parent $path
+        if ([string]::IsNullOrWhiteSpace($dir) -or -not (Test-Path -LiteralPath $dir)) { return @() }
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($path)
+        $ext = [System.IO.Path]::GetExtension($path)
+        # The stamp is fixed-width and lexically ordered, so sorting the NAMES sorts by time --
+        # no LastWriteTime read, which a copy or a restore would have scrambled.
+        $pattern = '^' + [regex]::Escape($base) + '-\d{8}-\d{6}-\d{3}' + [regex]::Escape($ext) + '$'
+        $rotated = @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match $pattern } |
+                Sort-Object Name |
+                ForEach-Object { $_.FullName })
+        $out = @($rotated)
+        if (Test-Path -LiteralPath $path -PathType Leaf) { $out += $path }
+        return @($out)
+    } catch { return @() }
 }
 
 function Get-DiagnosticShapeHash {
@@ -1474,6 +1611,64 @@ function Get-ProcessCommandLine {
     } catch { return '' }
 }
 
+function Test-PipeOptionSupported {
+    # $true iff this host's System.IO.Pipes.PipeOptions enum carries $Name.
+    #
+    # RUNTIME CAPABILITY, NOT PLATFORM NAME. The enum member is resolved by NAME rather than
+    # written as a `::CurrentUserOnly` literal, because a literal is a COMPILE-time member
+    # reference: on a host whose enum lacks it the expression throws, and the daemon would die
+    # at pipe construction rather than fall back. Measured 2026-08-21 on this repo's own two
+    # Windows CI hosts -- pwsh 7.6.5 lists None,Asynchronous,WriteThrough,CurrentUserOnly;
+    # Windows PowerShell 5.1.26100.9168 (.NET Framework) lists ONLY
+    # None,Asynchronous,WriteThrough. CurrentUserOnly arrived with .NET Core 3.0 and was never
+    # back-ported, so the `windows-powershell` CI leg is exactly the host that needs the guard.
+    param([Parameter(Mandatory)][string]$Name)
+    try { return ([enum]::GetNames([System.IO.Pipes.PipeOptions]) -contains $Name) } catch { return $false }
+}
+
+function Get-DaemonPipeOptions {
+    # The PipeOptions the daemon's server stream is created with (T5.1).
+    #
+    # THE MEASUREMENT THAT MOTIVATES THIS, taken 2026-08-21 against this exact constructor on
+    # Windows 11 10.0.26200 / pwsh 7.6.5 by reading the KERNEL object's security descriptor off
+    # the live SafePipeHandle (GetSecurityInfo, SE_KERNEL_OBJECT). The shipped pipe carried the
+    # OS DEFAULT named-pipe DACL:
+    #
+    #   D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;<invoking user>)(A;;FR;;;WD)(A;;FR;;;AN)
+    #
+    # The last two ACEs are the finding: WD is Everyone and AN is Anonymous, each granted
+    # FILE_GENERIC_READ. Every local principal could open the daemon's pipe for read. What
+    # crosses that pipe is diagnostics -- absolute file paths and verbatim source lines from
+    # the file being edited -- so this is a local-disclosure surface, not a theoretical one.
+    # T5.1 had stood as "unknown" precisely because nobody had measured it; measured, it is
+    # permissive beyond the invoking user, which is the arm Mike's R1 grant pre-authorized.
+    #
+    # With CurrentUserOnly the same measurement reads:
+    #
+    #   D:(A;;0x1f019f;;;<invoking user>)
+    #
+    # -- Everyone and Anonymous gone, the invoking user holding full pipe access. Nothing else
+    # about the pipe changes: InOut, one instance, Byte mode and Asynchronous are untouched, so
+    # the single-instance property Test-DaemonPipePresent's busy-vs-unreachable discriminator
+    # depends on is preserved.
+    #
+    # WHY THE CLIENTS ARE NOT CHANGED. CurrentUserOnly is asymmetric by design: on the SERVER it
+    # restricts who may connect; on a CLIENT it additionally verifies the server's identity.
+    # Setting it server-side alone is what the finding asks for, and it leaves every shipped
+    # client construction byte-identical -- including the doctor's probe and the Unix presence
+    # probe -- so no client contract moves.
+    #
+    # OFF-WINDOWS. .NET backs a named pipe with a unix domain socket file; CurrentUserOnly
+    # narrows that file's permissions to the owner instead of writing a DACL. The socket path
+    # (<temp>/CoreFxPipe_<name>) is unchanged, so Test-DaemonPipePresent's Unix arm still
+    # resolves and still connects as the same user. The four CI legs are the check on that.
+    $opts = [System.IO.Pipes.PipeOptions]::Asynchronous
+    if (Test-PipeOptionSupported -Name 'CurrentUserOnly') {
+        $opts = $opts -bor ([System.IO.Pipes.PipeOptions]'CurrentUserOnly')
+    }
+    return $opts
+}
+
 function New-DaemonPipeServer {
     # THE daemon's pipe-server constructor, in ONE place (dispatch 000237).
     #
@@ -1486,11 +1681,12 @@ function New-DaemonPipeServer {
     #
     # The arguments are the shipped ones, unchanged: InOut, ONE instance (the single-instance
     # property the busy-vs-unreachable discriminator in Test-DaemonPipePresent depends on),
-    # Byte transmission, Asynchronous (the serve loop accepts via WaitForConnectionAsync).
+    # Byte transmission, Asynchronous (the serve loop accepts via WaitForConnectionAsync) --
+    # plus CurrentUserOnly where the host offers it (T5.1, see Get-DaemonPipeOptions).
     param([Parameter(Mandatory)][string]$PipeName)
     return New-Object System.IO.Pipes.NamedPipeServerStream(
         $PipeName, [System.IO.Pipes.PipeDirection]::InOut, 1,
-        [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous)
+        [System.IO.Pipes.PipeTransmissionMode]::Byte, (Get-DaemonPipeOptions))
 }
 
 function Reset-PipeServerConnection {

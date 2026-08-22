@@ -62,6 +62,59 @@ from these pages.
 The provenance audit's per-file `GPL-3.0-or-later` License column is **deliberately preserved, not
 rewritten**: it records what an instrument observed on a dated tree, and a dated note now heads the
 document pointing forward to the current license. Historical records stay true.
+
+PATCH: the first hardening slice chartered off `docs/roadmap-ii/THREAT-MODEL.md` -- three findings
+close, two of them by measurement.
+
+### Changed
+
+- **The dogfood capture log moved out of the plugin tree** (threat-model finding **T2.3**). It now
+  lands at `dogfood/diagnostics.jsonl` under **`CLAUDE_PLUGIN_DATA`**, beside the logs, pids and
+  session files, instead of under `CLAUDE_PLUGIN_ROOT`. `ARCHITECTURE.md`, `TRUST.md` and the shared
+  library's own header all describe the plugin tree as read-only; the capture was writing to it on
+  every surfaced diagnostic, so the code moved to match the documented contract rather than the
+  documentation being softened to match the code.
+
+  A second, quieter defect closes with it: the plugin tree is a *versioned* marketplace-cache
+  directory, so every upgrade previously started an empty log and stranded the old one. Capture
+  history for the rule-curation lane fragmented across version roots by construction. The data root
+  carries no version segment, so captures now accrue in one place across upgrades.
+
+  **No log is moved or deleted, and nothing is orphaned.** Pre-relocation logs stay readable:
+  `scripts/review-dogfood.ps1` and `scripts/rule-efficacy-ledger.ps1` gain a `-Source data` rung for
+  the new location, `auto`/`union` lead with it, and the existing `cache` and `checkout` rungs still
+  reach the older locations.
+
+- **The daemon's pipe is now restricted to the invoking user** where the host supports it
+  (threat-model finding **T5.1**, previously *unknown* because it had never been measured). Measured
+  on Windows 11 / pwsh 7.6.5 by reading the kernel object's security descriptor off the live pipe
+  handle, the pipe carried the OS default DACL, which grants **Everyone** and **Anonymous**
+  `FILE_GENERIC_READ`. Diagnostics -- absolute paths and verbatim source lines -- cross that pipe, so
+  the server stream now sets `PipeOptions.CurrentUserOnly`, leaving `D:(A;;0x1f019f;;;<user>)`.
+
+  The option is resolved by **name at runtime**, not written as a compile-time enum literal:
+  `CurrentUserOnly` arrived with .NET Core 3.0 and does not exist under Windows PowerShell 5.1, where
+  a literal would have thrown at daemon start. On such a host the shipped options are used unchanged.
+  Client constructions are untouched, and the pipe's single-instance property -- which the
+  busy-versus-unreachable discriminator depends on -- is unchanged.
+
+### Added
+
+- **The capture log is now size-bounded** (threat-model finding **T6.4**). It was a single append-only
+  file the `keepLastN` sweep never touched, because that sweep bounds only stamped rolling families;
+  a live log measured 5,279,427 bytes over 10,161 rows with nothing that would ever have stopped it.
+  At session start a log at or past **8 MB** is renamed to `diagnostics-<yyyyMMdd-HHmmss-fff>.jsonl`
+  -- which *is* the stamped-family shape the existing sweep already recognises -- so the bound comes
+  from the sweep's own `keepLastN` and no second retention policy exists. The ceiling is
+  `(keepLastN + 1) x 8 MB`, i.e. **88 MB** at the shipped default.
+
+  Rotation renames rather than truncates, so no byte is lost, and every reader reads the **whole
+  retained family** -- bounding the log does not narrow what a review or the efficacy ledger sees.
+  `POWERSHELL_LSP_CAPTURE_ROTATE_BYTES` overrides the threshold for testing; a non-numeric or
+  non-positive value falls back to the default rather than disabling the bound.
+
+No `userConfig` knob name and no status token changed.
+
 ## [1.32.0] - 2026-08-19
 MINOR: **the `orgPolicy` file can now be integrity-pinned with a `.sha256` companion**, **the two
 pinned dependencies can be installed from an internal mirror or a pre-staged bundle** so a machine

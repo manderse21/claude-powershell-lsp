@@ -97,11 +97,18 @@ function Get-SessionIdFromStdin {
     } catch { return $null }
 }
 
-function Invoke-LogSweep([int]$keep) {
+function Invoke-LogSweep([int]$keep, [string]$dir = '') {
     # Rolling families carry a -yyyyMMdd-HHmmss-fff stamp; group by the stem and
     # keep the newest N of each. Single append logs (one file) are untouched.
+    #
+    # T6.4: the directory is now a PARAMETER (defaulting to $logDir, so the existing call site
+    # is behaviour-identical) so the same sweep also bounds the capture log's rotated family
+    # under Get-DogfoodDir. One retention policy, two directories -- not a second policy.
     try {
-        $items = Get-ChildItem -LiteralPath $logDir -Force -ErrorAction SilentlyContinue
+        $sweepDir = $dir
+        if ([string]::IsNullOrWhiteSpace($sweepDir)) { $sweepDir = $logDir }
+        if ([string]::IsNullOrWhiteSpace($sweepDir) -or -not (Test-Path -LiteralPath $sweepDir)) { return }
+        $items = Get-ChildItem -LiteralPath $sweepDir -Force -ErrorAction SilentlyContinue
         $groups = @{}
         foreach ($it in $items) {
             $stem = [System.Text.RegularExpressions.Regex]::Replace($it.Name, '-\d{8}-\d{6}-\d{3}', '-STAMP')
@@ -241,6 +248,17 @@ try {
 
     # 3) log sweep
     Invoke-LogSweep $KeepLastN
+    # 3b) bound the capture log (T6.4). Rotate it past its cap into the stamped-family shape,
+    # then sweep that family with the SAME keepLastN the log sweep above uses, so the capture
+    # log's ceiling is (keepLastN + 1) * rotate-bytes and no new retention policy exists.
+    # Fail-safe throughout: Invoke-CaptureLogRotation swallows its own errors and returns ''.
+    try {
+        $rotated = Invoke-CaptureLogRotation
+        if (-not [string]::IsNullOrWhiteSpace($rotated)) {
+            Write-SLog ('capture log rotated to ' + (Split-Path -Leaf $rotated))
+        }
+        Invoke-LogSweep $KeepLastN (Get-DogfoodDir)
+    } catch { Write-SLog ('capture log bound error: ' + $_.Exception.Message) }
 
     # 4) reap stale daemons (and supersede any prior daemon for this session)
     Invoke-Reap $sessionId

@@ -47,10 +47,11 @@ for how it works.
   explains** it (see [Honest degradation](#honest-degradation-the-l3-behavior)); it never
   bypasses it.
 
-> A local data-capture log (`dogfood/diagnostics.jsonl`) records the diagnostics the tool
-> surfaces, for offline quality work. It is **local-only, gitignored, and never
-> transmitted** (see [docs/dogfood.md](docs/dogfood.md)). Optional `enableStats`
-> (default **off**) appends local timing lines. Neither leaves the machine.
+> A local data-capture log (`dogfood/diagnostics.jsonl`, under `CLAUDE_PLUGIN_DATA`) records
+> the diagnostics the tool surfaces, for offline quality work. It is **local-only and never
+> transmitted**, and it is **size-bounded** by the same `keepLastN` sweep that bounds the other
+> logs (see [docs/dogfood.md](docs/dogfood.md)). Optional `enableStats` (default **off**)
+> appends local timing lines. Neither leaves the machine.
 
 ## Why ExecutionPolicy Bypass appears in every hook entry point
 

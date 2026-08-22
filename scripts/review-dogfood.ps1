@@ -69,18 +69,20 @@ param(
     # empty -- the log is then chosen by -Source below.
     [string] $Path = '',
 
-    # WHICH dogfood log the reader reads (dispatch 000088). READ-SIDE only -- this NEVER affects
-    # where the hook WRITES (Get-DogfoodLogPath's write-side is untouched):
-    #   auto      (default) the INSTALLED marketplace-cache log when it exists and is non-empty --
-    #             the log the LIVE hook writes to under normal installed use -- else the running-
-    #             tree (checkout) log. So a review run FROM the dev checkout stops seeing ZERO of
-    #             the real captures.
+    # WHICH dogfood log the reader reads (dispatch 000088; the 'data' rung added by T2.3).
+    # READ-SIDE only -- this NEVER decides where the hook WRITES:
+    #   auto      (default) the DATA-ROOT log when it exists and is non-empty -- the log the LIVE
+    #             hook writes to since the T2.3 relocation -- else the installed marketplace-cache
+    #             log, else the running-tree (checkout) log. The two lower rungs are where captures
+    #             landed BEFORE the relocation and are retained so that history stays readable.
+    #   data      force the data-root log under CLAUDE_PLUGIN_DATA (the live write target).
     #   cache     force the installed marketplace-cache log (the versioned path is DISCOVERED, never
-    #             hardcoded; follows CLAUDE_PLUGIN_ROOT when set).
-    #   checkout  force the running-tree log (the pre-000088 behavior: Get-DogfoodLogPath, reused
-    #             READ-ONLY).
-    # -Path always wins over -Source.
-    [ValidateSet('auto', 'cache', 'checkout')]
+    #             hardcoded; follows CLAUDE_PLUGIN_ROOT when set). PRE-RELOCATION history.
+    #   checkout  force the running-tree log (Get-LegacyDogfoodLogPath, READ-ONLY). PRE-RELOCATION
+    #             history; nothing writes there any more.
+    # -Path always wins over -Source. Whichever log is chosen, its RETAINED ROTATED MEMBERS are
+    # read with it (T6.4), so bounding the log is not a bound on what the reader can see.
+    [ValidateSet('auto', 'data', 'cache', 'checkout')]
     [string] $Source = 'auto',
 
     # Explicit annotations.jsonl to read/write. Default: annotations.jsonl beside the log.

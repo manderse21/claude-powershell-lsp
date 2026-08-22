@@ -9,8 +9,31 @@ Neither changes what the daemon or hooks run, and neither alters the diagnostics
 
 ## Capture
 
-- **Where:** `dogfood/diagnostics.jsonl` in the plugin tree. Override with the
+- **Where:** `dogfood/diagnostics.jsonl` under **`CLAUDE_PLUGIN_DATA`** -- the same data root that
+  holds the logs, pids, session files and the vendored analyzer. Override with the
   `POWERSHELL_LSP_DOGFOOD_LOG` environment variable (a full path to the `.jsonl` file).
+
+  > **Relocated (threat-model finding T2.3).** This log used to live in the **plugin tree**, which
+  > `ARCHITECTURE.md`, `TRUST.md` and the shared library's own header all describe as read-only.
+  > Writing it there contradicted that in both directions, so the log moved rather than the
+  > documentation. A second problem closed with it: because the plugin tree is a *versioned*
+  > marketplace-cache directory, every upgrade used to start an empty log and strand the previous
+  > one, fragmenting the capture history the rule-curation lane depends on. The data root carries no
+  > version segment, so captures now accrue in one place across upgrades.
+  >
+  > **Nothing was moved or deleted.** Pre-relocation logs stay exactly where they are and stay
+  > readable -- `-Source cache` reaches the per-version cache logs and `-Source checkout` reaches a
+  > running tree's log. Only the write target changed.
+
+- **Bounded (threat-model finding T6.4):** the capture log is no longer unbounded. At session start,
+  a log at or past **8 MB** is renamed to `diagnostics-<yyyyMMdd-HHmmss-fff>.jsonl`, which makes it a
+  member of the same **stamped rolling family** the existing `keepLastN` log sweep already trims. The
+  ceiling is therefore `(keepLastN + 1) x 8 MB` -- **88 MB** at the shipped default -- with no second
+  retention policy to keep in step. Rotation preserves every byte (it renames, never truncates), and
+  every reader reads the **whole retained family**, so bounding the log does not narrow what a review
+  or the efficacy ledger can see. `POWERSHELL_LSP_CAPTURE_ROTATE_BYTES` overrides the threshold for
+  testing; a non-numeric or non-positive value falls back to the default rather than disabling the
+  bound.
 - **What:** one JSON object per line, one line per diagnostic **occurrence** -- two identical
   diagnostics make two lines (frequency is the signal; de-duplication is an analysis-time concern,
   never a capture-time one). Each entry carries: `ts` (ISO-8601), `file`, `line`, `col`, `ruleId`
@@ -23,9 +46,10 @@ Neither changes what the daemon or hooks run, and neither alters the diagnostics
   fail-safe. If the write fails for any reason, the diagnostics you see and the hook's exit code
   are byte-for-byte unchanged; logging never changes, reorders, delays, or gates what is surfaced.
 
-> **Never commit this log.** It holds **real source snippets** from the files you edit. The whole
-> `dogfood/` directory is gitignored (see `.gitignore`) and must never be staged, added, or
-> committed -- do not weaken that entry.
+> **Never commit this log.** It holds **real source snippets** from the files you edit. Since the
+> T2.3 relocation it lives under `CLAUDE_PLUGIN_DATA`, outside every git tree, so it is now
+> *structurally* uncommittable rather than merely ignored. The `/dogfood/` entry in `.gitignore` is
+> retained because pre-relocation logs may still be sitting in a checkout -- do not weaken it.
 
 ## Review
 
@@ -50,12 +74,15 @@ quality work (rule curation, false-positive reduction, fix quality).
   rules -- those verdicted false-positive / noisy / bad-fix -- ranked by occurrence count). Writing a
   verdict is the explicit action.
 - **Reading the right log (`-Source`):** by default (`-Source auto`) the reviewer reads the
-  **installed marketplace-cache** log -- the one the live hook writes to under normal installed use --
-  when it exists and is non-empty, so a review run from the dev checkout is not blind to the real
-  captures; otherwise it falls back to the running-tree (checkout) log. Force one with `-Source cache`
-  or `-Source checkout`. The versioned cache path is **discovered** (it follows `CLAUDE_PLUGIN_ROOT`
-  when set, else picks the current installed version under the plugin cache tree) -- never hardcoded.
-  This is a read-side locator only; it never changes where the hook writes.
+  **data-root** log -- the one the live hook writes to since the T2.3 relocation -- when it exists and
+  is non-empty; failing that the **installed marketplace-cache** log; failing that the running-tree
+  (checkout) log. The lower two rungs are where captures landed *before* the relocation, and they are
+  retained so that history stays readable rather than being orphaned by the move. Force one with
+  `-Source data`, `-Source cache` or `-Source checkout`. The versioned cache path is **discovered**
+  (it follows `CLAUDE_PLUGIN_ROOT` when set, else picks the current installed version under the plugin
+  cache tree) -- never hardcoded. This is a read-side locator only; it never changes where the hook
+  writes. Whichever rung is chosen, its **retained rotated members are read with it**, so the T6.4
+  bound on the log is not a bound on what you can review.
 - **Source split:** the summary also buckets captures **by source** -- `canonical-checkout` (edits of
   the real checkout), `other-genuine` (linked worktrees, the demo recording, other repos), and
   `synthetic` (temp / Pester-fixture paths) -- so the quality wave can tell real canonical source from
@@ -65,7 +92,7 @@ quality work (rule curation, false-positive reduction, fix quality).
   non-interactive host it falls back to the read-only listing instead of blocking).
 - Use `-Redact` to mask the offending-line snippet in listings when sharing a review. Other flags:
   `-Summary` (summary only), `-All` (list every shape, not just pending), `-Source`
-  (`auto` / `cache` / `checkout`), `-Path` and `-AnnotationsPath` (point at explicit files).
+  (`auto` / `data` / `cache` / `checkout`), `-Path` and `-AnnotationsPath` (point at explicit files).
 
 ```text
 pwsh -File scripts/review-dogfood.ps1
