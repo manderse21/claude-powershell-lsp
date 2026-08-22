@@ -505,10 +505,35 @@ jobs:
       # step is already `if: ${{ !inputs.dry_run }}`, so a rehearsal neither uploads nor mentions
       # the map, and the airgap bundle stays the only asset step a dry run executes.
       #
-      # The list assumes the TARGET COMMIT carries docs/control-map.html. That is guaranteed by a
-      # human gate, not by this file: docs/RELEASING.md step 5 confirms the map is present at the
-      # target commit and its stamp is current before the tag is cut. A target commit predating the
-      # map would fail this step AFTER the tag was pushed, which is exactly why the gate is pre-tag.
+      # The control map is the ONE asset in this list that comes from the CHECKED-OUT TARGET
+      # rather than from a build step, so it is the one that can be absent -- and it is therefore
+      # GUARDED below rather than assumed.
+      #
+      # THE SPLIT THIS GUARD EXISTS FOR (v1.33.0, run 32585972425). This comment previously read
+      # "the list assumes the TARGET COMMIT carries docs/control-map.html ... guaranteed by a human
+      # gate", deferring to docs/RELEASING.md step 5, and correctly predicted the failure: "a target
+      # commit predating the map would fail this step AFTER the tag was pushed". That is exactly
+      # what happened. v1.33.0 was frozen at 6ab2d24; the map landed on main afterwards in 66b9522
+      # (PR #195). A workflow_dispatch run executes THIS FILE FROM main while checking out the
+      # TARGET, so the run carried an asset line for a file its own checkout did not have. Gates
+      # 1-6 passed, the signed tag was cut and pushed at the previous step, and THIS step then
+      # failed -- leaving a tag with no Release and orphaned provenance attestations.
+      #
+      # The human gate could not have closed it. Step 5 asks the maintainer to confirm the map is
+      # present at the target; the target was chosen and frozen BEFORE the map existed anywhere, so
+      # there was no moment at which a human inspecting C could have found it. The exposure is
+      # structural -- target-vs-main drift -- and belongs here, in the file that has the target
+      # checked out, not in a runbook.
+      #
+      # Absence is ANNOUNCED, not swallowed: a ::notice:: names the target commit, so a release that
+      # ships without the map says so in its own run log. DRY-RUN BEHAVIOUR IS UNCHANGED -- the step
+      # keeps its `if: ${{ !inputs.dry_run }}`, so a rehearsal still neither uploads nor mentions the
+      # map, and the airgap bundle stays the only asset step a dry run executes.
+      #
+      # The control map (dispatch 000274) rides this list rather than a step of its own. It is a
+      # DERIVED VIEW of ROADMAP.md and docs/decision-ledger.md -- never a second plan of record --
+      # published as an asset so a reader gets the map AS OF the version they downloaded, immutable
+      # once published, instead of a mutable page that drifts out from under every past release.
       - name: Create the GitHub Release (CHANGELOG notes + SBOM + airgap bundle + control map + provenance-attested archive)
         if: ${{ !inputs.dry_run }}
         shell: bash
@@ -518,15 +543,25 @@ jobs:
           set -euo pipefail
           V="${{ steps.resolve.outputs.version }}"
           TAG="${{ steps.resolve.outputs.tag }}"
+          TARGET="${{ steps.resolve.outputs.target }}"
+          # The three built assets are produced into the workspace by earlier steps in this job, so
+          # they are always present; only the repo-sourced map is conditional.
+          ASSETS=(
+            "powershell-lsp-$V.tar.gz"
+            "powershell-lsp-$V.cdx.json"
+            "powershell-lsp-airgap-$V.zip"
+          )
+          if [[ -f "docs/control-map.html" ]]; then
+            ASSETS+=("docs/control-map.html")
+          else
+            echo "::notice::docs/control-map.html is not present at target commit $TARGET -- creating the release WITHOUT the control map asset. Every other asset is unaffected."
+          fi
           gh release create "$TAG" \
             --title "powershell-lsp $TAG" \
             --notes-file release-notes.md \
-            --target "${{ steps.resolve.outputs.target }}" \
-            "powershell-lsp-$V.tar.gz" \
-            "powershell-lsp-$V.cdx.json" \
-            "powershell-lsp-airgap-$V.zip" \
-            "docs/control-map.html"
-          echo "Created GitHub Release $TAG."
+            --target "$TARGET" \
+            "${ASSETS[@]}"
+          echo "Created GitHub Release $TAG with ${#ASSETS[@]} assets."
 
       - name: Dry-run summary (no tag cut, no release created)
         if: ${{ inputs.dry_run }}
