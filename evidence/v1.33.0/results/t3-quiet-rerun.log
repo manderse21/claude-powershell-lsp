@@ -1,0 +1,31 @@
+
+==================================================================
+ T3 QUIET-HOST RE-RUN -- powershell-lsp v1.33.0 at C = 6ab2d24
+==================================================================
+started: 2026-08-22T14:03:58.6148530-04:00
+worktree HEAD    : 9aa9413f330228fd32bab493beb38b63a8d00d0e  (the evidence branch tip -- expected)
+C is an ancestor : yes  -- staging will `git archive 6ab2d24bf254`
+
+--- quiescence pre-flight (6s) ---
+    bar: CPU median <= 35%, agent/node processes <= 0
+    basis: the v1.32.0 run that RATIFIED T1-T6 measured 13-32% CPU with ~385 processes.
+
+    CPU median            : 41.5%
+    CPU max               : 80%
+    agent/node procs (max): 45
+    total processes       : 539
+
+    QUIESCENCE GATE: NOT MET.
+      -> 45 claude/node process(es) still running. Close every Claude Code
+         session (and any editor running one) and re-run this script.
+      -> CPU median 41.5% exceeds 35%. Something is busy; let it settle.
+         Top CPU consumers right now:
+           WindowsTerminal         pid=7924
+           chrome                  pid=13304
+           chrome                  pid=34952
+           OneDrive.Sync.Service   pid=12580
+           chrome                  pid=40664
+           claude                  pid=23956
+
+    ABORTING rather than producing a second non-compliant reading.
+    (Deliberate override: re-run with -IgnoreQuiescenceGate.)
