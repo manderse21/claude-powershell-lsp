@@ -1,0 +1,18 @@
+T3 QUIET-HOST RE-RUN at C = 6ab2d24bf254787520ad9449c4e6c17f74ee708d
+
+  quiescence COMPLIANT : True
+    cpu median 22%  p95 41%  max 65%  (10 of 85 samples over 35%)
+    agent/node procs max 0   total processes 352-376   span 7.5 min
+  equality             : 2 proofs EQUAL to C, digest d79b648f5af729c4...
+
+  target              : At most ONE edit per session returns "NOT checked", and only during cold start
+  sessions            : 15 (10 small + 5 large)
+  max unchecked       : 2
+  sessions over one   : 1
+     -> small session 5 returned 2
+  cold-start clause   : HOLDS
+
+  T3 VERDICT          : FAIL
+  (also) T4           : 5 of 5 converged on the 263073-byte fixture
+
+  written: C:\Users\mande\projects\work\nortam\claude-powershell-lsp\worktrees\s000273-freeze\evidence\v1.33.0\results\t3-quiet-rerun.json

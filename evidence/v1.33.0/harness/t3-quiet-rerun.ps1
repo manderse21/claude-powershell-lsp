@@ -297,23 +297,72 @@ if (Test-Path -LiteralPath $SampleFile) {
     }
 }
 $cpuMedian = Get-Median $cpu
-$cpuMax = $null; $agentMax = $null; $procMax = $null
-if ($cpu.Count) { $cpuMax = ($cpu | Measure-Object -Maximum).Maximum }
+$cpuMax = $null; $agentMax = $null; $procMax = $null; $cpuP95 = $null; $overBar = $null; $procMin = $null
+if ($cpu.Count) {
+    $cpuMax = ($cpu | Measure-Object -Maximum).Maximum
+    # Nearest-rank, never interpolated -- the same rule the rest of the harness uses.
+    $sorted = @($cpu | Sort-Object)
+    $cpuP95 = [double]$sorted[[int][math]::Ceiling(0.95 * $sorted.Count) - 1]
+    # Excursions are REPORTED, not hidden behind the median. A quiet host still spikes
+    # while the thing being measured does its work -- the daemon and PSES ARE the load.
+    $overBar = @($cpu | Where-Object { $_ -gt $MaxCpuMedian }).Count
+}
 if ($agents.Count) { $agentMax = ($agents | Measure-Object -Maximum).Maximum }
-if ($procs.Count) { $procMax = ($procs | Measure-Object -Maximum).Maximum }
+if ($procs.Count) { $procMax = ($procs | Measure-Object -Maximum).Maximum; $procMin = ($procs | Measure-Object -Minimum).Minimum }
 
 # COMPLIANT means quiet at pre-flight AND quiet THROUGHOUT, not merely at the edges.
 $compliant = ($quietOk -and $cpu.Count -gt 0 -and $cpuMedian -le $MaxCpuMedian -and $agentMax -le $MaxAgentProcs)
 
 # ------------------------------------------------------------------ the T3 verdict
+# THE SAME FIELD NAME MEANS TWO DIFFERENT THINGS IN THE TWO BLOCKS, and keying on the
+# name alone crashed post-processing on the first compliant run (2026-08-22):
+#
+#   m2.json  -> sessions    = Object[]  (the per-session records)
+#   m4b.json -> sessions    = Int64 5   (a COUNT), records live under per_session
+#
+# `foreach ($s in $b.sessions)` on m4b therefore iterated the integer 5, and `(5).i`
+# throws under Set-StrictMode -Version Latest: "The property 'i' cannot be found on
+# this object." Both blocks and both equality proofs had already completed, so the
+# measurement was intact and only the rendering died -- but the run still had to be
+# recovered by hand, which is exactly the cost this guard removes.
+#
+# The fix keys on SHAPE, not on name: a value is a session collection only if it
+# enumerates and its items actually carry the fields being read. Anything else is
+# skipped rather than trusted, and the fixture label comes from the BLOCK identity
+# instead of from which property name happened to match.
+function Get-SessionRecords {
+    param($Block, [string] $Fixture)
+    $recs = @()
+    foreach ($propName in @('sessions', 'per_session')) {
+        if (-not $Block.PSObject.Properties[$propName]) { continue }
+        $val = $Block.$propName
+        # A count, a string, or $null is not a session collection.
+        if ($null -eq $val -or $val -is [string] -or $val -is [ValueType]) { continue }
+        foreach ($s in @($val)) {
+            if ($null -eq $s -or $s -is [ValueType] -or $s -is [string]) { continue }
+            if (-not $s.PSObject.Properties['unchecked']) { continue }
+            $idx = $recs.Count + 1
+            if ($s.PSObject.Properties['i']) { $idx = [int]$s.i }
+            $recs += [ordered]@{ fixture = $Fixture; i = $idx; unchecked = [int]$s.unchecked }
+        }
+    }
+    return $recs
+}
+
 $sessions = @()
 foreach ($b in $blocks) {
-    if ($b.PSObject.Properties['sessions']) {
-        foreach ($s in $b.sessions) { $sessions += [ordered]@{ fixture = 'small'; i = $s.i; unchecked = [int]$s.unchecked } }
+    $fixture = 'unknown'
+    if ($b.PSObject.Properties['block']) {
+        if ([string]$b.block -match '^M2') { $fixture = 'small' }
+        elseif ([string]$b.block -match '^M4b') { $fixture = 'large' }
     }
-    if ($b.PSObject.Properties['per_session']) {
-        foreach ($s in $b.per_session) { $sessions += [ordered]@{ fixture = 'large'; i = $s.i; unchecked = [int]$s.unchecked } }
-    }
+    $sessions += (Get-SessionRecords -Block $b -Fixture $fixture)
+}
+# Anti-vacuity: T3's ratified standing was judged on 10 small + 5 large. A collector
+# that silently harvested fewer would render a verdict from a partial sample.
+if ($null -eq $failure -and $sessions.Count -ne 15) {
+    Write-Both ('WARNING: expected 15 session records (10 small + 5 large), collected ' + $sessions.Count +
+                ' -- the T3 verdict below is NOT judged on the ratified sample.')
 }
 $over = @($sessions | Where-Object { $_.unchecked -gt 1 })
 $maxUnchecked = $null
@@ -359,10 +408,14 @@ $result = [ordered]@{
         preflight_met = $quietOk
         during_run_samples = $cpu.Count
         during_run_cpu_median = $cpuMedian
+        during_run_cpu_p95 = $cpuP95
         during_run_cpu_max = $cpuMax
+        during_run_samples_over_bar = $overBar
         during_run_agent_procs_max = $agentMax
+        during_run_total_procs_min = $procMin
         during_run_total_procs_max = $procMax
         sampled_continuously = $true
+        excursion_note = 'The bar is a MEDIAN bar because the v1.32.0 ratification figures are block-boundary medians; comparing a continuous max against it would be apples-to-oranges. Transient spikes are expected and are reported rather than hidden: the daemon and PSES doing the work ARE load. The evidence of a QUIET HOST is zero competing agent processes and a total process count in the ratification run''s range, not a flat CPU trace.'
         gate_overridden = [bool]$IgnoreQuiescenceGate
         COMPLIANT = $compliant
     }
