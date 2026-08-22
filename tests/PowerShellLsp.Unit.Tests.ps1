@@ -698,12 +698,45 @@ Describe 'Dogfood diagnostic capture (dispatch 000039)' {
             (Get-FileHash -LiteralPath $rotated -Algorithm SHA256).Hash | Should -BeExactly $before
         }
         It 'is fail-safe: a rotation it cannot perform returns "" and leaves the log alone' {
+            # THE PROPERTY is platform-independent -- any failure is swallowed and the log is left
+            # exactly as it was. THE MECHANISM that induces a failure is not, and the first cut of
+            # this test got that wrong: it opened the file with FileShare.None and expected the
+            # rename to fail, which is Windows semantics. On POSIX, locking is advisory and renaming
+            # an open file is perfectly legal, so rotation SUCCEEDED and the test went red on both
+            # the ubuntu and macos legs while both Windows legs passed. The code was right; the
+            # test's premise was Windows-shaped.
+            #
+            # So each platform is failed the way it can actually be failed:
+            #   Windows -- hold the file open denying all sharing, so MoveFile is refused.
+            #   POSIX   -- remove write permission from the CONTAINING DIRECTORY, since a rename
+            #              needs write on the directory the entry lives in, not on the file.
             Set-Content -LiteralPath $script:RotLog -Value ('z' * 4000) -Encoding ascii
-            $held = [System.IO.File]::Open($script:RotLog, 'Open', 'Read', 'None')  # deny sharing
-            try {
-                Invoke-CaptureLogRotation -LogPath $script:RotLog | Should -BeExactly ''
-            } finally { $held.Dispose() }
+            # Captured rather than computed: the trailing newline Set-Content writes is 1 byte on
+            # POSIX and 2 on Windows, and hand-deriving that is one more platform assumption than
+            # this test needs.
+            $sizeBefore = (Get-Item -LiteralPath $script:RotLog).Length
+            $sizeBefore | Should -BeGreaterThan 4000
+            # Resolved HERE rather than read from $script:OnWindows. That variable is assigned at
+            # this file's top level, which Pester evaluates during DISCOVERY -- every other use of
+            # it in this file is a `-Skip:` argument, which is also discovery-time. Inside an It
+            # BODY, which runs in the run phase, it is not in scope: it read as $false on Windows
+            # and silently sent this test down the POSIX branch.
+            $onWin = if (Test-Path 'Variable:\IsWindows') { [bool]$IsWindows } else { $true }
+            if ($onWin) {
+                $held = [System.IO.File]::Open($script:RotLog, 'Open', 'Read', 'None')
+                try {
+                    Invoke-CaptureLogRotation -LogPath $script:RotLog | Should -BeExactly ''
+                } finally { $held.Dispose() }
+            } else {
+                & chmod 500 $script:RotDir
+                try {
+                    Invoke-CaptureLogRotation -LogPath $script:RotLog | Should -BeExactly ''
+                } finally { & chmod 700 $script:RotDir }
+            }
+            # The point of the whole test: the log survives the failed rotation untouched.
             (Test-Path -LiteralPath $script:RotLog) | Should -BeTrue
+            (Get-Item -LiteralPath $script:RotLog).Length | Should -Be $sizeBefore
+            @(Get-ChildItem -LiteralPath $script:RotDir -File).Count | Should -Be 1
         }
         It 'a non-numeric or non-positive cap falls back to the default rather than disabling the bound' {
             $env:POWERSHELL_LSP_CAPTURE_ROTATE_BYTES = 'not-a-number'
