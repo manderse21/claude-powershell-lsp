@@ -1,6 +1,9 @@
 # Feature request: an enum / select `userConfig` option type for Claude Code plugins
 
-**Status re-derived: 2026-08-12 via gh; live state wins over this file.**
+**Status re-derived: 2026-08-21 via gh; live state wins over this file.** `#74289` re-verified
+**OPEN**, last updated 2026-08-13T18:32:37Z, **2 comments** (both manderse21, the 2026-08-13
+current-version re-test on Claude Code 2.1.231 and its correcting follow-up). State unchanged since
+this file was last derived; no maintainer response yet.
 
 ## ALREADY FILED AS #74289 -- DO NOT FILE THIS. Read this block before acting on anything below
 

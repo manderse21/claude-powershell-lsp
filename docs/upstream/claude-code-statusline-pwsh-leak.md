@@ -1,6 +1,8 @@
 # Bug report: Windows statusline `pwsh.exe` processes never exit
 
-**Status re-derived: 2026-08-13 via gh; live state wins over this file.**
+**Status re-derived: 2026-08-21 via gh; live state wins over this file.** `#86551` re-verified
+**OPEN**, last updated 2026-08-13T23:54:28Z, **0 comments** -- unchanged since this file was last
+derived. No maintainer response yet.
 
 ## ALREADY FILED AS #86551 -- DO NOT FILE THIS
 

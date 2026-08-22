@@ -1,6 +1,8 @@
 # Track B findings -- can pull-model LSP features ship on the current surface?
 
-**Status re-derived: 2026-08-13; live state wins over this file.**
+**Status re-derived: 2026-08-21 via gh; live state wins over this file.** `#66987` is now **CLOSED**
+(fixed in Claude Code 2.1.205); `#86936` is **OPEN** and maintainer-reproduced. See the second
+correction below -- neither changes this page's verdict.
 
 **Dispatch:** powershell-lsp/000015, Track B (read-only gating probe).
 **Date:** 2026-06-14. **No code change** -- this note only orders the next dispatch.
@@ -23,8 +25,20 @@ matrix) and the v1.18.1 row of the release table in `docs/decision-ledger.md`.
 
 Mike rewrote [anthropics/claude-code#66987](https://github.com/anthropics/claude-code/issues/66987)
 on 2026-07-06 to the registrar silent-drop root cause, which **superseded the init-ordering issue
-title this page cites** at evidence item 5 (`docs/upstream/sitting-closeout.md`, live table). The
-issue remains OPEN, but it is no longer the issue this page describes.
+title this page cites** at evidence item 5 (`docs/upstream/sitting-closeout.md`, live table). It is
+no longer the issue this page describes.
+
+> **Second correction (re-derived live 2026-08-21, dispatch 000269): #66987 is now CLOSED.** This
+> sentence read "the issue remains OPEN", and that is stale. `gh issue view 66987` returns
+> **CLOSED**, last updated 2026-08-13T16:09:48Z; Mike closed it having bisected the fix to Claude
+> Code **2.1.205**.
+>
+> **This does not revive the verdict below.** The "#66987-gated" framing was already superseded for
+> a different reason -- see "What survives the correction" immediately after -- and that reasoning is
+> untouched by the closure. The pull features remain undeliverable today because **serve** does not
+> work on the direct path (a separate `#1359`-class handshake failure), and because `#86936`
+> (`${user_config.*}` interpolation) is still **OPEN** and independently suspends the LSP surface.
+> Recorded as a status correction; **no roadmap consequence is drawn here, which is Mike's call.**
 
 **What survives the correction.** The pull features are still not deliverable today, for a
 *different* reason: registration works, but **serve** does not on the direct path -- a separate
