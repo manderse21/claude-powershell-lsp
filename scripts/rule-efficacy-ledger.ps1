@@ -260,11 +260,23 @@ function Resolve-RuleLedgerSources {
             $dirs = @(Get-DogfoodCacheLogPathSet -CacheRoot $CacheRoot)
             $paths = @($dirs | Where-Object { $_.LogExists } | ForEach-Object { [string]$_.LogPath })
             $how = 'UNION of every per-version cache log under <cache-root>/<marketplace>/powershell-lsp/<version>/dogfood/diagnostics.jsonl (marketplace and version discovered from disk)'
-            $dataLog = Get-DogfoodLogPath
-            if (-not [string]::IsNullOrWhiteSpace($dataLog) -and (Test-Path -LiteralPath $dataLog -PathType Leaf)) {
-                $paths = @([string]$dataLog) + @($paths)
+            # AN EXPLICIT -CacheRoot SCOPES THE READ, so the ambient data-root log is NOT added to
+            # it. -CacheRoot exists to point the union at one named tree -- a fixture, or a specific
+            # cache being audited -- and silently folding in whatever the live machine happens to
+            # have under CLAUDE_PLUGIN_DATA would break exactly that scoping and pollute the
+            # denominator with captures from an unrelated population. Caught by
+            # PowerShellLsp.RuleLedger.Tests.ps1's union test, which supplies a synthetic two-version
+            # cache root and correctly refused a third path it had not put there.
+            $scoped = -not [string]::IsNullOrWhiteSpace($CacheRoot)
+            if ($scoped) {
+                $how += ' -- SCOPED to the supplied -CacheRoot, so the data-root log is deliberately excluded'
+            } else {
+                $dataLog = Get-DogfoodLogPath
+                if (-not [string]::IsNullOrWhiteSpace($dataLog) -and (Test-Path -LiteralPath $dataLog -PathType Leaf)) {
+                    $paths = @([string]$dataLog) + @($paths)
+                }
+                $how = 'the DATA-ROOT log via Get-DogfoodLogPath, PLUS a ' + $how
             }
-            $how = 'the DATA-ROOT log via Get-DogfoodLogPath, PLUS a ' + $how
             if ($Source -eq 'all') {
                 $co = Get-LegacyDogfoodLogPath
                 if (-not [string]::IsNullOrWhiteSpace($co) -and (Test-Path -LiteralPath $co -PathType Leaf)) {

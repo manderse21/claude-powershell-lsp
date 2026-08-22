@@ -373,6 +373,60 @@ Describe 'rule-efficacy-ledger -- union-read across per-version cache directorie
         [int]@($led.Rows)[0].distinct_shapes | Should -Be 3
     }
 
+    It 'an explicit -CacheRoot SCOPES the union -- the ambient data-root log is excluded' {
+        # The T2.3 relocation made the data-root log the live write target, so an UNSCOPED union
+        # must lead with it (next test). But -CacheRoot exists to point the union at ONE named tree,
+        # and folding in whatever this machine happens to hold under CLAUDE_PLUGIN_DATA would break
+        # that scoping and pollute the denominator with an unrelated population.
+        #
+        # Guarded against passing vacuously: a data-root log is CREATED first, so "excluded" is a
+        # real exclusion rather than the absence of anything to exclude.
+        $prevData = $env:CLAUDE_PLUGIN_DATA
+        $prevOverride = $env:POWERSHELL_LSP_DOGFOOD_LOG
+        Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_DOGFOOD_LOG' -ErrorAction SilentlyContinue
+        $env:CLAUDE_PLUGIN_DATA = Join-Path $TestDrive ('dr-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        try {
+            $dataLog = Get-DogfoodLogPath
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dataLog) | Out-Null
+            Write-Utf8NoBom -Path $dataLog -Lines @(
+                (New-CaptureLine -RuleId 'PSUseApprovedVerbs' -File $script:FileOther -Hash 'dr1'))
+            (Test-Path -LiteralPath $dataLog) | Should -BeTrue -Because 'the exclusion must have something to exclude'
+
+            $s = Resolve-RuleLedgerSources -Source 'union' -CacheRoot $script:CacheRoot
+            @($s.LogPaths).Count | Should -Be 2
+            @($s.LogPaths) | Should -Not -Contain $dataLog
+            $s.Discovery | Should -Match 'SCOPED to the supplied -CacheRoot'
+        } finally {
+            if ($null -eq $prevData) { Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_DATA' -ErrorAction SilentlyContinue }
+            else { $env:CLAUDE_PLUGIN_DATA = $prevData }
+            if ($null -ne $prevOverride) { $env:POWERSHELL_LSP_DOGFOOD_LOG = $prevOverride }
+        }
+    }
+
+    It 'an UNSCOPED union LEADS with the data-root log -- the live write target since T2.3' {
+        # The other half of the contract. Without -CacheRoot the ledger answers "what is the
+        # denominator on this machine", and omitting the log the hook is currently writing would
+        # have it read only frozen pre-relocation history and call that current.
+        $prevData = $env:CLAUDE_PLUGIN_DATA
+        $prevOverride = $env:POWERSHELL_LSP_DOGFOOD_LOG
+        Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_DOGFOOD_LOG' -ErrorAction SilentlyContinue
+        $env:CLAUDE_PLUGIN_DATA = Join-Path $TestDrive ('dr2-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        try {
+            $dataLog = Get-DogfoodLogPath
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dataLog) | Out-Null
+            Write-Utf8NoBom -Path $dataLog -Lines @(
+                (New-CaptureLine -RuleId 'PSUseApprovedVerbs' -File $script:FileOther -Hash 'dr2'))
+            $s = Resolve-RuleLedgerSources -Source 'union'
+            @($s.LogPaths).Count | Should -BeGreaterThan 0
+            @($s.LogPaths)[0] | Should -BeExactly $dataLog   # LEADS, not merely present
+            $s.Discovery | Should -Match 'DATA-ROOT log'
+        } finally {
+            if ($null -eq $prevData) { Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_DATA' -ErrorAction SilentlyContinue }
+            else { $env:CLAUDE_PLUGIN_DATA = $prevData }
+            if ($null -ne $prevOverride) { $env:POWERSHELL_LSP_DOGFOOD_LOG = $prevOverride }
+        }
+    }
+
     It 'the shipped single-version resolver would have seen only the newest -- the gap union closes' {
         # Not a criticism of Get-DogfoodCacheLogPath: it answers "where is the hook writing NOW".
         # This pins WHY the ledger needed a second, unioning discovery rather than reusing it.
