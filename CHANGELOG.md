@@ -31,6 +31,64 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.33.0] - 2026-08-22
+MINOR: **`doctor` and `status` now answer "which version is actually running?"** -- the report
+reconciles the tree's version against the live daemon's own stamp instead of naming the tree and
+warning you the number may be wrong. Read the **Security** entry first, though: **the daemon's
+diagnostics pipe is now restricted to the invoking user**, closing a local read surface that every
+release up to and including v1.32.0 shipped. Two capture-log defects close alongside it -- the log
+**leaves the read-only plugin tree** for `CLAUDE_PLUGIN_DATA`, where it also stops fragmenting across
+upgrades, and it is **size-bounded** by the sweep that already existed. The **correctness corpus
+publishes as a commons under Apache-2.0**, with a consumer-facing page and reproduction steps, and
+the project's white paper plus the raw v1.32.0 evidence bundle now ship in the tree. **No
+`userConfig` knob is added, removed, renamed or re-defaulted**, and no status token changed.
+
+### Security
+
+**The daemon's diagnostics pipe was readable by every local user, and is not any more**
+(threat-model finding **T5.1**, dispatch 000269). The row had stood as *unknown* since the threat
+model was written -- not because the risk had been judged low, but because nobody had measured it.
+This finding is why this release was cut when it was.
+
+**The exposure.** The daemon created its named pipe with no explicit `PipeSecurity` and no
+`CurrentUserOnly`, so the pipe took the OS default DACL. Measured 2026-08-21 on Windows 11
+10.0.26200 / pwsh 7.6.5 by reading the kernel object's security descriptor off the live pipe handle
+(`GetSecurityInfo`, `SE_KERNEL_OBJECT`), the shipped pipe read:
+
+```
+D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;<user SID>)(A;;FR;;;WD)(A;;FR;;;AN)
+```
+
+`WD` is **Everyone** and `AN` is **Anonymous**, each granted `FILE_GENERIC_READ`. What crosses that
+pipe is diagnostics -- **absolute paths and verbatim source lines from the file being edited** --
+so any other principal able to run code on that host could read them. This is **local information
+disclosure**: the daemon makes no network connection and the pipe is not reachable off the machine.
+It is correspondingly low-consequence on a single-user workstation, and real on the hosts this
+project explicitly targets -- **multi-user machines, RDP and terminal servers, and shared CI
+runners**.
+
+**Affected versions: every release up to and including v1.32.0.** All 44 tagged releases from v1.1.0
+create the pipe server with no `PipeSecurity` and no `CurrentUserOnly`. The finding and its remedy
+have been public in [`docs/roadmap-ii/THREAT-MODEL.md`](docs/roadmap-ii/THREAT-MODEL.md) on `main`
+since 2026-08-22 while the released artifact still carried the permissive DACL; this release closes
+that gap.
+
+**The fix.** The server stream now sets `PipeOptions.CurrentUserOnly`, so the pipe is restricted to
+the invoking user: the DACL becomes `D:(A;;0x1f019f;;;<user SID>)`, and no other principal appears
+in it. The option is resolved by **name at runtime**, not written as a compile-time enum literal:
+`CurrentUserOnly` arrived with .NET Core 3.0 and does not exist under Windows PowerShell 5.1, where
+a literal would have thrown at daemon start. On such a host the shipped options are used unchanged,
+**so a daemon running under Windows PowerShell 5.1 does not get the restriction** -- the guard is on
+runtime capability, not on platform name. Client constructions are untouched, and the pipe's
+single-instance property -- which the busy-versus-unreachable discriminator depends on -- is
+unchanged.
+
+**What was measured, and what was not.** The before and after DACLs above were measured on
+**Windows**. The **POSIX arm is unmeasured.** Off-Windows, .NET backs the pipe with a unix domain
+socket file and is documented to narrow that file's permissions to the owner, but this project has
+not measured it, and an expectation that has not been measured is not a result. Treat the exposure on
+Linux and macOS as **unknown**, not as fixed.
+
 ### The correctness corpus is a commons: published under Apache-2.0, reproducible from a clean clone
 
 **Documentation and a licensing statement** (dispatch 000251). **PATCH-class by SemVer**: no API,
@@ -85,19 +143,6 @@ close, two of them by measurement.
   the new location, `auto`/`union` lead with it, and the existing `cache` and `checkout` rungs still
   reach the older locations.
 
-- **The daemon's pipe is now restricted to the invoking user** where the host supports it
-  (threat-model finding **T5.1**, previously *unknown* because it had never been measured). Measured
-  on Windows 11 / pwsh 7.6.5 by reading the kernel object's security descriptor off the live pipe
-  handle, the pipe carried the OS default DACL, which grants **Everyone** and **Anonymous**
-  `FILE_GENERIC_READ`. Diagnostics -- absolute paths and verbatim source lines -- cross that pipe, so
-  the server stream now sets `PipeOptions.CurrentUserOnly`, leaving `D:(A;;0x1f019f;;;<user>)`.
-
-  The option is resolved by **name at runtime**, not written as a compile-time enum literal:
-  `CurrentUserOnly` arrived with .NET Core 3.0 and does not exist under Windows PowerShell 5.1, where
-  a literal would have thrown at daemon start. On such a host the shipped options are used unchanged.
-  Client constructions are untouched, and the pipe's single-instance property -- which the
-  busy-versus-unreachable discriminator depends on -- is unchanged.
-
 ### Added
 
 - **`doctor` and `status` now reconcile the tree's version against the daemon that is actually
@@ -132,6 +177,31 @@ close, two of them by measurement.
   non-positive value falls back to the default rather than disabling the bound.
 
 No `userConfig` knob name and no status token changed.
+
+### The white paper and its raw measurement evidence now ship in the tree
+
+**Documentation and published measurement records** (dispatches 000267 and 000268). **PATCH-class by
+SemVer**: no API, knob, or behavior change -- these are files added to the repository. Like the other
+PATCH-class entries here, they ride the MINOR above without raising it.
+
+[`docs/whitepaper.md`](docs/whitepaper.md) is the whole system in one document -- design rationale,
+measured evidence, and stated limits -- finalized against v1.32.0 and carried at revision **r2**, a
+corrective revision that narrows claims rather than restating them: the status-honesty claim drops
+from "a result is never silently wrong" to the analyzed-and-clean property it actually supports,
+`-ExecutionPolicy Bypass` is disclosed, the PSScriptAnalyzer `Save-Module` fallback is stated as
+Gallery-verified rather than covered by the project's SHA-256 pin, and "no leak" is narrowed to what
+the runs support. Every claim carries a label -- verified, measured, inferred, proposed, unverified
+-- and an unverified claim never appears as fact. `README.md` gains the link-map row.
+
+The measurements behind it publish at `evidence/v1.32.0/`: the measurement harness, the result JSONs
+every measured figure traces to, the measurement environment down to the host and the timer method,
+and `SHA256SUMS.txt` over the set. A new maintainer-triggered `attest evidence bundle` workflow
+builds that tree into an archive, attests it with SLSA build provenance, and uploads it as a release
+asset -- attesting and uploading the same bytes in one job, because the archive format is not
+byte-stable across runs.
+
+**Nothing was published externally.** No submission and no announcement -- that is a maintainer
+action and remains one.
 
 ## [1.32.0] - 2026-08-19
 MINOR: **the `orgPolicy` file can now be integrity-pinned with a `.sha256` companion**, **the two
