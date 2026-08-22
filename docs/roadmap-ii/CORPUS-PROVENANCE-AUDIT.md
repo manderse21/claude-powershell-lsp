@@ -17,6 +17,7 @@ follows from the table below, which was built before the verdict was written. Tw
 - **Scope:** audit only. No corpus file was added, deleted, moved, edited, or relicensed. Nothing
   was published anywhere.
 
+<<<<<<< HEAD
 > **DATED NOTE, added 2026-08-17 by dispatch 000251 -- the license identifier below is
 > point-in-time, and is deliberately not rewritten.**
 >
@@ -37,6 +38,24 @@ follows from the table below, which was built before the verdict was written. Tw
 > The surface itself has **not** drifted. Re-verified 2026-08-17: the 137 rows below match
 > `git ls-files` over the same coverage boundary file-for-file, and a `git diff` of that boundary
 > from `7f34277` to that date reports no change of any kind.
+
+> **Downstream, 2026-08-21 (dispatch 000269).** Two things now rest on this audit, and neither
+> alters its findings or its verdict.
+>
+> **1. The consumer-facing commons page.** Dispatch 000251 landed [`../corpus.md`](../corpus.md),
+> which states the license position the note above records.
+>
+> **2. A DETACHABLE publication package**, assembled at
+> [`../corpus-commons/`](../corpus-commons/): a standalone `LICENSE` and `NOTICE`, a
+> `PROVENANCE.md` that reproduces this audit's per-instrument "cannot establish" limits and its
+> Finding 2 authorship declaration, and a `README.md` defining what would ship and how a consumer
+> would score against it. It is deliberately **not** a second copy of `../corpus.md`: that page
+> makes the corpus consumable *where it lives*, while this package is the paperwork the corpus
+> would need if it were ever detached from this repository. Marked **prepared, not published**;
+> publication remains Mike's gate.
+>
+> **Finding 3 below is now CLOSED**, by verification rather than by an edit -- see its own
+> annotation.
 
 ---
 
@@ -441,6 +460,33 @@ two external components (PSES and PSScriptAnalyzer) that it "downloads at instal
 
 The vendored schema is a genuine exception to that framing. Attribution is not missing; it is
 recorded in a place the central register does not point to. Recorded only -- **no file was edited**.
+
+> **CLOSED (verified 2026-08-21, dispatch 000269).** This finding's remedy -- the "D1 SARIF
+> attribution rider", folded into Arc B activation by Mike's G8 ruling -- **had already been applied
+> before this dispatch reached it**, so the finding closes by verification rather than by an edit.
+> Re-derived from `THIRD-PARTY-LICENSES.md` at `origin/main`: the finding's load-bearing claim was
+> "zero hits" for SARIF, OASIS and SchemaStore in the central register. At HEAD that register returns
+> **9 SARIF, 6 OASIS and 1 SchemaStore** hits and carries a full *SARIF 2.1.0 JSON Schema* section
+> naming the copyright holder, the OASIS IPR terms, the retrieval route and date, and the in-tree
+> location -- and pointing at `tests/sarif/NOTICE.md` as authoritative.
+>
+> The register's *framing* was corrected too, not merely extended: it now calls the schema "the
+> single item here that this project genuinely redistributes", which is the exception the
+> downloader-not-redistributor sentence previously swallowed.
+>
+> **A currency check, since the relicense intervened.** This finding quotes the register as saying
+> the schema is "not relicensed under the project's GPL-3.0-or-later". That wording is itself now
+> stale: the repository relicensed to Apache-2.0 forward-only at v1.32.0, and the register reads
+> "**NOT** relicensed under this project's Apache-2.0 license" at HEAD. A scan of the whole
+> attribution surface -- `THIRD-PARTY-LICENSES.md`, `NOTICE`, `LICENSE`, `tests/sarif/NOTICE.md` --
+> returns **zero** `GPL-3` remnants. The quotation above is left as written, because it records what
+> the register said when the finding was raised.
+>
+> **One inconsistency remains, recorded and deliberately not edited.** The root `NOTICE` still says
+> "This product does not bundle or redistribute third-party source", while `THIRD-PARTY-LICENSES.md`
+> says the SARIF schema is redistributed. Both are defensible on their own scope -- `NOTICE` speaks
+> to the *product release*, and the schema is a test fixture that ships in no release artifact -- so
+> this is a positioning statement rather than a factual error, and wording it is a human's call.
 
 ---
 
