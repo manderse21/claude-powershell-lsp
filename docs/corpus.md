@@ -17,10 +17,18 @@ The corpus fixtures and every corpus-surface file publish under the **project li
 repository. See [LICENSE](../LICENSE) and [NOTICE](../NOTICE).
 
 **There is no second licensing regime to explain.** The corpus is not dual-licensed, not carved
-out under CC0 or MIT, and carries no per-file license header: a live grep for
-`SPDX-License-Identifier` returns zero hits across every tracked file in the repository, so each
-corpus file is covered by the repository `LICENSE` and by nothing else. You vendor a fixture the
-same way you vendor any other file from this project, under one set of terms.
+out under CC0 or MIT, and carries no per-file license header. Across all 190 tracked `.ps1`,
+`.psm1`, and `.psd1` files in this repository, **zero** declare an SPDX license identifier of
+their own, so each corpus file is covered by the repository `LICENSE` and by nothing else:
+
+```powershell
+# Expect 0. (Scoped to source files on purpose -- prose pages, including this one,
+# mention the identifier while discussing its absence, and would inflate a naive count.)
+git grep -l SPDX-License-Identifier -- '*.ps1' '*.psm1' '*.psd1' | Measure-Object -Line
+```
+
+You vendor a fixture the same way you vendor any other file from this project, under one set of
+terms.
 
 Apache-2.0 is a permissive license with an explicit patent grant, which is the property that
 matters for a benchmark corpus: you can copy cases into a differently-licensed test suite of your
@@ -169,7 +177,13 @@ pwsh -NoProfile -File tests/run-tests.ps1 -FullNameFilter '*Diagnostic-correctne
 ```
 
 The runner installs Pester 5 to the **CurrentUser** scope if it is missing -- never machine-global
--- and exits non-zero on any failure, so the exit code alone is a usable verdict.
+-- and exits with the number of failed tests.
+
+**Check the selected count, not just the exit code.** The runner exits on the *failure* count, so a
+`-FullNameFilter` that matches nothing exits `0` and reads like a pass. Pester prints
+`Filters selected N tests to run` near the top of the output: confirm `N` is non-zero before you
+believe the result. Dropping the filter entirely runs the whole suite, which takes considerably
+longer but cannot be vacuous.
 
 The measured report is written as JSON:
 
