@@ -100,6 +100,24 @@ close, two of them by measurement.
 
 ### Added
 
+- **`doctor` and `status` now reconcile the tree's version against the daemon that is actually
+  running** (DX-audit finding **O2**). After an upgrade the old daemon keeps serving until the
+  session ends -- which is the right behaviour -- but the report named only the tree's version, so
+  *"which version is actually running?"*, the first question of any support thread, got a
+  confidently wrong answer. v1.32.0 closed the honesty half of this by adding a caveat ("a live
+  daemon may be older -- see logs/pses-daemon.log"); that stopped the report being wrong but still
+  did not answer the question.
+
+  It is answered now. The daemon stamps a `pluginVersion` field into its own session record at
+  startup, and the report renders one of four lines: the two versions **agree**; they **differ**,
+  naming both and why that is expected after an upgrade; the daemon **predates version stamping**,
+  so its version is unknown; or there is **no live daemon** to reconcile against. An absent version
+  is reported as unknown and never inferred to be a mismatch.
+
+  This is an additive JSON field plus a header line: **no `userConfig` knob and no status token
+  changed**, and the version line remains a header rather than a check row, so the "of N checks"
+  count and the exit code are computed from exactly the same inputs as before.
+
 - **The capture log is now size-bounded** (threat-model finding **T6.4**). It was a single append-only
   file the `keepLastN` sweep never touched, because that sweep bounds only stamped rolling families;
   a live log measured 5,279,427 bytes over 10,161 rows with nothing that would ever have stopped it.

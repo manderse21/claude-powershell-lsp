@@ -3847,6 +3847,99 @@ Describe 'Preflight doctor -- plugin version report (dispatch 000208, report-onl
     }
 }
 
+Describe 'Preflight doctor -- tree-vs-daemon version reconciliation (DX finding O2)' {
+    # O2: after an upgrade the doctor reported the TREE's version beside a clean pass while the
+    # daemon serving the session was older, and no surface reconciled the two -- so "which version
+    # is actually running?", the first question of any support thread, got a confidently wrong
+    # answer. Dispatch 000265 closed the honesty half with a caveat; this closes the other half by
+    # ANSWERING it from the version the daemon stamps into its own session record.
+    BeforeAll {
+        . (Join-Path $script:ScriptsDir 'doctor.ps1')
+        $script:AllUnknown = @(
+            (New-DoctorResult -Status unknown -Component 'Alpha check' -Detail 'a')
+            (New-DoctorResult -Status unknown -Component 'Beta check' -Detail 'b')
+        )
+    }
+
+    Context 'Get-DoctorVersionLine -- the four cases, decided purely' {
+        It 'no live daemon -> the tree version stands alone, and says so' {
+            $l = Get-DoctorVersionLine -TreeVersion '1.32.0' -DaemonVersion '' -DaemonPresent $false
+            $l | Should -Match 'version: 1\.32\.0'
+            $l | Should -Match 'no live daemon to reconcile against'
+        }
+        It 'daemon agrees -> ONE version, stated as agreement rather than as a caveat' {
+            $l = Get-DoctorVersionLine -TreeVersion '1.32.0' -DaemonVersion '1.32.0' -DaemonPresent $true
+            $l | Should -Match 'this tree AND the live daemon agree'
+            # The old hedge must NOT survive where the answer is actually known.
+            $l | Should -Not -Match 'may be older'
+        }
+        It 'daemon differs -> BOTH versions appear, and the difference is explained as expected' {
+            $l = Get-DoctorVersionLine -TreeVersion '1.32.0' -DaemonVersion '1.30.0' -DaemonPresent $true
+            $l | Should -Match '1\.32\.0'      # the tree
+            $l | Should -Match '1\.30\.0'      # the daemon actually serving
+            $l | Should -Match 'LIVE DAEMON'
+            $l | Should -Match 'expected after an upgrade'
+        }
+        It 'daemon present but UNVERSIONED -> reported as unknown, never inferred to be a mismatch' {
+            # A record written by a daemon older than the pluginVersion field has no version. An
+            # ABSENT version is not evidence of disagreement, and saying otherwise would invent a
+            # mismatch out of a missing field.
+            $l = Get-DoctorVersionLine -TreeVersion '1.32.0' -DaemonVersion '' -DaemonPresent $true
+            $l | Should -Match 'predates version stamping'
+            $l | Should -Not -Match 'LIVE DAEMON is running'
+        }
+        It 'reproduces the exact O2 scenario end to end' {
+            # The audit recorded: tree 1.31.0, daemon 1.30.0, and a report containing NO occurrence
+            # of 1.30, mismatch, stale or older. Assert the opposite now holds.
+            $l = Get-DoctorVersionLine -TreeVersion '1.31.0' -DaemonVersion '1.30.0' -DaemonPresent $true
+            $l | Should -Match '1\.30'
+        }
+    }
+
+    Context 'the renderers carry the reconciliation' {
+        It 'both surfaces render the differing case, so /status and the full report cannot disagree' {
+            foreach ($render in @(
+                    (Format-DoctorReport  -Results $script:AllUnknown -Version '1.32.0' -DaemonVersion '1.30.0' -DaemonPresent $true),
+                    (Format-DoctorSummary -Results $script:AllUnknown -Version '1.32.0' -DaemonVersion '1.30.0' -DaemonPresent $true))) {
+                $render | Should -Match '1\.30\.0'
+                $render | Should -Match 'LIVE DAEMON'
+            }
+        }
+        It 'defaults are inert -- an out-of-band render produces the honest no-daemon wording' {
+            # Every pre-existing caller passes no daemon arguments. None of them may start
+            # claiming agreement it has not established.
+            foreach ($render in @(
+                    (Format-DoctorReport  -Results $script:AllUnknown),
+                    (Format-DoctorSummary -Results $script:AllUnknown))) {
+                $render | Should -Match 'no live daemon to reconcile against'
+                $render | Should -Not -Match 'agree'
+            }
+        }
+        It 'the version line is still a HEADER, not a check row (dispatch 000208 ruling preserved)' {
+            $before = @($script:AllUnknown).Count
+            $render = Format-DoctorSummary -Results $script:AllUnknown -Version '1.32.0' -DaemonVersion '1.30.0' -DaemonPresent $true
+            $render | Should -Match ('status -- ' + $before + ' checks')
+        }
+    }
+
+    Context 'the daemon stamps its own version into the session record' {
+        It 'Write-SessionFile emits pluginVersion, sourced from the ONE version resolver' {
+            $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'pses-daemon.ps1') -Raw
+            $src | Should -Match 'pluginVersion\s*=\s*\(Get-PluginVersion\)'
+        }
+        It 'the doctor reads that field by name from the session record' {
+            $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'doctor.ps1') -Raw
+            $src | Should -Match "Get-Prop \`$obj 'pluginVersion'"
+        }
+        It 'no userConfig knob and no status token was added for this (CONTRACT.md stays green)' {
+            # The fix had to be contained: an additive JSON field plus a header line, never a new
+            # knob or a new status token, both of which CONTRACT.md freezes for 1.x.
+            $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'doctor.ps1') -Raw
+            @([regex]::Matches($src, 'CLAUDE_PLUGIN_OPTION_daemonVersion')).Count | Should -Be 0
+        }
+    }
+}
+
 Describe 'Preflight doctor -- clearance provenance floor readout (dispatch 000216, report-only header)' {
     # The floor answers the question that follows "what version are you on?" -- "and how far back
     # can that answer be trusted?" It rides as a SECOND header line under the same 000208 ruling
