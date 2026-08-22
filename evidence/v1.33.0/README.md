@@ -129,11 +129,35 @@ pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\harness\slo-report.ps1
 
 Outputs land under the harness's working base (`out\`), matching the JSONs in `results/`.
 
-## What this bundle does NOT establish
+## Post-tag verification (added after the release published)
 
-- **No published-artifact claim.** No tag existed when these ran, so no SBOM, provenance attestation
-  or signature is verified here. That is the post-tag launch gate (the 000245 standard), and it is
-  deliberately not claimed.
+The freeze itself claimed nothing about published artifacts, because no tag existed when it ran.
+After the v1.33.0 release published -- following the release SPLIT and the re-run described in the
+paired outbox -- the 000245 post-tag gate ran against the REAL release assets, and lands here:
+
+- `results/attestation-verify.json` / `.log` -- per-asset provenance. All three published assets
+  PASS: the downloaded bytes re-hash to the digest the Release REST API itself reports, and each
+  binds to publishing run **32588047316**.
+- `results/signature-verify.json` / `.log` -- the tag signature. `gitsign verify-tag` with
+  certificate identity and issuer: Git signature, Rekor entry (tlog 2567774015) and **certificate
+  claims** all validated.
+
+**The orphan hazard, and why exit 0 was not accepted as the verdict.** The first producing run
+(32585972425) attested its artifacts and then failed at release-create, leaving those attestations
+ORPHANED in the store. `git archive` of the target is deterministic, so the tarball is
+BIT-IDENTICAL between the two runs -- and, measured rather than assumed, `gh attestation verify` on
+the published tarball returns **TWO** attestations and exits **0**. Exit code alone therefore says
+"some trusted attestation covers these bytes", not "the attestation from the run that published
+them". Each asset is additionally bound with `--source-digest` + `--signer-workflow`, and the
+returned `invocationId` is asserted. A RED control pins `--source-digest` to the ORPHAN's source
+commit and gets back exactly the orphan -- proving the flag discriminates in both directions on the
+one digest that carries two attestations, so the positive binding is not decoration.
+
+**Known bound.** SLSA provenance records the WORKFLOW's source commit (main's tip), not the release
+target. The attestation does not by itself bind an artifact to the release target commit; that
+binding comes from the Release object and the signed tag.
+
+## What this bundle does NOT establish
 - **Single host, single OS, single analyzer pin.** No cross-platform latency claim. The four CI legs
   cover other platforms functionally, not for latency.
 - **The POSIX arm of the pipe measurement is out of scope** and separately chartered. `CurrentUserOnly`
