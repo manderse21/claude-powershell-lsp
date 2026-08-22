@@ -1,0 +1,27 @@
+parsed 6 custom_checks from the outbox
+
+--- release identity: C is MERGED to origin/main and both manifests + the dated CHANGELOG section read 1.33.0
+    exit=0 expect=0  MATCH
+    | OK C=6ab2d24bf254787520ad9449c4e6c17f74ee708d merged-to-main=True plugin=1.33.0 marketplace=1.33.0 changelog_section=1
+
+--- equality chain: >=11 proofs at C, all equal, one stable tracked-tree digest, data root outside plugin root
+    exit=0 expect=0  MATCH
+    | OK ref=origin/dispatch/powershell-lsp-000273-freeze-v1-33-0 12 proofs, stable digest d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9
+
+--- SLO regression at C: exactly 6 rows, exactly T3 missed, SLO-BASELINES ratification intact
+    exit=0 expect=0  MATCH
+    | OK ref=origin/dispatch/powershell-lsp-000273-freeze-v1-33-0 5 of 6 MET, T3 missed as measured; ratification line intact
+
+--- T5.1 security gate at C: pwsh pipe restricted, RED control non-vacuous, PS 5.1 residual as disclosed
+    exit=0 expect=0  MATCH
+    | OK ref=origin/dispatch/powershell-lsp-000273-freeze-v1-33-0 pwsh D:(A;;0x1f019f;;;S-1-5-21-4146172374-3427792794-1412385963-1001); RED control valid; 5.1 residual confirmed
+
+--- four CI legs green at C, headSha matched live (000081 stale-grab guard)
+    exit=0 expect=0  MATCH
+    | OK 4 legs green at C, headSha matched
+
+--- evidence bundle: SHA256SUMS covers every bundle file, no orphan and no unlisted
+    exit=0 expect=0  MATCH
+    | OK ref=origin/dispatch/powershell-lsp-000273-freeze-v1-33-0 manifest covers all 49 bundle files, no orphan, no unlisted
+
+REPLAY: 6 of 6 MATCH

@@ -98,7 +98,7 @@ as defined rather than a remembered size.
 
 - `harness/` -- **only the scripts that actually ran in this freeze.** `run-quant.ps1`
   (orchestrator), `measure.ps1` (blocks M1-M4b), `stage-c.ps1`, `prove-equals-c.ps1`,
-  `security-gate.ps1` (T5.1), `slo-report.ps1` (the T1-T6 table), `run-gates.ps1` and the four gate
+  `security-gate.ps1` (T5.1), `slo-report.ps1` (the T1-T6 table), `replay-checks.ps1` (re-runs the outbox's own recorded checks), `run-gates.ps1` and the four gate
   scripts it drives.
 - `results/` -- raw outputs:
   - `m1.json` warm per-edit latency (N=30); `m2.json` cold start (N=10); `m35.json` memory +
@@ -110,6 +110,8 @@ as defined rather than a remembered size.
   - `gate-summary.json`, `repo-gates.json`, `license-gate.json`, `airgap-gate.json`,
     `cleaninstall-doctor.json`, `doctor-output.txt`, `pester-*.json` gate corroboration.
   - `ci-at-C.json` the four CI legs with `headSha` matched to C.
+  - `replay-checks.log` every `custom_check` recorded in the paired outbox, parsed OUT of that
+    outbox and re-run in its own shell, so what ran is what is claimed. 6 of 6 MATCH.
   - `*.log` run transcripts.
 - `SHA256SUMS.txt` -- SHA-256 of every file in this bundle.
 
