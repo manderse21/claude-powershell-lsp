@@ -580,6 +580,7 @@ one click away.
 | What changed, and when | [CHANGELOG.md](./CHANGELOG.md) |
 | What is next, blocked, and deferred | [ROADMAP.md](./ROADMAP.md) |
 | Why a decision was made (or declined) | [docs/decision-ledger.md](docs/decision-ledger.md) |
+| Where development is headed, as one visual map -- a derived view of ROADMAP.md and the decision ledger, refreshed at each release | [docs/control-map.html](docs/control-map.html) |
 | How a release is cut, and what provenance covers | [docs/RELEASING.md](docs/RELEASING.md) |
 | The single-maintainer bus factor and the fork path | [CONTINUITY.md](./CONTINUITY.md) |
 

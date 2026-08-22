@@ -497,7 +497,19 @@ jobs:
           git push origin "refs/tags/$TAG"
           echo "Cut gitsign-signed tag $TAG on $TARGET (keyless via GitHub OIDC, Rekor-logged) and pushed."
 
-      - name: Create the GitHub Release (CHANGELOG notes + SBOM + airgap bundle + provenance-attested archive)
+      # The control map (dispatch 000274) rides this list rather than a step of its own. It is a
+      # DERIVED VIEW of ROADMAP.md and docs/decision-ledger.md -- never a second plan of record --
+      # published as an asset so a reader gets the map AS OF the version they downloaded, immutable
+      # once published, instead of a mutable page that drifts out from under every past release.
+      # Attaching it here rather than in a new step is what keeps DRY-RUN BEHAVIOUR UNCHANGED: this
+      # step is already `if: ${{ !inputs.dry_run }}`, so a rehearsal neither uploads nor mentions
+      # the map, and the airgap bundle stays the only asset step a dry run executes.
+      #
+      # The list assumes the TARGET COMMIT carries docs/control-map.html. That is guaranteed by a
+      # human gate, not by this file: docs/RELEASING.md step 5 confirms the map is present at the
+      # target commit and its stamp is current before the tag is cut. A target commit predating the
+      # map would fail this step AFTER the tag was pushed, which is exactly why the gate is pre-tag.
+      - name: Create the GitHub Release (CHANGELOG notes + SBOM + airgap bundle + control map + provenance-attested archive)
         if: ${{ !inputs.dry_run }}
         shell: bash
         env:
@@ -512,7 +524,8 @@ jobs:
             --target "${{ steps.resolve.outputs.target }}" \
             "powershell-lsp-$V.tar.gz" \
             "powershell-lsp-$V.cdx.json" \
-            "powershell-lsp-airgap-$V.zip"
+            "powershell-lsp-airgap-$V.zip" \
+            "docs/control-map.html"
           echo "Created GitHub Release $TAG."
 
       - name: Dry-run summary (no tag cut, no release created)
