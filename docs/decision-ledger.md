@@ -3818,3 +3818,57 @@ required the approved text be copied exactly and forbade improving it, so it was
 and the discrepancy is recorded here and in `RELAUNCH-PLAN.md` (finding F1) instead of being
 silently corrected. It is directional wording only: both lanes are named by heading, so the gate
 stays checkable as written. The one-word fix is available whenever Mike wants it.
+
+---
+
+## Dispatch 000269 -- the gate-clearance sitting: RULED by Mike 2026-08-21 (G1-G9, grants R1-R3)
+
+Mike ruled on every open gate in one sitting. The rulings are recorded here as decisions; what each
+one caused is recorded in the documents it governs, not restated here. Grants are recorded with
+their limits, because a grant without its limit reads as a blanket permission.
+
+**Nothing in this section was decided by an agent.** Where the execution took a judgement -- a fork
+arm, a scope narrowing, a premise correction -- it is marked as such and attributed to the dispatch
+rather than to the ruling.
+
+### The nine rulings
+
+| # | Ruling | What it settles |
+| --- | --- | --- |
+| **G1** | **The corpus goes Apache-2.0.** | Ends the GPL-vs-permissive relicensing question deferred from R2-05 to Arc B activation. Derived at execution: no corpus file carries a per-file license header of any kind, and the repository relicensed forward-only at the current release, so the corpus was **already** Apache-2.0 on disk and nothing needed relicensing. Publication stays gated. |
+| **G2** | **T1-T6 are ratified as the v1 SLOs.** | Converts the six candidate targets in `SLO-BASELINES.md` from proposals into adopted targets, and the baseline document from a description into a regression bar. All six are met at the current release. Ratification changed no number and no basis, which is what makes "all six met" a result rather than a construction. **No cold-start target was adopted**, and that gap stays deliberately open. |
+| **G3** | **The threat-model register is triaged fix / measure-then-fix / accept-with-record.** | Settles all ten findings in `THREAT-MODEL.md` section 8. FIX: T2.3, T6.4. MEASURE-THEN-FIX: T5.1 (with a pre-authorized remedy, see R1), T6.2 (measure only). ACCEPT-WITH-RECORD: T4.1 residual, T4.2, T1.4, T1.5, T3.2, T6.1 -- each carrying one sentence of rationale, so the acceptance is re-openable rather than merely recorded. |
+| **G4** | **The DX triage is ratified as already-done-in-substance.** | D1-D4 and O1-O4 were fixed by dispatch 000265 and shipped in the current release; T1-T3 are accepted as priced tradeoffs. Closes the DX-findings-triage row that had been standing since R2-08 delivered findings-only. |
+| **G5** | **The rule-candidate promotions get a findings docket; the promotions stay attended.** | Charters an evidence docket with per-candidate recommendations and explicitly withholds the promotion decision. Promotion remains Mike-gated and standing, exactly as before. |
+| **G6** | **The 000225 / 000229 quarantine evidence is retained-archived.** | Disposal is declined. Follows the 000261 archive-never-delete precedent: failed-run evidence is part of the record, and the record is not pruned because the failure was resolved. |
+| **G7** | **The missing pillars B through G are retired, never reused.** | They are neither restated nor renamed, and their identifiers are not reassigned -- the same identifier-gap precedent already applied to R2-03 and R2-09..R2-13. A reused identifier would assert a continuity that was never established. |
+| **G8** | **The D1 SARIF attribution rider folds into Arc B activation.** | Declines a separate fix slice for it. Verified at execution to be **already closed**: the central register now carries a full SARIF/OASIS section pointing at the co-located notice as authoritative, so the finding closed by verification rather than by an edit. |
+| **G9** | **The relaunch gate is recorded as superseded by Mike's direct Path-A ruling.** | The gate stated in `ROADMAP.md` was not met -- it was passed through by hand. Recorded as superseded rather than retro-fitted into "met", because a condition that was overridden and a condition that was satisfied are different facts and the record should be able to tell them apart. |
+
+### The three grants, with their limits
+
+| # | Grant | Its limit |
+| --- | --- | --- |
+| **R1** | Apply `CurrentUserOnly` to the daemon pipe if the measured DACL is permissive beyond the invoking user. | Conditional on the **measurement**, not on the expectation. The measurement was taken first and resolved against the project (the default DACL granted Everyone and Anonymous read), which is what armed the grant. Bounded further by "do not break a non-Windows leg or a shipped contract surface -- stop and surface instead". |
+| **R2** | Execute the corpus relicense. | **Publication is NOT granted and stays held.** The grant covers changing license state, not making anything public. In the event no relicense was needed, so the grant went unexercised. |
+| **R3** | Overnight protocol. | Governs how the work runs, not what it may decide. Every human-gated item stayed human-gated: no merge, no promotion, no publication, no post, no tag. |
+
+### What the execution decided for itself, marked as such
+
+Three judgements were the dispatch's, not the ruling's, and each is recorded where it applies:
+
+- **The rule-candidate count.** The charter and `PROGRAM.md` both said "four candidates"; this
+  ledger's own tail-failure section carries **five**. `git log -S` puts the fifth candidate and the
+  "four" wording in the same commit (`d2e929d`), so it is an off-by-one authored in one sitting
+  rather than drift. The docket covers five and `PROGRAM.md` was corrected.
+- **The O2 fork arm.** G4 ratified the DX triage as done-in-substance, but a survey of the shipped
+  code found dispatch 000265 had closed O2's **remedy text** only -- the session record still carried
+  no version field, so "which version is actually running?" remained unanswerable. The charter's
+  pre-authorized fork was taken and the reconciliation was built, because it needed only an additive
+  JSON field and a header line: no `userConfig` knob and no status token, so it is not the
+  contract-adjacent change the fork stops at.
+- **The T6.2 boundary.** The measurement was taken on Windows and found no exposure. The POSIX arm
+  was **not** measured and is recorded as still unknown rather than inferred from platform
+  convention -- the finding's own text says these permissions are platform-dependent, so deriving
+  them and calling the row measured would have reintroduced the false confidence the `unknown`
+  label exists to prevent.
