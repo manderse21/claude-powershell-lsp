@@ -1,38 +1,68 @@
-# powershell-lsp -- candidate SLOs and their v1.31.0 baselines
+# powershell-lsp -- the adopted v1 SLOs and their v1.32.0 baselines
 
 **What this document is.** Five named service-level metrics for the edit path, each with an
 exact definition, a named instrument, and a stated exclusion boundary -- plus what each one
-measures **today** on the installed v1.31.0 build. It converts Arc E from "make it faster,
-someday, on demand" into an instrument: when a scale problem arrives, the program will know what
-normal looked like.
+measures on the **v1.32.0** release build. It converts Arc E from "make it faster, someday, on
+demand" into an instrument: when a scale problem arrives, the program knows what normal looked
+like.
 
-**What this document is not.** It adopts no SLO. Section 9 proposes candidate *targets*; every one
-of them is **unratified** and awaits Mike's ratification at the Wave A gate review. A benchmark
-threshold is not a benchmark result, and the two are derived independently here -- **no target in
-section 9 is back-filled from any measurement in sections 6 to 8.**
+**Section 9 is now in force.** The six targets T1-T6 were proposed here as unratified candidates
+against v1.31.0 and were **ratified by Mike on 2026-08-21** as the project's **v1 SLOs**. All six
+are met at v1.32.0. That makes this document a **regression bar** rather than a description: a
+future release that misses one of them is missing an adopted target, not merely reading differently.
+The independence rule that produced them is unchanged and still load-bearing -- **no target in
+section 9 is back-filled from any measurement in sections 6 to 8**; each states its own basis, and a
+measured value is named there only to show where the build sits against an independently chosen
+line.
+
+**What this document still does not do.** It proposes no cold-start target. Section 9 explains why
+that gap is deliberate rather than an omission, and ratification did not close it.
 
 **How to read a figure here.** Every figure is a **median with spread over a stated N**, taken
-against the **installed cache build**, and labelled **daytime-desktop-class**. There are no
-single-run figures. Where a run was excluded, the exclusion and its reason are printed. Where a
-number is surprising, it is reported as found -- section 8 exists because the ugliest result in
-this document is also its most useful one.
+against a staged copy of the **release commit**, and labelled **daytime-desktop-class**. There are
+no single-run figures. Where a run was excluded, the exclusion and its reason are printed. Where a
+number is surprising, it is reported as found.
+
+> **Every figure below is v1.32.0 unless it says otherwise.** v1.31.0 values appear only in a
+> clearly-labelled comparison column, never as a current baseline. Several metrics are marked
+> **re-measured and unchanged** -- that is a result, not a copy: the number was taken again on the
+> new build and landed where it had been.
 
 ---
 
 ## 1. The build actually measured
 
-Every measurement below drove the **installed plugin cache build**, never the dev clone, so the
-baseline describes what a user runs.
+Every measurement below drove a **scratch plugin tree staged from `git archive` of the release
+commit**, with a private junction-backed data root, never the dev clone -- so the baseline describes
+the bytes a user runs. The staging was proven equal to the commit before and after every block by
+computing each staged file's git object id and requiring it to equal the blob id in the commit's own
+tree (423 tracked paths, 0 missing, 0 differing, tracked-tree digest
+`3307d45f0bb0d0b6db3b395a859bf12f593fa047322b5ec6c59860cdfd50ea69`, stable across all blocks).
 
 | Fact | Value | Derivation |
 |---|---|---|
-| Plugin version | **1.31.0** | `.claude-plugin/plugin.json` in the cache tree |
-| Cache path | `~/.claude/plugins/cache/claude-powershell-lsp/powershell-lsp/1.31.0` | `~/.claude/plugins/installed_plugins.json`, key `powershell-lsp@claude-powershell-lsp` -> `installPath` |
-| Recorded install commit | `e84c44ba0ab06a751672652a10752aca6078b94e` | same manifest, `gitCommitSha` |
-| `v1.31.0` **peeled** tag commit | `e84c44ba0ab06a751672652a10752aca6078b94e` | `git rev-parse 'refs/tags/v1.31.0^{}'` |
-| Do they agree? | **YES -- byte-identical** | the installed build IS the released tag commit, confirmed rather than assumed |
-| Pinned PSES | v4.6.0 | bootstrap marker `pses-v4.6.0.ok` in the plugin data root |
+| Plugin version | **1.32.0** | `.claude-plugin/plugin.json` at the release commit |
+| `v1.32.0` **peeled** tag commit | `fb3116cab14cd8afec4e9c64ed0c2e67e76486b3` | `git rev-parse 'refs/tags/v1.32.0^{}'` |
+| Commit the blocks ran at (**C**) | `af6996f971c8e8629a7d005e83f72865f2a66112` | the squash-merge of PR #187 |
+| Release identity (**C'**) | `fb3116cab14cd8afec4e9c64ed0c2e67e76486b3` | the squash-merge of PR #188 -- **this is v1.32.0** |
+| Are the two the same runtime? | **YES, proven** | see the carry-forward note below |
+| Pinned PSES | v4.6.0 | bootstrap marker `pses-v4.6.0.ok` in the data root |
 | Pinned PSScriptAnalyzer | 1.25.0 | vendored marker `.pssa-1.25.0.ok` |
+| Evidence bundle | [`evidence/v1.32.0/`](../../evidence/v1.32.0/) | in-repo; every figure below traces to a JSON file there |
+
+> **Two commits appear here, and the distinction is load-bearing rather than pedantic.** The
+> quantitative blocks ran at **C**; the release identity is **C'**, the merge of the fix PR that
+> unblocked the release pipeline. The figures are **carried** from C to C', and the carry is proven,
+> not asserted: the C -> C' diff touches **five paths, none of them under `scripts/` or
+> `rulesets/`**, and all 36 tracked runtime blobs are **byte-identical** between the two commits.
+> The runtime a user executes is the same bytes, so these figures describe v1.32.0 as measured. Had
+> a single runtime blob moved, the honest move would have been to re-measure, and the check that
+> would have caught it is recorded in the evidence bundle.
+
+**Where these figures come from.** They were produced by the dispatch 000267 freeze block on
+**2026-08-19** (block start/end stamps are recorded in each `evidence/v1.32.0/results/m*.json`), and
+this document reproduces them rather than re-deriving them independently. Every table below cites
+the file it came from.
 
 **Configuration.** Shipped defaults throughout -- `profile` unset (`safe`), `ruleset`
 `pses-default`, `scopeToEdit` true, `formatOnEdit` off, `timeoutMs` 5000, `debounceMs` 150. The
@@ -48,7 +78,7 @@ which never alters the diagnostics surface.
 | RAM | 31.14 GB |
 | PowerShell 7 host | pwsh **7.6.3** (`C:\Program Files\PowerShell\7\pwsh.exe`) -- the plugin's default `ps_host` |
 | Windows PowerShell | **5.1.26100.8875** |
-| Measurement date | 2026-08-12 |
+| Measurement date | **2026-08-19** (the v1.31.0 baseline was 2026-08-12) |
 
 **Single machine, single host, single analyzer version.** Everything here is indicative of an
 order of magnitude and a shape on one developer laptop. Nothing here is a cross-platform claim, a
@@ -58,32 +88,51 @@ CI threshold, or an SLA.
 
 The quiescence arc established that this host's true idle is only reachable on a dark machine, and
 that a latency measured under load and published as if it were not is worse than no number at all.
-This dispatch therefore **does not claim a quiet window and did not attempt one.** It labels
-instead.
+Neither the v1.31.0 baseline nor this re-measurement **claims a quiet window or attempted one.**
+Both label instead.
 
 A coarse CPU-load observation was taken immediately **before and after** every measurement block
-(five samples of total machine CPU percent, plus a process census). Observed range across all
-blocks:
+(five samples of total machine CPU percent, plus a process census). At v1.32.0
+(`evidence/v1.32.0/results/m*.json`, `load_before` / `load_after`):
 
 | Block | CPU median before | CPU median after | Processes |
 |---|---:|---:|---:|
-| M1 warm settle (run A) | 47% | 33% | 568 |
-| M1 warm settle (run B) | 45% | 54% | 576 |
-| M2 cold start (small) | 36% | 21% | 570 |
-| M3/M5 sustained session | 38% | 36% | 547 -> 568 |
-| M4 large-file steady state | 43% | 43% | 571 |
-| M4b large-file convergence | 31% - 57% per session | -- | ~575 |
+| M1 warm settle | 32% | 18% | 385 -> 383 |
+| M2 cold start (small) | 29% | 11% | 379 -> 384 |
+| M3/M5 sustained session | 13% | 9% | 392 -> 376 |
+| M4/M4b large file | 14% | 12% | 386 -> 375 |
 
-**This is a busy machine, and the census says so plainly:** 547 to 585 live processes, of which
-roughly 80 are `statusline.ps1` shells, plus **three concurrent Claude Code sessions each running
-their own powershell-lsp daemon and PSES child**. Wave A ran attended-parallel by charter, so that
-contention is part of the measured condition, not an accident.
+> ### Read this before reading any wall-clock number
+>
+> **This machine ran materially quieter than the v1.31.0 baseline did.** CPU medians of **9-32%**
+> here against **31-57%** there; **375-392** live processes against **547-585**. The v1.31.0 run was
+> deliberately attended-parallel, with three concurrent Claude Code sessions each holding their own
+> daemon and PSES child; this one was not.
+>
+> **So the wall-clock improvements below are reported, not claimed.** Every end-to-end wall figure
+> fell, and it would be easy and wrong to present that as the release getting faster. The load
+> difference is a sufficient alternative explanation for all of it, and this document will not
+> arbitrate between the two on one machine.
+>
+> **`analysisMs` is the honest comparator, and it did not move.** The v1.31.0 baseline's own
+> Finding 2 established that the analyzer segment is the load-insensitive one -- its spread was 37 ms
+> against 510 ms for the end-to-end wall, a factor of ~14. At v1.32.0 `analysisMs` medians are
+> **1405 ms** warm (against 1407) and **1403 ms** across the 120-edit run (against 1404). That is
+> re-measured and unchanged, and it is the strongest statement this pair of runs supports.
+>
+> **The one result the load reading does NOT explain is section 8**, and section 8 says why.
 
-**Where load plausibly shows.** The spread attributable to load is concentrated in process
-startup, not in analysis -- see the attribution in section 6.1, which is the strongest evidence in
-this document that these figures are not simply noise. **The one result that does appear
-load-sensitive is section 8's large-file non-convergence**, and it is flagged there as a candidate
-for a quiet-window re-run, which is Mike's call to charter, not this dispatch's.
+**For the record, what the v1.31.0 census looked like:** 547 to 585 live processes, of which roughly
+80 were `statusline.ps1` shells, plus three concurrent Claude Code sessions each running their own
+powershell-lsp daemon and PSES child. Wave A ran attended-parallel by charter, so that contention was
+part of the measured condition, not an accident. It is recorded here because it is exactly what makes
+the two runs' wall-clock figures non-comparable.
+
+**Where load plausibly shows.** The spread attributable to load is concentrated in process startup,
+not in analysis -- see the attribution in section 6.1, which is the strongest evidence in this
+document that these figures are not simply noise. That attribution is what licenses treating
+`analysisMs` as the cross-release comparator, and it is why a 494 ms fall in the warm wall median
+between the two runs is reported without a causal claim attached to it.
 
 ## 3. The shipped budget chain, and what it lets an SLO promise
 
@@ -228,8 +277,14 @@ line containing `psl-slo-223`, a string a co-tenant daemon cannot carry.
   invents precision the data does not carry.
 - **Discard-and-report.** No run is silently dropped. Any iteration that did not produce a settled
   pass is counted, printed with its reason, and excluded from the latency medians only.
-- **Scripts live in scratch.** The harness is a scratch artifact and ships nowhere in this repo.
-  Its method is described here in enough detail to reproduce; section 10 lists what it does.
+- **The harness ships.** *(Corrected at v1.32.0 -- this line previously read "the harness is a
+  scratch artifact and ships nowhere in this repo", which was true of the v1.31.0 baseline and is no
+  longer true.)* The measurement and gate scripts are committed at
+  [`evidence/v1.32.0/harness/`](../../evidence/v1.32.0/harness/) -- `stage-c.ps1` (stage the release
+  commit), `prove-equals-c.ps1` (the equality proof), `measure.ps1` and `run-quant.ps1` (the
+  quantitative blocks), plus the gate scripts. Their raw output is beside them in
+  `evidence/v1.32.0/results/`. The method is still described here in enough detail to rebuild it, but
+  it no longer has to be rebuilt from prose.
 
 ### 4.4 One instrument defect found and fixed mid-dispatch
 
@@ -245,29 +300,31 @@ figure in this document was produced by the corrected instrument. The defect's p
 to make a non-converging large-file session look as though it were merely returning `incomplete`;
 section 8 is written from the corrected reading.
 
-## 5. The five candidate metrics
+## 5. The five metrics
 
 Each metric is defined here independently of what it measures. **"Excludes" is part of the
 definition**, not a caveat: a metric that does not say what it leaves out cannot be held to a
-target.
+target -- and since 2026-08-21 these are held to targets.
 
 | # | Metric | Exact definition | Instrument | Deliberately excludes |
 |---|---|---|---|---|
 | **M1** | Warm per-edit settle latency | Wall time for one PostToolUse edit on an already-warm daemon, from client process start to client process exit, on a file whose content genuinely changed | External process wall clock, plus `enableStats` `totalMs` / `analysisMs` / `connectMs` / `codeActionMs` | Cold start; bootstrap; the very first post-bring-up edits (priming); any pass that did not settle |
 | **M2** | Cold start to first-analysis-ready | Wall time from invoking the SessionStart hook to the first edit that returns a **settled** analysis, split into segment A (to the pipe answering `ping`) and segment B (to the first settled pass) | Wall clock around the real hooks; settled-ness from the stats record's `taken` field | PSES/PSSA bootstrap (pre-provisioned, as in a warm machine); the Claude Code session's own startup |
 | **M3** | Daemon steady-state memory | `WorkingSet64` and `PrivateMemorySize64` of the daemon process and its PSES child, sampled every 10 edits across a long run, after first-analysis-ready | `Get-Process` against the pids the daemon reports over its own pipe | The transient bring-up peak before first-ready; the client hook processes (short-lived, one per edit); shared/mapped pages counted per-process by the OS |
-| **M4** | Large-file settle latency | M1, measured on a large real PowerShell file instead of a small one | As M1 | As M1 -- **and additionally conditional on the session having converged at all**, which section 8 shows is the binding issue |
+| **M4** | Large-file settle latency | M1, measured on a large real PowerShell file instead of a small one | As M1 | As M1 -- **and additionally conditional on the session having converged at all**. At v1.31.0 that precondition was the binding issue; at v1.32.0 it holds in 5 of 5 sessions (section 8) |
 | **M5** | Sustained-session stability | Drift in per-edit latency and in daemon/PSES memory across a long uninterrupted run of repeated edits, judged as first-quartile versus last-quartile | As M1 plus M3, over 120 consecutive edits | Idle behavior (the 30-minute idle TTL is never reached); multi-day sessions; multi-file working sets |
 
 ### Why this large-file size
 
-The charter asked for a defensible size rather than a round number. **219,682 bytes / 3,881 lines**
--- the plugin's own `scripts/lib/lsp-common.ps1`, copied into scratch. Three independent reasons:
+The fixture is defined by **what it is** -- the largest shipped runtime file -- and not by a byte
+count. At v1.32.0 that file measures **251,523 bytes / 4,398 lines**: the plugin's own
+`scripts/lib/lsp-common.ps1`, copied into scratch. At v1.31.0 the same file measured 219,682 bytes /
+3,881 lines, so the fixture **grew 14.5%** between the two runs, and section 8's improvement is an
+improvement on a *larger* file. Three independent reasons for the choice:
 
 1. It is the **largest shipped runtime file in the plugin** (the only larger files in the repo are
-   test files: `PowerShellLsp.Unit.Tests.ps1` at 4,746 lines is the repo maximum). Across all 164
-   `.ps1`/`.psm1` files, the median is 319 bytes and the p95 is 54,102 bytes, so this file is the
-   p100 of the runtime surface.
+   test files). Across the `.ps1`/`.psm1` surface the median is a few hundred bytes and the p95 is
+   ~54 KB, so this file is the p100 of the runtime surface.
 2. It is **real PowerShell the analyzer must genuinely parse**, not synthetic filler.
 3. Decisively: **the plugin's own source names this exact file as the binding case.**
    `lsp-scan-common.ps1:453-466` records that "the largest scripts (`lib/lsp-common.ps1`,
@@ -287,136 +344,176 @@ other.
 sample size is not a new variable. Small fixture: 219 bytes, 7 lines, one `PSUseApprovedVerbs`
 finding. Priming consumed 2 untimed edits. **Kept 30 of 30; zero exclusions.**
 
-| Segment | median | p95 | min | max | spread | n |
-|---|---:|---:|---:|---:|---:|---:|
-| **End-to-end wall (what a user pays)** | **2997 ms** | 3246 ms | 2838 ms | 3348 ms | 510 ms | 30 |
-| Client `totalMs` (stats log) | 2066 ms | 2162 ms | 1987 ms | 2214 ms | 227 ms | 30 |
-| Daemon `analysisMs` (settle) | **1407 ms** | 1424 ms | 1390 ms | 1427 ms | **37 ms** | 30 |
-| Client `connectMs` | 12 ms | 15 ms | 10 ms | 17 ms | 7 ms | 30 |
-| Daemon `codeActionMs` | 4 ms | 9 ms | 3 ms | 9 ms | 6 ms | 30 |
+Source: `evidence/v1.32.0/results/m1.json`.
 
-**Finding 1 -- the instrument gap is 931 ms.** The end-to-end wall median exceeds the stats log's
-`totalMs` median by **931 ms**, or **45% of the recorded figure**. That is `pwsh` process spawn plus
-the dot-source of a 219 KB shared library plus the option reads -- real time a user waits, invisible
-to the only shipped latency instrument. **An SLO written against `totalMs` would understate
-user-visible per-edit latency by nearly a second.** This is the single most consequential
-measurement-coverage fact in this document.
+| Segment | median | p95 | min | max | spread | n | v1.31.0 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **End-to-end wall (what a user pays)** | **2503 ms** | 2738 ms | 2415 ms | 2910 ms | 495 ms | 30 | 2997 ms |
+| Client `totalMs` (stats log) | 1941 ms | 1998 ms | 1898 ms | 2071 ms | 173 ms | 30 | 2066 ms |
+| Daemon `analysisMs` (settle) | **1405 ms** | 1427 ms | 1389 ms | 1433 ms | **44 ms** | 30 | **1407 ms** |
+| Client `connectMs` | 30.5 ms | 38 ms | 9 ms | 40 ms | 31 ms | 30 | 12 ms |
+| Daemon `codeActionMs` | 3 ms | 6 ms | 2 ms | 10 ms | 8 ms | 30 | 4 ms |
 
-**Finding 2 -- the variance is startup, not analysis.** `analysisMs` spread is **37 ms** while the
-end-to-end wall spread is **510 ms**, a factor of ~14. PSES's analysis of a small file is
-strikingly deterministic even on a loaded desktop; essentially all run-to-run variance lives in
-process startup. This also bounds how much the load labelling matters: the part of the measurement
-most exposed to contention is the part that is not the analyzer.
+**`analysisMs` is re-measured and unchanged: 1405 ms against 1407 ms, a 2 ms difference inside a
+44 ms spread.** On the comparator this document's own Finding 2 identifies as load-insensitive, the
+two releases are indistinguishable. The wall and `totalMs` columns both fell; per section 2 those
+falls are reported, not claimed, because this host ran much quieter.
 
-**Reproducibility.** Two independent N=30 runs, taken about 25 minutes apart with separate daemons
-and separate data roots, agree closely: end-to-end wall medians **2926 ms** and **2997 ms** (2.4%
-apart), and `analysisMs` medians **1407 ms** and **1407 ms** -- **identical**. Numbers taken across
-uncontrolled foreign load scatter; these do not.
+**Finding 1 re-measured -- the instrument gap persists, at 562 ms.** The end-to-end wall median still
+exceeds the stats log's `totalMs` median, now by **562 ms** (v1.31.0: 931 ms), or **29% of the
+recorded figure**. That gap is `pwsh` process spawn plus the dot-source of a ~250 KB shared library
+plus the option reads -- real time a user waits, invisible to the only shipped latency instrument.
+**An SLO written against `totalMs` would still understate user-visible per-edit latency by more than
+half a second**, which is why T2 is written against the wall and not against `totalMs`. The finding
+survives; only its magnitude moved, and it moved on a quieter machine, which is consistent with the
+gap being mostly process startup.
+
+**Finding 2 re-measured and unchanged -- the variance is startup, not analysis.** `analysisMs` spread
+is **44 ms** while the end-to-end wall spread is **495 ms**, a factor of ~11 (v1.31.0: 37 ms against
+510 ms, ~14). PSES's analysis of a small file is strikingly deterministic; essentially all
+run-to-run variance lives in process startup. This is the fact that makes `analysisMs` the honest
+cross-release comparator, so it is load-bearing for every comparison in this document.
+
+**`connectMs` rose from 12 ms to 30.5 ms**, reported as found. It is a small absolute number against
+a 2000 ms connect timeout and against a 2503 ms wall, and no mechanism is claimed for it. Recording
+it rather than passing over it is the point: a figure that moved 2.5x deserves to be visible even
+when it is immaterial to the metric it sits inside.
 
 **Headroom under the shipped cap.** The daemon round-trip governed by `timeoutMs` is
 `analysisMs` + `codeActionMs` + debounce + IPC, roughly **1.6 s** against the **5000 ms** cap, so
-better than two-thirds of that budget is unused for a small file. Note this is *not* the same as the
-2997 ms a user waits: most of that wall sits outside anything `timeoutMs` bounds.
+better than two-thirds of that budget is unused for a small file -- unchanged from v1.31.0, as it
+must be, since `analysisMs` did not move. Note this is *not* the same as the 2503 ms a user waits:
+most of that wall sits outside anything `timeoutMs` bounds.
 
 ### 6.2 M2 -- cold start to first-analysis-ready
 
 **N = 10** independent cold sessions, each with a fresh data root, a fresh session id, and a full
 teardown between iterations. Small fixture. **Kept 10 of 10; zero exclusions.**
 
-| Segment | median | p95 | min | max | spread | n |
-|---|---:|---:|---:|---:|---:|---:|
-| SessionStart hook wall (returns detached) | 2716 ms | 3140 ms | 2429 ms | 3140 ms | 711 ms | 10 |
-| **Segment A** -- to the pipe answering `ping` | 3643 ms | 4196 ms | 3315 ms | 4196 ms | 881 ms | 10 |
-| **COLD START -- to first settled analysis** | **9523 ms** | 10069 ms | 8531 ms | 10069 ms | 1538 ms | 10 |
-| Edits until the first settled pass | **2** | 2 | 2 | 2 | **0** | 10 |
-| Edits returned "NOT checked" | **1** | 1 | 1 | 1 | **0** | 10 |
+Source: `evidence/v1.32.0/results/m2.json`.
 
-**Finding 3 -- cold start is about 2.6x longer than the pipe-up figure suggests.** The existing
-`docs/benchmarks.md` cold-start figures (3287-3371 ms at v1.29.1) measure "the per-session daemon
-reaching ready" -- segment A. Measured through to the moment an edit actually comes back checked,
-cold start is **9523 ms**. Both numbers are correct about different events; only the second is what
-a user experiences as "my edits are being checked now". *(The v1.29.1 figures are cited here as the
-historical, differently-defined measurement they are -- they carry their own build context and are
-not a current baseline.)*
+| Segment | median | p95 | min | max | spread | n | v1.31.0 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| SessionStart hook wall (returns detached) | 1627 ms | 2078 ms | 1505 ms | 2078 ms | 573 ms | 10 | 2716 ms |
+| **Segment A** -- to the pipe answering `ping` | 2265 ms | 2796 ms | 2080 ms | 2796 ms | 716 ms | 10 | 3643 ms |
+| **COLD START -- to first settled analysis** | **6991.5 ms** | 8453 ms | 6470 ms | 8453 ms | 1983 ms | 10 | 9523 ms |
+| Edits until the first settled pass | **2** | 2 | 2 | 2 | **0** | 10 | 2 |
+| Edits returned "NOT checked" | **1** | 1 | 1 | 1 | **0** | 10 | 1 |
 
-**Finding 4 -- exactly one edit per session comes back unchecked, deterministically.** In 10 of 10
-sessions the first post-bring-up edit returned the honest `incomplete` banner ("this edit was NOT
-checked") and the second settled. Spread zero on both counts. This is the pipe-first design working
-exactly as documented -- an edit racing startup gets an honest status rather than silence -- and it
-is quantified here for the first time: **the cost of that design is one unchecked edit per
-session**, no more and no less, on a small file.
+**Finding 3 re-measured -- cold start is still about 3x longer than the pipe-up figure suggests.**
+The existing `docs/benchmarks.md` cold-start figures (3287-3371 ms at v1.29.1) measure "the
+per-session daemon reaching ready" -- segment A. Measured through to the moment an edit actually
+comes back checked, cold start is **6991.5 ms**, against a 2265 ms segment A. Both numbers are
+correct about different events; only the second is what a user experiences as "my edits are being
+checked now". The *ratio* is the durable part of this finding and it barely moved (2.6x, now 3.1x);
+the absolute figures fell on a quieter host. *(The v1.29.1 figures are cited as the historical,
+differently-defined measurement they are -- they carry their own build context and are not a current
+baseline.)*
+
+**Finding 4 re-measured and unchanged -- exactly one edit per session comes back unchecked,
+deterministically.** In 10 of 10 sessions the first post-bring-up edit returned the honest
+`incomplete` banner ("this edit was NOT checked") and the second settled. **Spread zero on both
+counts, in both releases.** This is the pipe-first design working exactly as documented -- an edit
+racing startup gets an honest status rather than silence -- and the cost of that design is **one
+unchecked edit per session**, no more and no less, on a small file. Determinism repeated across two
+independent 10-session runs on two builds is a considerably stronger statement than it was when this
+document first recorded it, and it is the direct basis on which T3 is met.
 
 ### 6.3 M3 -- daemon steady-state memory
 
-Sampled every 10 edits across the 120-edit sustained run, **12 samples over 387 seconds**, after
-first-analysis-ready.
+Sampled every 10 edits across the 120-edit sustained run, **12 samples over 291.9 seconds**, after
+first-analysis-ready. Source: `evidence/v1.32.0/results/m35.json`.
 
-| Process / counter | median | p95 | min | max | spread | n |
-|---|---:|---:|---:|---:|---:|---:|
-| Daemon working set | **154 MB** | 157 MB | 140 MB | 157 MB | 17 MB | 12 |
-| PSES child working set | **164 MB** | 170 MB | 161 MB | 170 MB | 10 MB | 12 |
-| PSES child private bytes | 60 MB | 66 MB | 57 MB | 66 MB | 8 MB | 12 |
-| Daemon private bytes | 70 MB | 75 MB | 60 MB | 75 MB | 15 MB | 12 |
+| Process / counter | median | p95 | min | max | spread | n | v1.31.0 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Daemon working set | **156.5 MB** | 162 MB | 139.7 MB | 162 MB | 22.3 MB | 12 | 154 MB |
+| PSES child working set | **161.8 MB** | 168 MB | 151.4 MB | 168 MB | 16.6 MB | 12 | 164 MB |
+| Daemon private bytes | 73.1 MB | 79.4 MB | 67.7 MB | 79.4 MB | 11.7 MB | 12 | 70 MB |
+| PSES child private bytes | 58.7 MB | 64.1 MB | 55.4 MB | 64.1 MB | 8.7 MB | 12 | 60 MB |
 
-**Combined steady-state working set: about 318 MB** for the daemon plus its PSES child.
+**Combined steady-state working set: about 318 MB** for the daemon plus its PSES child --
+**re-measured and unchanged to the megabyte** (156.5 + 161.8 = 318.3, against 154 + 164 = 318).
+Memory is the metric here least exposed to ambient load, so unlike the wall-clock figures this
+agreement is a real like-for-like result rather than a reported one.
 
-At the first-analysis-ready moment the pair measured **126.3 MB + 147.9 MB = 274 MB**; the daemon
-then rose to ~154 MB by roughly edit 30 and **plateaued** for the remaining 90 edits. That shape --
-a warm-up rise to a plateau -- is characterised further in M5.
+At the first-analysis-ready moment the pair measured **128.2 MB + 148.9 MB = 277 MB** (v1.31.0:
+274 MB); the daemon then rose to ~156 MB by roughly edit 30 and **plateaued** for the remaining 90
+edits. The same warm-up-rise-then-flat shape, characterised further in M5.
 
 ### 6.4 M4 -- large-file settle latency
 
-**Read section 8 first.** The figures below are **conditional on the session having converged**,
-and section 8 establishes that convergence on this file is the exception rather than the rule.
-Presenting this table without that precondition would be the most misleading thing in the document.
+**Read section 8 with this.** The figures below remain **conditional on the session having
+converged**. At v1.31.0 that precondition was the story, because convergence was the exception. At
+v1.32.0 it holds in **5 of 5** sessions, so the table below is now representative rather than
+survivorship-selected -- but the conditional is kept in the metric's definition, because it is what
+makes the number honest if the precondition ever stops holding.
 
-From the one session that did converge: **N = 15**, large fixture (219,682 bytes, 3,881 lines).
-**Kept 15 of 15** within that session; zero exclusions. Load context: CPU median 43% before and
-after.
+Pooled across all five converged sessions: **n = 70 kept of 75**, large fixture (251,523 bytes,
+4,398 lines). Load context: CPU median 14% before, 12% after. Source:
+`evidence/v1.32.0/results/m4b.json`.
 
-| Segment | median | p95 | min | max | spread | n |
-|---|---:|---:|---:|---:|---:|---:|
-| **End-to-end wall** | **5071 ms** | 5748 ms | 4477 ms | 5748 ms | 1271 ms | 15 |
-| Client `totalMs` | 3814 ms | 4079 ms | 3496 ms | 4079 ms | 583 ms | 15 |
-| Daemon `analysisMs` | 1665 ms | 1762 ms | 1564 ms | 1762 ms | 198 ms | 15 |
-| Daemon `codeActionMs` | 4 ms | 22 ms | 3 ms | 22 ms | 19 ms | 15 |
+| Segment | median | p95 | min | max | spread | n | v1.31.0 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **End-to-end wall** | **3741.5 ms** | 4090 ms | 3484 ms | 4277 ms | 793 ms | 70 | 5071 ms |
+| Client `totalMs` | 3209 ms | 3533 ms | 2973 ms | 3746 ms | 773 ms | 70 | 3814 ms |
+| Daemon `analysisMs` | 1610.5 ms | 1717 ms | 1514 ms | 1795 ms | 281 ms | 70 | 1665 ms |
+| Daemon `codeActionMs` | **0 ms** | 0 ms | 0 ms | 0 ms | 0 ms | 70 | 4 ms |
 
-**Finding 5 -- once converged, a large file is only ~18% slower to analyze, but ~69% slower to
-edit.** `analysisMs` rises from 1407 ms to 1665 ms (+18%) for a file roughly 1000x larger, while the
-end-to-end wall rises from 2997 ms to 5071 ms (+69%). The extra ~1.1 s sits in the client, before
-the daemon is ever contacted: the client's own pre-passes -- the non-ASCII byte scan and the
-in-process parser pre-pass -- both read and parse the whole 219 KB file in the hook process, and
-neither is bounded by `timeoutMs`.
+The v1.31.0 column came from **one** session's 15 samples; this one pools **70** across five, so the
+sample base is materially stronger as well as the result.
+
+> **The `codeActionMs` row nearly shipped as "no data", and the reason is recorded rather than
+> quietly fixed.** Every one of its 70 samples is exactly **0**, because `lsp-common.ps1` is
+> lint-clean on the default surface and the correction-enrichment pass is a no-op. The aggregator
+> filtered its inputs with `Where-Object { $_ }`, which discards `0` as falsy, so the summary block
+> in `m4b.json` still records this metric as `n=0, median=null`. The recovered figure above comes
+> from the raw per-session `keptCodeAction` arrays in the same file -- 70 values, all zero -- and
+> that file is left as it was written rather than edited after the fact. **A metric whose true value
+> is zero and whose instrument treats zero as absent is indistinguishable from an unmeasured
+> metric**, and the only thing that caught it was an n=0 sitting next to a kept-set of 70.
+
+**Finding 5 re-measured -- once converged, a large file is ~15% slower to analyze but ~49% slower to
+edit.** `analysisMs` rises from 1405 ms to 1610.5 ms (+15%) for a file roughly 1150x larger, while
+the end-to-end wall rises from 2503 ms to 3741.5 ms (+49%). At v1.31.0 the same comparison read +18%
+and +69%. The shape of the finding is intact and its cause is unchanged: the extra ~1.2 s sits in the
+client, before the daemon is ever contacted, because the client's own pre-passes -- the non-ASCII
+byte scan and the in-process parser pre-pass -- both read and parse the whole ~250 KB file in the
+hook process, and neither is bounded by `timeoutMs`. **The analyzer scales far better with file size
+than the client does**, and that remains the actionable content of this finding.
 
 ### 6.5 M5 -- sustained-session stability
 
 **N = 120** consecutive edits on one daemon over **387 seconds**, memory sampled every 10 edits.
 **Kept 120 of 120; zero exclusions -- no edit in the entire run failed to settle.**
 
-| Segment | median | p95 | min | max | spread | n |
-|---|---:|---:|---:|---:|---:|---:|
-| End-to-end wall, whole run | 3103 ms | 3821 ms | 2618 ms | 4167 ms | 1549 ms | 120 |
-| Daemon `analysisMs`, whole run | 1404 ms | 1418 ms | 1362 ms | 1436 ms | 74 ms | 120 |
+Source: `evidence/v1.32.0/results/m35.json`.
+
+| Segment | median | p95 | min | max | spread | n | v1.31.0 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| End-to-end wall, whole run | 2398.5 ms | 2646 ms | 2220 ms | 3023 ms | 803 ms | 120 | 3103 ms |
+| Daemon `analysisMs`, whole run | **1403 ms** | 1421 ms | 1360 ms | 1433 ms | 73 ms | 120 | **1404 ms** |
 
 **Drift, first 30 edits versus last 30 edits:**
 
 | Window | wall median | analysis median |
 |---|---:|---:|
-| First quartile (edits 1-30) | 3179 ms | 1406 ms |
-| Last quartile (edits 91-120) | 3017 ms | 1395 ms |
-| **Drift (positive = slower at the end)** | **-162 ms** | **-11 ms** |
+| First quartile (edits 1-30) | 2531.0 ms | 1407.0 ms |
+| Last quartile (edits 91-120) | 2403.5 ms | 1403.0 ms |
+| **Drift (positive = slower at the end)** | **-127.5 ms** | **-4.0 ms** |
 
-**Memory across the run:** daemon working set **+14.1 MB**, PSES working set **+2.3 MB**, PSES
-private bytes **-3.4 MB**. The daemon's growth is front-loaded -- 126 MB at first-ready, ~154 MB by
-edit 30, then flat between 152 and 157 MB for the remaining 90 edits.
+**Memory across the run:** the daemon rose from **128.2 MB** at first-ready to ~156 MB by edit 30,
+then stayed between **154.4 and 157.3 MB** for the remaining 90 edits, ending at 155.8 MB. PSES's
+working set ended at 162.1 MB having started at 148.9 MB. Front-loaded growth to a plateau, the same
+shape as v1.31.0.
 
-**Finding 6 -- stability is confirmed, and that is the reportable answer.** The charter asked
-whether sustained use reveals drift, and noted that stability confirmed is as much a finding as
-drift found. Over 120 edits and 6.5 minutes: latency did not degrade (both medians moved slightly
-*faster*, well inside the run's own spread), no edit failed to settle, and memory reached a plateau
-rather than climbing. **There is no leak and no slowdown on this path at this duration.** The
-honest bound on that claim is in section 10: 120 edits over 6.5 minutes is not a multi-hour session,
-and the 30-minute idle TTL was never exercised.
+**Finding 6 re-measured and unchanged -- stability is confirmed, and that is the reportable answer.**
+Over 120 edits and 291.9 seconds: latency did not degrade (both medians again moved slightly
+*faster*, well inside the run's own spread), **no edit failed to settle**, and memory reached a
+plateau rather than climbing. `analysisMs` over the whole run is **1403 ms** against v1.31.0's
+1404 ms -- a 1 ms difference across 240 samples on two builds. **There is no leak and no slowdown on
+this path at this duration.** The honest bound on that claim is unchanged and stated in section 10:
+120 edits over ~5 minutes is not a multi-hour session, and the 30-minute idle TTL was never
+exercised. T6 is met on exactly this evidence, and on nothing broader.
 
 ## 7. Anomalies, exclusions, and everything that did not go cleanly
 
@@ -424,131 +521,191 @@ Recorded so that the absence of a problem elsewhere reads as a search rather tha
 
 - **Excluded latency runs: zero, across M1, M2, M3 and M5.** Every timed iteration in those blocks
   produced a settled pass. No outlier was discarded, because none needed to be.
-- **M4's exclusions are total, not partial** -- see section 8. Non-converging sessions produced no
-  latency figures at all rather than slow ones.
-- **One instrument defect was found and fixed mid-dispatch** (section 4.4), and it changed a
-  conclusion. It is recorded rather than quietly corrected.
-- **The first large-file cold-start block crashed after measuring**, when its summary step tried to
-  compute a median over an empty kept-set. The measurement itself completed and its data is used;
-  only the reporting step failed.
-- **Client-relaunched orphan daemons had to be swept.** Because the client auto-relaunches a daemon
-  it believes unreachable (section 8), a session can end owning more daemons than it started. Each
-  block's teardown was verified, and a scoped sweep filtered on the private data-root path removed
-  the strays. **Co-tenant daemons were never a candidate for that sweep**, by construction.
+- **M4 kept 70 of 75.** The five not kept are the per-session unchecked first edits -- one each, the
+  T3 racing edit -- not slow passes. At v1.31.0 this line read "M4's exclusions are total, not
+  partial", because non-converging sessions produced no latency figures at all. That is no longer
+  the case; see section 8.
+- **A `0`-valued metric was nearly reported as absent** (section 6.4). The aggregator's falsy filter
+  discarded `codeActionMs = 0`, and only an `n=0` beside a kept-set of 70 caught it. The evidence
+  file is left carrying the uncorrected summary so the defect stays visible.
+- **One instrument defect was found and fixed mid-dispatch at v1.31.0** (section 4.4), and it changed
+  a conclusion. It is recorded rather than quietly corrected, and every figure in this document --
+  including the v1.32.0 ones -- was produced by the corrected instrument.
+- **Client-relaunched orphan daemons had to be swept at v1.31.0.** Because the client auto-relaunched
+  a daemon it believed unreachable (section 8), a session could end owning more daemons than it
+  started. At v1.32.0 the scoped sweep found **zero** strays after M1 and after M3/M5
+  (`scoped_strays_swept: 0`), which is the same fix showing up from a second direction. **Co-tenant
+  daemons were never a candidate for that sweep**, by construction.
+- **The capture log wrote inside the staged plugin tree.** Every equality proof recorded
+  `dogfood/diagnostics.jsonl` as an ignored byproduct under the plugin root, which is threat-model
+  finding **T2.3** showing up as a measurement artifact. It was classified by the commit's own
+  `.gitignore` rather than excluded by name, so the proof stayed able to fail. That finding has since
+  been fixed -- the capture log now writes under `CLAUDE_PLUGIN_DATA` -- so a future re-run of this
+  block should record **no** byproduct inside the plugin root. If it does, something else is writing
+  there.
 - **Fixture growth is real but immaterial.** The nonce-per-iteration protocol grows the small
   fixture during a block (219 bytes to about 613 bytes over 30 edits). Fixtures were reset to the
-  stated sizes between blocks. Given `analysisMs` spread of 37 ms across the block, this is not a
+  stated sizes between blocks. Given `analysisMs` spread of 44 ms across the block, this is not a
   measurable contributor.
 
-## 8. The headline finding: the edit path does not converge on a large file
+## 8. The headline finding, RESOLVED: the edit path now converges on a large file
 
-This is the ugliest number in the document and the most useful one. It is reported as found.
+At v1.31.0 this section was titled *"the edit path does not converge on a large file"* and it was the
+ugliest number in the document. **That finding does not hold at v1.32.0.** It is recorded as resolved
+here, with the same discipline the failure was recorded with -- including what the resolution does
+*not* establish.
 
-**On the 3,881-line fixture, a cold session repeatedly fails to ever return a checked edit.** Not
-"slowly" -- at all. Across independently measured cold sessions with a uniform 15-attempt cap:
+**On the 4,398-line fixture, 5 of 5 cold sessions converge, each at edit 2.** Source:
+`evidence/v1.32.0/results/m4b.json`, uniform 15-attempt cap, five independent cold sessions.
 
-| Measurement | Sessions | Converged | Attempt cap each |
-|---|---:|---:|---:|
-| **M4b controlled block** (uniform cap, primary figure) | **5** | **1** | 15 |
-| M2 large-file cold block | 4 | 0 | 27-29 over ~183 s each |
-| M4 first retry (corrected instrument) | 1 | 0 | 25 |
-| M4 original block | 1 | 1 | converged, then 15 of 15 settled |
-| **Pooled across all cold sessions** | **11** | **2** | (caps differ -- see note) |
+| # | converged | at edit | ms | unchecked | daemons launched | auto-relaunches | daemon `settled=True` | CPU before |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 1 | **yes** | 2 | 13996 | 1 of 15 | 1 | 0 | 14 | 20% |
+| 2 | **yes** | 2 | 13623 | 1 of 15 | 1 | 0 | 15 | 14% |
+| 3 | **yes** | 2 | 13785 | 1 of 15 | 1 | 0 | 15 | 6% |
+| 4 | **yes** | 2 | 13108 | 1 of 15 | 1 | 0 | 15 | 6% |
+| 5 | **yes** | 2 | 13065 | 1 of 15 | 1 | 0 | 15 | 9% |
 
-The primary figure is **M4b: 1 of 5 cold sessions converged**, because it is the only block with a
-uniform attempt cap across sessions. The pooled 2-of-11 row is offered as corroboration only; its
-sessions used different caps, so it is a weaker statistic than its larger denominator suggests.
+| Measurement | v1.31.0 | **v1.32.0** |
+|---|---:|---:|
+| Sessions converged (uniform 15-attempt cap) | **1 of 5** | **5 of 5** |
+| Cost of convergence | 13 edits / 89,927 ms | **2 edits / 13,623 ms** (median) |
+| Daemons launched per session (median) | 3 (min 3, max 4) | **1** (spread 0) |
+| Auto-relaunches per session (median) | 3 (spread 0) | **0** (spread 0) |
+| Client "daemon unreachable" verdicts | 16 in one session | **0** across all five |
 
-In the single M4b session that did converge, convergence cost **13 edits and 89,927 ms** -- about
-**90 seconds** of editing, with 12 edits returned unchecked, before the first checked result. Across
-all five sessions the client launched a median of **3 daemons per session** (min 3, max 4) and fired
-a median of **3 auto-relaunches per session** (spread 0).
+Every column moves in the same direction, with **spread zero on the three count columns**. The result
+is not a marginal shift in a noisy statistic; it is the failure mode being absent.
 
-### The mechanism, read from the plugin's own logs
+### The mechanism -- and why this is not just a quieter machine
 
-Two failures compound, and neither is visible from the edit's return value alone. From one
-non-converging 25-edit session:
+Section 2 is blunt that this host ran quieter, and that every wall-clock improvement is therefore
+reported rather than claimed. **This result is the exception, and the reason is specific.**
 
-| Signal | Count | Source |
-|---|---:|---|
-| Stats lines written (of 25 edits) | **4** | `logs/stats.jsonl` -- 21 edits produced no record at all |
-| Daemon `settled=True` | **0** | `logs/pses-daemon.log` |
-| Daemon "analysis did not settle" | 5 | same |
-| Client "connect attempt failed" | 32 | `logs/lsp-client.log` |
-| Client "daemon unreachable (degrading to log-only)" | 16 | same |
-| Client "auto-relaunch: daemon launch fired" | **6** | same |
-| Client "auto-relaunch suppressed (cooldown)" | 15 | same |
-| Distinct daemons launched in one session | **6** | `pses-server-*.json` count |
+The v1.31.0 diagnosis was a compounding pair, read from the plugin's own logs:
 
-1. **The daemon's 5000 ms settle cap expires** before PSES publishes a settled analysis of a 219 KB
+1. **The daemon's 5000 ms settle cap expires** before PSES publishes a settled analysis of a ~220 KB
    file, so the pass returns `incomplete`. This is precisely the condition
    `lsp-scan-common.ps1:453-466` documents for this very file, and precisely why the **scan** path
-   raised its cap to 15000 ms.
-2. **While the daemon is busy analyzing, it is not accepting pipe connections.** The client's
-   2000 ms connect timeout expires, the client concludes the daemon is *unreachable* -- a different
-   condition from "busy" -- and **auto-relaunches it**. The replacement daemon starts cold, and any
-   progress the previous one made is discarded. Six daemons in one session.
+   raised its cap to 15000 ms while the edit path was deliberately left at 5000.
+2. **While the daemon is busy analyzing, it is not accepting pipe connections.** The client's 2000 ms
+   connect timeout expires, the client concludes the daemon is *unreachable* -- a different condition
+   from "busy" -- and **auto-relaunches it**. The replacement starts cold and the previous daemon's
+   progress is discarded. Six daemons in one session. Abandoned daemons were observed logging
+   `settled=True` **after** the client had given up on them: the work completed, with nobody left to
+   receive it.
 
-The two failures reinforce each other: the analysis is slow enough to trip the connect timeout, and
-tripping the connect timeout destroys the daemon that was doing the analysis. In one earlier session
-the abandoned daemons were observed logging `settled=True` **after** the client had already given up
-on them -- the work completed, with nobody left to receive it.
+**Two shipped fixes in the 1.32.0 band name exactly that pair.**
 
-**Why this is a finding and not a re-run.** It would have been easy to keep re-running until a
-converging session appeared and publish its tidy 5071 ms. That session exists (section 6.4) and is
-reported -- with its precondition stated, because the precondition is the story.
+- **v1.31.2** (dispatch 000237) fixed the destructive half: a client that abandoned one reply killed
+  the whole daemon. Its own text names *"the binding reason a large-file session never converged once
+  the relaunch thrash"* began.
+- **v1.31.1** fixed the misclassification that started the thrash: *"a live-but-busy analyzer daemon
+  is no longer mistaken for an unreachable one, and is no longer relaunched because of it."* Its text
+  names this case -- the connect succeeded, the response did not arrive within the hard cap, and *"the
+  daemon is alive and still analyzing (the large-file case ...)"*.
 
-**What it does not establish.** It is not established that this reproduces on other hosts or on
-files between the 54 KB p95 and this 219 KB p100.
+The measurement then shows **precisely the signature those fixes predict**: one daemon, zero
+relaunches, zero unreachable verdicts, and the analysis surviving to be received. A causal story that
+predicts three specific counts in advance, and finds all three at zero-spread, is a materially
+stronger claim than "the number improved".
 
-**Ambient load does not explain it, on this evidence.** The tempting reading is that the machine was
-simply busy. The per-session CPU medians refuse that reading: the session that **converged** ran at
-**43%**, while failures occurred at **31%, 42%, 52% and 57%** -- the *lowest*-load session in the
-block failed. Load may still matter, but it does not separate the cases here, and saying so is more
-honest than implying the desktop is the cause. **A quiet-window re-run of M4/M4b would test it
-properly, and is offered as a Mike option; this dispatch neither chartered nor attempted one, per
-charter.**
+**And the load reading does not fit this result even on its own terms.** At v1.31.0 the session that
+*converged* ran at **43%** CPU while failures occurred at **31%, 42%, 52% and 57%** -- the
+*lowest*-load session in that block failed. Load did not separate the cases when the failure was
+live, so a lower ambient load is a poor explanation for the failure's disappearance now. **On top of
+that, the fixture grew 14.5%** (219,682 -> 251,523 bytes): convergence improved on a *larger* file.
 
-## 9. CANDIDATE TARGETS -- UNRATIFIED PROPOSALS, NOT ADOPTED SLOs
+### What this resolution does NOT establish
 
-> **Nothing in this section is in force.** These are proposals for Mike to ratify, amend, or reject
-> at the Wave A gate review. **No target below is derived from any measurement above.** Each states
-> its independent basis. Where a measured value is named, it is named only to show where today's
-> build sits relative to an independently-chosen line -- which is a comparison, not a derivation.
+Recorded with the same care the failure was:
 
-| # | Candidate target | Independent basis for the number | Where v1.31.0 sits |
+- **One host, one OS, one analyzer pin.** Nothing here says the fix holds on other platforms; the
+  four CI legs cover them functionally, not for this behaviour.
+- **Five sessions is five sessions.** Zero-spread across five is strong for a failure mode that used
+  to fire in four of five, but it is not a proof of impossibility.
+- **The file-size curve still has two points.** Nothing bounds behaviour between the ~54 KB p95 and
+  this ~250 KB p100, which is exactly where a practical answer for real user repositories would live.
+- **The underlying cap is unchanged.** The edit path still runs a 5000 ms daemon settle cap, and PSES
+  still needs longer than that on this file -- **one edit per session still comes back unchecked**.
+  What changed is that the client no longer destroys the daemon that is doing the work. The design
+  tension `lsp-scan-common.ps1` documents is still there; it is no longer *compounding*.
+
+**T3 and T4 both moved on this evidence**, and section 9 records them as met. T3 -- at most one
+unchecked edit per session -- was "not met on a large file"; it is now met exactly, 5 of 5, spread 0.
+T4 -- every shipped `.ps1`/`.psm1` settles on the edit path -- was "Not met"; the p100 file settles.
+
+## 9. ADOPTED v1 SLOs -- ratified by Mike, 2026-08-21
+
+> **These six are in force.** They were proposed in this document as unratified candidates against
+> v1.31.0 and were **ratified by Mike on 2026-08-21** as the project's v1 SLOs. **All six are met at
+> v1.32.0.**
+>
+> **Ratification did not change a single number.** Each target is exactly the line that was proposed,
+> with exactly the basis it was proposed on -- which is the whole point of having derived them
+> independently before measuring against them. **No target below is derived from any measurement
+> above.** Where a measured value is named, it is named to show where the build sits relative to an
+> independently-chosen line: a comparison, not a derivation.
+>
+> **What adoption changes is the consequence of missing one.** These stop being descriptions of a
+> build and become a **regression bar**: a future release that misses one is missing an adopted
+> target, and that is a release-blocking fact to be surfaced, not a number that reads differently.
+
+| # | Adopted target | Independent basis for the number | Standing at v1.32.0 |
 |---|---|---|---|
-| **T1** | The `timeoutMs`-governed round-trip completes within the shipped **5000 ms** cap on at least 99% of warm edits | The shipped `timeoutMs` default **is** the product's own declared promise: past it, the client degrades to log-only. The target restates a contract the build already ships. | Met with room on a small file (~1.6 s of a 5000 ms budget) |
-| **T2** | User-visible per-edit wall stays under **10 s**, with **1 s** named as the aspiration | Published human-response thresholds, external to this project: ~1 s keeps a user's flow of thought unbroken; ~10 s is the limit of sustained attention. | 10 s met (2997 ms); 1 s aspiration not met |
-| **T3** | At most **one** edit per session returns "NOT checked", and only during cold start | The pipe-first design's own stated intent -- an edit racing startup receives an honest status rather than silence. Bounding it at the single racing edit is what "honest status" is *for*. | Met exactly on a small file (1 of 1, 10 of 10 sessions); **not met on a large file** |
-| **T4** | Every `.ps1`/`.psm1` **shipped in this repository** settles on the edit path | Dispatch 000133 already ratified that these files need up to ~15000 ms, and raised the *scan* cap to match. The edit path was deliberately left at 5000 ms. The target is that the already-ratified fact apply to both paths. | **Not met** -- see section 8 |
-| **T5** | Daemon plus PSES steady-state working set stays under **512 MB** | A policy choice about what a background editor helper may cost: roughly 3% of a 16 GB workstation, the low end of machines this plugin targets. Chosen as a round policy ceiling, not fitted to an observation. | Met (~318 MB) |
-| **T6** | Over a session-length run, per-edit latency shows no monotonic upward trend and resident memory reaches a plateau | The `idleTtlMin` design intends the daemon to persist across a working session; a resident process that grew without bound would defeat that design. The target is the design's own precondition. | Met over 120 edits / 6.5 minutes |
+| **T1** | The `timeoutMs`-governed round-trip completes within the shipped **5000 ms** cap on at least 99% of warm edits | The shipped `timeoutMs` default **is** the product's own declared promise: past it, the client degrades to log-only. The target restates a contract the build already ships. | **MET** with room -- ~1.6 s of a 5000 ms budget on a small file; the large-file round trip is ~1.6 s too (`analysisMs` 1610.5 ms, `codeActionMs` 0) |
+| **T2** | User-visible per-edit wall stays under **10 s**, with **1 s** named as the aspiration | Published human-response thresholds, external to this project: ~1 s keeps a user's flow of thought unbroken; ~10 s is the limit of sustained attention. | **MET** -- 2503 ms warm, 3741.5 ms on the p100 file. The **1 s aspiration is still not met**, and the instrument gap in section 6.1 says where the time goes |
+| **T3** | At most **one** edit per session returns "NOT checked", and only during cold start | The pipe-first design's own stated intent -- an edit racing startup receives an honest status rather than silence. Bounding it at the single racing edit is what "honest status" is *for*. | **MET** on both fixtures -- exactly 1, spread 0, in 10 of 10 small-file sessions and 5 of 5 large-file sessions. Was "not met on a large file" at v1.31.0 |
+| **T4** | Every `.ps1`/`.psm1` **shipped in this repository** settles on the edit path | Dispatch 000133 already ratified that these files need up to ~15000 ms, and raised the *scan* cap to match. The edit path was deliberately left at 5000 ms. The target is that the already-ratified fact apply to both paths. | **MET** -- the p100 runtime file settles, 5 of 5 sessions. Was **"Not met"** at v1.31.0; section 8 is the whole story |
+| **T5** | Daemon plus PSES steady-state working set stays under **512 MB** | A policy choice about what a background editor helper may cost: roughly 3% of a 16 GB workstation, the low end of machines this plugin targets. Chosen as a round policy ceiling, not fitted to an observation. | **MET** with wide margin -- ~318 MB, re-measured and unchanged to the megabyte |
+| **T6** | Over a session-length run, per-edit latency shows no monotonic upward trend and resident memory reaches a plateau | The `idleTtlMin` design intends the daemon to persist across a working session; a resident process that grew without bound would defeat that design. The target is the design's own precondition. | **MET** over 120 edits / 291.9 s -- both medians drifted *faster*, memory plateaued, no edit failed to settle |
 
-**Deliberately not proposed.** No target is offered for cold start to first-analysis-ready. A
-defensible line would have to trade off against bootstrap strategy and against T3, and this
-dispatch found no basis for one that was not simply the measured value rounded -- which is exactly
-the back-fill the charter forbids. It is left open for the gate review.
+**Two of the six were not met when they were proposed.** T3 and T4 were both failing at v1.31.0, and
+they were still proposed -- because a target chosen to be already-passing is not a target. They are
+met now because v1.31.1 and v1.31.2 fixed the mechanism section 8 describes, not because the line
+moved.
+
+**How to read a future miss.** T1, T2 and T5 are met with margin; T3, T4 and T6 are met with **spread
+zero**, meaning the evidence for them is categorical rather than statistical. A T3 or T4 miss is
+therefore a *behavioural regression* and should be read as one, not as measurement noise.
+
+**Deliberately not proposed, and still not.** No target is offered for cold start to
+first-analysis-ready. A defensible line would have to trade off against bootstrap strategy and
+against T3, and no basis was found for one that was not simply the measured value rounded -- which is
+exactly the back-fill this document forbids. Ratification did **not** close this gap: the cold-start
+figure in section 6.2 is a baseline, not a promise. Adopting a seventh target here would require a
+basis that does not yet exist.
 
 ## 10. What these baselines do not establish
 
 - **One host, one OS, one PowerShell version, one analyzer pin.** No cross-platform claim. The four
-  CI legs cover other platforms functionally, not for latency.
-- **Not a quiet-window measurement.** Every figure is daytime-desktop-class, with three co-tenant
-  Claude Code sessions live. Section 8's result is the one plausibly load-sensitive finding.
-- **Not a regression gate, and not CI-wired.** These are indicative baselines. Wiring any of them to
-  a merge gate would turn an indicative number into a flaky gate, which is the mistake
-  `docs/benchmarks.md` already warns against.
-- **Sustained means 120 edits over 6.5 minutes**, not a multi-hour or multi-day session. The
-  30-minute idle TTL was never reached, and no multi-file working set was exercised.
-- **The file-size curve has two points, not a curve.** 219 bytes and 219,682 bytes. Nothing here
-  bounds behavior between the repo's 54 KB p95 and its 219 KB p100, which is exactly where a
-  practical answer for real user repositories would live.
+  CI legs cover other platforms functionally, not for latency. **This bound now also carries the
+  adopted SLOs**: T1-T6 are ratified as targets for the project, but the evidence that they are met
+  is single-host evidence.
+- **Not a quiet-window measurement, and the two runs were not equally loaded.** Every figure is
+  daytime-desktop-class. The v1.32.0 run was materially quieter than the v1.31.0 baseline (section 2),
+  so **wall-clock differences between the two are reported, not claimed**. `analysisMs` is the
+  load-insensitive comparator, and it did not move.
+- **Not a CI-wired gate.** Ratification made T1-T6 a **regression bar the program holds itself to**;
+  it did not wire them to a merge gate, and it should not. Wiring a single-host latency number to CI
+  would turn an indicative measurement into a flaky gate, which is the mistake `docs/benchmarks.md`
+  already warns against. The bar is enforced by re-measuring at a release and reporting the standing,
+  not by a red X on a pull request.
+- **Sustained means 120 edits over ~5 minutes**, not a multi-hour or multi-day session. The 30-minute
+  idle TTL was never reached, and no multi-file working set was exercised. T6 is met over exactly
+  that window and claims nothing beyond it.
+- **The file-size curve has two points, not a curve.** 219 bytes and 251,523 bytes. Nothing here
+  bounds behavior between the repo's ~54 KB p95 and its ~250 KB p100, which is exactly where a
+  practical answer for real user repositories would live -- and, since section 8's resolution rests on
+  the p100 case, it is also where a re-emergence would be least visible.
+- **Section 8's resolution rests on five sessions.** Zero-spread across five is strong for a failure
+  mode that used to fire in four of five, and the mechanism was predicted rather than fitted, but it
+  is not a proof of impossibility.
 - **Prior figures in `docs/benchmarks.md` remain historical.** They were measured at v1.24.3 and
   v1.29.1 with different harnesses and different definitions, and are not restated here as current
   baselines.
-- **The harness is a scratch artifact and ships nowhere.** It drives `session-start.ps1` and
+- **The harness ships, in `evidence/v1.32.0/harness/`.** It drives `session-start.ps1` and
   `lsp-client.ps1` over stdin against a junction-backed private data root, classifies each edit by a
   stats line-count delta plus the client's banner, samples memory against daemon-reported pids, and
   tears down through the daemon's own `shutdown` action with a scoped verification sweep. Section 4
-  carries the detail needed to rebuild it.
+  carries the detail; the scripts carry the rest.
