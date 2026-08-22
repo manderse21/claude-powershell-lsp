@@ -17,7 +17,6 @@ follows from the table below, which was built before the verdict was written. Tw
 - **Scope:** audit only. No corpus file was added, deleted, moved, edited, or relicensed. Nothing
   was published anywhere.
 
-<<<<<<< HEAD
 > **DATED NOTE, added 2026-08-17 by dispatch 000251 -- the license identifier below is
 > point-in-time, and is deliberately not rewritten.**
 >
