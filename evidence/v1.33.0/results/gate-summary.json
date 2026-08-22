@@ -1,0 +1,65 @@
+{
+  "freeze": "dispatch 000273, v1.33.0 freeze 1B",
+  "commit": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "generated": "2026-08-22T12:21:47.8769957-04:00",
+  "instrument_defect": {
+    "gate": "license-gate.ps1",
+    "found": "The gate asserted each continuity document names \"from v<the version being released>\" as the Apache-2.0 start. That is only true for v1.32.0 -- the release where the relicense actually happened -- so at C it demanded the docs name v1.33.0 and reported a FAIL against four documents that are CORRECT.",
+    "evidence_at_C": "README.md, CONTINUITY.md, TRUST.md and docs/CONTINUITY.md all read \"forward-only, effective from v1.32.0\"; naming v1.33.0 as the start would be factually wrong.",
+    "fix": "The Apache-2.0 start version and the GPL band are now fixed constants ($ApacheStartVersion=1.32.0, $GplBand=\"v1.6.1 through v1.31.2\"), which is what an irrevocable grant boundary is. The stale $Commit default (fb3116ca, the v1.32.0 tag) was corrected to C.",
+    "verdict": "NOT a defect in C. The release commit was never changed; only the measuring instrument was.",
+    "first_run": "FAIL (recorded in gates.log, kept deliberately)",
+    "corrected_run": "PASS, with the RED control still firing (license-gate.log)"
+  },
+  "gates": [
+    {
+      "gate": "corpus recompute",
+      "detail": "256 passed / 0 failed (filter selected 256 of 2046; selected-count floor held)",
+      "verdict": "PASS"
+    },
+    {
+      "gate": "release workflow + SBOM + provenance CONFIGURATION",
+      "detail": "69 passed / 0 failed",
+      "verdict": "PASS"
+    },
+    {
+      "gate": "signing (Authenticode org-signing path)",
+      "detail": "13 passed / 0 failed / 2 skipped",
+      "verdict": "PASS"
+    },
+    {
+      "gate": "supply chain: Actions pinned by 40-char SHA",
+      "detail": "16 passed / 0 failed",
+      "verdict": "PASS"
+    },
+    {
+      "gate": "air-gapped bootstrap CONTRACT suite",
+      "detail": "45 passed / 0 failed",
+      "verdict": "PASS"
+    },
+    {
+      "gate": "air-gapped bootstrap END-TO-END",
+      "detail": "RED control valid (network blocked -> bootstrap FAILED); GREEN bootstrapped offline from the bundle layer, both layers recorded \"bundle\"",
+      "verdict": "PASS"
+    },
+    {
+      "gate": "clean install + doctor",
+      "detail": "install exit=0; PSUseApprovedVerbs surfaced on a known-bad specimen; doctor exit=0, summary \"12 pass, 0 fail, 2 unknown (of 14 checks)\"",
+      "verdict": "PASS"
+    },
+    {
+      "gate": "LICENSE is Apache-2.0 and CONTINUITY matches",
+      "detail": "13 checks, all PASS after the instrument fix above; RED control fired (pass=False on mutated wording, restored)",
+      "verdict": "PASS"
+    },
+    {
+      "gate": "equality proof after all gates",
+      "detail": "483 tracked, 0 missing / 0 differing / 0 unexplained extra, digest d79b648f...f03fe9",
+      "verdict": "PASS"
+    }
+  ],
+  "not_claimed": [
+    "Published SBOM / provenance / signature verification -- no tag exists yet; this is the post-tag 000245 launch gate.",
+    "Release-workflow DRY RUN -- see dryrun-gate.json for its status."
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "gate": "four CI legs at C, headSha matched (000161 + the 000081 stale-grab guard)",
+  "commit": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "run_id": 32580456217,
+  "run_url": "https://github.com/manderse21/claude-powershell-lsp/actions/runs/32580456217",
+  "workflow": "powershell-lsp CI",
+  "event": "push",
+  "createdAt": "2026-08-22T15:01:46Z",
+  "run_headSha": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "headSha_matches_C": true,
+  "run_conclusion": "success",
+  "expected_legs": [
+    "ubuntu-pwsh",
+    "macos-pwsh",
+    "windows-pwsh",
+    "windows-powershell"
+  ],
+  "missing_legs": [],
+  "legs_total": 4,
+  "legs_green": 4,
+  "legs": [
+    {
+      "name": "ubuntu-pwsh",
+      "conclusion": "success",
+      "status": "completed",
+      "startedAt": "2026-08-22T15:01:49Z",
+      "completedAt": "2026-08-22T15:17:50Z",
+      "url": "https://github.com/manderse21/claude-powershell-lsp/actions/runs/32580456217/job/97048896106"
+    },
+    {
+      "name": "windows-powershell",
+      "conclusion": "success",
+      "status": "completed",
+      "startedAt": "2026-08-22T15:01:49Z",
+      "completedAt": "2026-08-22T15:25:37Z",
+      "url": "https://github.com/manderse21/claude-powershell-lsp/actions/runs/32580456217/job/97048896229"
+    },
+    {
+      "name": "windows-pwsh",
+      "conclusion": "success",
+      "status": "completed",
+      "startedAt": "2026-08-22T15:01:49Z",
+      "completedAt": "2026-08-22T15:22:54Z",
+      "url": "https://github.com/manderse21/claude-powershell-lsp/actions/runs/32580456217/job/97048896247"
+    },
+    {
+      "name": "macos-pwsh",
+      "conclusion": "success",
+      "status": "completed",
+      "startedAt": "2026-08-22T15:01:49Z",
+      "completedAt": "2026-08-22T15:18:01Z",
+      "url": "https://github.com/manderse21/claude-powershell-lsp/actions/runs/32580456217/job/97048896259"
+    }
+  ],
+  "verdict": "PASS"
+}

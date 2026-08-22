@@ -1,0 +1,66 @@
+{
+  "gate": "T5.1 pipe restriction at C",
+  "commit": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "measured_at": "2026-08-22T11:32:59.3319812-04:00",
+  "os": "Microsoft Windows 11 Pro 10.0.26200",
+  "method": "GetSecurityInfo(SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION) off a live pipe handle, rendered as SDDL",
+  "host_pwsh": {
+    "host": "7.6.5",
+    "edition": "Core",
+    "members": "None,FirstPipeInstance,CurrentUserOnly,Asynchronous,WriteThrough",
+    "supported": true
+  },
+  "host_powershell": {
+    "host": "5.1.26100.9168",
+    "edition": "Desktop",
+    "members": "None,Asynchronous,WriteThrough",
+    "supported": false
+  },
+  "red_control_prefix": {
+    "label": "RED control: PRE-FIX constructor (Asynchronous only)",
+    "sddl": "D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;S-1-5-21-4146172374-3427792794-1412385963-1001)(A;;FR;;;WD)(A;;FR;;;AN)",
+    "everyone_ace": true,
+    "anonymous_ace": true,
+    "restricted": false
+  },
+  "red_control_shipped": {
+    "label": "RED control: C's own New-DaemonPipeServer",
+    "sddl": "D:(A;;0x1f019f;;;S-1-5-21-4146172374-3427792794-1412385963-1001)",
+    "everyone_ace": false,
+    "anonymous_ace": false,
+    "restricted": true
+  },
+  "arm_pwsh": {
+    "ps_host": "pwsh",
+    "session_id": "psl273seca",
+    "daemon_served": true,
+    "daemon_pid": 34504,
+    "pses_pid": 20488,
+    "pipe": {
+      "label": "live daemon pipe, ps_host=pwsh",
+      "sddl": "D:(A;;0x1f019f;;;S-1-5-21-4146172374-3427792794-1412385963-1001)",
+      "everyone_ace": false,
+      "anonymous_ace": false,
+      "restricted": true
+    },
+    "error": null
+  },
+  "arm_powershell": {
+    "ps_host": "powershell",
+    "session_id": "psl273secc",
+    "daemon_served": true,
+    "daemon_pid": 16080,
+    "pses_pid": 47956,
+    "pipe": {
+      "label": "live daemon pipe, ps_host=powershell",
+      "sddl": "D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;S-1-5-21-4146172374-3427792794-1412385963-1001)(A;;FR;;;WD)(A;;FR;;;AN)",
+      "everyone_ace": true,
+      "anonymous_ace": true,
+      "restricted": false
+    },
+    "error": null
+  },
+  "verdict_pwsh_restricted": true,
+  "verdict_residual_as_disclosed": true,
+  "verdict": "PASS"
+}

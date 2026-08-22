@@ -1,0 +1,14 @@
+{
+  "label": "before m2",
+  "commit": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "expected_files": 483,
+  "tracked_observed": 483,
+  "missing": [],
+  "differing": [],
+  "extra_ignored_byproducts": [],
+  "extra_unexplained": [],
+  "manifest_sha256": "d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9",
+  "data_inside_root": false,
+  "excluded_for_data": 0,
+  "equal": true
+}

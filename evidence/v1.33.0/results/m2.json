@@ -1,0 +1,167 @@
+{
+  "block": "M2 cold start to first-analysis-ready",
+  "commit": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "attempted": 10,
+  "converged": 10,
+  "summaries": [
+    {
+      "metric": "sessionstart_hook_wall_ms",
+      "n": 10,
+      "median": 5892.0,
+      "p95": 12725.0,
+      "min": 4515.0,
+      "max": 12725.0,
+      "spread": 8210.0
+    },
+    {
+      "metric": "segment_A_pipe_answers_ping_ms",
+      "n": 10,
+      "median": 7888.5,
+      "p95": 15931.0,
+      "min": 5887.0,
+      "max": 15931.0,
+      "spread": 10044.0
+    },
+    {
+      "metric": "cold_start_to_first_settled_ms",
+      "n": 10,
+      "median": 17565.0,
+      "p95": 28925.0,
+      "min": 15561.0,
+      "max": 28925.0,
+      "spread": 13364.0
+    },
+    {
+      "metric": "edits_until_first_settled",
+      "n": 10,
+      "median": 2.0,
+      "p95": 3.0,
+      "min": 2.0,
+      "max": 3.0,
+      "spread": 1.0
+    },
+    {
+      "metric": "edits_returned_not_checked",
+      "n": 10,
+      "median": 1.0,
+      "p95": 2.0,
+      "min": 1.0,
+      "max": 2.0,
+      "spread": 1.0
+    }
+  ],
+  "sessions": [
+    {
+      "i": 1,
+      "hookWallMs": 6157,
+      "segAMs": 8307,
+      "coldMs": 17656,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 2,
+      "hookWallMs": 5625,
+      "segAMs": 7632,
+      "coldMs": 17164,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 3,
+      "hookWallMs": 5970,
+      "segAMs": 7809,
+      "coldMs": 17474,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 4,
+      "hookWallMs": 5738,
+      "segAMs": 7607,
+      "coldMs": 16735,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 5,
+      "hookWallMs": 5814,
+      "segAMs": 7968,
+      "coldMs": 19356,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 6,
+      "hookWallMs": 5424,
+      "segAMs": 7349,
+      "coldMs": 16167,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 7,
+      "hookWallMs": 4515,
+      "segAMs": 5887,
+      "coldMs": 15561,
+      "edits": 3,
+      "unchecked": 2
+    },
+    {
+      "i": 8,
+      "hookWallMs": 7009,
+      "segAMs": 9406,
+      "coldMs": 20056,
+      "edits": 2,
+      "unchecked": 1
+    },
+    {
+      "i": 9,
+      "hookWallMs": 12725,
+      "segAMs": 15931,
+      "coldMs": 28925,
+      "edits": 3,
+      "unchecked": 2
+    },
+    {
+      "i": 10,
+      "hookWallMs": 6726,
+      "segAMs": 8773,
+      "coldMs": 20650,
+      "edits": 3,
+      "unchecked": 2
+    }
+  ],
+  "load_before": {
+    "cpu_samples": [
+      82.0,
+      99.0,
+      89.0,
+      92.0,
+      77.0
+    ],
+    "cpu_median": 89.0,
+    "processes": 677
+  },
+  "load_after": {
+    "cpu_samples": [
+      89.0,
+      91.0,
+      82.0,
+      77.0,
+      86.0
+    ],
+    "cpu_median": 86.0,
+    "processes": 670
+  },
+  "head_before": {
+    "origin_main": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+    "staged_client_sha256": "a4a9efcd8e1827416267002c112cf0a99121d32be1297843d625dd5545478560",
+    "at": "2026-08-22T11:36:59.3515550-04:00"
+  },
+  "head_after": {
+    "origin_main": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+    "staged_client_sha256": "a4a9efcd8e1827416267002c112cf0a99121d32be1297843d625dd5545478560",
+    "at": "2026-08-22T11:40:55.9204670-04:00"
+  }
+}

@@ -1,0 +1,947 @@
+
+################ GATE: repo gates (corpus + trust/signing/provenance config suites) ################
+GATE repo gates (corpus + trust/signing/provenance config suites) exit=0 elapsed=536.8s
+
+################ GATE: LICENSE is Apache-2.0 and CONTINUITY matches ################
+Exception: C:\Users\mande\AppData\Local\Temp\psl-273\bin\license-gate.ps1:159
+Line |
+ 159 |  if (-not $r.pass) { throw 'LICENSE / CONTINUITY GATE FAILED' }
+     |                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | LICENSE / CONTINUITY GATE FAILED
+GATE LICENSE is Apache-2.0 and CONTINUITY matches exit=1 elapsed=1.5s
+
+################ GATE: offline / air-gapped bootstrap ################
+GATE offline / air-gapped bootstrap exit=0 elapsed=56.2s
+
+################ GATE: clean install + doctor ################
+GATE clean install + doctor exit=0 elapsed=26.7s
+[post-gates] tracked_at_C=483 tracked_observed=483 missing=0 differing=0 ignored_byproducts=0 unexplained_extra=0 data_inside_root=False manifest_sha256=d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9 EQUAL=True
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to 6ab2d24bf254787520ad9449c4e6c17f74ee708d
+
+================ GATE SUMMARY ================
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PASS  repo gates (corpus + trust/signing/provenance config suites)  (536.8s)
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+FAIL  LICENSE is Apache-2.0 and CONTINUITY matches  (1.5s)
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PASS  offline / air-gapped bootstrap  (56.2s)
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'exit' cannot be found on this object. Verify that the property exists.
+PropertyNotFoundException: C:\Users\mande\AppData\Local\Temp\psl-273\bin\run-gates.ps1:38
+Line |
+  38 |      Write-Host (('{0,-6}' -f $(if ($r.exit -eq 0) { 'PASS' } else { ' …
+     |                                     ~~~~~~~~~~~~~
+     | The property 'gate' cannot be found on this object. Verify that the property exists.
+PASS  clean install + doctor  (26.7s)
+PASS  equality proof after all gates
+GATES DONE

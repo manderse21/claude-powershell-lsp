@@ -1,0 +1,224 @@
+{
+  "block": "M3 daemon steady-state memory + M5 sustained-session stability",
+  "commit": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "priming_edits": 2,
+  "attempted": 120,
+  "kept": 120,
+  "excluded": 0,
+  "run_seconds": 506.6,
+  "first_ready_mem": {
+    "daemon_pid": 49208,
+    "pses_pid": 44768,
+    "daemon_ws_mb": 121.5,
+    "daemon_priv_mb": 52.4,
+    "pses_ws_mb": 147.2,
+    "pses_priv_mb": 56.1
+  },
+  "mem_samples": [
+    {
+      "daemon_pid": 49208,
+      "pses_pid": 44768,
+      "daemon_ws_mb": 151.7,
+      "daemon_priv_mb": 72.5,
+      "pses_ws_mb": 160.5,
+      "pses_priv_mb": 58.5,
+      "edit": 10
+    },
+    {
+      "daemon_pid": 49208,
+      "pses_pid": 44768,
+      "daemon_ws_mb": 151.7,
+      "daemon_priv_mb": 69.3,
+      "pses_ws_mb": 161.7,
+      "pses_priv_mb": 58.6,
+      "edit": 20
+    },
+    {
+      "daemon_pid": 49208,
+      "pses_pid": 44768,
+      "daemon_ws_mb": 160.4,
+      "daemon_priv_mb": 77.4,
+      "pses_ws_mb": 163.5,
+      "pses_priv_mb": 59.1,
+      "edit": 30
+    },
+    {
+      "daemon_pid": 49208,
+      "pses_pid": 44768,
+      "daemon_ws_mb": 153.0,
+      "daemon_priv_mb": 70.3,
+      "pses_ws_mb": 161.8,
+      "pses_priv_mb": 57.2,
+      "edit": 40
+    },
+    {
+      "daemon_pid": 49208,
+      "pses_pid": 44768,
+      "daemon_ws_mb": 153.0,
+      "daemon_priv_mb": 69.6,
+      "pses_ws_mb": 164.8,
+      "pses_priv_mb": 59.9,
+      "edit": 50
+    },
+    {
+      "daemon_pid": 49208,
+      "pses_pid": 44768,
+      "daemon_ws_mb": 147.4,
+      "daemon_priv_mb": 63.9,
+      "pses_ws_mb": 165.7,
+      "pses_priv_mb": 60.2,
+      "edit": 60
+    },
+    {
+      "daemon_pid": 49208,
+      "pses_pid": 44768,
+      "daemon_ws_mb": 157.3,
+      "daemon_priv_mb": 73.7,
+      "pses_ws_mb": 163.1,
+      "pses_priv_mb": 57.3,
+      "edit": 70
+    },
+    {
+      "daemon_pid": 49208,
+      "pses_pid": 44768,
+      "daemon_ws_mb": 154.6,
+      "daemon_priv_mb": 70.7,
+      "pses_ws_mb": 163.3,
+      "pses_priv_mb": 57.4,
+      "edit": 80
+    },
+    {
+      "daemon_pid": 49208,
+      "pses_pid": 44768,
+      "daemon_ws_mb": 155.0,
+      "daemon_priv_mb": 71.1,
+      "pses_ws_mb": 163.5,
+      "pses_priv_mb": 57.7,
+      "edit": 90
+    },
+    {
+      "daemon_pid": 49208,
+      "pses_pid": 44768,
+      "daemon_ws_mb": 154.9,
+      "daemon_priv_mb": 71.0,
+      "pses_ws_mb": 163.5,
+      "pses_priv_mb": 57.5,
+      "edit": 100
+    },
+    {
+      "daemon_pid": 49208,
+      "pses_pid": 44768,
+      "daemon_ws_mb": 155.0,
+      "daemon_priv_mb": 71.1,
+      "pses_ws_mb": 163.6,
+      "pses_priv_mb": 57.6,
+      "edit": 110
+    },
+    {
+      "daemon_pid": 49208,
+      "pses_pid": 44768,
+      "daemon_ws_mb": 155.0,
+      "daemon_priv_mb": 71.1,
+      "pses_ws_mb": 163.5,
+      "pses_priv_mb": 57.5,
+      "edit": 120
+    }
+  ],
+  "mem_summaries": [
+    {
+      "metric": "daemon_working_set_mb",
+      "n": 12,
+      "median": 154.8,
+      "p95": 160.4,
+      "min": 147.4,
+      "max": 160.4,
+      "spread": 13.0
+    },
+    {
+      "metric": "pses_working_set_mb",
+      "n": 12,
+      "median": 163.5,
+      "p95": 165.7,
+      "min": 160.5,
+      "max": 165.7,
+      "spread": 5.2
+    },
+    {
+      "metric": "daemon_private_mb",
+      "n": 12,
+      "median": 71.0,
+      "p95": 77.4,
+      "min": 63.9,
+      "max": 77.4,
+      "spread": 13.5
+    },
+    {
+      "metric": "pses_private_mb",
+      "n": 12,
+      "median": 57.6,
+      "p95": 60.2,
+      "min": 57.2,
+      "max": 60.2,
+      "spread": 3.0
+    }
+  ],
+  "summaries": [
+    {
+      "metric": "end_to_end_wall_ms_whole_run",
+      "n": 120,
+      "median": 4205.5,
+      "p95": 5397.0,
+      "min": 3064.0,
+      "max": 6044.0,
+      "spread": 2980.0
+    },
+    {
+      "metric": "daemon_analysisMs_whole_run",
+      "n": 120,
+      "median": 1416.0,
+      "p95": 1468.0,
+      "min": 1362.0,
+      "max": 1497.0,
+      "spread": 135.0
+    }
+  ],
+  "drift": {
+    "first_quartile_wall_median": 4278.5,
+    "last_quartile_wall_median": 3855.0,
+    "first_quartile_analysis_median": 1412.5,
+    "last_quartile_analysis_median": 1413.0
+  },
+  "load_before": {
+    "cpu_samples": [
+      96.0,
+      95.0,
+      81.0,
+      95.0,
+      80.0
+    ],
+    "cpu_median": 95.0,
+    "processes": 672
+  },
+  "load_after": {
+    "cpu_samples": [
+      99.0,
+      86.0,
+      51.0,
+      78.0,
+      91.0
+    ],
+    "cpu_median": 86.0,
+    "processes": 671
+  },
+  "head_before": {
+    "origin_main": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+    "staged_client_sha256": "a4a9efcd8e1827416267002c112cf0a99121d32be1297843d625dd5545478560",
+    "at": "2026-08-22T11:41:03.8105970-04:00"
+  },
+  "head_after": {
+    "origin_main": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+    "staged_client_sha256": "a4a9efcd8e1827416267002c112cf0a99121d32be1297843d625dd5545478560",
+    "at": "2026-08-22T11:49:52.2898374-04:00"
+  },
+  "scoped_strays_swept": 0
+}

@@ -1,0 +1,12 @@
+{
+  "gate": "pre-tag release-workflow DRY RUN, pinned to C",
+  "commit": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "version": "1.33.0",
+  "status": "NOT RUN",
+  "reason": "The workflow_dispatch call was blocked by this session permission policy for outward-facing actions. It was surfaced to Mike rather than worked around; the freeze does not fabricate a rehearsal it did not observe.",
+  "required_trigger": "gh workflow run \"powershell-lsp release\" --repo manderse21/claude-powershell-lsp -f version=1.33.0 -f commit=6ab2d24bf254787520ad9449c4e6c17f74ee708d -f dry_run=true",
+  "why_it_matters": "Gate 6 of the release workflow REFUSES a producing run unless a successful dry_run=true run exists for the same resolved commit. So the dry run is a hard precondition of Mike's producing trigger, not an optional rehearsal.",
+  "how_a_dry_run_is_identified": "dry_run is a workflow INPUT and does not appear on the run object, so the workflow encodes it into run-name: \"powershell-lsp release <version> [DRY-RUN] target=<commit>\". Gate 6 reads exactly that, and it is how the pairing is verified.",
+  "existing_runs_checked": "2026-08-22: no release-workflow run exists for version 1.33.0 in any state. The most recent dry run is 1.32.0 at fb3116ca.",
+  "verdict": "NOT RUN -- surfaced to Mike as a required pre-trigger step"
+}

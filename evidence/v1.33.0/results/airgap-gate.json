@@ -1,0 +1,47 @@
+{
+  "gate": "offline / air-gapped bootstrap at C",
+  "commit": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "prescribed_by_176": "tests/PowerShellLsp.AirgapBootstrap.Tests.ps1 (resolver/wiring/doctor contract suite) and the operator procedure release/New-AirgapBundle.ps1 + POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR",
+  "end_to_end_test_origin": "CONSTRUCTED by dispatch 000273 -- #176 prescribes no end-to-end no-network bootstrap run",
+  "block_mechanism": "HTTP_PROXY/HTTPS_PROXY/ALL_PROXY -> http://127.0.0.1:1 on the bootstrap process only",
+  "bundle_zip_bytes": 34573431,
+  "bundle_contents": [
+    "MANIFEST.txt",
+    "PowerShellEditorServices-v4.6.0.zip",
+    "PSScriptAnalyzer-1.25.0.nupkg"
+  ],
+  "red_control": {
+    "wall_ms": 34205,
+    "exited": true,
+    "state": {
+      "pses_installed": false,
+      "pses_marker": "",
+      "pses_marker_layer": "",
+      "pssa_marker": "",
+      "pssa_marker_layer": "",
+      "pssa_installed": false,
+      "ensure_pses_log_tail": "[2026-08-22T12:17:10.3022223-04:00] Bootstrapping PSES v4.6.0\r | [2026-08-22T12:17:12.6474335-04:00] PSES bootstrap FAILED: No connection could be made because the target machine actively refused it. (127.0.0.1:1)\r | "
+    },
+    "stderr_tail": "",
+    "bootstrapped": false
+  },
+  "green_run": {
+    "wall_ms": 13223,
+    "exited": true,
+    "state": {
+      "pses_installed": true,
+      "pses_marker": "pses-v4.6.0.ok",
+      "pses_marker_layer": "bundle",
+      "pssa_marker": ".pssa-1.25.0.ok",
+      "pssa_marker_layer": "bundle",
+      "pssa_installed": true,
+      "ensure_pses_log_tail": "[2026-08-22T12:17:43.9846714-04:00] Bootstrapping PSES v4.6.0\r | [2026-08-22T12:17:44.0921092-04:00] artifact-source: resolved from bundle (C:\\Users\\mande\\AppData\\Local\\Temp\\psl-273\\airgap\\bundle\\PowerShellEditorServices-v4.6.0.zip); pin is still verified before use\r | [2026-08-22T12:17:48.4183205-04:00] PSES bootstrap complete (source: bundle).\r | "
+    },
+    "stderr_tail": "",
+    "bootstrapped": true
+  },
+  "red_control_valid": true,
+  "green_bootstrapped_offline": true,
+  "both_layers_recorded_bundle": true,
+  "verdict": "PASS"
+}

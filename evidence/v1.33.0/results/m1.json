@@ -1,0 +1,93 @@
+{
+  "block": "M1 warm per-edit settle latency",
+  "commit": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "fixture": {
+    "bytes": 219,
+    "lines": 7
+  },
+  "priming_edits": 4,
+  "attempted": 30,
+  "kept": 30,
+  "excluded": 0,
+  "exclusions": [],
+  "summaries": [
+    {
+      "metric": "end_to_end_wall_ms",
+      "n": 30,
+      "median": 4518.5,
+      "p95": 6697.0,
+      "min": 3507.0,
+      "max": 6761.0,
+      "spread": 3254.0
+    },
+    {
+      "metric": "client_totalMs",
+      "n": 30,
+      "median": 2616.5,
+      "p95": 3108.0,
+      "min": 2311.0,
+      "max": 3138.0,
+      "spread": 827.0
+    },
+    {
+      "metric": "daemon_analysisMs",
+      "n": 30,
+      "median": 1443.0,
+      "p95": 1584.0,
+      "min": 1382.0,
+      "max": 1683.0,
+      "spread": 301.0
+    },
+    {
+      "metric": "client_connectMs",
+      "n": 30,
+      "median": 22.5,
+      "p95": 60.0,
+      "min": 14.0,
+      "max": 62.0,
+      "spread": 48.0
+    },
+    {
+      "metric": "daemon_codeActionMs",
+      "n": 30,
+      "median": 18.0,
+      "p95": 44.0,
+      "min": 3.0,
+      "max": 100.0,
+      "spread": 97.0
+    }
+  ],
+  "load_before": {
+    "cpu_samples": [
+      79.0,
+      84.0,
+      84.0,
+      100.0,
+      99.0
+    ],
+    "cpu_median": 84.0,
+    "processes": 619
+  },
+  "load_after": {
+    "cpu_samples": [
+      95.0,
+      98.0,
+      97.0,
+      87.0,
+      74.0
+    ],
+    "cpu_median": 95.0,
+    "processes": 670
+  },
+  "head_before": {
+    "origin_main": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+    "staged_client_sha256": "a4a9efcd8e1827416267002c112cf0a99121d32be1297843d625dd5545478560",
+    "at": "2026-08-22T11:33:56.6048974-04:00"
+  },
+  "head_after": {
+    "origin_main": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+    "staged_client_sha256": "a4a9efcd8e1827416267002c112cf0a99121d32be1297843d625dd5545478560",
+    "at": "2026-08-22T11:36:49.0961699-04:00"
+  },
+  "scoped_strays_swept": 0
+}
