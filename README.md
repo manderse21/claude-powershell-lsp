@@ -367,6 +367,14 @@ One fact the corpus surfaced: the tool's effective default ruleset (via PSES) is
 raw PSScriptAnalyzer -- it surfaces **six** rules on the fly and drops others the CLI flags (e.g.
 `PSAvoidUsingWriteHost`, `PSUseSingularNouns`). Set `ruleset` = `base` to broaden it.
 
+**The corpus is a commons, and it is yours to use.** It publishes under the project's own
+[Apache-2.0](https://spdx.org/licenses/Apache-2.0.html) license -- one license across the whole
+repository, no separate regime for the fixtures -- so you can vendor cases into a differently
+licensed test suite of your own. Every file in the audited surface was authored in this repository,
+with no third-party rightsholder anywhere in it. Full text -- the provenance audit, the derivation
+invariant, the exact steps to reproduce the measurement from a clean clone, how to cite it, and
+what it deliberately does **not** attest -- is in [docs/corpus.md](docs/corpus.md).
+
 Every diagnostic surfaced is also teed to a local, append-only **dogfood log** so real editing
 drives the roadmap's quality work; capture, the offline review tool, and the never-commit rules
 are in [docs/dogfood.md](docs/dogfood.md).
@@ -564,6 +572,7 @@ one click away.
 | The pinned components, and how to bump one | [docs/pinned-versions.md](docs/pinned-versions.md) |
 | The quirks that bite when changing the runtime | [docs/DEV_NOTES.md](docs/DEV_NOTES.md) |
 | Dogfood capture and the offline review tool | [docs/dogfood.md](docs/dogfood.md) |
+| The correctness corpus as a commons -- license, provenance, reproduction | [docs/corpus.md](docs/corpus.md) |
 | What runs locally, what is downloaded, the signing posture | [TRUST.md](./TRUST.md), [docs/trust.md](docs/trust.md) |
 | The whole system in one document -- design rationale, measured evidence, stated limits | [docs/whitepaper.md](docs/whitepaper.md) |
 | How a diagnostic flows from edit to banner | [ARCHITECTURE.md](./ARCHITECTURE.md) |

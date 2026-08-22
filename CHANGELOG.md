@@ -31,6 +31,37 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+### The correctness corpus is a commons: published under Apache-2.0, reproducible from a clean clone
+
+**Documentation and a licensing statement** (dispatch 000251). **PATCH-class by SemVer**: no API,
+knob, or behavior change, and every corpus file is byte-identical -- `git diff` over the audited
+surface reports no change of any kind.
+
+**The corpus publishes under the project license, Apache-2.0** -- one license across the
+repository, no second regime for the fixtures, no per-file headers. This closes the last thing
+holding the Arc B corpus-commons gate: the provenance audit (dispatch 000222) had already
+established that all 137 files in the audited surface are authored in this repository with zero
+external rightsholders, so the relicense (dispatch 000247) was the only remaining input. You can
+now vendor cases into a differently-licensed test suite of your own.
+
+New [`docs/corpus.md`](docs/corpus.md) is the consumer-facing page: what the corpus is, where every
+file came from, the derivation invariant (expected findings are **never** hand-authored or
+model-authored -- they are snapshots of what the real tool emitted), how the false-positive and
+true-positive rates are defined, **the exact steps to reproduce those numbers from a clean clone**,
+a citation form, and what the corpus deliberately does *not* attest. The AI co-authorship of 21 of
+the 137 files is disclosed there rather than left for a consumer to discover.
+
+`README.md` gains the pointer and a link-map row, `TRUST.md` gains an honest-limits entry drawing
+the line between what the corpus attests (diagnostics) and what it does not (security), and
+`ROADMAP.md` plus `docs/roadmap-ii/PROGRAM.md` record the arc as un-gated.
+
+**Nothing was published externally.** No announcement, no submission to any list or benchmark site,
+no new repository -- that is a maintainer action and remains one. Do not infer submission state
+from these pages.
+
+The provenance audit's per-file `GPL-3.0-or-later` License column is **deliberately preserved, not
+rewritten**: it records what an instrument observed on a dated tree, and a dated note now heads the
+document pointing forward to the current license. Historical records stay true.
 ## [1.32.0] - 2026-08-19
 MINOR: **the `orgPolicy` file can now be integrity-pinned with a `.sha256` companion**, **the two
 pinned dependencies can be installed from an internal mirror or a pre-staged bundle** so a machine

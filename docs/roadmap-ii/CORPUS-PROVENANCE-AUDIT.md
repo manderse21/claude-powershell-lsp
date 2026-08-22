@@ -17,6 +17,27 @@ follows from the table below, which was built before the verdict was written. Tw
 - **Scope:** audit only. No corpus file was added, deleted, moved, edited, or relicensed. Nothing
   was published anywhere.
 
+> **DATED NOTE, added 2026-08-17 by dispatch 000251 -- the license identifier below is
+> point-in-time, and is deliberately not rewritten.**
+>
+> This document was derived on 2026-08-12, when the repository was licensed `GPL-3.0-or-later`, and
+> its License column records that for all 137 rows. Dispatch 000247 then relicensed the repository
+> **forward to Apache-2.0** (ruled by Mike 2026-08-16), and dispatch 000251 ruled that the corpus
+> publishes under that same project license -- one license across the repository. **The corpus is
+> Apache-2.0 today**; see [`../decision-ledger.md`](../decision-ledger.md) and
+> [`../corpus.md`](../corpus.md).
+>
+> The 137 rows are **left exactly as derived** rather than overwritten. The column records what an
+> instrument observed on a dated tree, and editing it to match a later state would falsify that
+> record -- the same reason 000247 left the D1 rider and the v1.6.1 CHANGELOG entry untouched. The
+> column's *substantive* finding is unaffected by the relicense and remains true: no corpus file
+> carries a per-file license header, so each is covered by the repository `LICENSE` and by nothing
+> else. Only the name of that license has changed.
+>
+> The surface itself has **not** drifted. Re-verified 2026-08-17: the 137 rows below match
+> `git ls-files` over the same coverage boundary file-for-file, and a `git diff` of that boundary
+> from `7f34277` to that date reports no change of any kind.
+
 ---
 
 ## 1. Method, and what each instrument can and cannot establish
@@ -190,6 +211,12 @@ which is the granularity the declaration exists at; neither asserts a per-line s
 **License column.** `GPL-3.0-or-later (repo-wide)` for every row. No corpus file carries a per-file
 license header -- instrument I2 found zero across all 137 -- so each is covered by the repository
 `LICENSE` (GNU GPL v3, 674 lines) and by nothing else.
+
+**The identifier in that column is as-of 2026-08-12 and is not maintained.** The repository
+relicensed forward to Apache-2.0 on 2026-08-16 (dispatch 000247) and the corpus publishes under it
+(dispatch 000251). See the dated note at the top of this document for why these rows are preserved
+rather than updated; the "covered by the repository `LICENSE` and by nothing else" finding is what
+the column asserts, and that is still true.
 
 | Path | Origin class | Evidence | License status | Commons-eligible |
 |---|---|---|---|---|

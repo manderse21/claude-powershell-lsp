@@ -95,8 +95,11 @@ Real work that is deliberately not moving, each waiting on a named thing rather 
   what still gates this item is the client's handling of those initialization requests and the
   interpolation defect above, rather than that regression.
 - **Corpus commons.** The licensing and provenance audit that gated publishing the correctness
-  oracle as a community benchmark has **passed**. What remains is a licensing decision at
-  activation, not an audit.
+  oracle as a community benchmark has **passed**, and the licensing decision it left open has now
+  been made: the corpus publishes under the project's own Apache-2.0 license, one license across
+  the repository. It is documented for outside use, reproduction, and citation in
+  [docs/corpus.md](docs/corpus.md). What remains is external publishing, and that is
+  maintainer-owned -- do not infer from this page that it has happened.
 - **Attested diagnostics.** Extending the SLSA / Sigstore chain from release assets to scan
   outputs waits on real efficacy data existing and on a real consumer to read it.
 - **Enterprise control plane.** Policy distribution and fleet rollup, continuing the shipped
