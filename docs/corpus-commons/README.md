@@ -11,6 +11,22 @@
 > Apache-2.0) and R2 grant (relicense execution, **publication still held**). The act of publishing
 > -- pushing to a registry, opening a repository, posting an announcement -- remains Mike's gate.
 
+> ### This is not the corpus documentation. That is [`../corpus.md`](../corpus.md).
+>
+> Dispatch 000251 landed a consumer-facing commons page at `docs/corpus.md`, and **that page is the
+> one to read and to cite.** It documents the corpus *where it lives*: what it is, where each file
+> came from, how the expected findings are derived, and the exact steps to reproduce the
+> false-positive and true-positive numbers from a clean clone.
+>
+> **This directory is the paperwork the corpus would need if it were ever detached from this
+> repository** -- a standalone `LICENSE` and `NOTICE`, which `docs/corpus.md` gets for free by
+> living beside the repository's own, and a `PROVENANCE.md` written to travel with a package that no
+> longer has the audit sitting next to it. The two overlap on the license position deliberately: a
+> detached package cannot rely on a link back here for it.
+>
+> If you are choosing between them: **`../corpus.md` to use the corpus; this directory only if the
+> question is what a separate distribution would have to carry.**
+
 ---
 
 ## What this is

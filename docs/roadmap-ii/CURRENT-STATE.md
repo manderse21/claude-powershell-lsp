@@ -9,56 +9,80 @@ and date inline, because a bare number in a planning document ages into a false 
 figure was expected from the planning side, it was **confirmed or refuted against disk**, never
 restated. Nothing in this file is asserted from memory.
 
-**Derivation moment.** Repository facts derived 2026-08-12 from the plugin repo at
-`origin/main`; live-service facts carry their own query timestamps.
+**Derivation moment.** This document was first derived 2026-08-12 (dispatch 000221, R2-01) at
+`origin/main` = `7f34277`, plugin version `1.31.0`.
+
+> ### SUCCESSOR RE-DERIVATION: 2026-08-21, dispatch 000269, at v1.32.0
+>
+> **This document moves only when a successor dispatch re-derives it**, which is the rule
+> `PROGRAM.md` records for R2-01 and the only sanctioned way its numbers change. Dispatch 000269 is
+> that successor. Sections 1, 2, 4, 7, 10, 11 and 13 are re-derived below at
+> `origin/main` = `78ddcee`, release **v1.32.0** (peeled `fb3116c`).
+>
+> Every re-derived figure was taken again from disk or from live `gh` at write time. Where a figure
+> is unchanged it is marked **re-derived unchanged** rather than left silent, so a reader can tell a
+> checked number from an unrevisited one. Sections not listed above were not re-derived, and say so
+> where it matters.
 
 **Line anchors into `ROADMAP.md` are stale throughout this document.** That page was rewritten and
-shortened by dispatch 000230 after this derivation, so every `ROADMAP.md:<n>` citation below points
-at the pre-canonicalization line numbering. Recorded rather than repaired: re-anchoring them is part
-of re-deriving this document, which only a successor dispatch does.
+shortened by dispatch 000230 after the original derivation, so every `ROADMAP.md:<n>` citation below
+points at the pre-canonicalization line numbering. **Still not repaired at the 2026-08-21
+re-derivation, and recorded as a known defect rather than quietly carried:** re-anchoring every
+citation was out of this successor's scope, which was the factual figures. Treat any
+`ROADMAP.md:<n>` below as a pointer to a section name, not to a line.
 
 ---
 
 ## 1. Current version
 
+**Re-derived 2026-08-21.** The v1.31.0 figures this section carried are superseded.
+
 | Fact | Value | Derivation |
 |---|---|---|
-| Latest release tag | `v1.31.0` | `git tag --list 'v*' --sort=-v:refname` and `git for-each-ref --sort=-creatordate refs/tags`, 2026-08-12 -- both agree |
-| Tag object type | annotated (`tag`), object `42b27b396d6a3c9014581f4fda6483a982b90db6` | `git rev-parse refs/tags/v1.31.0`, 2026-08-12 |
-| Tag creation date | 2026-08-10T19:01:39+0000 | `git for-each-ref --format='%(creatordate:iso8601)'`, 2026-08-12 |
-| `plugin.json` version at `origin/main` | `1.31.0` | `git show origin/main:.claude-plugin/plugin.json`, 2026-08-12 |
-| `plugin.json` version at the peeled tag | `1.31.0` | `git show e84c44ba...:.claude-plugin/plugin.json`, 2026-08-12 |
-| `marketplace.json` version at `origin/main` | `1.31.0` | `git show origin/main:.claude-plugin/marketplace.json`, 2026-08-12 |
-| `marketplace.json` version at the peeled tag | `1.31.0` | `git show e84c44ba...:.claude-plugin/marketplace.json`, 2026-08-12 |
+| Latest release tag | **`v1.32.0`** | `git tag --list 'v*' --sort=-v:refname`, 2026-08-21 (`v1.32.0`, then `v1.31.2`, `v1.31.1`) |
+| Tag object type | annotated (`tag`), object `072d8818109728301558c7c6707d795f4096c598` | `git rev-parse refs/tags/v1.32.0` + `git cat-file -t`, 2026-08-21 |
+| Tag creation date | 2026-08-19 20:31:18 +0000 | `git for-each-ref --format='%(creatordate:iso8601)'`, 2026-08-21 |
+| Release published | 2026-08-19T20:31:25Z, not a draft | `gh release view v1.32.0 --json publishedAt,isDraft`, 2026-08-21 |
+| `plugin.json` version at `origin/main` | `1.32.0` | `git show origin/main:.claude-plugin/plugin.json`, 2026-08-21 |
+| `plugin.json` version at the peeled tag | `1.32.0` | `git show 'refs/tags/v1.32.0^{}:.claude-plugin/plugin.json'`, 2026-08-21 |
+| `marketplace.json` version at `origin/main` | `1.32.0` | same command against `marketplace.json`, `.metadata.version`, 2026-08-21 |
+| `marketplace.json` version at the peeled tag | `1.32.0` | same, at the peeled tag, 2026-08-21 |
+| Declared license | **`Apache-2.0`** | `.claude-plugin/plugin.json` `.license` at `origin/main`, 2026-08-21 -- the forward-only relicense took effect at this release |
 
-The two manifests are in lockstep at both refs. No version drift exists between `main` and the
-released artifact as of the derivation moment.
+The two manifests are **in lockstep at both refs** -- re-derived unchanged as a property, at new
+values. No version drift exists between `main` and the released artifact.
 
 ## 2. Current commit
 
+**Re-derived 2026-08-21.**
+
 | Fact | Value | Derivation |
 |---|---|---|
-| `origin/main` tip | `a82716d2bbfe9545e2daf3a39b74ead3242e0209` | `git rev-parse origin/main`, 2026-08-12 |
-| `v1.31.0` **peeled** commit | `e84c44ba0ab06a751672652a10752aca6078b94e` | `git rev-parse 'refs/tags/v1.31.0^{}'`, 2026-08-12 |
-| `main` relative to the peeled tag | **5 ahead, 0 behind** | `git rev-list --left-right --count 'refs/tags/v1.31.0^{}...origin/main'` -> `0	5`, 2026-08-12 |
+| `origin/main` tip | **`78ddcee2620b5c5bfcae2755998dfe7685f9900f`** | `git rev-parse origin/main`, 2026-08-21 |
+| `v1.32.0` **peeled** commit | **`fb3116cab14cd8afec4e9c64ed0c2e67e76486b3`** | `git rev-parse 'refs/tags/v1.32.0^{}'`, 2026-08-21 |
+| `main` relative to the peeled tag | **4 ahead, 0 behind** | `git rev-list --left-right --count 'refs/tags/v1.32.0^{}...origin/main'` -> `0	4`, 2026-08-21 |
 
-**Both planning-side expectations were CONFIRMED, not restated.** The planning session's reads on
-2026-08-12 recorded `main` at `a82716d2` and `v1.31.0` peeling to `e84c44ba`; both re-derive
-identically here.
-
-The five commits by which `main` leads the release tag, oldest last
-(`git log 'refs/tags/v1.31.0^{}..origin/main'`, 2026-08-12):
+The four commits by which `main` leads the release tag, newest first
+(`git log 'refs/tags/v1.32.0^{}..origin/main'`, 2026-08-21):
 
 | Commit | Subject |
 |---|---|
-| `a82716d` | Merge pull request #145 from manderse21/dispatch/000220-final-pre-horizon-close-out |
-| `fef0048` | 000220: correct the LEGACY_CAP claim -- the identifier is gone entirely |
-| `5b441aa` | 000220: ratify both open rulings, record the check contract |
-| `831d82e` | Merge pull request #144 from manderse21/dispatch/powershell-lsp-000219-verify-v1-31-0 |
-| `69f2ce3` | 000219: true the ledger to v1.31.0, verified at the 000161 standard |
+| `78ddcee` | docs(000251): land the corpus commons un-gate -- publish the audited surface under Apache-2.0 (#192) |
+| `220149f` | docs: correct v1.32.0 whitepaper (r2) and cite evidence bundle (#191) |
+| `84fda97` | Evidence bundle + attestation workflow for v1.32.0 (#190) |
+| `b44c1ff` | docs(000268): land the finalized v1.32.0 white paper at docs/whitepaper.md (#189) |
 
-All five are documentation and decision-ledger commits. No executable change separates `main` from
-the released artifact.
+**All four are documentation, evidence and workflow commits. No change under `scripts/` or
+`rulesets/` separates `main` from the released artifact** -- so the runtime a user executes at
+`main` is the runtime that shipped. The same property held at the previous derivation, and it is
+re-derived here rather than assumed to persist.
+
+> **The release identity has a second commit worth knowing.** The quantitative evidence for
+> v1.32.0 was measured at `af6996f` (the merge of PR #187) and carried to the release identity
+> `fb3116c` (the merge of PR #188, the fix that unblocked the release pipeline). The carry is proven
+> rather than asserted: the `af6996f -> fb3116c` diff touches five paths, none under `scripts/` or
+> `rulesets/`, and every tracked runtime blob is byte-identical between them. See
+> [`SLO-BASELINES.md`](SLO-BASELINES.md) section 1 and `evidence/v1.32.0/`.
 
 ## 3. Architecture summary
 
@@ -90,7 +114,12 @@ Everything runs on the local machine. Timing is in section 5.
 
 ## 4. Shipped capability inventory
 
-All figures derived at `origin/main` (`a82716d2`), 2026-08-12.
+**The four surface tables below were derived at `origin/main` (`a82716d2`), 2026-08-12, and were NOT
+re-derived by the 2026-08-21 successor pass.** Only the release-assets subsection at the end of this
+section was. Treat every count and size in them as **as-of 2026-08-12**, not as current: they are
+recorded rather than refreshed, because refreshing the whole inventory was outside the successor's
+scope -- and a half-refreshed table, where the reader cannot tell which rows moved, is worse than a
+plainly dated one.
 
 ### Distribution surface
 
@@ -145,24 +174,38 @@ upstream manifest-schema limit in section 7, not a local authoring choice.
 | Code-scanning workflow | `.github/workflows/powershell-lsp-code-scanning.yml`, 153 lines, weekly `cron: '0 6 * * 1'`, ubuntu-24.04, SARIF upload, never fails the job | file header and `on:` block |
 | Release gates | 6, all shipped by v1.29.1 and all green cutting v1.31.0 | `VERIFICATION_SURFACE.md` "Release gates", derived by dispatch 000219 at the tag |
 
-### v1.31.0 release assets
+### v1.32.0 release assets
 
-Queried via `gh api repos/manderse21/claude-powershell-lsp/releases/tags/v1.31.0`,
-2026-08-12T13:05Z. Release published 2026-08-10T19:01:43Z; not a draft, not a prerelease.
+**Re-derived 2026-08-21** via `gh api repos/manderse21/claude-powershell-lsp/releases/tags/v1.32.0`.
+Release published 2026-08-19T20:31:25Z; not a draft, not a prerelease. The v1.31.0 table this
+section carried is superseded.
 
 | Asset | Size (bytes) | Digest listed by the API |
 |---|---:|---|
-| `powershell-lsp-1.31.0.cdx.json` | 2,524 | `sha256:6ee8a8174be559d0a0fd98099167f12c76d8d85e5aafe777e36f76bc6678170d` |
-| `powershell-lsp-1.31.0.tar.gz` | 2,372,358 | `sha256:9212b85036da13fc55a815465c573f2257a689159ae9dbd61aa9fcc722fc5b82` |
+| `powershell-lsp-1.32.0.cdx.json` | 2,518 | `sha256:52a3fe814de7c25be00f68dc5e6abdab9f15faa795adac5762f5ba77676ffb4a` |
+| `powershell-lsp-1.32.0.tar.gz` | 2,668,407 | `sha256:1972d7a2867544dc782d87dabaec5d8d196072d17e853a9688da41e6271a7ba0` |
+| `powershell-lsp-airgap-1.32.0.zip` | 34,573,424 | `sha256:3f9a76e311010ed9622bfd5305812f7d745586e83dc346d844f8786f034db101` |
+| `powershell-lsp-evidence-1.32.0.zip` | 64,962 | `sha256:9b38de54e8245888ffbdd3a2736c1c18e6f8814d1f9f19f48e1bfc385e85de92` |
 
-**Digest confirmation pass: both assets MATCH.** Both were downloaded fresh and re-hashed with
-`Get-FileHash -Algorithm SHA256` on 2026-08-12; each re-hash equals the digest above, byte for
-byte. Recorded as a confirmation, and no repair was attempted or needed.
+**Two new asset classes ship at this release**, and both are substantive rather than packaging
+churn: the **airgap bundle** (R2-15's deliverable -- the offline bootstrap path) and the **evidence
+bundle** (the freeze measurements and gate outputs, which is what makes the release's quantitative
+claims checkable by a reader).
 
-Two facts about *where* those digests live, recorded because they differ from the usual assumption:
-the digests are carried in the **GitHub release API asset `digest` field**, and the release
-**body** contains no digest listing at all (checked by scanning the full body text for `sha256`,
-`digest`, and any 64-hex run, 2026-08-12 -- zero matches).
+**The digest-location fact is re-derived and still holds:** the digests live in the GitHub release
+API asset `digest` field, and the release **body carries no asset-digest listing**.
+
+> A naive re-check of the body for `sha256` / `digest` / any 64-hex run returns **5 hits at this
+> release where the previous derivation found zero** -- and every one of them is a **false
+> positive**. They are prose about the new `orgPolicy` `<policy>.sha256` integrity-pinning feature,
+> plus one example hash inside that prose. None is an asset digest. Recorded because the naive
+> count *looks* like the finding changed and it did not: a needle that matches a feature's
+> documentation cannot distinguish it from the feature's output.
+>
+> **The digest confirmation pass was NOT re-run at this derivation.** The 2026-08-12 pass
+> downloaded both v1.31.0 assets and re-hashed them; nothing equivalent was done for the four
+> v1.32.0 assets here. The digests above are what the API reports, not what this dispatch verified
+> by re-hashing, and they are recorded as the former.
 
 ## 5. Capability maturity assessment
 
@@ -223,6 +266,31 @@ number,title,state,stateReason,createdAt,updatedAt,closedAt,comments,labels`.
 "last activity" timestamp in the table is the maintainer's own edit or comment, not an upstream
 reply. The most recent activity of any kind across all four was 2026-07-06 -- **37 days before this
 derivation**.
+
+### Write-time re-check, 2026-08-21 (dispatch 000269) -- the successor re-derivation
+
+Re-derived live with `gh issue view --json state,updatedAt,comments,labels`. **Three of the six
+tracked issues moved since the last re-check, and two of them moved to CLOSED.**
+
+| Issue | State 2026-08-21 | Last activity | Comments | What changed |
+|---|---|---|---|---|
+| `anthropics/claude-code#66987` | **CLOSED** | 2026-08-13T16:09:48Z | 2 | **Fixed upstream.** Mike closed it having re-run the controlled matrix on Claude Code 2.1.231 and **bisected the fix to 2.1.205**. It was OPEN at every prior derivation |
+| `anthropics/claude-code#73961` | **CLOSED** | 2026-08-13T16:08:43Z | 1 | **Fixed upstream.** The Windows regression that had blocked the native tier from starting at all. It was OPEN with zero comments at the 2026-08-12 derivation |
+| `anthropics/claude-code#86936` | **OPEN** | 2026-08-18T18:12:08Z | 2 | **MAINTAINER-REPRODUCED.** `bcherny` confirmed it 2026-08-18 on Claude Code 2.1.234 **on Linux** -- so the defect is **not Windows-specific**, which corrects this project's own Windows-derived report |
+| `anthropics/claude-plugins-official#1359` | **OPEN** | 2026-08-13T16:10:59Z | 4 | Still open. Comment count rose from 3 to 4 |
+| `anthropics/claude-code#74289` | **OPEN** | 2026-08-13T18:32:37Z | 2 | Still open. Both comments are the maintainer's own current-version re-test and its correction |
+| `anthropics/claude-code#86551` | **OPEN** | 2026-08-13T23:54:28Z | 0 | Still open, **zero comments** -- no upstream response since filing |
+
+**The upstream picture is materially better than at any prior derivation, and it is still not
+clear.** Two of the gating defects are fixed. But the native-serve lane is **not** un-gated by
+that: `#86936` is a different registrar defect, it is still open, and it independently suspends the
+`${user_config.*}` configuration transport the shim depends on. A reader should not conclude from
+the two closures that the lane has moved.
+
+**What upstream responsiveness now looks like, stated plainly.** At the 2026-08-12 derivation the
+honest summary was that **no** issue had ever drawn an upstream reply. That is no longer true:
+`#86936` drew a maintainer reproduction within three days of filing. It remains true of the other
+five.
 
 ### Write-time re-check, 2026-08-17 (dispatch 000257)
 
@@ -369,21 +437,48 @@ such.
 
 ### Capture log (`diagnostics.jsonl`)
 
+**Re-derived 2026-08-21**, by enumerating every `dogfood` directory under
+`~/.claude/plugins/cache` plus the dev clone.
+
 | Data root | Rows | Bytes | Last written |
 |---|---:|---:|---|
-| `claude-powershell-lsp/dogfood/` (dev clone) | **8,600** | 4,481,991 | 2026-08-11 10:04 |
+| `claude-powershell-lsp/dogfood/` (dev clone) | **10,161** | 5,279,427 | 2026-08-18 15:07 |
 | `~/.claude/plugins/cache/.../powershell-lsp/1.23.1/dogfood/` | 34 | 18,364 | 2026-07-25 12:34 |
-| `.../1.27.1/dogfood/` | 81 | 43,660 | 2026-07-28 12:26 |
-| `.../1.27.3/dogfood/` | 25 | 10,829 | 2026-07-31 09:07 |
-| `.../1.28.0/dogfood/` | 9 | 5,421 | 2026-07-31 11:57 |
-| `.../1.28.1/dogfood/` | 35 | 20,048 | 2026-08-01 08:12 |
 | `.../1.29.0/dogfood/` | 15 | 7,154 | 2026-08-07 13:45 |
 | `.../1.29.1/dogfood/` | 6 | 3,069 | 2026-08-08 14:00 |
-| `.../1.30.0/dogfood/` | 4 | 6,368 | 2026-08-10 12:43 |
-| **Installed-cache subtotal (8 version roots)** | **209** | | |
+| `.../1.30.0/dogfood/` | 5 | 6,801 | 2026-08-12 16:53 |
+| `.../1.31.0/dogfood/` | 234 | 123,647 | 2026-08-12 16:42 |
+| `.../1.31.1/dogfood/` | 1 | 544 | 2026-08-15 21:34 |
+| `.../1.31.2/dogfood/` | 7 | 3,644 | 2026-08-19 12:56 |
+| `.../1.32.0/dogfood/` | 1 | 515 | 2026-08-21 21:04 |
+| **Installed-cache subtotal (8 version roots)** | **303** | | |
 
-**No `1.31.0` cache root exists** -- the installed cache has no directory for the current release.
-Derived by enumerating every `dogfood` directory under `~/.claude/plugins/cache`, 2026-08-12.
+A `1.31.0` cache root now **does** exist (234 rows) -- the previous derivation recorded its absence,
+and that has resolved simply by the release being installed and used.
+
+> ### FOUR CACHE ROOTS FROM THE PREVIOUS TABLE ARE GONE, AND 150 ROWS WITH THEM
+>
+> The 2026-08-12 table listed roots for `1.27.1` (81 rows), `1.27.3` (25), `1.28.0` (9) and
+> `1.28.1` (35). **None of those directories exists on 2026-08-21.** The plugin cache evicts old
+> version directories, and the capture log lived inside them.
+>
+> **150 rows of real captured diagnostics were destroyed by a routine cache eviction**, and nothing
+> recorded that it happened. The subtotal still went *up* -- 209 to 303 -- which is exactly why this
+> is worth stating: a rising total concealed a permanent loss, and only comparing against a dated
+> prior enumeration reveals it. This is the accrual-fragmentation hazard that has been noted
+> repeatedly as "captures fragment across upgrades", now measured as **captures are LOST across
+> upgrades**, which is a materially worse claim.
+>
+> **This is the defect that threat-model finding T2.3's fix closes as a side effect.** The capture
+> log now writes under `CLAUDE_PLUGIN_DATA`, which carries no version segment and is not evicted
+> with a cache directory. The relocation was chartered to stop the plugin tree being written at
+> runtime; preserving the rule-curation corpus across upgrades is the larger practical benefit, and
+> it was not the stated reason for the change.
+>
+> **The data-root log does not exist yet** (checked 2026-08-21: no `dogfood/` under the plugin data
+> root). That is expected and is not a defect -- the fix is on a branch and has not shipped to an
+> installed build. The next derivation should find it, and should find the cache roots frozen at
+> the row counts above.
 
 ### Annotations (`annotations.jsonl`)
 
@@ -443,11 +538,24 @@ Recorded as observed state, with no remedy proposed.
   repository root. Until this dispatch, the hub's PK configuration declared `docs\trust.md` and not
   root `TRUST.md`, so none of that reached a planning bundle (closed in the hub by this dispatch;
   see section 13).
-- **Scale behavior is uncharacterized.** `ROADMAP.md:112-113` records the performance harness and
+- **Scale behavior is uncharacterized.** `ROADMAP.md` records the performance harness and
   very-large-repo behavior as deferred and on-demand. No large-repo measurement exists in
-  `docs/benchmarks.md`, whose measurements are per-edit round-trips at n=30.
-- **Windows is the platform with the most open upstream defects.** Three of the four issues in
-  section 7 carry the `platform:windows` label.
+  `docs/benchmarks.md`, whose measurements are per-edit round-trips at n=30. **Re-derived unchanged
+  2026-08-21** in substance -- but [`SLO-BASELINES.md`](SLO-BASELINES.md) now carries a two-point
+  file-size curve (219 bytes and 251,523 bytes) with adopted SLOs over it, so "uncharacterized" is
+  narrower than it was: what is missing is the *repository* scale dimension, not the per-file one.
+- **Windows is the platform with the most open upstream defects.** **Re-derived and now QUALIFIED,
+  2026-08-21.** Of the issues still open in section 7, `#74289` and `#86551` carry
+  `platform:windows`. The headline claim is weaker than it was for two reasons: both
+  Windows-labelled defects that gated the native tier (`#66987`, `#73961`) are now **closed**, and
+  the one live registrar defect (`#86936`) was **reproduced by a maintainer on Linux**, which
+  establishes it is not Windows-specific despite carrying that label. The label set now overstates
+  the Windows concentration rather than understating it.
+- **Offline / air-gapped installation is no longer a gap.** Added 2026-08-21. The previous
+  derivation predates R2-15: an airgap bundle now ships as a release asset
+  (`powershell-lsp-airgap-1.32.0.zip`, 34,573,424 bytes, section 4) with layered artifact sources
+  feeding the existing pin check. This closed the item a corporate-IT review had ranked as the top
+  tractable adoption blocker, and is recorded here so the gap list does not carry a resolved item.
 - **Single-maintainer disclosure and support model.** Security fixes are provided for the latest
   release only; disclosure runs through GitHub private vulnerability reporting
   (`VERIFICATION_SURFACE.md` "Trust / legal leaves", sourced from `SECURITY.md`).
@@ -488,6 +596,39 @@ Two of these are partially recorded elsewhere already: `docs/decision-ledger.md:
 that #2297/#2299 is settled and explicitly names `docs/upstream/pses-2297-pr.md` and
 `sitting-closeout.md` as superseded. That supersession note covers discrepancy 3 but **not**
 discrepancy 2 (the stale #66987 title), which is recorded here for the first time.
+
+### Re-run 2026-08-21 (dispatch 000269): the same search, and it found two more
+
+The 2026-08-12 pass is preserved above as the finding it was. **The search was re-run at this
+derivation rather than assumed to still hold**, because the whole point of the section is that
+`docs/upstream/` labels drift -- and a drift register that is not itself re-derived becomes the
+thing it warns about.
+
+**Two live discrepancies were found, and both were corrected in the same dispatch** (unlike the
+2026-08-12 pass, whose scope forbade editing those files):
+
+| # | Document | What it said | What is true (live `gh`, 2026-08-21) |
+|---|---|---|---|
+| 5 | `claude-code-lsp-registration.md`, `pull-feature-gating-probe.md`, `sitting-closeout.md` -- **three files** | `#66987` is **OPEN** ("the issue remains OPEN"; live-table row `**OPEN**`) | **CLOSED.** Fixed upstream, bisected to Claude Code **2.1.205**, closed 2026-08-13T16:09:48Z |
+| 6 | `claude-code-lspservers-userconfig-defaults.md` | `#86936` OPEN, "last updated 2026-08-15T15:54:30Z", no comments recorded | Still **OPEN**, but last updated **2026-08-18T18:12:08Z** with **2 comments**, including a **maintainer reproduction on Linux** that establishes the defect is not Windows-specific |
+
+**Discrepancy 5 is the shape this section exists to catch.** Three separate documents carried the
+same stale status, because each had copied it from the others rather than from `gh`. The correction
+had to be made in three places, and the "live state wins over this file" header that dispatch
+000224 added to each is what made them findable.
+
+**Every one of the ten `docs/upstream/` notes now carries a `2026-08-21` re-derivation stamp**, so
+the eight that were unchanged say *checked and unchanged* rather than being silently older than the
+two that moved. The four PSES items were re-verified against live `gh` and are unchanged: #2297 and
+#2300 CLOSED/COMPLETED, PR #2296 MERGED (merge commit `40cf5e1e...`), PR #2299 CLOSED with a null
+`mergedAt`.
+
+> **One check-design note, recorded because it cost a false positive.** The gate that verifies no
+> file still claims `#66987` is open initially flagged `sitting-closeout.md` -- and the hit was the
+> **quoted before-text inside the correction that fixed it**. A scan for stale wording will always
+> trip over the record of its own repair, so the exemption requires two markers. The retained
+> 2026-06-10 historical snapshot in that same file, which legitimately records `state=OPEN` as
+> history, is deliberately left untouched.
 
 ### One hub-side correction, and one premise nuance
 
