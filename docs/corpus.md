@@ -17,9 +17,11 @@ The corpus fixtures and every corpus-surface file publish under the **project li
 repository. See [LICENSE](../LICENSE) and [NOTICE](../NOTICE).
 
 **There is no second licensing regime to explain.** The corpus is not dual-licensed, not carved
-out under CC0 or MIT, and carries no per-file license header. Across all 190 tracked `.ps1`,
-`.psm1`, and `.psd1` files in this repository, **zero** declare an SPDX license identifier of
-their own, so each corpus file is covered by the repository `LICENSE` and by nothing else:
+out under CC0 or MIT, and carries no per-file license header. Across **every** tracked `.ps1`,
+`.psm1`, and `.psd1` file in this repository -- 202 of them as of v1.32.0 -- **zero** declare an
+SPDX license identifier of their own, so each corpus file is covered by the repository `LICENSE`
+and by nothing else. The load-bearing claim is the zero, which the command below re-measures at
+whatever the file count happens to be:
 
 ```powershell
 # Expect 0. (Scoped to source files on purpose -- prose pages, including this one,
