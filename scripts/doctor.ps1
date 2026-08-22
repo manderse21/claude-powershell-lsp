@@ -1133,22 +1133,63 @@ function Get-DoctorDaemonObservation {
         if (-not $alive) { continue }
         $pipe = [string](Get-Prop $obj 'pipe')
         if ([string]::IsNullOrWhiteSpace($pipe)) { $pipe = 'powershell-lsp-' + [string](Get-Prop $obj 'sessionId') }
-        $live += [pscustomobject]@{ Pipe = $pipe; State = [string](Get-Prop $obj 'state') }
+        # DaemonVersion (DX finding O2): the version the RUNNING daemon stamped into its own
+        # record. '' when the record carries no such field -- which is exactly what a daemon
+        # older than the field looks like, and is reported as unknown, never as a mismatch.
+        $live += [pscustomobject]@{
+            Pipe = $pipe
+            State = [string](Get-Prop $obj 'state')
+            DaemonVersion = [string](Get-Prop $obj 'pluginVersion')
+        }
     }
 
     if ($live.Count -eq 0) {
         # No live daemon in scope -> the benign 000030 absent-but-relaunchable case.
-        return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $false; State = ''; Reachable = $null; LiveCount = 0; Pipe = '' }
+        return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $false; State = ''; Reachable = $null; LiveCount = 0; Pipe = ''; DaemonVersion = '' }
     }
     if (-not $scoped -and $live.Count -gt 1) {
         # Several live daemons and no session id to pick THIS session's -> honest UNKNOWN.
-        return @{ DataRootKnown = $true; Determinable = $false; DaemonPresent = $true; State = ''; Reachable = $null; LiveCount = $live.Count; Pipe = '' }
+        return @{ DataRootKnown = $true; Determinable = $false; DaemonPresent = $true; State = ''; Reachable = $null; LiveCount = $live.Count; Pipe = ''; DaemonVersion = '' }
     }
     $d = $live[0]
     $reachable = Test-DoctorDaemonPingProbe -PipeName $d.Pipe
     # Pipe rides along (dispatch 000166) so the end-to-end check can ask the SAME daemon this
-    # check just identified, instead of re-discovering and possibly disagreeing with it.
-    return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; State = $d.State; Reachable = $reachable; LiveCount = 1; Pipe = $d.Pipe }
+    # check just identified, instead of re-discovering and possibly disagreeing with it. The
+    # daemon's own version rides along for the same reason: the reconciliation below must describe
+    # the daemon THIS resolution identified, never one re-discovered separately.
+    return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; State = $d.State; Reachable = $reachable; LiveCount = 1; Pipe = $d.Pipe; DaemonVersion = $d.DaemonVersion }
+}
+
+function Get-DoctorVersionLine {
+    # The doctor / status header's version line, reconciling the TREE against the RUNNING daemon
+    # (DX finding O2). PURE: it decides wording from two strings and never touches disk.
+    #
+    # O2 recorded that the doctor "gets a confidently wrong answer" to the first question of any
+    # support thread. Dispatch 000265 closed the honesty half by appending a caveat -- "(this tree;
+    # a live daemon may be older -- see logs/pses-daemon.log)" -- which stopped the report being
+    # confidently wrong but still did not ANSWER the question: it told the reader the number might
+    # be wrong and pointed at a log. This closes the other half.
+    #
+    # Four cases, and the distinction between the middle two is the whole point:
+    #   agree     -> one version, stated plainly.
+    #   differ    -> BOTH versions, named, plus why that is expected rather than broken (the old
+    #                daemon serves out the session by design -- better than a mid-session restart).
+    #   unknown   -> a daemon is live but its record carries no version, i.e. it predates this
+    #                field. Say so. An ABSENT version is not evidence of a mismatch.
+    #   no daemon -> nothing to reconcile against, so the tree version stands alone.
+    param([string] $TreeVersion, [string] $DaemonVersion, [bool] $DaemonPresent)
+    if (-not $DaemonPresent) {
+        return ('  version: ' + $TreeVersion + '   (this tree; no live daemon to reconcile against)')
+    }
+    if ([string]::IsNullOrWhiteSpace($DaemonVersion)) {
+        return ('  version: ' + $TreeVersion +
+            '   (this tree; the live daemon predates version stamping -- see logs/pses-daemon.log)')
+    }
+    if ($DaemonVersion -eq $TreeVersion) {
+        return ('  version: ' + $TreeVersion + '   (this tree AND the live daemon agree)')
+    }
+    return ('  version: ' + $TreeVersion + '   (this tree) -- the LIVE DAEMON is running ' +
+        $DaemonVersion + '; it keeps serving until the session ends, so this is expected after an upgrade')
 }
 
 function Get-DoctorRulesetObservation {
@@ -1790,6 +1831,12 @@ function Invoke-Doctor {
     $daemonObs = Get-DoctorDaemonObservation -SessionId $SessionId
     $results += (Test-DoctorDaemon -DataRootKnown $daemonObs.DataRootKnown -Determinable $daemonObs.Determinable `
             -DaemonPresent $daemonObs.DaemonPresent -State $daemonObs.State -Reachable $daemonObs.Reachable -LiveCount $daemonObs.LiveCount)
+    # Publish THIS observation for the header renderer (DX finding O2). Deliberately a hand-off of
+    # the observation already resolved above, NOT a second call: the codebase's own rule is that
+    # discovery happens once, because a re-derivation can disagree with the real one and report
+    # confidently while being wrong. The version line must describe the daemon this check just
+    # identified. Invoke-Doctor's return shape is unchanged, so every existing caller is untouched.
+    $script:DoctorDaemonObs = $daemonObs
 
     # 7) active ruleset surface (dispatch 000166 B9, checklist item 6). WHICH rules are actually
     # applied here, resolved through the SHIPPED resolver rather than a second implementation of
@@ -1885,13 +1932,17 @@ function Format-DoctorReport {
     # header and never a row. It contributes no result object, so the "of N checks" count and the
     # exit code are computed from exactly the same inputs as before this line existed. Same seam
     # shape as $Version -- blank means "ask the one source of truth".
-    param([object[]] $Results, [string] $Version = '', [string] $Provenance = '')
+    #
+    # $DaemonVersion / $DaemonPresent (DX finding O2) turn that header from a caveat into a
+    # RECONCILIATION -- see Get-DoctorVersionLine. Same seam shape again: parameters with inert
+    # defaults, so an out-of-band render still produces the honest no-daemon wording.
+    param([object[]] $Results, [string] $Version = '', [string] $Provenance = '',
+        [string] $DaemonVersion = '', [bool] $DaemonPresent = $false)
     if ([string]::IsNullOrWhiteSpace($Version)) { $Version = [string](Get-PluginVersion) }
     if ([string]::IsNullOrWhiteSpace($Provenance)) { $Provenance = Get-DoctorProvenanceHeader }
     $lines = @()
     $lines += 'powershell-lsp doctor -- preflight self-check (report-only)'
-    $lines += ('  version: ' + $Version +
-        '   (this tree; a live daemon may be older -- see logs/pses-daemon.log)')
+    $lines += (Get-DoctorVersionLine -TreeVersion $Version -DaemonVersion $DaemonVersion -DaemonPresent $DaemonPresent)
     $lines += ('  provenance floor: ' + $Provenance)
     $lines += ''
     foreach ($r in $Results) {
@@ -1929,13 +1980,13 @@ function Format-DoctorSummary {
     # provenance floor (dispatch 000216) rides for exactly that reason as well -- the two facts
     # are one answer, and splitting them across surfaces would make /status the surface that
     # states a version it cannot date.
-    param([object[]] $Results, [string] $Version = '', [string] $Provenance = '')
+    param([object[]] $Results, [string] $Version = '', [string] $Provenance = '',
+        [string] $DaemonVersion = '', [bool] $DaemonPresent = $false)
     if ([string]::IsNullOrWhiteSpace($Version)) { $Version = [string](Get-PluginVersion) }
     if ([string]::IsNullOrWhiteSpace($Provenance)) { $Provenance = Get-DoctorProvenanceHeader }
     $lines = @()
     $lines += 'powershell-lsp status -- ' + @($Results).Count + ' checks (report-only)'
-    $lines += ('  version: ' + $Version +
-        '   (this tree; a live daemon may be older -- see logs/pses-daemon.log)')
+    $lines += (Get-DoctorVersionLine -TreeVersion $Version -DaemonVersion $DaemonVersion -DaemonPresent $DaemonPresent)
     $lines += ('  provenance floor: ' + $Provenance)
     $lines += ''
     foreach ($r in $Results) {
@@ -1962,10 +2013,19 @@ if ($MyInvocation.InvocationName -ne '.') {
     Set-StrictMode -Version Latest
     $ErrorActionPreference = 'Stop'
     $doctorResults = Invoke-Doctor -SessionId $SessionId -ProbeNativeServe:([bool]$ProbeNativeServe)
+    # The daemon observation Invoke-Doctor already resolved, for the O2 version reconciliation.
+    # Absent or malformed -> the renderer's inert defaults, which produce the honest no-daemon
+    # wording rather than a fabricated agreement.
+    $dObs = $script:DoctorDaemonObs
+    $dVer = ''; $dPresent = $false
+    if ($null -ne $dObs) {
+        try { $dVer = [string]$dObs.DaemonVersion } catch { $dVer = '' }
+        try { $dPresent = [bool]$dObs.DaemonPresent } catch { $dPresent = $false }
+    }
     if ($Summary) {
-        Write-Host (Format-DoctorSummary -Results $doctorResults)
+        Write-Host (Format-DoctorSummary -Results $doctorResults -DaemonVersion $dVer -DaemonPresent $dPresent)
     } else {
-        Write-Host (Format-DoctorReport -Results $doctorResults)
+        Write-Host (Format-DoctorReport -Results $doctorResults -DaemonVersion $dVer -DaemonPresent $dPresent)
     }
     # The exit code is computed from the SAME results either way -- the rendering never
     # changes the verdict, and 'unknown' is never a failure.

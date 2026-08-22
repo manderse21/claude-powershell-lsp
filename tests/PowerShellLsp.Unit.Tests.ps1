@@ -625,15 +625,199 @@ Describe 'Dogfood diagnostic capture (dispatch 000039)' {
         }
     }
 
-    Context 'Get-DogfoodLogPath -- resolution + override' {
+    Context 'Get-DogfoodLogPath -- resolution + override (T2.3 relocation)' {
         It 'honors the POWERSHELL_LSP_DOGFOOD_LOG override verbatim' {
             $env:POWERSHELL_LSP_DOGFOOD_LOG = 'C:\custom\df.jsonl'
             Get-DogfoodLogPath | Should -BeExactly 'C:\custom\df.jsonl'
         }
-        It 'defaults to the plugin-root dogfood/diagnostics.jsonl when no override is set' {
+        It 'defaults to the DATA-ROOT dogfood/diagnostics.jsonl when no override is set' {
+            # T2.3: this used to resolve under the PLUGIN ROOT, contradicting ARCHITECTURE.md,
+            # TRUST.md and lsp-common.ps1's own header, all of which say state lives under
+            # CLAUDE_PLUGIN_DATA and never under the read-only plugin tree.
             Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_DOGFOOD_LOG' -ErrorAction SilentlyContinue
-            Get-DogfoodLogPath | Should -BeExactly (Join-Path $script:PluginRoot 'dogfood/diagnostics.jsonl')
+            Get-DogfoodLogPath | Should -BeExactly (Join-Path (Join-Path (Get-PluginDataRoot) 'dogfood') 'diagnostics.jsonl')
         }
+        It 'resolves UNDER the data root and NOT under the plugin root' {
+            # The assertion the finding is actually about, stated as a relationship rather than a
+            # literal so it cannot pass by coincidence on a machine where the two happen to agree.
+            Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_DOGFOOD_LOG' -ErrorAction SilentlyContinue
+            $env:CLAUDE_PLUGIN_DATA = Join-Path $TestDrive 'dr-t23'
+            try {
+                $p = Get-DogfoodLogPath
+                $p | Should -BeLike ((Join-Path $TestDrive 'dr-t23') + '*')
+                $p | Should -Not -BeLike ($script:PluginRoot + '*')
+            } finally { Remove-Item -LiteralPath 'Env:CLAUDE_PLUGIN_DATA' -ErrorAction SilentlyContinue }
+        }
+        It 'Get-LegacyDogfoodLogPath still names the PRE-relocation plugin-root log (read-only)' {
+            # Historical captures must stay reachable; the relocation orphans nothing.
+            Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_DOGFOOD_LOG' -ErrorAction SilentlyContinue
+            Get-LegacyDogfoodLogPath | Should -BeExactly (Join-Path $script:PluginRoot 'dogfood/diagnostics.jsonl')
+        }
+    }
+
+    Context 'Capture-log bound -- rotation into the stamped family (T6.4)' {
+        BeforeEach {
+            $script:RotDir = Join-Path $TestDrive ('rot-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            New-Item -ItemType Directory -Force -Path $script:RotDir | Out-Null
+            $script:RotLog = Join-Path $script:RotDir 'diagnostics.jsonl'
+            $env:POWERSHELL_LSP_CAPTURE_ROTATE_BYTES = '1000'
+        }
+        AfterEach {
+            Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_CAPTURE_ROTATE_BYTES' -ErrorAction SilentlyContinue
+        }
+
+        It 'does NOT rotate a log under the cap' {
+            Set-Content -LiteralPath $script:RotLog -Value ('x' * 100) -Encoding ascii
+            Invoke-CaptureLogRotation -LogPath $script:RotLog | Should -BeExactly ''
+            (Test-Path -LiteralPath $script:RotLog) | Should -BeTrue
+            @(Get-ChildItem -LiteralPath $script:RotDir -File).Count | Should -Be 1
+        }
+        It 'does NOT rotate a log that does not exist' {
+            Invoke-CaptureLogRotation -LogPath (Join-Path $script:RotDir 'absent.jsonl') | Should -BeExactly ''
+        }
+        It 'rotates a log at or over the cap into a name the EXISTING sweep recognises as a family' {
+            Set-Content -LiteralPath $script:RotLog -Value ('y' * 4000) -Encoding ascii
+            $rotated = Invoke-CaptureLogRotation -LogPath $script:RotLog
+            $rotated | Should -Not -BeNullOrEmpty
+            (Test-Path -LiteralPath $rotated) | Should -BeTrue
+            (Test-Path -LiteralPath $script:RotLog) | Should -BeFalse   # the active log is moved, never copied
+            # The bound only works if session-start.ps1's sweep sees this as a stamped family
+            # member. That sweep derives a stem by collapsing -\d{8}-\d{6}-\d{3} to -STAMP and
+            # SKIPS any name that does not change, so assert exactly that transformation.
+            $name = Split-Path -Leaf $rotated
+            $name | Should -Match '^diagnostics-\d{8}-\d{6}-\d{3}\.jsonl$'
+            $stem = [System.Text.RegularExpressions.Regex]::Replace($name, '-\d{8}-\d{6}-\d{3}', '-STAMP')
+            $stem | Should -Not -BeExactly $name
+            $stem | Should -BeExactly 'diagnostics-STAMP.jsonl'
+        }
+        It 'preserves every byte it rotates' {
+            $payload = (1..200 | ForEach-Object { '{"n":' + $_ + '}' }) -join "`n"
+            Set-Content -LiteralPath $script:RotLog -Value $payload -Encoding ascii
+            $before = (Get-FileHash -LiteralPath $script:RotLog -Algorithm SHA256).Hash
+            $rotated = Invoke-CaptureLogRotation -LogPath $script:RotLog
+            (Get-FileHash -LiteralPath $rotated -Algorithm SHA256).Hash | Should -BeExactly $before
+        }
+        It 'is fail-safe: a rotation it cannot perform returns "" and leaves the log alone' {
+            # THE PROPERTY is platform-independent -- any failure is swallowed and the log is left
+            # exactly as it was. THE MECHANISM that induces a failure is not, and the first cut of
+            # this test got that wrong: it opened the file with FileShare.None and expected the
+            # rename to fail, which is Windows semantics. On POSIX, locking is advisory and renaming
+            # an open file is perfectly legal, so rotation SUCCEEDED and the test went red on both
+            # the ubuntu and macos legs while both Windows legs passed. The code was right; the
+            # test's premise was Windows-shaped.
+            #
+            # So each platform is failed the way it can actually be failed:
+            #   Windows -- hold the file open denying all sharing, so MoveFile is refused.
+            #   POSIX   -- remove write permission from the CONTAINING DIRECTORY, since a rename
+            #              needs write on the directory the entry lives in, not on the file.
+            Set-Content -LiteralPath $script:RotLog -Value ('z' * 4000) -Encoding ascii
+            # Captured rather than computed: the trailing newline Set-Content writes is 1 byte on
+            # POSIX and 2 on Windows, and hand-deriving that is one more platform assumption than
+            # this test needs.
+            $sizeBefore = (Get-Item -LiteralPath $script:RotLog).Length
+            $sizeBefore | Should -BeGreaterThan 4000
+            # Resolved HERE rather than read from $script:OnWindows. That variable is assigned at
+            # this file's top level, which Pester evaluates during DISCOVERY -- every other use of
+            # it in this file is a `-Skip:` argument, which is also discovery-time. Inside an It
+            # BODY, which runs in the run phase, it is not in scope: it read as $false on Windows
+            # and silently sent this test down the POSIX branch.
+            $onWin = if (Test-Path 'Variable:\IsWindows') { [bool]$IsWindows } else { $true }
+            if ($onWin) {
+                $held = [System.IO.File]::Open($script:RotLog, 'Open', 'Read', 'None')
+                try {
+                    Invoke-CaptureLogRotation -LogPath $script:RotLog | Should -BeExactly ''
+                } finally { $held.Dispose() }
+            } else {
+                & chmod 500 $script:RotDir
+                try {
+                    Invoke-CaptureLogRotation -LogPath $script:RotLog | Should -BeExactly ''
+                } finally { & chmod 700 $script:RotDir }
+            }
+            # The point of the whole test: the log survives the failed rotation untouched.
+            (Test-Path -LiteralPath $script:RotLog) | Should -BeTrue
+            (Get-Item -LiteralPath $script:RotLog).Length | Should -Be $sizeBefore
+            @(Get-ChildItem -LiteralPath $script:RotDir -File).Count | Should -Be 1
+        }
+        It 'a non-numeric or non-positive cap falls back to the default rather than disabling the bound' {
+            $env:POWERSHELL_LSP_CAPTURE_ROTATE_BYTES = 'not-a-number'
+            Get-CaptureLogRotateBytes | Should -Be 8MB
+            $env:POWERSHELL_LSP_CAPTURE_ROTATE_BYTES = '0'
+            Get-CaptureLogRotateBytes | Should -Be 8MB
+            $env:POWERSHELL_LSP_CAPTURE_ROTATE_BYTES = '-5'
+            Get-CaptureLogRotateBytes | Should -Be 8MB
+        }
+
+        It 'Get-CaptureLogFamily returns rotated members OLDEST FIRST, active log LAST' {
+            Set-Content -LiteralPath (Join-Path $script:RotDir 'diagnostics-20260101-010101-001.jsonl') -Value 'a' -Encoding ascii
+            Set-Content -LiteralPath (Join-Path $script:RotDir 'diagnostics-20260301-010101-001.jsonl') -Value 'c' -Encoding ascii
+            Set-Content -LiteralPath (Join-Path $script:RotDir 'diagnostics-20260201-010101-001.jsonl') -Value 'b' -Encoding ascii
+            Set-Content -LiteralPath $script:RotLog -Value 'd' -Encoding ascii
+            $fam = @(Get-CaptureLogFamily -LogPath $script:RotLog)
+            $fam.Count | Should -Be 4
+            @($fam | ForEach-Object { Split-Path -Leaf $_ }) | Should -Be @(
+                'diagnostics-20260101-010101-001.jsonl',
+                'diagnostics-20260201-010101-001.jsonl',
+                'diagnostics-20260301-010101-001.jsonl',
+                'diagnostics.jsonl')
+        }
+        It 'Get-CaptureLogFamily ignores unrelated files and unstamped siblings' {
+            Set-Content -LiteralPath (Join-Path $script:RotDir 'annotations.jsonl') -Value 'x' -Encoding ascii
+            Set-Content -LiteralPath (Join-Path $script:RotDir 'diagnostics-backup.jsonl') -Value 'x' -Encoding ascii
+            Set-Content -LiteralPath $script:RotLog -Value 'd' -Encoding ascii
+            @(Get-CaptureLogFamily -LogPath $script:RotLog).Count | Should -Be 1
+        }
+        It 'Get-CaptureLogFamily returns the rotated members even when the active log is absent' {
+            Set-Content -LiteralPath (Join-Path $script:RotDir 'diagnostics-20260101-010101-001.jsonl') -Value 'a' -Encoding ascii
+            $fam = @(Get-CaptureLogFamily -LogPath $script:RotLog)
+            $fam.Count | Should -Be 1
+            (Split-Path -Leaf $fam[0]) | Should -BeExactly 'diagnostics-20260101-010101-001.jsonl'
+        }
+    }
+
+    Context 'Daemon pipe options -- CurrentUserOnly where the host offers it (T5.1)' {
+        It 'Test-PipeOptionSupported agrees with the live enum, both ways' {
+            # Both arms asserted: a predicate that only ever returns $true would pass a
+            # one-armed test and silently make the guard below meaningless.
+            Test-PipeOptionSupported -Name 'Asynchronous' | Should -BeTrue
+            Test-PipeOptionSupported -Name 'NoSuchPipeOptionEver' | Should -BeFalse
+            (Test-PipeOptionSupported -Name 'CurrentUserOnly') |
+                Should -Be ([enum]::GetNames([System.IO.Pipes.PipeOptions]) -contains 'CurrentUserOnly')
+        }
+        It 'always includes Asynchronous -- the serve loop accepts via WaitForConnectionAsync' {
+            (([int](Get-DaemonPipeOptions)) -band ([int][System.IO.Pipes.PipeOptions]::Asynchronous)) |
+                Should -Be ([int][System.IO.Pipes.PipeOptions]::Asynchronous)
+        }
+        It 'adds CurrentUserOnly exactly when the host enum carries it, and never throws when it does not' {
+            $opts = Get-DaemonPipeOptions
+            if ([enum]::GetNames([System.IO.Pipes.PipeOptions]) -contains 'CurrentUserOnly') {
+                $cuo = [int]([System.IO.Pipes.PipeOptions]'CurrentUserOnly')
+                (([int]$opts) -band $cuo) | Should -Be $cuo
+            } else {
+                # Windows PowerShell 5.1 (.NET Framework) has no such member. The contract on that
+                # host is the SHIPPED options unchanged -- not an exception at daemon start.
+                ([int]$opts) | Should -Be ([int][System.IO.Pipes.PipeOptions]::Asynchronous)
+            }
+        }
+        It 'New-DaemonPipeServer still builds a usable single-instance server with these options' {
+            $pn = 'psl-t51-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+            $srv = New-DaemonPipeServer -PipeName $pn
+            try {
+                $srv | Should -BeOfType ([System.IO.Pipes.NamedPipeServerStream])
+                # A SECOND server on the same name must still fail -- that single-instance property
+                # is what Test-DaemonPipePresent's busy-vs-unreachable discriminator rests on, and
+                # a change to PipeOptions is exactly the kind of edit that could have moved it.
+                { New-DaemonPipeServer -PipeName $pn } | Should -Throw
+            } finally { $srv.Dispose() }
+        }
+        # WHY THE EFFECTIVE DACL IS NOT ASSERTED HERE, recorded so the omission is a decision and
+        # not an oversight. Reading a pipe's kernel security descriptor needs P/Invoke on pwsh 7
+        # ([System.IO.Pipes.AclExtensions] is a type-forward with no exported type there, and
+        # PipeStream.GetAccessControl() exists only on .NET Framework), so the assertion would
+        # cost an Add-Type C# compile on every run of all four CI legs -- and a compiler hiccup
+        # would surface as a red with nothing to do with the pipe. The DACL was instead MEASURED
+        # directly, before and after, and the before/after SDDL pair is recorded in
+        # docs/roadmap-ii/THREAT-MODEL.md section 8 with its method. What guards the fix against
+        # regression is the option contract above: drop CurrentUserOnly and these go red.
     }
 }
 
@@ -1210,6 +1394,42 @@ Describe 'Dogfood reader: source resolution + source split (dispatch 000088)' {
             $f = Join-Path $script:SrcDir 'one.jsonl'; Set-Content -LiteralPath $f -Value '{"hash":"h"}' -Encoding ascii
             (Test-DogfoodLogNonEmpty -LogPath $f) | Should -BeTrue
         }
+        It 'is true when the ACTIVE log is empty but a ROTATED member carries records (T6.4)' {
+            # The state immediately after a rotation. Testing the active file alone would walk
+            # -Source auto straight past a live data root down to a frozen pre-relocation log.
+            $d = Join-Path $script:SrcDir 'rotated-nonempty'
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+            $active = Join-Path $d 'diagnostics.jsonl'
+            Set-Content -LiteralPath $active -Value '' -Encoding ascii
+            Set-Content -LiteralPath (Join-Path $d 'diagnostics-20260101-010101-001.jsonl') -Value '{"hash":"h"}' -Encoding ascii
+            (Test-DogfoodLogNonEmpty -LogPath $active) | Should -BeTrue
+        }
+    }
+
+    Context 'Read-DogfoodLog -- unions the rotated family (T6.4)' {
+        It 'reads rotated members and the active log, OLDEST FIRST' {
+            # Bounding the log must not bound what the reader can see: the whole retained window
+            # is the corpus, and its ORDER is the accrual order.
+            $d = Join-Path $script:SrcDir 'fam'
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+            Set-Content -LiteralPath (Join-Path $d 'diagnostics-20260101-010101-001.jsonl') -Value '{"hash":"old"}' -Encoding ascii
+            Set-Content -LiteralPath (Join-Path $d 'diagnostics-20260201-010101-001.jsonl') -Value '{"hash":"mid"}' -Encoding ascii
+            $active = Join-Path $d 'diagnostics.jsonl'
+            Set-Content -LiteralPath $active -Value '{"hash":"new"}' -Encoding ascii
+            $recs = @(Read-DogfoodLog -LogPath $active)
+            $recs.Count | Should -Be 3
+            @($recs | ForEach-Object { $_.hash }) | Should -Be @('old', 'mid', 'new')
+        }
+        It 'is byte-for-byte the old behaviour when nothing has rotated' {
+            $d = Join-Path $script:SrcDir 'nofam'
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+            $active = Join-Path $d 'diagnostics.jsonl'
+            Set-Content -LiteralPath $active -Value "{`"hash`":`"a`"}`n{`"hash`":`"b`"}" -Encoding ascii
+            @(Read-DogfoodLog -LogPath $active | ForEach-Object { $_.hash }) | Should -Be @('a', 'b')
+        }
+        It 'still returns an empty array for a missing log' {
+            @(Read-DogfoodLog -LogPath (Join-Path $script:SrcDir 'gone.jsonl')).Count | Should -Be 0
+        }
     }
 
     Context 'Resolve-DogfoodLogSource -- -Source semantics + effective label' {
@@ -1218,14 +1438,38 @@ Describe 'Dogfood reader: source resolution + source split (dispatch 000088)' {
             $r.LogPath | Should -BeExactly 'C:\explicit\df.jsonl'
             $r.Effective | Should -BeExactly 'path'
         }
-        It 'checkout reuses the UNCHANGED write-side resolver (Get-DogfoodLogPath) READ-ONLY' {
-            # The read-side/write-side boundary: the reader's checkout source is exactly the hook's
-            # own resolver, driven here via its documented override seam.
+        It 'checkout resolves the PRE-relocation running-tree log (Get-LegacyDogfoodLogPath) READ-ONLY' {
+            # Post-T2.3 the read-side/write-side boundary moved: `checkout` no longer names the
+            # hook's write target (that is `data` now) -- it names where captures landed BEFORE
+            # the relocation, so history stays reachable. Driven here via the override seam both
+            # resolvers honour.
             $env:POWERSHELL_LSP_DOGFOOD_LOG = 'C:\co\df.jsonl'
             $r = Resolve-DogfoodLogSource -Source 'checkout'
-            $r.LogPath | Should -BeExactly (Get-DogfoodLogPath)
+            $r.LogPath | Should -BeExactly (Get-LegacyDogfoodLogPath)
             $r.LogPath | Should -BeExactly 'C:\co\df.jsonl'
             $r.Effective | Should -BeExactly 'checkout'
+        }
+        It 'data resolves the LIVE data-root write target (Get-DogfoodLogPath)' {
+            Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_DOGFOOD_LOG' -ErrorAction SilentlyContinue
+            $r = Resolve-DogfoodLogSource -Source 'data'
+            $r.LogPath | Should -BeExactly (Get-DogfoodLogPath)
+            $r.Effective | Should -BeExactly 'data'
+        }
+        It 'auto prefers a NON-EMPTY DATA-ROOT log over the cache log (Effective auto->data)' {
+            # The rung T2.3 added, and the reason it had to be added: after the relocation the
+            # cache log is frozen history while the data-root log is what the hook is writing.
+            # Had auto kept its old cache-first order it would have gone on reading the frozen
+            # one -- silently, and looking exactly like a healthy read.
+            $cache = Join-Path $script:SrcDir 'cache-vs-data'
+            $null = New-FakeCacheLog -CacheRoot $cache -Version '1.18.1' -Lines @('{"file":"cache","hash":"h"}')
+            $dataDir = Join-Path $script:SrcDir 'dataroot'
+            New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+            $dataLog = Join-Path $dataDir 'diagnostics.jsonl'
+            Set-Content -LiteralPath $dataLog -Value '{"file":"data","hash":"h"}' -Encoding ascii
+            $env:POWERSHELL_LSP_DOGFOOD_LOG = $dataLog
+            $r = Resolve-DogfoodLogSource -Source 'auto' -CacheRoot $cache
+            $r.LogPath | Should -BeExactly $dataLog
+            $r.Effective | Should -BeExactly 'auto->data'
         }
         It 'cache resolves the discovered cache log' {
             $cache = Join-Path $script:SrcDir 'cache'
@@ -3633,6 +3877,99 @@ Describe 'Preflight doctor -- plugin version report (dispatch 000208, report-onl
     It 'the injected-version seam is honored (the renderers stay testable)' {
         (Format-DoctorReport -Results $script:AllUnknown -Version '9.9.9-test') | Should -Match 'version: 9\.9\.9-test'
         (Format-DoctorSummary -Results $script:AllUnknown -Version '9.9.9-test') | Should -Match 'version: 9\.9\.9-test'
+    }
+}
+
+Describe 'Preflight doctor -- tree-vs-daemon version reconciliation (DX finding O2)' {
+    # O2: after an upgrade the doctor reported the TREE's version beside a clean pass while the
+    # daemon serving the session was older, and no surface reconciled the two -- so "which version
+    # is actually running?", the first question of any support thread, got a confidently wrong
+    # answer. Dispatch 000265 closed the honesty half with a caveat; this closes the other half by
+    # ANSWERING it from the version the daemon stamps into its own session record.
+    BeforeAll {
+        . (Join-Path $script:ScriptsDir 'doctor.ps1')
+        $script:AllUnknown = @(
+            (New-DoctorResult -Status unknown -Component 'Alpha check' -Detail 'a')
+            (New-DoctorResult -Status unknown -Component 'Beta check' -Detail 'b')
+        )
+    }
+
+    Context 'Get-DoctorVersionLine -- the four cases, decided purely' {
+        It 'no live daemon -> the tree version stands alone, and says so' {
+            $l = Get-DoctorVersionLine -TreeVersion '1.32.0' -DaemonVersion '' -DaemonPresent $false
+            $l | Should -Match 'version: 1\.32\.0'
+            $l | Should -Match 'no live daemon to reconcile against'
+        }
+        It 'daemon agrees -> ONE version, stated as agreement rather than as a caveat' {
+            $l = Get-DoctorVersionLine -TreeVersion '1.32.0' -DaemonVersion '1.32.0' -DaemonPresent $true
+            $l | Should -Match 'this tree AND the live daemon agree'
+            # The old hedge must NOT survive where the answer is actually known.
+            $l | Should -Not -Match 'may be older'
+        }
+        It 'daemon differs -> BOTH versions appear, and the difference is explained as expected' {
+            $l = Get-DoctorVersionLine -TreeVersion '1.32.0' -DaemonVersion '1.30.0' -DaemonPresent $true
+            $l | Should -Match '1\.32\.0'      # the tree
+            $l | Should -Match '1\.30\.0'      # the daemon actually serving
+            $l | Should -Match 'LIVE DAEMON'
+            $l | Should -Match 'expected after an upgrade'
+        }
+        It 'daemon present but UNVERSIONED -> reported as unknown, never inferred to be a mismatch' {
+            # A record written by a daemon older than the pluginVersion field has no version. An
+            # ABSENT version is not evidence of disagreement, and saying otherwise would invent a
+            # mismatch out of a missing field.
+            $l = Get-DoctorVersionLine -TreeVersion '1.32.0' -DaemonVersion '' -DaemonPresent $true
+            $l | Should -Match 'predates version stamping'
+            $l | Should -Not -Match 'LIVE DAEMON is running'
+        }
+        It 'reproduces the exact O2 scenario end to end' {
+            # The audit recorded: tree 1.31.0, daemon 1.30.0, and a report containing NO occurrence
+            # of 1.30, mismatch, stale or older. Assert the opposite now holds.
+            $l = Get-DoctorVersionLine -TreeVersion '1.31.0' -DaemonVersion '1.30.0' -DaemonPresent $true
+            $l | Should -Match '1\.30'
+        }
+    }
+
+    Context 'the renderers carry the reconciliation' {
+        It 'both surfaces render the differing case, so /status and the full report cannot disagree' {
+            foreach ($render in @(
+                    (Format-DoctorReport  -Results $script:AllUnknown -Version '1.32.0' -DaemonVersion '1.30.0' -DaemonPresent $true),
+                    (Format-DoctorSummary -Results $script:AllUnknown -Version '1.32.0' -DaemonVersion '1.30.0' -DaemonPresent $true))) {
+                $render | Should -Match '1\.30\.0'
+                $render | Should -Match 'LIVE DAEMON'
+            }
+        }
+        It 'defaults are inert -- an out-of-band render produces the honest no-daemon wording' {
+            # Every pre-existing caller passes no daemon arguments. None of them may start
+            # claiming agreement it has not established.
+            foreach ($render in @(
+                    (Format-DoctorReport  -Results $script:AllUnknown),
+                    (Format-DoctorSummary -Results $script:AllUnknown))) {
+                $render | Should -Match 'no live daemon to reconcile against'
+                $render | Should -Not -Match 'agree'
+            }
+        }
+        It 'the version line is still a HEADER, not a check row (dispatch 000208 ruling preserved)' {
+            $before = @($script:AllUnknown).Count
+            $render = Format-DoctorSummary -Results $script:AllUnknown -Version '1.32.0' -DaemonVersion '1.30.0' -DaemonPresent $true
+            $render | Should -Match ('status -- ' + $before + ' checks')
+        }
+    }
+
+    Context 'the daemon stamps its own version into the session record' {
+        It 'Write-SessionFile emits pluginVersion, sourced from the ONE version resolver' {
+            $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'pses-daemon.ps1') -Raw
+            $src | Should -Match 'pluginVersion\s*=\s*\(Get-PluginVersion\)'
+        }
+        It 'the doctor reads that field by name from the session record' {
+            $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'doctor.ps1') -Raw
+            $src | Should -Match "Get-Prop \`$obj 'pluginVersion'"
+        }
+        It 'no userConfig knob and no status token was added for this (CONTRACT.md stays green)' {
+            # The fix had to be contained: an additive JSON field plus a header line, never a new
+            # knob or a new status token, both of which CONTRACT.md freezes for 1.x.
+            $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'doctor.ps1') -Raw
+            @([regex]::Matches($src, 'CLAUDE_PLUGIN_OPTION_daemonVersion')).Count | Should -Be 0
+        }
     }
 }
 

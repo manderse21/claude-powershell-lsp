@@ -1,0 +1,38 @@
+powershell-lsp diagnostic-correctness corpus
+Copyright 2026 Mike Andersen
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use these files except in compliance with the License. A copy of the License
+is distributed with this package in the file LICENSE, and is also available at
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+ORIGIN OF THE MATERIAL
+
+Every sample in this corpus was authored in the powershell-lsp repository. A
+per-file provenance audit of the corpus surface -- first-add commit, content
+marker sweep, upstream comparison, and commit-trailer scan -- found zero files
+derived from an external source and zero of unknown origin. There is no
+third-party rightsholder anywhere in the sample surface. See PROVENANCE.md in
+this directory for the audit, its instruments, and the limits each instrument
+carries.
+
+THIRD-PARTY CONTENT
+
+This package contains no third-party content.
+
+The powershell-lsp repository does carry one vendored third-party file -- the
+OASIS SARIF 2.1.0 JSON Schema at tests/sarif/sarif-2.1.0.json, under the OASIS
+IPR Policy (RF on RAND Terms Mode), not under Apache-2.0. It is a test fixture
+for validating SARIF output and is NOT part of this corpus package. It is named
+here only so that "no third-party content" above is a checked statement rather
+than an assumed one.
+
+The two runtime components powershell-lsp depends on (PowerShell Editor Services
+and PSScriptAnalyzer, both Copyright (c) Microsoft Corporation, MIT) are
+downloaded at install time by the plugin and are likewise not part of this
+package.

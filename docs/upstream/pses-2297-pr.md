@@ -1,6 +1,8 @@
 # Drafted PR -- PSES PrepareRename/Rename null RenameCapability guard (#2297)
 
-**Status re-derived: 2026-08-12 via gh; live state wins over this file.**
+**Status re-derived: 2026-08-21 via gh; live state wins over this file.** Re-verified unchanged:
+PR #2299 **CLOSED**, `mergedAt` null and `mergeCommit` null; PR #2296 **MERGED** 2026-06-11T14:43:50Z,
+merge commit `40cf5e1ea4fed40a75af59871cc5c05e9707bab2`; issue #2297 **CLOSED / COMPLETED**.
 
 ## SUBMITTED, and CLOSED UNMERGED -- this is a historical record, not a pending action
 

@@ -1,10 +1,28 @@
 # Claude Code drops a plugin's `lspServers` when a `${user_config.*}` key is unset
 
-**Status re-derived: 2026-08-17 via gh; live state wins over this file.**
+**Status re-derived: 2026-08-21 via gh; live state wins over this file.**
 
-`anthropics/claude-code#86936` -- **OPEN**, last updated 2026-08-15T15:54:30Z, re-derived live
-with `gh issue view 86936 --repo anthropics/claude-code --json state,title,updatedAt`. The
-downstream suspension recorded below therefore still stands.
+`anthropics/claude-code#86936` -- **OPEN**, last updated **2026-08-18T18:12:08Z**, **2 comments**,
+re-derived live with
+`gh issue view 86936 --repo anthropics/claude-code --json state,title,updatedAt,comments`. The
+downstream suspension recorded below therefore still stands: open means unfixed, and a
+reproduction is not a fix.
+
+> ### MAINTAINER-REPRODUCED, 2026-08-18 -- and it is NOT Windows-specific
+>
+> **`bcherny` confirmed the defect upstream on 2026-08-18T01:30:52Z**, on Claude Code **2.1.234**,
+> **on Linux**: a marketplace-installed plugin declaring `userConfig.knob` with a `"default"` and an
+> `lspServers` entry interpolating it reproduces the drop.
+>
+> **The Linux reproduction is the load-bearing part**, and it corrects this repository's own report
+> rather than merely endorsing it. Everything below was derived on Windows and the issue carried a
+> `platform:windows` label; the defect is now demonstrated to be platform-independent, so any reading
+> of this file that treats the drop as a Windows problem is wrong. Mike replied the same day
+> (2026-08-18T18:10:17Z) noting the label can probably come off.
+>
+> A maintainer reproduction **raises confidence in the diagnosis and changes nothing about the
+> remedy**: the entry is still dropped on an affected build, so the suspension this file records
+> remains the correct downstream posture. Nothing here is a green light to un-suspend.
 
 ## ALREADY FILED AS #86936 -- DO NOT FILE THIS
 

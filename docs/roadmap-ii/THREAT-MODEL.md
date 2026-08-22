@@ -5,10 +5,17 @@ and already true, but scattered across four documents and the code. It walks the
 boundaries, states what crosses each one, and names the threats the evidence supports. It is
 **derived from disk**, not restated from the documents it consolidates.
 
-**What this document does not do.** It **proposes no fix, no mitigation, and no roadmap item.**
-Where a boundary has no mitigation, that is recorded as an `OPEN` finding and routed to the gate
-review unchanged. A threat model that repairs what it finds stops being a description of the
-system and becomes a description of the author's intentions.
+**What this document does not do.** The analysis in sections 1 to 7 **proposes no fix, no mitigation,
+and no roadmap item.** Where a boundary has no mitigation, that is recorded as a finding and routed
+to the gate review unchanged. A threat model that repairs what it finds stops being a description of
+the system and becomes a description of the author's intentions.
+
+> **That gate review has since happened, and section 8 now records its outcome.** Mike triaged every
+> row of the findings register on **2026-08-21**; three findings were fixed, two were measured, and
+> six were accepted with a stated reason. The discipline above is unchanged and still governs: the
+> dispositions live in section 8 and **nowhere else**, so the boundary walk stays a description of
+> the system rather than of what anyone intends to do about it. Sections 1 to 7 have been re-derived
+> where the code moved under them, not rewritten to reflect the fixes.
 
 **How to read a claim here.** Every trust claim carries a `path` citation, and a `path:line`
 citation where the line is load-bearing. A claim that cannot be traced to disk is labelled
@@ -26,8 +33,15 @@ reader must copy exactly, so it lives in one place --
 Where those documents disagree with each other or with the code, the disagreement is recorded in
 section 7 as a finding.
 
-**Derivation moment.** All facts derived 2026-08-12 from the plugin repository at `origin/main`
-(`c0e4b51`), plugin version `1.31.0` (`.claude-plugin/plugin.json:5`).
+**Derivation moments.** The boundary walk and its findings were derived **2026-08-12** from the
+plugin repository at `origin/main` (`c0e4b51`), plugin version `1.31.0`.
+
+The **2026-08-21** pass (dispatch 000269) re-derived section 7's drift rows and dispositioned
+section 8's register against `origin/main` at plugin version `1.32.0`. Two cited line numbers had
+drifted since 2026-08-12 and were corrected (D2, D4); D3's four were re-verified exact. **A stale
+`path:line` citation inside a drift register is itself drift**, which is why they were re-read rather
+than carried. Where that pass took a measurement rather than a reading, the method is printed with
+the result.
 
 ---
 
@@ -141,7 +155,7 @@ for reading *this* file directly where the settings path deliberately is not rea
 | Bootstrap and daemon logs | the data root, `logs/` | `scripts/lib/lsp-common.ps1:66` | always |
 | Vendored PSES bundle and PSScriptAnalyzer | the data root | `scripts/ensure-pses.ps1:110`, `scripts/ensure-pssa.ps1:206-212` | first run |
 | Per-session state files | the data root, session dir | `scripts/pses-daemon.ps1:1431` | always |
-| Diagnostics capture (`dogfood/diagnostics.jsonl`) | **`CLAUDE_PLUGIN_ROOT`**, not the data root | `scripts/lib/lsp-common.ps1:771-794`, appended `:895-897` | **ungated** |
+| Diagnostics capture (`dogfood/diagnostics.jsonl`) | as derived: **`CLAUDE_PLUGIN_ROOT`**, not the data root -- **since FIXED, now the data root** (T2.3) | `scripts/lib/lsp-common.ps1`, `Get-DogfoodLogPath` | **ungated** (T6.1, accepted) |
 | Timing telemetry (`logs/stats.jsonl`) | the data root, `logs/` | gated by `enableStats` (`scripts/lsp-client.ps1:40`) | opt-in, default off |
 | **The user's own source file** | in place | `scripts/pses-daemon.ps1:1403`, via `Write-FormatResultAtomic` (`scripts/lib/lsp-common.ps1:3801`) | `formatOnEdit = apply`, default `off` |
 | PowerShell repository registration | user profile, **outside the data root** | `scripts/ensure-pssa.ps1:233-237` | fallback path only, and only when PSGallery is absent |
@@ -162,10 +176,17 @@ the edited file and `snippet` is **the offending source line, verbatim**
 directory, and the capture is fail-safe: any failure is swallowed and nothing reaches stdout
 (`:851-853`, `:898`).
 
-Two properties of that capture are carried into section 3. It is written under the **plugin root**,
-not the data root (`:794`), which contradicts a claim made in two places -- see finding **D1**. And
-it is **not gated by any knob**: the three call sites (`scripts/lsp-client.ps1:412,418,802`) are
+Two properties of that capture are carried into section 3. As derived, it was written under the
+**plugin root**, not the data root, which contradicted a claim made in two places -- see finding
+**D1**. And it is **not gated by any knob**: the three call sites in `scripts/lsp-client.ps1` are
 unconditional.
+
+> **The first of those two has since been fixed** (T2.3, 2026-08-21): the capture now writes under
+> `CLAUDE_PLUGIN_DATA`, so the plugin-root property no longer holds and D1 is resolved. The second
+> stands and was **accepted with record** (T6.1) -- gating the capture would strangle the
+> rule-curation lane it feeds. The capture log is now also **size-bounded** (T6.4), which the
+> paragraph below on `.gitignore` protection predates: the log lives outside every git tree now, so
+> it is structurally uncommittable rather than merely ignored.
 
 **The stats log records absolute paths and is known to need redaction.** `scripts/lib/lsp-common.ps1:238-239`
 records the ruling that `enableStats` stays `false` in every profile precisely because
@@ -294,10 +315,12 @@ control-aware component exists to *explain* blocks: `scripts/lib/security-classi
 states the fence -- it never bypasses, disables, weakens, or auto-modifies any control, and every
 remediation is instructions rather than an action.
 
-**T2.3 Plugin tree writability.** **OPEN.** The plugin root is documented as a read-only tree
-(`scripts/lib/lsp-common.ps1:13`), but the capture log is written into it
-(`scripts/lib/lsp-common.ps1:794`). A tree that is written at runtime cannot also be assumed
-immutable by a reviewer allow-listing it by path. See finding **D1**.
+**T2.3 Plugin tree writability.** **FIXED 2026-08-21.** As derived, the plugin root was documented as
+a read-only tree (`scripts/lib/lsp-common.ps1:13`) while the capture log was written into it, and a
+tree written at runtime cannot also be assumed immutable by a reviewer allow-listing it by path.
+`Get-DogfoodLogPath` now resolves under `CLAUDE_PLUGIN_DATA`, so **the plugin tree is no longer
+written at runtime** and the allow-listing assumption holds. See finding **D1** (resolved) and the
+section 8 disposition.
 
 ### B3 -- repository content to analyzer
 
@@ -376,6 +399,12 @@ recorded as unknown, not as zero. Two bounds are on disk: `maxNumberOfServerInst
 (`:1452`), so only one client is connected at a time, and the pipe name is keyed to the session id.
 No fix is proposed here.
 
+> **MEASURED, then FIXED, 2026-08-21.** The unknown resolved the wrong way: the platform default DACL
+> granted **Everyone** and **Anonymous** `FILE_GENERIC_READ`. `CurrentUserOnly` is now set on the
+> server stream, host permitting. The before/after security descriptors, the measurement method, and
+> the reason the option is resolved by name rather than as an enum literal are in section 8.
+> `maxNumberOfServerInstances` is unchanged, so the bound cited above still holds.
+
 **T5.2 What an attacker on the pipe would obtain.** *Scoped by the protocol.* The request surface is
 one-line JSON with `action` of `diagnostics`, `format`, or `ping` (`scripts/lsp-client.ps1:126,166`;
 `scripts/doctor.ps1:813`). A `diagnostics` request names an arbitrary file path and returns findings
@@ -400,6 +429,13 @@ accumulating snippets of every file with a finding. The relevant knob, `enableSt
 session files land under a `powershell-lsp-data` subdirectory of the system temp path (`scripts/lib/lsp-common.ps1:17`). The
 permissions of that directory are platform-dependent and were not measured.
 
+> **MEASURED ON WINDOWS, 2026-08-21 -- no exposure found there; the POSIX arm remains unmeasured.**
+> On Windows 11 the fallback inherits the per-user `%LOCALAPPDATA%\Temp` ACL: three inherited ACEs
+> (SYSTEM, Administrators, the invoking user), no Everyone, no Anonymous. The platform-dependence
+> this finding names is exactly why that is **not** a general answer -- on Linux the same call
+> typically resolves to a world-readable `/tmp`. Section 8 records the measurement, and records the
+> POSIX arm as still open rather than inferring it.
+
 **T6.3 Stats log absolute paths.** *Latent, opt-in, and already ruled on.* `logs/stats.jsonl`
 records absolute paths; the project's recorded ruling keeps `enableStats` false in every profile
 until redaction ships (`scripts/lib/lsp-common.ps1:238-239`).
@@ -408,6 +444,13 @@ until redaction ships (`scripts/lib/lsp-common.ps1:238-239`).
 newest files, default 10 (`scripts/session-start.ps1:6,57,116`;
 `.claude-plugin/plugin.json:124`). The capture log is a single appended file, not a rolling family,
 so the sweep does not bound it -- recorded as an observation, with no fix proposed.
+
+> **FIXED 2026-08-21, and the gap was real.** A live capture log measured **5,279,427 bytes over
+> 10,161 rows** with no mechanism that would ever have stopped it. Rather than teach the sweep a
+> second concept, the log is now **rotated into the stamped-family shape the sweep already
+> recognises**, so the same `keepLastN` bounds it: ceiling `(keepLastN + 1) x 8 MB` = 88 MB at the
+> default. The sentence above stays accurate about the *sweep*; what changed is that the capture log
+> is no longer outside it.
 
 ### B7 -- release pipeline to consumer
 
@@ -519,11 +562,18 @@ correlation to this plugin is by component-name pattern (`:43-55`).
 `Set-ExecutionPolicy`, no listening socket, no telemetry endpoint, and no credential access appears
 anywhere in `scripts/` or `hooks/` (searches in sections 1.2 and 1.5).
 
-**Where least privilege is not clean, stated plainly.** Three writes leave the data root: the
-capture log into the plugin root (T2.3 / D1), the PowerShell repository registration into the user
-profile on the fallback path (T1.4), and temp staging during bootstrap
+**Where least privilege is not clean, stated plainly.** Three writes left the data root as derived:
+the capture log into the plugin root (T2.3 / D1), the PowerShell repository registration into the
+user profile on the fallback path (T1.4), and temp staging during bootstrap
 (`scripts/ensure-pssa.ps1:119`, cleaned at `:213`). The first two are the ones a reviewer
 allow-listing by path should know about.
+
+> **Two down to one, 2026-08-21.** The capture-log write is gone -- T2.3 is fixed and the log lands
+> in the data root -- so of the three, **only the PSGallery registration (T1.4) still leaves the data
+> root persistently**, and it is accepted with record because removing it would remove the fallback
+> acquisition path rather than harden it. Temp staging is transient and cleaned. A reviewer
+> allow-listing the plugin root by path can now rely on it being read-only at runtime, which is the
+> concrete thing T2.3 was costing.
 
 ---
 
@@ -532,10 +582,17 @@ allow-listing by path should know about.
 - **Upstream internals are out of scope**, matching [`SECURITY.md`](../../SECURITY.md#scope): a flaw
   in how this plugin downloads, verifies, or invokes PSES and PSScriptAnalyzer is in scope; a flaw
   inside them is not. T3.2 is bounded by exactly that line.
-- **No dynamic testing was performed.** Every claim here is derived by reading the tree at
-  `origin/main`. Nothing was executed, no daemon was started, and no ACL was queried. The two
-  `unknown` labels (T5.1, T6.2) are unknown for that reason, and each names the measurement that
-  would resolve it.
+- **No dynamic testing was performed in the 2026-08-12 derivation.** Every claim in the boundary walk
+  is derived by reading the tree at `origin/main`. Nothing was executed, no daemon was started, and
+  no ACL was queried. The two `unknown` labels (T5.1, T6.2) were unknown for exactly that reason, and
+  each named the measurement that would resolve it.
+
+  > **Both measurements were subsequently taken** (2026-08-21, section 8), and naming them is what
+  > made them cheap to take. **T5.1 resolved against the project**: the platform-default pipe DACL
+  > granted Everyone and Anonymous read access, so the honest label had been hiding a live exposure
+  > rather than a tidy one. **T6.2 resolved in the project's favour on Windows** and remains
+  > unmeasured on POSIX. That split is the argument for the `unknown` discipline: two labels written
+  > the same way resolved in opposite directions, and neither could have been guessed.
 - **The threat list is bounded by the evidence**, as instructed. Threats that would require
   assumptions about deployment, adversary position, or upstream behavior are labelled unknown rather
   than enumerated speculatively.
@@ -549,46 +606,63 @@ allow-listing by path should know about.
 
 The dispatch asks whether `TRUST.md`, `SECURITY.md`, and `docs/trust.md` agree with each other and
 with the code everywhere they overlap, and records that any drift is a finding. Four were found.
-None is repaired here.
 
-**D1 -- "all state stays under `CLAUDE_PLUGIN_DATA`" is contradicted by the capture log.**
+**Status as of 2026-08-21: D1 is RESOLVED; D2, D3 and D4 stand.** The rows below were re-derived
+against the current files rather than carried, and where a cited line number had drifted it was
+corrected -- a stale line number inside a drift register is itself drift.
+
+**D1 -- RESOLVED (2026-08-21).** *The finding as written:* "all state stays under
+`CLAUDE_PLUGIN_DATA`" was contradicted by the capture log.
 [`TRUST.md`](../../TRUST.md#what-it-executes----and-what-it-does-not) states that all state, logs,
-pids, and the vendored analyzer live under `CLAUDE_PLUGIN_DATA` and stay there. The same claim is
+pids, and the vendored analyzer live under `CLAUDE_PLUGIN_DATA` and stay there, and the same claim is
 made more strongly inside the code: `scripts/lib/lsp-common.ps1:12-13` says state lives under
 `CLAUDE_PLUGIN_DATA` and "**Never under CLAUDE_PLUGIN_ROOT (read-only plugin tree)**". But
-`Get-DogfoodLogPath` in that same file resolves the capture log under the **plugin root**
-(`:775-777,794`), and the capture is unconditional (`scripts/lsp-client.ps1:412,418,802`). The
-plugin tree is therefore written at runtime. Severity is meaningful for two audiences: a reviewer
-allow-listing the plugin root by path is told it is read-only, and a reader of the data-root claim
-will not look in the plugin tree for captured source snippets.
+`Get-DogfoodLogPath` in that same file resolved the capture log under the **plugin root**, and the
+capture is unconditional (`scripts/lsp-client.ps1`), so the plugin tree was written at runtime.
+
+*How it was closed:* **the code moved, not the documentation.** `Get-DogfoodLogPath` now resolves
+`<data-root>/dogfood/diagnostics.jsonl` (finding **T2.3** in section 8), which makes all three
+statements -- `TRUST.md`, `ARCHITECTURE.md`, and the library header -- true at once. Softening the
+documents to match the code was the available alternative and was **not** taken: the documents
+described the property the project actually wants, and it was the code that was wrong.
+
+*Corroboration that this was real rather than theoretical:* every equality proof in the v1.32.0
+freeze recorded `dogfood/diagnostics.jsonl` as an ignored byproduct **inside the staged plugin root**
+(`evidence/v1.32.0/results/equality-*.json`, field `extra_ignored_byproducts`). The drift was visible
+in the release evidence before anyone went looking for it. A re-run of that block should now record
+no byproduct under the plugin root at all.
 
 **D2 -- "no network access at all after first-run bootstrap" is broader than the code supports.**
 [`TRUST.md`](../../TRUST.md#what-it-executes----and-what-it-does-not) states that the only outbound
 network the plugin makes is the one-time download of its two pinned dependencies, and that every
-later session is fully offline. `scripts/doctor.ps1:777` makes an outbound TCP connection on every
-`/powershell-lsp:doctor` and `/powershell-lsp:status` run, at any time, bootstrapped or not
-(section 1.5). The narrower claims in the same document survive intact -- no listener, no telemetry,
-no exfiltration, and a network-free *edit* path are all confirmed here -- but the "at all" and "only"
-phrasing does not cover the doctor's reachability probe.
+later session is fully offline. `scripts/doctor.ps1:1036` (**re-derived 2026-08-21**; this row cited
+`:777` when written, and the `New-Object System.Net.Sockets.TcpClient` has since moved) makes an
+outbound TCP connection on every `/powershell-lsp:doctor` and `/powershell-lsp:status` run, at any
+time, bootstrapped or not (section 1.5). The narrower claims in the same document survive intact --
+no listener, no telemetry, no exfiltration, and a network-free *edit* path are all confirmed here --
+but the "at all" and "only" phrasing does not cover the doctor's reachability probe. **STANDS.**
 
 **D3 -- "all four of them, and there are no others" is true of the manifest and not of the launch
 surface.** [`TRUST.md`](../../TRUST.md#why-executionpolicy-bypass-appears-in-every-hook-entry-point)
 scopes the sentence with "Reviewing the manifest", and within that scope it is exact: four
-occurrences at `.claude-plugin/plugin.json:140,162,173,183`, verified. Read as a statement about
-entry points Claude Code launches, it undercounts: the three slash commands also launch `pwsh`
-(section 1.2). They carry no Bypass, so the omission is conservative rather than dangerous, but a
-reviewer enumerating launch surfaces from that sentence will find three more.
+occurrences at `.claude-plugin/plugin.json:140,162,173,183` -- **re-verified 2026-08-21, all four
+line numbers still exact.** Read as a statement about entry points Claude Code launches, it
+undercounts: the three slash commands also launch `pwsh` (section 1.2). They carry no Bypass, so the
+omission is conservative rather than dangerous, but a reviewer enumerating launch surfaces from that
+sentence will find three more. **STANDS.**
 
 **D4 -- `SECURITY.md` describes code-signing as "pending" where `TRUST.md` records it as declined,
-and points at the wrong section.** [`SECURITY.md:126-127`](../../SECURITY.md) refers the reader to
-`TRUST.md` for "the current (**pending -- not signed**) code-signing status", linking to the
-`#supply-chain-artifacts-sbom--build-provenance` anchor. Two problems. First, that section
-(`TRUST.md:134-156`) covers the SBOM and provenance and says nothing about code-signing status; the
-subject lives in `#signing-posture` (`TRUST.md:157-209`). Second, `TRUST.md` does not describe the
-status as pending: it records Authenticode as **deliberately not pursued** for a git-distributed
-plugin (`TRUST.md:159-162`), the SignPath Foundation path as **declined / adoption-gated**, and
-Azure Trusted Signing as not pursued (`TRUST.md:207-209`) -- a decision, not a queue position.
-"Pending" tells an evaluator to expect a signature that the project has decided not to seek.
+and points at the wrong section.** [`SECURITY.md:163-164`](../../SECURITY.md) (**re-derived
+2026-08-21**; this row cited `:126-127` when written) refers the reader to `TRUST.md` for "the
+current (**pending -- not signed**) code-signing status", linking to the
+`#supply-chain-artifacts-sbom--build-provenance` anchor. Two problems, both still live. First, that
+section (`TRUST.md:186`, *Supply-chain artifacts: SBOM + build provenance*) covers the SBOM and
+provenance and says nothing about code-signing status; the subject lives in `#signing-posture`
+(`TRUST.md:253`). Second, `TRUST.md` does not describe the status as pending: it records Authenticode
+as **deliberately not pursued** for a git-distributed plugin (`TRUST.md:255-258`), the SignPath
+Foundation path as **declined / adoption-gated** and Azure Trusted Signing as not pursued
+(`TRUST.md:304-307`) -- a decision, not a queue position. "Pending" tells an evaluator to expect a
+signature that the project has decided not to seek. **STANDS.**
 
 **Checked and found consistent.** The pinned versions and SHA-256 values tabulated in
 [TRUST.md](../../TRUST.md#what-it-downloads-pinned-versions-and-pinned-hashes) match
@@ -607,24 +681,116 @@ as an observation rather than a finding.
 
 ---
 
-## 8. OPEN findings register
+## 8. Findings register -- triaged and dispositioned
 
-Consolidated for the gate review. Each is stated as observed; none carries a proposed remedy.
+This register was written as a list of observations with no remedies attached, for a gate review.
+**That review happened: Mike triaged every row on 2026-08-21** into FIX / MEASURE-THEN-FIX /
+ACCEPT-WITH-RECORD, and the FIX and MEASURE arms were executed by dispatch 000269. Each row below now
+carries its disposition and, where it was accepted, the one-sentence reason it was accepted.
 
-| ID | Boundary | Finding | Status |
+**No row was closed by re-describing it.** Three were closed by changing code, two by taking a
+measurement that had never been taken, and six by an explicit decision to carry the risk.
+
+| ID | Boundary | Finding | Disposition |
 |---|---|---|---|
-| T1.4 | B1 | Fallback path registers PSGallery and sets it Trusted -- a persistent write outside the data root | OPEN |
-| T1.5 | B1 | Blocking the primary fetch without corrupting it steers acquisition to the unpinned fallback | OPEN |
-| T2.3 | B2 | The plugin tree, documented as read-only, is written at runtime by the capture log | OPEN |
-| T3.2 | B3 | Repo-local settings file is handed to PSES unread; upstream handling of a hostile settings file not derived | OPEN / unknown |
-| T4.1 | B4 | Org policy file content was trusted as delivered; an opt-in `<policy>.sha256` gate now pins it, but only where opted in and only against an attacker who cannot also rewrite the companion | mitigated (opt-in) / residual OPEN |
-| T4.2 | B4 | Fail-open by design: making the policy unreachable disables exclusions, signalled only in a log line | OPEN (designed trade-off) |
-| T5.1 | B5 | Daemon pipe is created with no explicit `PipeSecurity` and no `CurrentUserOnly`; effective DACL not measured | unknown |
-| T6.1 | B6 | Capture log records absolute paths and verbatim source lines, ungated by any knob | OPEN |
-| T6.2 | B6 | Data-root temp fallback permissions not measured | unknown |
-| T6.4 | B6 | The `keepLastN` sweep does not bound the capture log | OPEN |
-| D1-D4 | -- | Documentation drift, section 7 | OPEN |
+| T2.3 | B2 | The plugin tree, documented as read-only, is written at runtime by the capture log | **FIXED** (000269) |
+| T5.1 | B5 | Daemon pipe is created with no explicit `PipeSecurity` and no `CurrentUserOnly`; effective DACL not measured | **MEASURED, then FIXED** (000269) |
+| T6.4 | B6 | The `keepLastN` sweep does not bound the capture log | **FIXED** (000269) |
+| T6.2 | B6 | Data-root temp fallback permissions not measured | **MEASURED** (000269) -- no fix chartered |
+| T1.4 | B1 | Fallback path registers PSGallery and sets it Trusted -- a persistent write outside the data root | **ACCEPTED WITH RECORD** |
+| T1.5 | B1 | Blocking the primary fetch without corrupting it steers acquisition to the unpinned fallback | **ACCEPTED WITH RECORD** |
+| T3.2 | B3 | Repo-local settings file is handed to PSES unread; upstream handling of a hostile settings file not derived | **ACCEPTED WITH RECORD** (still unknown) |
+| T4.1 | B4 | Org policy content trusted as delivered; the opt-in `<policy>.sha256` gate pins it only where opted in, and only against an attacker who cannot also rewrite the companion | **ACCEPTED WITH RECORD** (residual) |
+| T4.2 | B4 | Fail-open by design: making the policy unreachable disables exclusions, signalled only in a log line | **ACCEPTED WITH RECORD** |
+| T6.1 | B6 | Capture log records absolute paths and verbatim source lines, ungated by any knob | **ACCEPTED WITH RECORD** |
+| D1 | -- | Documentation drift: the data-root claim vs the capture log (section 7) | **RESOLVED** by T2.3 |
+| D2-D4 | -- | Documentation drift, section 7 | **OPEN** -- re-derived 2026-08-21, all three stand |
 
-Two entries are marked **unknown** rather than OPEN because no measurement was taken. Unknown is not
-zero: T5.1 and T6.2 each name the measurement that would settle them, and neither should be read as
-"no exposure".
+### The three fixed, and what "fixed" is resting on
+
+**T2.3 -- FIXED.** `Get-DogfoodLogPath` now resolves `<data-root>/dogfood/diagnostics.jsonl` instead
+of walking up to the plugin root. The plugin tree is no longer written at runtime, which makes
+`ARCHITECTURE.md`, `TRUST.md` and the library's own header true rather than aspirational. Pre-existing
+logs are neither moved nor deleted; `Get-LegacyDogfoodLogPath` and the reader's `cache` / `checkout`
+sources keep them reachable read-only. *Landed by dispatch 000269 -- see the CHANGELOG `[Unreleased]`
+entry, which is the durable reference; the branch commit is `6b6dfdc`, pre-squash.*
+
+**T6.4 -- FIXED.** The finding was exact: `Invoke-LogSweep` bounds only stamped rolling families, and
+the capture log was a single append file, so nothing bounded it. **Measured before fixing:** a live
+capture log held **5,279,427 bytes over 10,161 rows**. The fix rotates the log past 8 MB into
+`diagnostics-<yyyyMMdd-HHmmss-fff>.jsonl`, which *is* the stamped-family shape the existing sweep
+recognises, so the bound is the sweep's own `keepLastN` -- ceiling `(keepLastN + 1) x 8 MB` = 88 MB at
+the default -- and there is no second retention policy to drift. Rotation renames rather than
+truncates and every reader reads the whole retained family, so the bound does not destroy the
+curation corpus.
+
+**T5.1 -- MEASURED, then FIXED.** This row had stood as *unknown* since the model was written, purely
+because nobody had measured it. Measured 2026-08-21 by reading the kernel object's security
+descriptor off the live pipe handle (`GetSecurityInfo`, `SE_KERNEL_OBJECT`, Windows 11 10.0.26200,
+pwsh 7.6.5), against the daemon's own `New-DaemonPipeServer`:
+
+| | DACL |
+|---|---|
+| **Before** | `D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;<user SID>)`**`(A;;FR;;;WD)(A;;FR;;;AN)`** |
+| **After** | `D:(A;;0x1f019f;;;<user SID>)` |
+
+The two bolded ACEs are the finding: **`WD` is Everyone and `AN` is Anonymous**, each granted
+`FILE_GENERIC_READ` by the OS default named-pipe DACL. What crosses that pipe is diagnostics --
+absolute file paths and verbatim source lines from the file being edited -- so this was a real local
+disclosure surface, and *unknown* had been hiding a live one. The fix sets
+`PipeOptions.CurrentUserOnly` on the server stream, under the R1 grant.
+
+*The guard is on runtime capability, not platform name.* `CurrentUserOnly` arrived with .NET Core 3.0
+and was never back-ported: measured the same day, pwsh 7.6.5 lists
+`None,Asynchronous,WriteThrough,CurrentUserOnly` while Windows PowerShell 5.1.26100.9168 lists only
+`None,Asynchronous,WriteThrough`. A compile-time `::CurrentUserOnly` literal would therefore have
+killed the daemon at start on the `windows-powershell` CI leg, so the member is resolved by name and
+the shipped options are used unchanged where it is absent. Off-Windows, .NET narrows the backing unix
+socket file's permissions to the owner instead of writing a DACL; the socket path is unchanged, so
+the presence probe still resolves. Client constructions are untouched, and the single-instance
+property the busy-vs-unreachable discriminator depends on is preserved.
+
+### The one measured and left alone
+
+**T6.2 -- MEASURED, no fix chartered.** Measured 2026-08-21 on Windows 11 10.0.26200, by forcing the
+fallback (clearing `CLAUDE_PLUGIN_DATA`, confirming `Provenance = fallback:temp`) and reading the ACL
+of the resolved directory and of a probe file written into it:
+
+```
+root  : %LOCALAPPDATA%\Temp\powershell-lsp-data
+owner : <invoking user>
+dir   : D:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;<user SID>)
+file  : D:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;FA;;;<user SID>)
+```
+
+**Three ACEs, all inherited, all FullControl: SYSTEM, Administrators, and the invoking user. No
+Everyone, no Anonymous, no Users.** On Windows the fallback inherits the per-user
+`%LOCALAPPDATA%\Temp` ACL, so it is not the exposure the *unknown* status left room for. The row moves
+from unknown to measured **on Windows only** -- and that bound is the honest part of this entry:
+
+> **The POSIX arm is NOT measured.** `Path.GetTempPath()` resolves to a per-user directory on Windows,
+> but on Linux it is typically world-readable `/tmp`, where a directory created under a default umask
+> lands `0755`. That is a *derivation from platform convention, not a measurement*, and it is
+> deliberately not written into the table as one. Settling it needs the same ACL read taken on a Linux
+> and a macOS host, which this run had no access to. Recording it as measured-on-Windows-only is the
+> difference between a bounded fact and the "unknown is not zero" trap this register already warns
+> about.
+
+### The six accepted, each with the reason it was accepted
+
+Accepted means **the risk is carried knowingly**, not that it was dismissed. Each carries its
+rationale, so a future reader can re-open the decision rather than re-discover the finding.
+
+| ID | Why it is accepted |
+|---|---|
+| **T1.4** | The fallback exists so a machine that cannot reach the pinned artifact still has an acquisition path at all; registering PSGallery is what makes that path work, and removing the write would remove the fallback rather than harden it. |
+| **T1.5** | Steering to the fallback requires an attacker who can already block the primary fetch on the network path, which is a strictly larger capability than the one this finding grants -- and the airgap-bundle path shipped in v1.32.0 gives an estate that cares a pinned, offline alternative. |
+| **T3.2** | The finding is *unknown*, not *exposed*: it names upstream PSES behaviour on a hostile settings file that this project has not derived. Guessing a mitigation for undetermined upstream behaviour would ship a defence against an unmeasured threat. |
+| **T4.1** | The residual is bounded to an attacker who can rewrite **both** the policy and its `.sha256` companion, which is materially harder than rewriting the policy alone -- the opt-in pin closed the gap it was designed to close, and closing the rest needs a trust anchor the org policy mechanism does not have. |
+| **T4.2** | Fail-open is the deliberate trade: an unreachable policy that disabled the plugin's diagnostics would turn an availability problem into a silent loss of linting, which is the worse failure for a tool whose whole contract is never being silent. |
+| **T6.1** | Gating the capture behind a knob would strangle the dogfood channel the entire rule-curation lane depends on, and the log is local-only, never transmitted, and now both bounded (T6.4) and outside every git tree (T2.3) -- so the exposure it carries is to a local user who already has the source files it quotes. |
+
+**What is left genuinely open.** D2, D3 and D4 -- all documentation drift, all re-derived and still
+standing, all cheap to fix and none of them fixed here because this dispatch's threat-model scope was
+the section 8 register. T3.2 remains *unknown* by its own terms, and T6.2's POSIX arm is unmeasured.
+None of those should be read as zero.

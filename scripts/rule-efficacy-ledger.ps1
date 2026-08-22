@@ -79,15 +79,23 @@ param(
     # Explicit diagnostics.jsonl to read. Overrides -Source entirely (honored verbatim).
     [string] $Path = '',
 
-    # WHICH log(s) the ledger reads. All four are READ-ONLY resolutions; none affects where the
-    # hook WRITES (Get-DogfoodLogPath's write-side is untouched):
-    #   union     (default) EVERY per-version marketplace-cache log discovered, unioned -- so the
+    # WHICH log(s) the ledger reads. All five are READ-ONLY resolutions; none affects where the
+    # hook WRITES:
+    #   union     (default) the DATA-ROOT log (the live write target since the T2.3 relocation)
+    #             PLUS every per-version marketplace-cache log discovered, unioned -- so the
     #             denominator survives a plugin upgrade instead of resetting with the version dir.
     #   all       the union above PLUS the running-tree (checkout) log.
+    #   data      the single data-root log (Get-DogfoodLogPath -- where captures land now).
     #   cache     the single CURRENT cache log (Get-DogfoodCacheLogPath, reused unchanged).
-    #   checkout  the running-tree log (Get-DogfoodLogPath, reused READ-ONLY, unchanged).
+    #   checkout  the running-tree log (Get-LegacyDogfoodLogPath, READ-ONLY).
     # -Path always wins over -Source.
-    [ValidateSet('union', 'all', 'cache', 'checkout')]
+    #
+    # T2.3 NOTE, load-bearing for the denominator. Before the relocation every capture landed in
+    # a VERSIONED cache directory, which is the whole reason `union` had to enumerate version
+    # dirs to keep a denominator across upgrades. The data root carries no version segment, so
+    # accrual from here on is already unfragmented -- but the pre-relocation per-version logs
+    # still hold real history, so `union` keeps reading them rather than discarding the past.
+    [ValidateSet('union', 'all', 'data', 'cache', 'checkout')]
     [string] $Source = 'union',
 
     # Explicit annotations.jsonl to read. Default: the annotations.jsonl beside EACH resolved log
@@ -224,27 +232,57 @@ function Resolve-RuleLedgerSources {
                 UnionAttempted = $false
             }
         }
-        'checkout' {
+        'data' {
             $one = Get-DogfoodLogPath
             return [pscustomobject]@{
                 LogPaths       = @($one | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
                 VersionDirs    = @()
-                Discovery      = 'running-tree log via Get-DogfoodLogPath (write-side resolver, reused READ-ONLY)'
+                Discovery      = 'data-root log via Get-DogfoodLogPath (the LIVE write target since the T2.3 relocation)'
+                Mode           = 'data'
+                UnionAttempted = $false
+            }
+        }
+        'checkout' {
+            $one = Get-LegacyDogfoodLogPath
+            return [pscustomobject]@{
+                LogPaths       = @($one | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                VersionDirs    = @()
+                Discovery      = 'pre-relocation running-tree log via Get-LegacyDogfoodLogPath (READ-ONLY; nothing writes there since T2.3)'
                 Mode           = 'checkout'
                 UnionAttempted = $false
             }
         }
         default {
-            # 'union' and 'all' share the cache enumeration; 'all' appends the checkout log.
+            # 'union' and 'all' share the cache enumeration and BOTH lead with the data-root log,
+            # which is where captures land since the T2.3 relocation; 'all' also appends the
+            # pre-relocation checkout log. Omitting the data root would have left the ledger
+            # reading only frozen history and calling it the current denominator.
             $dirs = @(Get-DogfoodCacheLogPathSet -CacheRoot $CacheRoot)
             $paths = @($dirs | Where-Object { $_.LogExists } | ForEach-Object { [string]$_.LogPath })
             $how = 'UNION of every per-version cache log under <cache-root>/<marketplace>/powershell-lsp/<version>/dogfood/diagnostics.jsonl (marketplace and version discovered from disk)'
+            # AN EXPLICIT -CacheRoot SCOPES THE READ, so the ambient data-root log is NOT added to
+            # it. -CacheRoot exists to point the union at one named tree -- a fixture, or a specific
+            # cache being audited -- and silently folding in whatever the live machine happens to
+            # have under CLAUDE_PLUGIN_DATA would break exactly that scoping and pollute the
+            # denominator with captures from an unrelated population. Caught by
+            # PowerShellLsp.RuleLedger.Tests.ps1's union test, which supplies a synthetic two-version
+            # cache root and correctly refused a third path it had not put there.
+            $scoped = -not [string]::IsNullOrWhiteSpace($CacheRoot)
+            if ($scoped) {
+                $how += ' -- SCOPED to the supplied -CacheRoot, so the data-root log is deliberately excluded'
+            } else {
+                $dataLog = Get-DogfoodLogPath
+                if (-not [string]::IsNullOrWhiteSpace($dataLog) -and (Test-Path -LiteralPath $dataLog -PathType Leaf)) {
+                    $paths = @([string]$dataLog) + @($paths)
+                }
+                $how = 'the DATA-ROOT log via Get-DogfoodLogPath, PLUS a ' + $how
+            }
             if ($Source -eq 'all') {
-                $co = Get-DogfoodLogPath
+                $co = Get-LegacyDogfoodLogPath
                 if (-not [string]::IsNullOrWhiteSpace($co) -and (Test-Path -LiteralPath $co -PathType Leaf)) {
                     $paths = @($paths) + @([string]$co)
                 }
-                $how += ', PLUS the running-tree log via Get-DogfoodLogPath'
+                $how += ', PLUS the pre-relocation running-tree log via Get-LegacyDogfoodLogPath'
             }
             return [pscustomobject]@{
                 LogPaths       = @($paths)

@@ -82,14 +82,31 @@ function Test-DogfoodVerdict {
 # ===========================================================================
 
 function Read-DogfoodLog {
-    # Return the capture records (parsed PSCustomObjects) from one diagnostics.jsonl, skipping
-    # blank / malformed lines. Missing file -> empty array. Never throws.
+    # Return the capture records (parsed PSCustomObjects) from a capture log, skipping blank /
+    # malformed lines. Missing file -> empty array. Never throws.
+    #
+    # READS THE ROTATED FAMILY, OLDEST FIRST, ENDING WITH THE ACTIVE LOG (T6.4). The capture log
+    # is now bounded by rotation, so the file named $LogPath holds only what has accrued since
+    # the last rotation. Reading it alone would make the corpus appear to collapse the first
+    # time the bound fired -- a reader-side false zero, which is exactly the failure this
+    # module's own 000088 header exists to prevent. Get-CaptureLogFamily (lib/lsp-common.ps1)
+    # enumerates the retained members; when nothing has rotated it returns just the active log,
+    # so behaviour on an unrotated log is byte-identical to before.
     param([string] $LogPath)
-    if ([string]::IsNullOrWhiteSpace($LogPath) -or -not (Test-Path -LiteralPath $LogPath)) { return @() }
+    if ([string]::IsNullOrWhiteSpace($LogPath)) { return @() }
+    $files = @()
+    try { $files = @(Get-CaptureLogFamily -LogPath $LogPath) } catch { $files = @() }
+    if ($files.Count -eq 0) {
+        if (-not (Test-Path -LiteralPath $LogPath)) { return @() }
+        $files = @($LogPath)
+    }
     $out = @()
-    foreach ($line in @(Get-Content -LiteralPath $LogPath -ErrorAction SilentlyContinue)) {
-        if ([string]::IsNullOrWhiteSpace($line)) { continue }
-        try { $out += ($line | ConvertFrom-Json) } catch { }
+    foreach ($file in $files) {
+        if (-not (Test-Path -LiteralPath $file)) { continue }
+        foreach ($line in @(Get-Content -LiteralPath $file -ErrorAction SilentlyContinue)) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            try { $out += ($line | ConvertFrom-Json) } catch { }
+        }
     }
     return @($out)
 }
@@ -573,12 +590,22 @@ function Get-DogfoodCacheLogPath {
 }
 
 function Test-DogfoodLogNonEmpty {
-    # $true iff the log exists and holds at least one non-blank line. -Source auto uses this to prefer
-    # the cache log only when it actually carries captures (else fall back to the checkout log).
+    # $true iff the log -- or any RETAINED ROTATED MEMBER of its family (T6.4) -- holds at least one
+    # non-blank line. -Source auto uses this to pick a rung only when it actually carries captures.
+    #
+    # The family matters here for the same reason it matters in Read-DogfoodLog: immediately after a
+    # rotation the ACTIVE log is empty while the corpus is not, and testing the active file alone
+    # would walk auto straight past a live data root down to a frozen pre-relocation log.
     param([string] $LogPath)
-    if ([string]::IsNullOrWhiteSpace($LogPath) -or -not (Test-Path -LiteralPath $LogPath)) { return $false }
-    foreach ($line in @(Get-Content -LiteralPath $LogPath -ErrorAction SilentlyContinue)) {
-        if (-not [string]::IsNullOrWhiteSpace($line)) { return $true }
+    if ([string]::IsNullOrWhiteSpace($LogPath)) { return $false }
+    $files = @()
+    try { $files = @(Get-CaptureLogFamily -LogPath $LogPath) } catch { $files = @() }
+    if ($files.Count -eq 0) { $files = @($LogPath) }
+    foreach ($file in $files) {
+        if (-not (Test-Path -LiteralPath $file)) { continue }
+        foreach ($line in @(Get-Content -LiteralPath $file -ErrorAction SilentlyContinue)) {
+            if (-not [string]::IsNullOrWhiteSpace($line)) { return $true }
+        }
     }
     return $false
 }
@@ -588,26 +615,41 @@ function Resolve-DogfoodLogSource {
     # label (what 'auto' actually chose, for a self-locating readout). READ-SIDE only. Returns
     # { LogPath; Effective }:
     #   -Path <file>  wins over -Source -- honored verbatim (Effective 'path').
-    #   cache         -> Get-DogfoodCacheLogPath (installed marketplace-cache log).
-    #   checkout      -> Get-DogfoodLogPath (the write-side resolver, reused READ-ONLY, unchanged).
-    #   auto          -> the cache log when it exists and is non-empty, else the checkout log.
+    #   data          -> Get-DogfoodLogPath -- the LIVE write target since the T2.3 relocation.
+    #   cache         -> Get-DogfoodCacheLogPath (installed marketplace-cache log, pre-relocation).
+    #   checkout      -> Get-LegacyDogfoodLogPath (the pre-relocation running-tree log, READ-ONLY).
+    #   auto          -> data when non-empty, else cache when non-empty, else the checkout log.
+    #
+    # WHY 'auto' GAINED A RUNG (T2.3). The hook now writes under CLAUDE_PLUGIN_DATA. Had auto kept
+    # its old cache-then-checkout order it would have gone on resolving a log that no longer
+    # receives captures -- silently, and looking exactly like a healthy read of a stale corpus.
+    # The data root is therefore tried FIRST, and the two pre-relocation locations are retained
+    # below it so historical captures stay reachable rather than being orphaned by the move.
+    # Neither of them is ever written again.
     param([string] $Source = 'auto', [string] $Path = '', [string] $CacheRoot = '')
     if (-not [string]::IsNullOrWhiteSpace($Path)) {
         return [pscustomobject]@{ LogPath = $Path; Effective = 'path' }
     }
     switch ($Source) {
+        'data' {
+            return [pscustomobject]@{ LogPath = (Get-DogfoodLogPath); Effective = 'data' }
+        }
         'cache' {
             return [pscustomobject]@{ LogPath = (Get-DogfoodCacheLogPath -CacheRoot $CacheRoot); Effective = 'cache' }
         }
         'checkout' {
-            return [pscustomobject]@{ LogPath = (Get-DogfoodLogPath); Effective = 'checkout' }
+            return [pscustomobject]@{ LogPath = (Get-LegacyDogfoodLogPath); Effective = 'checkout' }
         }
         default {
+            $data = Get-DogfoodLogPath
+            if (Test-DogfoodLogNonEmpty -LogPath $data) {
+                return [pscustomobject]@{ LogPath = $data; Effective = 'auto->data' }
+            }
             $cache = Get-DogfoodCacheLogPath -CacheRoot $CacheRoot
             if (Test-DogfoodLogNonEmpty -LogPath $cache) {
                 return [pscustomobject]@{ LogPath = $cache; Effective = 'auto->cache' }
             }
-            return [pscustomobject]@{ LogPath = (Get-DogfoodLogPath); Effective = 'auto->checkout' }
+            return [pscustomobject]@{ LogPath = (Get-LegacyDogfoodLogPath); Effective = 'auto->checkout' }
         }
     }
 }

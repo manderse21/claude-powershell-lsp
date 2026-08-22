@@ -1418,6 +1418,25 @@ function Invoke-FormatApply {
 
 # --- session file / heartbeat ----------------------------------------------
 function Write-SessionFile([string]$pipeName, [string]$state) {
+    # pluginVersion (DX finding O2) is the version of the tree THIS DAEMON is running from,
+    # stamped by the daemon process itself. It is what makes "which version is actually running?"
+    # answerable by a reader instead of merely caveated.
+    #
+    # WHY IT HAS TO LIVE HERE. After an upgrade the old daemon keeps serving until the session
+    # ends -- which is the right behaviour, better than a mid-session restart -- so the tree and
+    # the running daemon legitimately disagree. Before this field the only record of the daemon's
+    # own version was a line in pses-daemon.log, and nothing pointed a reader there, so `doctor`
+    # reported the TREE's version beside a clean pass and the gap was invisible. The session record
+    # is already the handle doctor resolves to find the daemon (Get-DoctorDaemonHandle), so
+    # carrying the version here costs one field and no new discovery path.
+    #
+    # In-record rather than in-path, for the same reason the lifecycle ledger stamps its records:
+    # a field survives a move, a rotation, and a reader's union; a path segment does not.
+    #
+    # ADDITIVE ONLY. Per CONTRACT.md this is a drift-guard-green additive field: no userConfig knob
+    # name and no status token moves. Every existing reader of this file pulls named keys through
+    # Get-Prop, so an added key is inert to all of them, and a record written by an OLDER daemon
+    # simply lacks it -- which readers must treat as "unknown", never as a mismatch.
     $obj = [ordered]@{
         sessionId = $SessionId
         pid = $PID
@@ -1427,6 +1446,7 @@ function Write-SessionFile([string]$pipeName, [string]$state) {
         started = $script:startedIso
         heartbeat = (Get-Date -Format 'o')
         psesPid = if ($null -ne $script:proc) { $script:proc.Id } else { $null }
+        pluginVersion = (Get-PluginVersion)
     }
     try { ($obj | ConvertTo-Json -Depth 5) | Out-File -FilePath $sessionFile -Encoding ascii -Force } catch { }
 }

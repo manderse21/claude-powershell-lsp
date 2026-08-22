@@ -1,6 +1,7 @@
 # Upstream draft -- PowerShell Editor Services: OnInitialize NullReferenceException on Linux when initialize carries workspaceFolders
 
-**Status re-derived: 2026-08-12 via gh; live state wins over this file.**
+**Status re-derived: 2026-08-21 via gh; live state wins over this file.** Re-verified unchanged:
+issue #2300 **CLOSED / COMPLETED**, closed 2026-06-18T03:08:27Z.
 
 ## ALREADY FILED AS #2300 -- DO NOT FILE THIS
 

@@ -1,11 +1,35 @@
 # Claude Code plugin LSP registration -- root cause (corrected record)
 
+**Status re-derived: 2026-08-21 via gh; live state wins over this file.**
+
+> ### #66987 is CLOSED -- FIXED UPSTREAM. This file said OPEN, and that was stale.
+>
+> `gh issue view 66987 --repo anthropics/claude-code --json state,title,updatedAt,comments`
+> re-derived on **2026-08-21** returns **CLOSED**, last updated **2026-08-13T16:09:48Z**.
+>
+> Mike closed it himself on 2026-08-13, recording that he re-ran the controlled matrix on Claude Code
+> **2.1.231** and **bisected the fix to 2.1.205**. The registrar no longer silently drops an
+> `lspServers` entry that declares `restartOnCrash` or `shutdownTimeout`.
+>
+> **What this changes here, and what it does not.** The root-cause analysis below is unaffected --
+> it was correct, and it is what got the defect fixed. What was stale is the *status*: this file,
+> `pull-feature-gating-probe.md` and `sitting-closeout.md` all described a live upstream gate that
+> has since lifted.
+>
+> **Recorded as a finding, not acted on.** Whether anything downstream should change -- the
+> nativeServe posture in particular -- is **out of scope here and is Mike's call**. A fixed upstream
+> defect is a precondition, not a decision. Note also that `#86936` (a *different* registrar defect,
+> `${user_config.*}` interpolation) is still **OPEN** and independently suspends the same surface, so
+> this closure does not on its own clear the path. Correcting a status line is not lifting a
+> suspension.
+
 **What this is:** the corrected internal record of why this plugin's native LSP server did not
-register, and what actually fixes it. **The registration root cause is now FILED upstream as
+register, and what actually fixes it. **The registration root cause was FILED upstream as
 [`anthropics/claude-code#66987`](https://github.com/anthropics/claude-code/issues/66987)** -- Mike
-rewrote that issue to exactly this root cause on 2026-07-06 (OPEN, re-confirmed on Claude Code
-2.1.201; see "#66987 is now the filed registrar-drop report" below). This stays the internal
-record; any FURTHER upstream comment remains Mike-gated (all external posting is Mike's gate).
+rewrote that issue to exactly this root cause on 2026-07-06, and closed it as fixed on 2026-08-13
+(see the status block above, and "#66987 is now the filed registrar-drop report" below). This stays
+the internal record; any FURTHER upstream comment remains Mike-gated (all external posting is Mike's
+gate).
 
 **Status (2026-06-27, dispatch 000069 -> 000075) -- root cause ISOLATED; the earlier
 "platform-inert" framing is SUPERSEDED.** This document previously argued that a plugin-provided

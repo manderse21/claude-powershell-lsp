@@ -43,13 +43,24 @@ anyone trusts it green. The white paper and the launch content are a presentatio
 evidentiary discipline as the marketing case itself -- no claim goes out that doesn't trace to
 something reproducible in the repo.
 
-**Gate: the relaunch triggers when the Next lane above is empty AND every item in Gated and
-Paced is either upstream-blocked (names a real external issue number) or demand-paced with no
-live signal recorded.** Not before. Chartered as a planning docket first (dispatch 000262):
-a channel plan, a white-paper outline grounded in what actually ships, and a launch sequence
--- findings only, no publishing, until the gate above is met and Mike triggers it by hand.
-External publishing stays Mike's gate always, same as every prior launch action in this
-project's history.
+**The relaunch is no longer waiting on a gate. Mike ruled it directly, and it went.**
+
+The gate this paragraph used to state -- the relaunch triggers when the Next lane is empty and every
+Gated and Paced item is either upstream-blocked or demand-paced with no live signal -- was
+**superseded by Mike's direct Path-A ruling** rather than met. That is worth stating plainly instead
+of quietly rewriting: the condition was a mechanism for deciding *when*, and the person it reserved
+that decision for made it himself. A gate passed through by hand is no longer a gate, and a page
+still describing it as pending would be describing a deliberation that has already concluded.
+
+What was chartered as findings-only planning (dispatch 000262 -- a channel plan, a white-paper
+outline grounded in what actually ships, and a launch sequence) is executed work now: the release is
+cut, published and attested, and the white paper landed in this repository at
+[`docs/whitepaper.md`](docs/whitepaper.md), which is the URL the launch channels cite.
+
+**External publishing stays Mike's gate always, and that has not changed** -- it is the one rule
+this project has never made an exception to, and the ruling above was Mike exercising that gate, not
+removing it. Which channels have gone out, and when, is his record rather than this page's; nothing
+here should be read as a claim about what has been posted where.
 
 ## Now
 
