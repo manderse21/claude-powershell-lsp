@@ -77,11 +77,13 @@ the real known-good artifact **before** use; a mismatch is refused (the session 
 `unavailable`, editing keeps working). Two things to know:
 
 - **A hash mismatch never falls back and never retries** -- it fails closed. Only a
-  *download failure* (offline/proxy) falls back (PSScriptAnalyzer: verified `.nupkg` first,
-  then `Save-Module`).
+  *download failure* (offline/proxy) falls back (PSScriptAnalyzer: direct `.nupkg` download
+  first, then the same `.nupkg` over PackageManagement) -- and **both** feed the one
+  `Test-PinnedFileHash` gate, so the fallback fails closed exactly as the primary does.
 - **The PowerShell Gallery / CDN throws transient 403s on hosted CI** (dispatch 000047).
   The fix already in place is an explicit User-Agent, a bounded 3-try retry on the
-  download only, and registering the default PSGallery repo when it is absent. If you see a
+  download only, and a fallback that names the Gallery feed explicitly rather than depending
+  on a registered `PSRepository`. If you see a
   one-off 403 on a CI leg, it is almost certainly this egress flake, not a 5.1 or
   User-Agent bug -- re-run before assuming a real regression.
 

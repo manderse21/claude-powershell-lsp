@@ -128,9 +128,10 @@ yourself:
 ```
 
 The PSScriptAnalyzer acquisition path is **verified `.nupkg` download first**; only if that
-download cannot complete (offline / proxy) does it fall back to `Save-Module`, which relies
-on the PowerShell Gallery's own publisher/catalog integrity. A hash **mismatch** never
-falls back -- it fails closed.
+download cannot complete (offline / proxy) does it fall back to the Gallery over
+PackageManagement, which retrieves the **same pinned `.nupkg`** and passes it through the
+**same** SHA-256 gate before use. A hash **mismatch** never falls back -- it fails closed, on
+the fallback exactly as on the primary.
 
 ### Where the bytes may come from (sources are transport, pins are trust)
 
@@ -164,9 +165,16 @@ checkable rather than merely asserted:
   above is unaffected in every configuration: these layers change *where* the one-time
   first-run fetch may be satisfied from, never *whether* later sessions reach the network.
 
-The one acquisition route these pins do **not** gate is the `Save-Module` fallback named just
-above, which rests on the Gallery's publisher/catalog integrity instead. It is reported
-distinctly by `/doctor` (as `gallery-fallback`) rather than being presented as a pinned source.
+**Every acquisition route is pin-gated.** Until the gate described above was extended, one was
+not: the PSScriptAnalyzer `Save-Module` fallback left an extracted module tree and no `.nupkg`,
+so the pinned SHA-256 -- a digest *of the `.nupkg`* -- could not be computed from what it
+produced, and those bytes rested on the Gallery's publisher/catalog integrity alone. That route
+now retrieves the `.nupkg` itself and enters the same single `Test-PinnedFileHash` gate as the
+mirror, bundle, cache and download layers; bytes that do not match the pin are refused and
+nothing is installed. It is still reported distinctly by `/doctor` (as `gallery-fallback`), so
+you can still tell which transport supplied an install -- and because a marker records the
+layer and not the build that wrote it, `/doctor` also states that a `gallery-fallback` marker
+left by an install predating the gate describes bytes the pin did not verify.
 
 **Offline installation is two independently verifiable artifacts, not one.** Every release
 publishes `powershell-lsp-airgap-<version>.zip` -- the two pinned dependencies plus a manifest of

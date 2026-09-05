@@ -305,8 +305,9 @@ function Test-DoctorArtifactSource {
     # Check: WHICH artifact source layer produced the installed dependencies (dispatch 000244).
     #
     # PASS ON ANY LAYER is the whole design. This check does not have an opinion about which
-    # source is better -- mirror, bundle, cache and download all feed the identical SHA-256 pin
-    # gate, so an install is exactly as trustworthy whichever one produced it. What the check
+    # source is better -- mirror, bundle, cache, download and (since dispatch 000279) the gallery
+    # fallback all feed the identical SHA-256 pin gate, so an install is exactly as trustworthy
+    # whichever one produced it. What the check
     # exists to do is ANSWER THE QUESTION "where did these bytes come from?", which before 000244
     # nothing on the machine could answer at all.
     #
@@ -338,13 +339,18 @@ function Test-DoctorArtifactSource {
                 -Detail 'no install marker records an artifact source; the markers predate this feature, or nothing has been bootstrapped yet.' `
                 -Remediation 'Start a fresh session to re-run the bootstrap, which records the source it resolved.')
     }
-    # The Gallery fallback is the one acquisition route the SHA-256 pin does NOT gate (it rests on
-    # the Gallery''s publisher/catalog integrity instead). It is still a real, working install, so
-    # it PASSES -- but the detail says so plainly rather than letting a green tick imply the pin
-    # verified it. See TRUST.md, "What it downloads".
+    # The Gallery fallback WAS the one acquisition route the SHA-256 pin did not gate. Dispatch
+    # 000279 wired it into the same single Test-PinnedFileHash gate as every other layer, failing
+    # closed identically, so a green tick no longer over-claims for a fresh install.
+    #
+    # The NOTE stays, and says only what is true OF A MARKER. A marker records the LAYER and never
+    # the build that wrote it, so a 'gallery-fallback' marker left by an install predating that
+    # gate describes bytes the pin did not verify -- and this check reads markers, not today's
+    # code. Naming both cases is the honest reading of the one fact on disk; dropping the NOTE
+    # would silently upgrade a legacy install's provenance. See TRUST.md, "What it downloads".
     $detail = ($known -join '; ') + '.'
     if ($PssaLayer -eq 'gallery-fallback') {
-        $detail += ' NOTE: the gallery-fallback route is not SHA-256 pin-gated -- it relies on the PowerShell Gallery''s own publisher/catalog integrity.'
+        $detail += ' NOTE: the gallery-fallback route is SHA-256 pin-gated by the bootstrap this build ships; a marker left by an install predating that gate records bytes the pin did not verify.'
     }
     return (New-DoctorResult -Status pass -Component $component -Detail $detail)
 }

@@ -31,6 +31,43 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+### Security
+
+**The last dependency-acquisition route the SHA-256 pin did not gate is now gated, and fails
+closed** (dispatch 000279, ruling R10 of 2026-09-05 = `ENTERPRISE-PROGRAM-DOCKET` R-C option
+(a)).
+
+**The gap.** `scripts/ensure-pssa.ps1` vendors PSScriptAnalyzer through several acquisition
+layers -- internal mirror, pre-staged bundle, pinned-`.nupkg` cache, direct download -- and
+every one of them passed a single `Test-PinnedFileHash` gate and failed closed on a mismatch.
+One did not. When the direct download could not complete (offline, proxy, a transient Gallery
+403) the script fell back to `Save-Module`, which leaves an **extracted module tree and no
+`.nupkg`** -- and the pin is a digest *of the `.nupkg`*, so it could not be computed from what
+that route produced. Those bytes were installed on the PowerShell Gallery's own
+publisher/catalog integrity alone. The code said so in its own comment, and named closing it as
+its own dispatch.
+
+**The fix.** The fallback now acquires the package with `Save-Package` over the NuGet provider,
+which retrieves the `.nupkg` itself, and hands those bytes to the **same single gate** every
+other layer feeds. A mismatch is refused exactly as a tampered mirror artifact is: nothing is
+expanded, nothing is installed, no install marker is written, and the failure banner names the
+`gallery-fallback` layer. There is now **no acquisition route in either `ensure-*` script whose
+bytes the pin does not verify**, and none after the fail-closed exit at all. `ensure-pses.ps1`
+needed no change and did not get one: it has never had a fallback -- one layered acquisition,
+one gate, one fail-closed throw.
+
+**What this costs, deliberately.** A fallback whose bytes cannot be verified no longer installs.
+That is the point of failing closed, and the session still degrades honestly -- the analyzer
+reports `unavailable` and editing keeps working.
+
+**Reported provenance is unchanged in shape and more honest in content.** `/doctor` still names
+the `gallery-fallback` layer, so an operator can still tell which transport supplied an install.
+Its note inverted with the gate and kept the case it must not lose: a marker records the *layer*
+and never the build that wrote it, so a `gallery-fallback` marker left by an install predating
+this gate still describes bytes the pin did not verify, and the check says so.
+
+No `userConfig` key, no diagnostics status token, no line of `CONTRACT.md`.
+
 ## [1.33.1] - 2026-09-05
 PATCH: **every filesystem object the plugin creates on Linux and macOS is now created
 owner-only.** The data root, its temp fallback, the daemon's unix-socket endpoint and the

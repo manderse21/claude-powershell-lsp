@@ -208,16 +208,28 @@ Describe 'Layered sources are WIRED into both bootstrap scripts, one pin gate ea
         $pssaFail | Should -BeGreaterThan 0
         $pssaExit = $script:PssaSrc.IndexOf('exit 1', $pssaFail)
         $pssaExit | Should -BeGreaterThan $pssaFail
-        # ...and the UNVERIFIED Save-Module fallback is not reachable from that branch.
-        $fallbackIdx = $script:PssaSrc.IndexOf('Save-Module -Name PSScriptAnalyzer')
-        $fallbackIdx | Should -BeGreaterThan $pssaExit
+        # ...and NO acquisition of any kind is reachable from that branch. Before dispatch
+        # 000279 this asserted that the unverified Save-Module fallback sat after the exit;
+        # that route no longer exists, so the assertion is now the stronger one -- nothing
+        # after the fail-closed exit can acquire bytes at all.
+        $pssaTail = $script:PssaSrc.Substring($pssaExit)
+        $pssaTail | Should -Not -Match 'Save-Module -Name'
+        $pssaTail | Should -Not -Match 'Save-Package -Name'
+        $pssaTail | Should -Not -Match 'Invoke-WebRequest'
     }
     It 'both scripts record the resolved layer in their install marker' {
         $script:PsesSrc | Should -Match 'Set-Content -LiteralPath \$marker -Value \$sourceLayer'
         $script:PssaSrc | Should -Match 'Set-Content -LiteralPath \$marker -Value \$sourceLayer'
     }
-    It 'the unverified Save-Module fallback labels itself distinctly, never as a pinned layer' {
+    It 'the gallery fallback labels itself distinctly AND feeds the one pin gate (000279)' {
+        # The label survives 000279 unchanged -- an operator still wants to know which transport
+        # supplied an install, and old markers still parse. What changed is that the layer is now
+        # acquired as a .nupkg BEFORE the gate rather than installed after it.
         $script:PssaSrc | Should -Match "\`$sourceLayer = 'gallery-fallback'"
+        $fallbackIdx = $script:PssaSrc.IndexOf('$sourceLayer = ''gallery-fallback''')
+        $gateIdx = $script:PssaSrc.IndexOf('if (-not (Test-PinnedFileHash -Path $nupkg')
+        $fallbackIdx | Should -BeGreaterThan 0
+        $gateIdx | Should -BeGreaterThan $fallbackIdx
     }
     It 'ensure-pses uses $installDir for the INSTALL destination (000244 collision rename)' {
         $script:PsesSrc | Should -Match '\$installDir = Join-Path \$dataRoot'
@@ -243,10 +255,15 @@ Describe 'Doctor: artifact-source check (dispatch 000244)' {
         $r.Detail | Should -Match 'PSES from bundle'
         $r.Detail | Should -Match 'PSScriptAnalyzer from cache'
     }
-    It 'PASSES on the gallery fallback but says the pin did not gate it' {
+    It 'PASSES on the gallery fallback, now saying the pin DOES gate it (000279)' {
+        # The NOTE inverted with the gate. What it must NOT do is drop the legacy caveat: a
+        # marker records the LAYER, never the build that wrote it, so a gallery-fallback marker
+        # left by an install predating the gate still describes bytes the pin did not verify.
         $r = Test-DoctorArtifactSource -DataRootKnown $true -PsesLayer 'download' -PssaLayer 'gallery-fallback'
         $r.Status | Should -Be 'pass'
-        $r.Detail | Should -Match 'not SHA-256 pin-gated'
+        $r.Detail | Should -Match 'is SHA-256 pin-gated'
+        $r.Detail | Should -Match 'predating that gate'
+        $r.Detail | Should -Not -Match 'is not SHA-256 pin-gated'
     }
     It 'Get-DoctorMarkerLayer returns only known layer words, never arbitrary marker content' {
         # A marker lives under a user-writable data dir; echoing its content into the report

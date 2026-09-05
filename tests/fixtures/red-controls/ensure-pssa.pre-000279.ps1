@@ -31,14 +31,6 @@ $PssaSha256 = '14E634C828EB98EFB9F40B2918BA90F139ED5ECCDF663A2A747736D996995D60'
 # UA -- so the bounded retry on the download (Method 1) is the actual transient-403 mitigation.
 $PssaUserAgent = 'powershell-lsp-plugin (ensure-pssa)'
 
-# The PowerShell Gallery NuGet v2 feed, used by the gallery-fallback LAYER below (dispatch
-# 000279, ruling R10 = ENTERPRISE-PROGRAM-DOCKET R-C option (a)). PackageManagement's own
-# transport is a genuinely different route to the same bytes than Invoke-WebRequest -- it
-# honours NuGet/proxy configuration this script does not read -- which is the whole reason a
-# fallback exists. It is named explicitly rather than resolved through a registered
-# PSRepository so the fallback depends on nothing an operator may have unregistered.
-$PssaGallerySource = 'https://www.powershellgallery.com/api/v2'
-
 # Pinned-.nupkg cache (dispatch 000049): the STRUCTURAL cure for the 000047 PowerShell Gallery /
 # Azure-CDN egress flake. When POWERSHELL_LSP_PSSA_CACHE names a directory, the pinned .nupkg is
 # restored from there on a cache HIT (so the Gallery is contacted ONLY on a miss) and saved there
@@ -107,28 +99,18 @@ Write-Log ('vendoring PSScriptAnalyzer ' + $PssaVersion)
 $installed = $false
 # Declared BEFORE the try (dispatch 000244), the same StrictMode discipline ensure-pses.ps1
 # applies to its staging paths: Method 1 can throw before the layering block runs, and the
-# marker write and the gallery-fallback layer below both read this. Referencing an unset
-# variable under Set-StrictMode -Version Latest is a terminating error, so it is initialized once.
+# marker write and the Method 2 fallback below both read this. Referencing an unset variable
+# under Set-StrictMode -Version Latest is a terminating error, so it is initialized here once.
 $sourceLayer = ''
 
 # Method 1 (PRIMARY, hash-verified -- dispatch 000046 Gap B L2): download the pinned .nupkg,
 # verify it against $PssaSha256, then expand. The VERIFIED path is primary on purpose so the
 # integrity pin is LOAD-BEARING (it gates the install on the happy path) rather than bypassed
 # by an unverified installer. A hash MISMATCH is a tamper signal -> FAIL CLOSED immediately
-# (exit 1, loud, NO retry, NO fallback to an unverified install). A DOWNLOAD failure (offline /
-# proxy / a transient Gallery 403) falls through to the gallery-fallback LAYER, which acquires the
-# same pinned .nupkg over PackageManagement's transport and feeds it to the SAME pin gate. Layout
-# is identical to the prior nupkg path (vendorDir/PSScriptAnalyzer/<version>), so Find-PssaManifest
-# resolves it unchanged.
-#
-# 000279 (ruling R10 = docket R-C option (a)): there is NO LONGER an unverified acquisition route.
-# Until this dispatch the fallback was Save-Module, which leaves an EXTRACTED module tree and no
-# .nupkg, so the pinned SHA-256 -- a digest OF THE .nupkg -- could not be computed from what it
-# produced, and those bytes were installed on the Gallery's publisher/catalog integrity alone.
-# Save-Package over the NuGet provider retrieves the .nupkg ITSELF (measured: the file it saves
-# for PSScriptAnalyzer 1.25.0 hashes to exactly $PssaSha256), so the fallback now enters the
-# SINGLE Test-PinnedFileHash gate below as one more layer and fails closed identically. The
-# consequence is deliberate: a fallback whose bytes cannot be verified no longer installs.
+# (exit 1, loud, NO retry, NO fallback to an unverified install). A DOWNLOAD/expand failure
+# (offline / proxy / a transient Gallery 403) falls through to the Save-Module fallback, which
+# relies on the PowerShell Gallery's own publisher/catalog integrity. Layout is identical to the
+# prior nupkg path (vendorDir/PSScriptAnalyzer/<version>), so Find-PssaManifest resolves it unchanged.
 #
 # 000047: the DOWNLOAD (only) is wrapped in a bounded retry. The PowerShell Gallery / Azure CDN
 # intermittently 403s GitHub-Actions egress IPs -- observed on one CI leg while the others fetched
@@ -183,9 +165,9 @@ try {
 
     # DOWNLOAD on a cache MISS only. Bounded retry on the network fetch ONLY (000047), preserved
     # verbatim as the miss path. A genuine hash mismatch is handled below and never reaches a retry;
-    # this loop only re-attempts a failed/transient DOWNLOAD before handing off to the
-    # gallery-fallback layer. Backoff: 2s, then 4s (last attempt does not sleep). The Gallery is
-    # never contacted on a cache hit.
+    # this loop only re-attempts a failed/transient DOWNLOAD before giving up to the Save-Module
+    # fallback. Backoff: 2s, then 4s (last attempt does not sleep). The Gallery is never contacted
+    # on a cache hit.
     if (-not $sourced.Resolved -and -not $fromCache) {
         $sourceLayer = 'download'
         $downloaded = $false
@@ -201,28 +183,7 @@ try {
                 if ($attempt -lt 3) { Start-Sleep -Seconds ($attempt * 2) }
             }
         }
-        if (-not $downloaded) {
-            # GALLERY FALLBACK, now a PINNED LAYER (dispatch 000279). The direct download could
-            # not complete; reach the same artifact over PackageManagement's transport, stage the
-            # .nupkg it saves as $nupkg, and let the ONE Test-PinnedFileHash gate below decide.
-            # Nothing here verifies anything itself -- the resolver discipline 000244 established
-            # for the mirror and bundle layers, applied to the last route that lacked it.
-            $sourceLayer = 'gallery-fallback'
-            Write-Log ('direct download failed after 3 attempts (' + $lastDownloadError +
-                '); trying the gallery fallback, whose bytes pass the SAME pin gate.')
-            $galleryStaging = Join-Path $tmp 'gallery'
-            New-ContainedDirectory -Path $galleryStaging
-            Save-Package -Name PSScriptAnalyzer -RequiredVersion $PssaVersion -Source $PssaGallerySource `
-                -ProviderName NuGet -Path $galleryStaging -Force -ErrorAction Stop | Out-Null
-            $galleryNupkg = @(Get-ChildItem -LiteralPath $galleryStaging -Filter '*.nupkg' -File -ErrorAction SilentlyContinue |
-                    Sort-Object { $_.FullName.Length }) | Select-Object -First 1
-            if ($null -eq $galleryNupkg) {
-                throw ('gallery fallback produced no .nupkg (direct download had failed with: ' +
-                    $lastDownloadError + ')')
-            }
-            Copy-Item -LiteralPath $galleryNupkg.FullName -Destination $nupkg -Force
-            Write-Log ('gallery fallback staged ' + $galleryNupkg.Name + '; the pin is still verified before use.')
-        }
+        if (-not $downloaded) { throw ('download failed after 3 attempts: ' + $lastDownloadError) }
     }
 
     # VERIFY: the pin gate runs on the .nupkg REGARDLESS of source (cache hit OR fresh download),
@@ -287,9 +248,45 @@ try {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 
     if (Test-PssaImportable) { $installed = $true; Write-Log 'verified .nupkg method succeeded.' }
-    else { Write-Log 'pinned .nupkg expanded but module not importable.' }
+    else { Write-Log 'verified .nupkg expanded but module not importable; will try Save-Module.' }
 } catch {
     Write-Log ('verified .nupkg method failed (download/expand): ' + $_.Exception.Message)
+}
+
+# Method 2 (FALLBACK -- download/network failure only): Save-Module at the pinned version. Used
+# only when the verified .nupkg path could not COMPLETE (NOT on a hash mismatch -- that already
+# failed closed above and exited). Relies on the PowerShell Gallery's own publisher/catalog integrity.
+if (-not $installed) {
+    # 000047: register the DEFAULT PSGallery repository when it is ABSENT, idempotently and scoped to
+    # this fallback path (the verified primary never reaches here). On some hosts (observed on a CI
+    # runner) PSGallery is not registered, so Save-Module dies with "Unable to find repository
+    # 'PSGallery'" and the fallback can never recover. Only touch the repo set when PSGallery is
+    # missing -- an already-configured repository set is left untouched. Set it Trusted so the
+    # non-interactive Save-Module below does not stall on an install-from-untrusted-source prompt.
+    $galleryPresent = $false
+    try { $galleryPresent = $null -ne (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue) } catch { $galleryPresent = $false }
+    if (-not $galleryPresent) {
+        Write-Log 'PSGallery repository not registered; registering the default repository for the fallback.'
+        try { Register-PSRepository -Default -ErrorAction Stop } catch { Write-Log ('Register-PSRepository -Default failed: ' + $_.Exception.Message) }
+        try { Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue } catch { }
+    }
+    try {
+        Save-Module -Name PSScriptAnalyzer -RequiredVersion $PssaVersion -Path $vendorDir -Repository PSGallery -Force -ErrorAction Stop
+        if (Test-PssaImportable) {
+            $installed = $true
+            # 000244: label this path DISTINCTLY, and never as one of the pinned layers. This is
+            # the one acquisition route in either ensure-script whose bytes the SHA-256 pin does
+            # NOT gate -- it rests on the Gallery's own publisher/catalog integrity instead (see
+            # TRUST.md). Recording it as 'gallery-fallback' means the doctor's artifact-source
+            # check reports the honest thing rather than implying a pin verified this install.
+            # PRE-EXISTING and deliberately NOT changed here: closing that gap is its own dispatch.
+            $sourceLayer = 'gallery-fallback'
+            Write-Log 'Save-Module fallback succeeded.'
+        }
+        else { Write-Log 'Save-Module fallback ran but module not importable.' }
+    } catch {
+        Write-Log ('Save-Module fallback failed: ' + $_.Exception.Message)
+    }
 }
 
 if (-not $installed) {
