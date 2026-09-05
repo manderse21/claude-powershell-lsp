@@ -168,10 +168,22 @@ characterized the guard on Windows only. The real-client status of the native na
 Linux under Claude Code 2.1.196-2.1.200 has **not** been probed, and is **not** claimed here in either
 direction.
 
-**Upstream: `anthropics/claude-code#73961` (open).** The guard is filed upstream as
-[anthropics/claude-code#73961](https://github.com/anthropics/claude-code/issues/73961) (labeled bug /
-platform:windows / area:lsp / area:plugins / has-repro), with the same-root-cause siblings `#67821`
-(bare `cmd` in `/desktop`) and `#42135` (bare `git` in marketplace update).
+**Upstream: `anthropics/claude-code#73961` -- CLOSED / COMPLETED. This line read "(open)" and
+that was stale; corrected 2026-09-05 by dispatch 000276.** Re-derived live, `#73961` is **CLOSED**
+with `stateReason` **COMPLETED**, closed and last updated **2026-08-13T16:08:43Z** -- the same day
+Mike closed `#66987`, which is why the 2026-08-21 pass that corrected `#66987` above did not also
+catch this one. Labels at re-derivation: `bug`, `has repro`, `platform:windows`, `area:lsp`,
+`area:plugins`. The guard was filed upstream as
+[anthropics/claude-code#73961](https://github.com/anthropics/claude-code/issues/73961), with the
+same-root-cause siblings `#67821` (bare `cmd` in `/desktop`) and `#42135` (bare `git` in
+marketplace update).
+**What this changes, and what it does not.** The characterization below is unaffected and remains
+the record of why the launcher guard bit. What is no longer true is that this is a *live* upstream
+blocker: it is fixed. The native tier is still gated, but by `#86936` and the client's handling of
+the initialization requests -- not by this regression. `ROADMAP.md` already described `#73961` as
+fixed and closed while this file still said open, so the two are now reconciled in the direction
+of live gh. **Recorded as a finding, not acted on:** whether anything downstream changes is
+Mike's call, and correcting a status line is not lifting a suspension.
 
 **Verdict: wait for upstream.** Per dispatch 000107 the fix is not the plugin's to make cleanly. A single
 `lspServers.command` string cannot be both a Windows `.cmd` wrapper and a cross-platform launcher (Claude

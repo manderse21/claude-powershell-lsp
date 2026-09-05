@@ -1,12 +1,27 @@
 # Claude Code drops a plugin's `lspServers` when a `${user_config.*}` key is unset
 
-**Status re-derived: 2026-08-21 via gh; live state wins over this file.**
+**Status re-derived: 2026-09-05 via gh (dispatch 000276); live state wins over this file.**
 
 `anthropics/claude-code#86936` -- **OPEN**, last updated **2026-08-18T18:12:08Z**, **2 comments**,
 re-derived live with
-`gh issue view 86936 --repo anthropics/claude-code --json state,title,updatedAt,comments`. The
-downstream suspension recorded below therefore still stands: open means unfixed, and a
-reproduction is not a fix.
+`gh issue view 86936 --repo anthropics/claude-code --json state,title,labels,updatedAt,comments`.
+State, timestamp and comment count are all **unchanged** since the 2026-08-21 derivation -- checked,
+not assumed. The downstream suspension recorded below therefore still stands: open means unfixed,
+and a reproduction is not a fix.
+
+**LABEL SET at re-derivation, and one label has MOVED:** `bug`, `has repro`, `area:lsp`,
+`area:plugins`, **`reproduced`**. **`platform:windows` is GONE.** Mike's 2026-08-18 reply said the
+label "can probably come off" now that the defect had been reproduced on Linux; it has come off,
+and a `reproduced` label has been added. This is worth stating precisely because the correction
+below predicted it as a request -- it is now an observed fact about the issue, re-read from gh
+rather than inferred from the reply. Every sibling issue this directory tracks (`#73961`,
+`#66987`, `#74289`, `#86551`) still carries `platform:windows`; `#86936` alone does not, which is
+the label set agreeing with the Linux reproduction.
+
+**UN-GATE CONDITION: NOT MET.** The shipped `nativeServe` transport suspension lifts on this issue
+(`Get-ServeTransportSuspension`, `scripts/lib/lsp-common.ps1`). `#86936` is **OPEN**, so the
+condition is **not met** and the suspension stands. Recorded, not acted on -- lifting it is Mike's
+call and a separate dispatch.
 
 > ### MAINTAINER-REPRODUCED, 2026-08-18 -- and it is NOT Windows-specific
 >
@@ -18,7 +33,9 @@ reproduction is not a fix.
 > rather than merely endorsing it. Everything below was derived on Windows and the issue carried a
 > `platform:windows` label; the defect is now demonstrated to be platform-independent, so any reading
 > of this file that treats the drop as a Windows problem is wrong. Mike replied the same day
-> (2026-08-18T18:10:17Z) noting the label can probably come off.
+> (2026-08-18T18:10:17Z) noting the label can probably come off -- **and as of the 2026-09-05
+> re-derivation it has: the live label set carries `reproduced` and no longer carries
+> `platform:windows`.**
 >
 > A maintainer reproduction **raises confidence in the diagnosis and changes nothing about the
 > remedy**: the entry is still dropped on an affected build, so the suspension this file records

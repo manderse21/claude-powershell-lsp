@@ -1,7 +1,7 @@
 # Upstream draft -- PowerShell Editor Services: PrepareRename NullReferenceException
 
-**Status re-derived: 2026-08-21 via gh; live state wins over this file.** Re-verified unchanged:
-issue #2297 **CLOSED / COMPLETED** 2026-06-11T14:43:51Z; PR #2296 **MERGED**; PR #2299 **CLOSED**,
+**Status re-derived: 2026-09-05 via gh (dispatch 000276); live state wins over this file.**
+Re-verified UNCHANGED: issue #2297 **CLOSED / COMPLETED** 2026-06-11T14:43:51Z; PR #2296 **MERGED**; PR #2299 **CLOSED**,
 never merged.
 
 ## ALREADY FILED AS #2297 -- DO NOT FILE THIS

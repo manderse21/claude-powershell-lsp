@@ -1,8 +1,12 @@
 # Track B findings -- can pull-model LSP features ship on the current surface?
 
-**Status re-derived: 2026-08-21 via gh; live state wins over this file.** `#66987` is now **CLOSED**
-(fixed in Claude Code 2.1.205); `#86936` is **OPEN** and maintainer-reproduced. See the second
-correction below -- neither changes this page's verdict.
+**Status re-derived: 2026-09-05 via gh (dispatch 000276); live state wins over this file.**
+Re-verified against live gh, both UNCHANGED since 2026-08-21: `#66987` is **CLOSED / COMPLETED**
+(2026-08-13T16:09:48Z, fixed in Claude Code 2.1.205); `#86936` is **OPEN**, maintainer-reproduced,
+and its label set no longer carries `platform:windows`. See the second correction below -- neither
+changes this page's verdict. **A reader must still not treat the "gate is tracked and OPEN: #66987"
+line further down as current**: that line is the original 2026-07 text and the correction block
+below governs it.
 
 **Dispatch:** powershell-lsp/000015, Track B (read-only gating probe).
 **Date:** 2026-06-14. **No code change** -- this note only orders the next dispatch.

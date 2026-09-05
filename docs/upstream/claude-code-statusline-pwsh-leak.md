@@ -1,8 +1,13 @@
 # Bug report: Windows statusline `pwsh.exe` processes never exit
 
-**Status re-derived: 2026-08-21 via gh; live state wins over this file.** `#86551` re-verified
-**OPEN**, last updated 2026-08-13T23:54:28Z, **0 comments** -- unchanged since this file was last
-derived. No maintainer response yet.
+**Status re-derived: 2026-09-05 via gh (dispatch 000276); live state wins over this file.**
+`#86551` re-verified **OPEN**, last updated **2026-08-28T00:55:40Z**, **0 comments**. Labels at
+re-derivation: `bug`, `has repro`, `platform:windows`, `area:statusline`, **`stale`**.
+**Two things moved since the 2026-08-21 derivation and are corrected here rather than carried:**
+the last-updated timestamp advanced from 2026-08-13T23:54:28Z to 2026-08-28T00:55:40Z, and the
+issue has acquired a **`stale`** label. Still no maintainer response and still zero comments, so
+the timestamp move and the label are the same event -- automated staleness marking, not upstream
+engagement. Read the `stale` label as what it is: a bot's clock, not a verdict on the report.
 
 ## ALREADY FILED AS #86551 -- DO NOT FILE THIS
 
