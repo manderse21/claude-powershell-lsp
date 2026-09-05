@@ -116,7 +116,7 @@ Describe 'POSIX containment -- directories the plugin creates (000277 leg C, T6.
         try {
             $parent = Join-Path $root 'preexisting'
             New-Item -ItemType Directory -Force -Path $parent | Out-Null
-            & chmod 755 -- $parent | Out-Null
+            & chmod 755 $parent | Out-Null
             (Get-PcMode -Path $parent) | Should -Be '755' -Because 'the fixture must start permissive or the assertion proves nothing'
             New-ContainedDirectory -Path (Join-Path $parent 'child')
             (Get-PcMode -Path $parent) | Should -Be '755'

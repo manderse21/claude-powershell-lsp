@@ -1637,7 +1637,14 @@ function Set-OwnerOnlyMode {
         # .NET 7 (pwsh 7.3), and this library still has to run on whatever pwsh the user
         # has. chmod is on every POSIX host, and this path runs once per object created,
         # not per edit, so the process spawn is not on any hot path.
-        & chmod $octal -- $Path 2>$null | Out-Null
+        #
+        # NO `--` END-OF-OPTIONS SEPARATOR, and that is not an oversight. BSD chmod (macOS)
+        # does not support it: it takes `--` as the first FILE operand, applies the mode to
+        # the real path, and then exits NON-ZERO on the phantom one -- so the object is
+        # contained but the return value lies. Measured on macos-pwsh in this dispatch's own
+        # CI run 33978662085 (`chmod: --: No such file or directory`). Every path this is
+        # called with is absolute, so there is no leading-dash operand to defend against.
+        & chmod $octal $Path 2>$null | Out-Null
         return ($LASTEXITCODE -eq 0)
     }
     catch { return $false }
