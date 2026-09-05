@@ -405,6 +405,37 @@ No fix is proposed here.
 > the reason the option is resolved by name rather than as an enum literal are in section 8.
 > `maxNumberOfServerInstances` is unchanged, so the bound cited above still holds.
 
+> **THE POSIX ARM: MEASURED 2026-09-05, then FIXED, and both readings are kept.** The Windows fix
+> above did not carry off-Windows, and the reason is the mechanism rather than an oversight: .NET
+> backs a named pipe with a unix-domain socket file, and it enforces `CurrentUserOnly` at **accept**
+> time on the connecting peer's credentials -- it does not narrow the socket file's mode.
+>
+> **Method.** The record-only measurement step dispatch 000276 leg F shipped
+> (`tests/measure-posix-surface.ps1`, run on the `ubuntu-pwsh` and `macos-pwsh` CI legs, emitting
+> `posix-surface-<leg>.json` inside the `daemon-logs-<leg>` artifact). It resolves the endpoint
+> through the plugin's own derivation and reads mode, owner and group with `stat(1)`. It gates on
+> nothing: it fails only if the JSON was not written or does not parse.
+>
+> | Reading | ubuntu-pwsh | macos-pwsh |
+> |---|---|---|
+> | **PRE-fix** (run `33949910984`, head `7fbe9ba`) | `755` at `/tmp/CoreFxPipe_powershell-lsp-<sid>` -- *exposed-beyond-user, OTHER has 5* | `755` -- *exposed-beyond-user, OTHER has 5* |
+> | **POST-fix** (run `33979971327`, head `dee89b5`) | **`600`** -- *user-only, no group or other access* | **`600`** -- *user-only* |
+> | containing temp directory, unchanged | `/tmp` at `1777`, root:root -- world-writable, **no containment above the socket** | per-user temp at `700` -- contained by where macOS puts temp, not by this plugin |
+>
+> **Re-graded on those two readings and no further.** The finding moves from *unknown on POSIX* to
+> **MEASURED, then FIXED on both platforms**, at the same standing the Windows arm already had. The
+> mode is now set explicitly at the one pipe-server seam (`New-DaemonPipeServer`,
+> `scripts/lib/lsp-common.ps1`), 0600 because `connect(2)` on a unix socket needs write and never
+> execute.
+>
+> **What is NOT closed, stated rather than implied.** (1) The socket is bound by the constructor and
+> contained on the next statement, so a window exists in which it carries the umask default;
+> `CurrentUserOnly` covers that window on the credentials, which is why the mode is defence in depth
+> and not the only control. (2) **`/tmp` at `1777` on Linux is unchanged and is not this plugin's to
+> change** -- only objects the plugin itself creates are contained. A local user still cannot read
+> the socket, but the directory it sits in remains world-writable, which is a property of the
+> platform's temp directory.
+
 **T5.2 What an attacker on the pipe would obtain.** *Scoped by the protocol.* The request surface is
 one-line JSON with `action` of `diagnostics`, `format`, or `ping` (`scripts/lsp-client.ps1:126,166`;
 `scripts/doctor.ps1:813`). A `diagnostics` request names an arbitrary file path and returns findings
@@ -425,16 +456,40 @@ log stores absolute paths and verbatim offending source lines
 accumulating snippets of every file with a finding. The relevant knob, `enableStats`, gates a
 *different* log.
 
-**T6.2 Data-root fallback permissions.** **unknown.** When `CLAUDE_PLUGIN_DATA` is unset, logs and
-session files land under a `powershell-lsp-data` subdirectory of the system temp path (`scripts/lib/lsp-common.ps1:17`). The
-permissions of that directory are platform-dependent and were not measured.
+**T6.2 Data-root fallback permissions.** *Measured on all three platforms; fixed on POSIX.* When
+`CLAUDE_PLUGIN_DATA` is unset, logs and session files land under a `powershell-lsp-data`
+subdirectory of the system temp path (`scripts/lib/lsp-common.ps1:17`). The permissions of that
+directory are platform-dependent, which is why each platform is recorded separately below rather
+than generalised from one.
 
-> **MEASURED ON WINDOWS, 2026-08-21 -- no exposure found there; the POSIX arm remains unmeasured.**
+> **MEASURED ON WINDOWS, 2026-08-21 -- no exposure found there.**
 > On Windows 11 the fallback inherits the per-user `%LOCALAPPDATA%\Temp` ACL: three inherited ACEs
 > (SYSTEM, Administrators, the invoking user), no Everyone, no Anonymous. The platform-dependence
-> this finding names is exactly why that is **not** a general answer -- on Linux the same call
-> typically resolves to a world-readable `/tmp`. Section 8 records the measurement, and records the
-> POSIX arm as still open rather than inferring it.
+> this finding names is exactly why that was **not** a general answer -- on Linux the same call
+> resolves to a world-readable `/tmp`. Section 8 records the measurement.
+
+> **THE POSIX ARM: MEASURED 2026-09-05, then FIXED, and both readings are kept.** Same method and
+> same artifacts as T5.1 above.
+>
+> | Reading | ubuntu-pwsh | macos-pwsh |
+> |---|---|---|
+> | **PRE-fix** (run `33949910984`, head `7fbe9ba`) | `755` at `/tmp/powershell-lsp-data` -- *exposed-beyond-user, OTHER has 5* | `755` -- *exposed-beyond-user, OTHER has 5* |
+> | **POST-fix** (run `33979971327`, head `dee89b5`) | **`700`** -- *user-only, no group or other access* | **`700`** -- *user-only* |
+> | containing temp directory, unchanged | `/tmp` at `1777` -- **no containment above the data root** | per-user temp at `700` |
+>
+> **Re-graded on those two readings and no further.** The row moves from *unknown on POSIX* to
+> **MEASURED, then FIXED**. What the earlier entry called a "derivation from platform convention,
+> not a measurement" turned out to be right about the value -- Linux really did land `0755` under
+> the default umask -- and that is exactly why it was worth measuring instead of writing down: the
+> convention and the observation agreeing is a fact, whereas the convention alone was a guess.
+>
+> **Beyond the measured object.** Every directory the plugin creates is now `0700` and the files the
+> shared JSONL writers create are `0600`, applied at creation in one helper. The measurement reads
+> the data root only, so that wider claim rests on the Pester suite's POSIX arm
+> (`tests/PowerShellLsp.PosixContainment.Tests.ps1`), not on this artifact. **Text logs written by
+> the per-script `Write-Log` helpers keep the ambient file mode** and are contained by their `0700`
+> parent rather than by their own bits -- recorded because it is the one place the "0600 for files"
+> statement does not hold literally.
 
 **T6.3 Stats log absolute paths.** *Latent, opt-in, and already ruled on.* `logs/stats.jsonl`
 records absolute paths; the project's recorded ruling keeps `enableStats` false in every profile
@@ -590,9 +645,12 @@ allow-listing by path should know about.
   > **Both measurements were subsequently taken** (2026-08-21, section 8), and naming them is what
   > made them cheap to take. **T5.1 resolved against the project**: the platform-default pipe DACL
   > granted Everyone and Anonymous read access, so the honest label had been hiding a live exposure
-  > rather than a tidy one. **T6.2 resolved in the project's favour on Windows** and remains
-  > unmeasured on POSIX. That split is the argument for the `unknown` discipline: two labels written
-  > the same way resolved in opposite directions, and neither could have been guessed.
+  > rather than a tidy one. **T6.2 resolved in the project's favour on Windows** and, when its POSIX
+  > arm was finally measured on 2026-09-05, resolved AGAINST the project there -- `755` on both
+  > POSIX platforms, now fixed. That split is the argument for the `unknown` discipline three times
+  > over: two labels written the same way resolved in opposite directions on Windows, and the same
+  > label resolved in opposite directions on two different platforms. None of it could have been
+  > guessed.
 - **The threat list is bounded by the evidence**, as instructed. Threats that would require
   assumptions about deployment, adversary position, or upstream behavior are labelled unknown rather
   than enumerated speculatively.
@@ -694,9 +752,9 @@ measurement that had never been taken, and six by an explicit decision to carry 
 | ID | Boundary | Finding | Disposition |
 |---|---|---|---|
 | T2.3 | B2 | The plugin tree, documented as read-only, is written at runtime by the capture log | **FIXED** (000269) |
-| T5.1 | B5 | Daemon pipe is created with no explicit `PipeSecurity` and no `CurrentUserOnly`; effective DACL not measured | **MEASURED, then FIXED** (000269) |
+| T5.1 | B5 | Daemon pipe is created with no explicit `PipeSecurity` and no `CurrentUserOnly`; effective DACL not measured | **MEASURED, then FIXED** on Windows (000269); POSIX arm **MEASURED, then FIXED** (000276 measured, 000277 fixed) |
 | T6.4 | B6 | The `keepLastN` sweep does not bound the capture log | **FIXED** (000269) |
-| T6.2 | B6 | Data-root temp fallback permissions not measured | **MEASURED** (000269) -- no fix chartered |
+| T6.2 | B6 | Data-root temp fallback permissions not measured | **MEASURED** on Windows (000269) -- no fix needed there; POSIX arm **MEASURED, then FIXED** (000276 measured, 000277 fixed) |
 | T1.4 | B1 | Fallback path registers PSGallery and sets it Trusted -- a persistent write outside the data root | **ACCEPTED WITH RECORD** |
 | T1.5 | B1 | Blocking the primary fetch without corrupting it steers acquisition to the unpinned fallback | **ACCEPTED WITH RECORD** |
 | T3.2 | B3 | Repo-local settings file is handed to PSES unread; upstream handling of a hostile settings file not derived | **ACCEPTED WITH RECORD** (still unknown) |
@@ -768,13 +826,18 @@ Everyone, no Anonymous, no Users.** On Windows the fallback inherits the per-use
 `%LOCALAPPDATA%\Temp` ACL, so it is not the exposure the *unknown* status left room for. The row moves
 from unknown to measured **on Windows only** -- and that bound is the honest part of this entry:
 
-> **The POSIX arm is NOT measured.** `Path.GetTempPath()` resolves to a per-user directory on Windows,
-> but on Linux it is typically world-readable `/tmp`, where a directory created under a default umask
-> lands `0755`. That is a *derivation from platform convention, not a measurement*, and it is
-> deliberately not written into the table as one. Settling it needs the same ACL read taken on a Linux
-> and a macOS host, which this run had no access to. Recording it as measured-on-Windows-only is the
-> difference between a bounded fact and the "unknown is not zero" trap this register already warns
-> about.
+> **The POSIX arm was NOT measured when this entry was written, and is now.** The reasoning
+> recorded here at the time is left standing verbatim below because it was right, and because the
+> outcome is the argument for the discipline: `Path.GetTempPath()` resolves to a per-user directory
+> on Windows, "but on Linux it is typically world-readable `/tmp`, where a directory created under a
+> default umask lands `0755`. That is a *derivation from platform convention, not a measurement*,
+> and it is deliberately not written into the table as one. Settling it needs the same ACL read
+> taken on a Linux and a macOS host, which this run had no access to."
+>
+> **Settled 2026-09-05.** Dispatch 000276 shipped the CI measurement step and took the reading;
+> dispatch 000277 fixed what it found. The convention's predicted `0755` was exactly right -- and
+> the socket in T5.1 read `0755` too, which no convention had predicted. Both arms now read
+> user-only. The readings and their run ids are in the T5.1 and T6.2 rows in section 4.
 
 ### The six accepted, each with the reason it was accepted
 
@@ -792,5 +855,6 @@ rationale, so a future reader can re-open the decision rather than re-discover t
 
 **What is left genuinely open.** D2, D3 and D4 -- all documentation drift, all re-derived and still
 standing, all cheap to fix and none of them fixed here because this dispatch's threat-model scope was
-the section 8 register. T3.2 remains *unknown* by its own terms, and T6.2's POSIX arm is unmeasured.
-None of those should be read as zero.
+the section 8 register. T3.2 remains *unknown* by its own terms. **T6.2's POSIX arm is no longer
+open**: it was measured on 2026-09-05 (dispatch 000276) and fixed the same day (dispatch 000277),
+as was T5.1's. None of what is left should be read as zero.

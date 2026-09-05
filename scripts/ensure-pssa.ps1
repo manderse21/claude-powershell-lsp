@@ -57,7 +57,7 @@ if ([string]::IsNullOrWhiteSpace($dataRoot)) { return }
 
 $vendorDir = Get-PssaModuleDir
 $logDir = Get-LogDir
-New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+New-ContainedDirectory -Path $logDir
 $log = Join-Path $logDir 'ensure-pssa.log'
 $marker = Join-Path $vendorDir ('.pssa-' + $PssaVersion + '.ok')
 
@@ -94,7 +94,7 @@ if ((Test-Path -LiteralPath $marker) -and (Test-PssaImportable)) {
     return
 }
 
-New-Item -ItemType Directory -Force -Path $vendorDir | Out-Null
+New-ContainedDirectory -Path $vendorDir
 Write-Log ('vendoring PSScriptAnalyzer ' + $PssaVersion)
 $installed = $false
 # Declared BEFORE the try (dispatch 000244), the same StrictMode discipline ensure-pses.ps1
@@ -122,7 +122,7 @@ $sourceLayer = ''
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('pssa-' + [Guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    New-ContainedDirectory -Path $tmp
     $nupkg = Join-Path $tmp 'pssa.zip'
     $url = 'https://www.powershellgallery.com/api/v2/package/PSScriptAnalyzer/' + $PssaVersion
 
@@ -222,7 +222,7 @@ try {
         try {
             $cacheDir = Split-Path -Parent $cachedNupkg
             if (-not [string]::IsNullOrWhiteSpace($cacheDir) -and -not (Test-Path -LiteralPath $cacheDir)) {
-                New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+                New-ContainedDirectory -Path $cacheDir
             }
             Copy-Item -LiteralPath $nupkg -Destination $cachedNupkg -Force
             Write-Log ('cache POPULATED with verified .nupkg at ' + $cachedNupkg)
@@ -240,7 +240,7 @@ try {
 
     $dest = Join-Path (Join-Path $vendorDir 'PSScriptAnalyzer') $PssaVersion
     if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
-    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    New-ContainedDirectory -Path $dest
     $skip = @('_rels', 'package', '[Content_Types].xml')
     Get-ChildItem -LiteralPath $moduleSrc -Force | Where-Object {
         ($skip -notcontains $_.Name) -and ($_.Extension -ne '.nuspec')

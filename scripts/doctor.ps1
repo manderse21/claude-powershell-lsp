@@ -1458,7 +1458,7 @@ function Get-DoctorTestDiagnosticObservation {
         # A private temp subdirectory, so the repo-local settings walk-up starts somewhere neutral
         # and no existing temp file can be clobbered.
         $probeDir = Join-Path ([System.IO.Path]::GetTempPath()) ('powershell-lsp-doctor-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
-        New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
+        New-ContainedDirectory -Path $probeDir
         $probeFile = Join-Path $probeDir 'doctor-probe.ps1'
         [System.IO.File]::WriteAllText($probeFile, ($script:DoctorProbeSource + "`n"), (New-Object System.Text.UTF8Encoding($false)))
 

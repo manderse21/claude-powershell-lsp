@@ -38,7 +38,7 @@ if ((Test-Path -LiteralPath $startScript) -and (Test-Path -LiteralPath $marker))
 }
 
 $logDir = Join-Path $dataRoot 'logs'
-New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+New-ContainedDirectory -Path $logDir
 $log = Join-Path $logDir 'ensure-pses.log'
 function Write-Log([string]$m) {
     ('[' + (Get-Date -Format 'o') + '] ' + $m) | Out-File -FilePath $log -Append -Encoding ascii
@@ -130,7 +130,7 @@ try {
     if (Test-Path -LiteralPath $backupDir) { Remove-Item -LiteralPath $backupDir -Recurse -Force }
     if (Test-Path -LiteralPath $installDir) { Rename-Item -LiteralPath $installDir -NewName (Split-Path -Leaf $backupDir) }
     try {
-        New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+        New-ContainedDirectory -Path $installDir
         # MIT-notice preservation (dispatch 000029): the PSES release zip carries its MIT LICENSE +
         # NOTICE.txt at the distribution root (siblings of the PowerShellEditorServices module dir).
         # The module-only move below would drop them, leaving the installed bundle with NO upstream

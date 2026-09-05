@@ -54,7 +54,7 @@ try {
     if ([string]::IsNullOrWhiteSpace($ld)) { $ld = $env:TEMP }
     if ([string]::IsNullOrWhiteSpace($ld)) { $ld = [System.IO.Path]::GetTempPath() }
     $ld = Join-Path $ld 'logs'
-    New-Item -ItemType Directory -Force -Path $ld | Out-Null
+    New-ContainedDirectory -Path $ld
     $script:ShimLogPath = Join-Path $ld 'pses-serve-shim.log'
 } catch { $script:ShimLogPath = $null }
 

@@ -31,6 +31,63 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+### Security
+
+**Everything the plugin creates on Linux and macOS was world-readable, and is not any more**
+(threat-model findings **T5.1** and **T6.2**, POSIX arms; dispatch 000277, ruling R4 of
+2026-09-05). Windows is unaffected and unchanged.
+
+**The exposure.** Both rows had carried their POSIX arms as *unmeasured* -- the register said so in
+its own words, refusing to write platform convention into the table as if it had been observed.
+Dispatch 000276 took the measurement on the two POSIX CI legs (run `33949910984`, headSha
+`7fbe9ba`), and both arms came back exposed on both platforms:
+
+| Object | ubuntu-pwsh | macos-pwsh |
+|---|---|---|
+| data-root temp fallback directory | `755` (`/tmp/powershell-lsp-data`) | `755` |
+| daemon pipe unix-socket endpoint | `755` (`/tmp/CoreFxPipe_powershell-lsp-<sid>`) | `755` |
+| containing temp directory | `/tmp` at `1777` -- world-writable, no containment | per-user temp at `700` |
+
+`755` is `exposed-beyond-user`: any other local account could read the capture log, the stats
+log, the daemon logs and the session state, and could reach the socket file. On Linux nothing
+above them contained them either. macOS was contained only by where its per-user temp happens to
+live, not by anything this plugin did.
+
+`CurrentUserOnly` -- the v1.33.0 fix for the Windows arm of T5.1 -- did not cover this. Off-Windows
+.NET enforces it at accept time on the connecting peer's credentials; it does not narrow the socket
+file's mode, which lands at `0777` masked by the ambient umask (`0022` on both runners).
+
+**The fix.** Every filesystem object the plugin creates on a POSIX host is now created owner-only:
+**`0700` for directories**, and **`0600` for the socket endpoint and for the files the shared
+JSONL writers create** (the diagnostic capture log, `stats.jsonl`, the per-rule lifecycle log, and
+dogfood annotations). This is a default, not a knob: **no `userConfig` key, no status token, and no
+line of `CONTRACT.md` changed.** Containment happens at creation, in one shared helper
+(`New-ContainedDirectory` / `Set-OwnerOnlyMode` in `scripts/lib/lsp-common.ps1`), used at all 24
+runtime creation sites.
+
+**Measured after the fix**, on this change's own CI run `33979971327` (head `dee89b5`, all four
+legs green), by the same record-only measurement step that took the before reading:
+
+| Object | ubuntu-pwsh | macos-pwsh |
+|---|---|---|
+| data-root temp fallback directory | `755` -> **`700`** | `755` -> **`700`** |
+| daemon pipe unix-socket endpoint | `755` -> **`600`** | `755` -> **`600`** |
+
+Both arms now read *user-only -- no group or other access*.
+
+**What is deliberately still permissive, and why.** Only segments the plugin itself creates are
+contained. `/tmp` at `1777` on Linux is the platform's, and a data root you point
+`CLAUDE_PLUGIN_DATA` at is yours; re-moding either would be this plugin reaching outside its own
+objects. Text logs written by the per-script `Write-Log` helpers keep the ambient file mode and are
+contained by their `0700` parent directory rather than by their own bits. The socket is contained
+on the statement after the constructor binds it, so a window exists in which it carries the umask
+default; `CurrentUserOnly` covers that window by rejecting a foreign peer's credentials, which is
+why the file mode is defence in depth and not the only thing standing there.
+
+**Windows is byte-identical.** The mode work is short-circuited before it starts on Windows, the
+creation call is the one that always ran, and the suite asserts that a directory created through
+the new helper carries the same ACL as one created the prior way in the same parent.
+
 ## [1.33.0] - 2026-08-22
 MINOR: **`doctor` and `status` now answer "which version is actually running?"** -- the report
 reconciles the tree's version against the live daemon's own stamp instead of naming the tree and

@@ -379,11 +379,14 @@ function Add-DogfoodAnnotation {
     param([string] $AnnotationsPath, $Annotation)
     $dir = Split-Path -Parent $AnnotationsPath
     if (-not [string]::IsNullOrWhiteSpace($dir) -and -not (Test-Path -LiteralPath $dir)) {
-        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        New-ContainedDirectory -Path $dir
     }
     $line = ($Annotation | ConvertTo-Json -Depth 5 -Compress)
     $enc = New-Object System.Text.UTF8Encoding($false)
+    # Contain on the absent->present transition only -- see Write-StatsLine (000277 leg C).
+    $bornHere = -not (Test-Path -LiteralPath $AnnotationsPath)
     [System.IO.File]::AppendAllText($AnnotationsPath, ($line + "`n"), $enc)
+    if ($bornHere) { [void](Set-ContainedFileMode -Path $AnnotationsPath) }
 }
 
 function Set-DogfoodVerdict {
