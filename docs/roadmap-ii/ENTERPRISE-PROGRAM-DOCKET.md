@@ -660,5 +660,8 @@ recommendation.
   re-rendered, and the survey's P3 is routed to a ruling rather than taken.
 - **No re-banking of the `--jq` quoting rule.** Section 4.6 records the control that would
   mechanically refuse it, which is what the fifth banked sighting proved is missing.
-- **No phase kept unexamined.** Six of the review's own phase rows are demoted, split or marked
-  already-shipped in section 3, with the reason stated for each.
+- **No phase kept unexamined, and the arithmetic is stated rather than rounded.** The review's
+  phase table has **fourteen rows**, and its `P0 -- Trust closure` row bundles three work items,
+  so section 3 dispositions **sixteen** work items in all. **Nine** are placed somewhere other
+  than where the review put them -- demoted, split, marked already-shipped, or routed to the
+  human-only list -- and **seven** are kept where they are, each with the reason stated.

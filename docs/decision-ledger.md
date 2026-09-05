@@ -4148,11 +4148,14 @@ UNVERIFIABLE with the probe named rather than assumed true.
   organization *requirement* at all. The cost driver is T4.1's own words: a signed policy needs "a
   trust anchor the org policy mechanism does not have".
 
-**The review's own phasing was not adopted wholesale.** Six of its fourteen phase rows moved, each
-with the reason recorded: "strict data-root permissions" is already shipped; "SLO release gates" and
-"Claude Code compatibility" drop from P0 to P1; OTel drops from P1 to P2; the architecture split
-drops to P3; and the assurance-pack and deployment-matrix rows split, because half of each is
-human-only or is Pillar H.
+**The review's own phasing was not adopted wholesale.** Its phase table has **fourteen rows**, and
+the `P0 -- Trust closure` row bundles three work items, so the docket dispositions **sixteen** in
+all: **nine are placed somewhere other than where the review put them, and seven are kept.** The
+nine, each with its reason recorded: "strict data-root permissions" is already shipped; "SLO release
+gates" and "Claude Code compatibility" drop from P0 to P1; OTel drops from P1 to P2; the architecture
+split drops to P3; the assurance-pack and deployment-matrix rows split, because half of each is
+human-only or is Pillar H; and the governance and external-audit rows leave the build queue for the
+human-only list.
 
 **The release-governance slice is re-shaped by the T3 survey, and this is the load-bearing change.**
 `T3-REGRESSION-SURVEY.md` (000275) found no monotone timing threshold explains the miss -- a
