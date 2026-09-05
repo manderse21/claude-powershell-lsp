@@ -65,6 +65,16 @@ line of `CONTRACT.md` changed.** Containment happens at creation, in one shared 
 (`New-ContainedDirectory` / `Set-OwnerOnlyMode` in `scripts/lib/lsp-common.ps1`), used at all 24
 runtime creation sites.
 
+**Measured after the fix**, on this change's own CI run `33979971327` (head `dee89b5`, all four
+legs green), by the same record-only measurement step that took the before reading:
+
+| Object | ubuntu-pwsh | macos-pwsh |
+|---|---|---|
+| data-root temp fallback directory | `755` -> **`700`** | `755` -> **`700`** |
+| daemon pipe unix-socket endpoint | `755` -> **`600`** | `755` -> **`600`** |
+
+Both arms now read *user-only -- no group or other access*.
+
 **What is deliberately still permissive, and why.** Only segments the plugin itself creates are
 contained. `/tmp` at `1777` on Linux is the platform's, and a data root you point
 `CLAUDE_PLUGIN_DATA` at is yours; re-moding either would be this plugin reaching outside its own

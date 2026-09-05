@@ -69,6 +69,14 @@ A claim can be TRUE as a *fact* and still carry no work, because the disposition
 already taken deliberately. Those are marked TRUE with the adjudication cited, and they are the
 most common shape below.
 
+**That shape caught this docket itself, and the correction is left visible rather than tidied
+away.** C1 and C2 were first written as open rulings and put to Mike in section 7. Reading
+`THREAT-MODEL.md` end to end then found both already accepted, with reasons, as **T6.1** and
+**T4.2**. Both were withdrawn. Four of the five claims below therefore resolve to *already
+adjudicated*, and the single one that does not -- C3 -- is the only slice this docket adds. An
+audit whose output is mostly "this was already decided" is doing its job; the failure mode is the
+opposite one.
+
 ---
 
 ## 3. The five named claims, scored against disk
@@ -85,15 +93,20 @@ most common shape below.
 - There is **no separate knob** for capture: `.claude-plugin/plugin.json` contains no
   `enableCapture`, no `dogfood` key, and no other capture gate.
 
-**Why this is not merely a tidiness point.** The capture writer's own header in
-`scripts/lib/lsp-common.ps1` states that "the log holds REAL source snippets" and describes a
-"NEVER-COMMIT FENCE" built to keep it outside every git tree. So the surface that records the
-user's actual source lines is on by default, while the surface that records *timings* is opt-in.
-That may well be the intended design -- capture is what the rule-curation arc runs on -- but the
-asymmetry is not stated in `CONTRACT.md` or in `docs/configuration.md` as a decision, and an
-enterprise reviewer will read it as an undeclared data-collection default.
+**And it is ALREADY ADJUDICATED, which is the part that matters.** `THREAT-MODEL.md` carries this
+exact finding as **T6.1**, in the same words: the log is "written **unconditionally**
+(`scripts/lsp-client.ps1:412,418,802`), so a user who has enabled no data-collection knob is still
+accumulating snippets of every file with a finding. The relevant knob, `enableStats`, gates a
+*different* log." T6.1 sits in the register's **six accepted** list with its reason recorded:
+gating capture behind a knob "would strangle the dogfood channel the entire rule-curation lane
+depends on, and the log is local-only, never transmitted, and now both bounded (T6.4) and outside
+every git tree (T2.3)."
 
-**This is a ruling, not a bug** -- see R-A in section 7.
+**So there is no open question here, and this docket does not manufacture one.** What remains is
+narrower and is stated as such in section 7: the acceptance lives in the threat register, and
+neither `CONTRACT.md` nor `docs/configuration.md` -- the two documents a deploying enterprise
+actually reads -- carries it. That is a documentation gap against an existing decision, not a
+decision to take.
 
 ### C2 -- "`orgPolicy` fails open on a missing or unreadable policy"
 
@@ -116,7 +129,15 @@ gets more noise; one deploying it as a control gets silence where it expected en
 degrade is surfaced (doctor check 10, "Org policy exclusions") and never silent, which is the part
 that is already right.
 
-**This is a ruling, not a bug** -- see R-B in section 7.
+**And this too is ALREADY ADJUDICATED.** `THREAT-MODEL.md` carries it as **T4.2**, accepted with
+its reason stated: "Fail-open is the deliberate trade: an unreachable policy that disabled the
+plugin's diagnostics would turn an availability problem into a silent loss of linting, which is the
+worse failure for a tool whose whole contract is never being silent." The register's T4.1 row
+separately prices the integrity half.
+
+**So no ruling is opened here either.** The residue is the same shape as C1's: the decision exists
+in the threat register and is not carried into `docs/configuration.md`'s `orgPolicy` section, where
+an administrator configuring the knob would look for it.
 
 ### C3 -- "the acquisition fallback bypasses the hash chain"
 
@@ -269,8 +290,8 @@ recommendation.
 
 | # | Question | Options | Recommended default | Mike's answer |
 | --- | --- | --- | --- | --- |
-| **R-A** | Diagnostic capture writes real source snippets and is **on by default**, while `enableStats` (timings only) is opt-in. Is that the intended posture? | (a) keep on by default and **declare it** in `CONTRACT.md` + `configuration.md`; (b) put capture behind a knob defaulting **on**; (c) put capture behind a knob defaulting **off** | **(a)** -- the rule-curation arc runs on this data, the never-commit fence already keeps it outside every git tree, and a knob defaulting on adds a Tier 1 surface for no behaviour change | |
-| **R-B** | `orgPolicy` degrades **open** on a missing, non-absolute, unreadable or integrity-failed policy: no exclusions applied, reason logged, doctor check 10 surfaces it. Enforcement or visibility? | (a) keep fail-open, document the direction explicitly; (b) add an opt-in strict mode that refuses to serve diagnostics when a configured `orgPolicy` cannot be applied | **(a)** -- the payload only *removes* diagnostics, so failing open cannot hide a defect, and (b) adds a knob to Tier 1 | |
+| **R-A** | **NOT an open ruling -- WITHDRAWN on derivation.** Capture-on-by-default is already accepted with its reason as `THREAT-MODEL.md` **T6.1**. The only residue is that the acceptance is not carried into `CONTRACT.md` or `docs/configuration.md` | (a) restate T6.1's acceptance in the two deploying-reader documents; (b) leave it in the threat register only | **(a)**, as documentation -- but this is a chore, not a ruling, and Mike need not answer it | |
+| **R-B** | **NOT an open ruling -- WITHDRAWN on derivation.** `orgPolicy`'s fail-open degrade is already accepted with its reason as `THREAT-MODEL.md` **T4.2**, with T4.1 pricing the integrity half. Same residue: `docs/configuration.md`'s `orgPolicy` section does not carry it | (a) restate T4.2's acceptance where an administrator configures the knob; (b) leave it in the threat register only | **(a)**, same chore | |
 | **R-C** | For **P1-1**, which shape closes the `gallery-fallback` hash gap? | (a) verify the fallback's bytes against the same pin, fail closed; (b) fail closed on the fallback by default with an explicit opt-in to accept publisher-integrity-only bytes | **(a)** -- zero freeze exposure, and it makes the one unpinned route match the other four | |
 | **R-D** | `DOCTOR-SURFACE-DOCKET.md` has been unruled since 000276. Build **S1**? | (a) S1 now, S2 as the follow-on; (b) S1 only; (c) none | **(a)** -- that docket's own section 5 recommendation, unchanged | |
 | **R-E** | Should a successor dispatch be minted to audit the enterprise review once the file is supplied? | (a) yes, against this same disk baseline; (b) no | **(a)** -- section 1 is a gap, not a verdict | |
