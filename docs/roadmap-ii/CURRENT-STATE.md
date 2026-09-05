@@ -12,6 +12,34 @@ restated. Nothing in this file is asserted from memory.
 **Derivation moment.** This document was first derived 2026-08-12 (dispatch 000221, R2-01) at
 `origin/main` = `7f34277`, plugin version `1.31.0`.
 
+> ### SUCCESSOR RE-DERIVATION: 2026-09-05, dispatch 000276, at v1.33.0
+>
+> **Lineage: 000221 (v1.31.0, `7f34277`) -> 000269 (v1.32.0, main `78ddcee`) -> 000276 (v1.33.0,
+> main `6a6a371`).** This document moves only when a successor dispatch re-derives it, and this is
+> that successor. Derived at release **v1.33.0**, peeled commit
+> `6ab2d24bf254787520ad9449c4e6c17f74ee708d`, `origin/main` = `6a6a371c623acf7fd16f61654030dd354bd72711`.
+>
+> **The re-derivation set was DERIVED, not chosen.** `git diff --name-only 78ddcee v1.33.0^{}`
+> returns **36 files** over exactly **two** commits -- `98815b9` (#193, dispatch 000269's own
+> gate-clearance omnibus, which merged after the previous derivation was taken) and `6ab2d24`
+> (#194, the v1.33.0 release cut). Grouped: `docs/upstream` 10, `docs/roadmap-ii` 6, `scripts` 5,
+> `docs/corpus-commons` 4, `tests` 2, `scripts/lib` 2, `docs` 2, `.claude-plugin` 2, plus
+> `TRUST.md`, `ROADMAP.md` and `CHANGELOG.md`.
+>
+> **RE-DERIVED in this pass:** sections **1** (version), **2** (commit), **4** (the release-assets
+> subsection) and **7** (active upstream dependencies -- re-queried against live `gh` at
+> 2026-09-05T06:00:17Z as leg B of this dispatch, and three notes were found stale and corrected).
+>
+> **RE-CHECKED and unchanged in this pass:** sections **3**, **5**, **6**, **8**, **9**, **10**,
+> **11**, **12**, **13** and **14**. The `scripts/` and `scripts/lib/` movement in the derived set
+> above is dispatch 000269's T2.3 / T5.1 / T6.4 / O2 work, which sections 11 and 13 already record
+> as delivered at v1.32.0; no figure in those sections is keyed to a constant that moved between
+> `78ddcee` and the tag. Stated as re-checked rather than left silent, so a reader can tell a
+> checked section from an unrevisited one.
+>
+> **The `ROADMAP.md:<n>` line-anchor defect below is STILL NOT REPAIRED**, and is carried forward
+> as a known defect for the third derivation running rather than quietly dropped.
+
 > ### SUCCESSOR RE-DERIVATION: 2026-08-21, dispatch 000269, at v1.32.0
 >
 > **This document moves only when a successor dispatch re-derives it**, which is the rule
@@ -35,54 +63,58 @@ citation was out of this successor's scope, which was the factual figures. Treat
 
 ## 1. Current version
 
-**Re-derived 2026-08-21.** The v1.31.0 figures this section carried are superseded.
+**Re-derived 2026-09-05 (dispatch 000276).** The v1.32.0 figures this section carried are
+superseded.
 
 | Fact | Value | Derivation |
 |---|---|---|
-| Latest release tag | **`v1.32.0`** | `git tag --list 'v*' --sort=-v:refname`, 2026-08-21 (`v1.32.0`, then `v1.31.2`, `v1.31.1`) |
-| Tag object type | annotated (`tag`), object `072d8818109728301558c7c6707d795f4096c598` | `git rev-parse refs/tags/v1.32.0` + `git cat-file -t`, 2026-08-21 |
-| Tag creation date | 2026-08-19 20:31:18 +0000 | `git for-each-ref --format='%(creatordate:iso8601)'`, 2026-08-21 |
-| Release published | 2026-08-19T20:31:25Z, not a draft | `gh release view v1.32.0 --json publishedAt,isDraft`, 2026-08-21 |
-| `plugin.json` version at `origin/main` | `1.32.0` | `git show origin/main:.claude-plugin/plugin.json`, 2026-08-21 |
-| `plugin.json` version at the peeled tag | `1.32.0` | `git show 'refs/tags/v1.32.0^{}:.claude-plugin/plugin.json'`, 2026-08-21 |
-| `marketplace.json` version at `origin/main` | `1.32.0` | same command against `marketplace.json`, `.metadata.version`, 2026-08-21 |
-| `marketplace.json` version at the peeled tag | `1.32.0` | same, at the peeled tag, 2026-08-21 |
-| Declared license | **`Apache-2.0`** | `.claude-plugin/plugin.json` `.license` at `origin/main`, 2026-08-21 -- the forward-only relicense took effect at this release |
+| Latest release tag | **`v1.33.0`** | `git tag --list 'v*' --sort=-v:refname`, 2026-09-05 (`v1.33.0`, then `v1.32.0`, `v1.31.2`) |
+| Tag object type | annotated (`tag`), object `a78b445f39f0f8cdd52315fc3886ff909bbf77cb` | `git rev-parse refs/tags/v1.33.0` + `git cat-file -t`, 2026-09-05 |
+| Tag creation date | 2026-08-22 17:34:57 +0000 | `git for-each-ref --format='%(creatordate:iso8601)'`, 2026-09-05 |
+| Release published | 2026-08-22T17:35:03Z, not a draft | `gh release view v1.33.0 --json publishedAt,isDraft`, 2026-09-05 |
+| `plugin.json` version at `origin/main` | `1.33.0` | `git show origin/main:.claude-plugin/plugin.json`, 2026-09-05 |
+| `plugin.json` version at the peeled tag | `1.33.0` | `git show 'refs/tags/v1.33.0^{}:.claude-plugin/plugin.json'`, 2026-09-05 |
+| `marketplace.json` version at `origin/main` | `1.33.0` | same command against `marketplace.json`, `.metadata.version`, 2026-09-05 |
+| `marketplace.json` version at the peeled tag | `1.33.0` | same, at the peeled tag, 2026-09-05 |
+| Declared license | **`Apache-2.0`** | `.claude-plugin/plugin.json` `.license` at `origin/main` AND at the peeled tag, 2026-09-05 -- re-derived unchanged; the forward-only relicense took effect at v1.32.0 and this is its second shipped release |
 
 The two manifests are **in lockstep at both refs** -- re-derived unchanged as a property, at new
 values. No version drift exists between `main` and the released artifact.
 
 ## 2. Current commit
 
-**Re-derived 2026-08-21.**
+**Re-derived 2026-09-05 (dispatch 000276).**
 
 | Fact | Value | Derivation |
 |---|---|---|
-| `origin/main` tip | **`78ddcee2620b5c5bfcae2755998dfe7685f9900f`** | `git rev-parse origin/main`, 2026-08-21 |
-| `v1.32.0` **peeled** commit | **`fb3116cab14cd8afec4e9c64ed0c2e67e76486b3`** | `git rev-parse 'refs/tags/v1.32.0^{}'`, 2026-08-21 |
-| `main` relative to the peeled tag | **4 ahead, 0 behind** | `git rev-list --left-right --count 'refs/tags/v1.32.0^{}...origin/main'` -> `0	4`, 2026-08-21 |
+| `origin/main` tip | **`6a6a371c623acf7fd16f61654030dd354bd72711`** | `git rev-parse origin/main`, 2026-09-05 |
+| `v1.33.0` **peeled** commit | **`6ab2d24bf254787520ad9449c4e6c17f74ee708d`** | `git rev-parse 'refs/tags/v1.33.0^{}'`, 2026-09-05 |
+| `main` relative to the peeled tag | **3 ahead, 0 behind** | `git rev-list --left-right --count 'refs/tags/v1.33.0^{}...origin/main'` -> `0	3`, 2026-09-05 |
 
-The four commits by which `main` leads the release tag, newest first
-(`git log 'refs/tags/v1.32.0^{}..origin/main'`, 2026-08-21):
+The three commits by which `main` leads the release tag, newest first
+(`git log 'refs/tags/v1.33.0^{}..origin/main'`, 2026-09-05):
 
 | Commit | Subject |
 |---|---|
-| `78ddcee` | docs(000251): land the corpus commons un-gate -- publish the audited surface under Apache-2.0 (#192) |
-| `220149f` | docs: correct v1.32.0 whitepaper (r2) and cite evidence bundle (#191) |
-| `84fda97` | Evidence bundle + attestation workflow for v1.32.0 (#190) |
-| `b44c1ff` | docs(000268): land the finalized v1.32.0 white paper at docs/whitepaper.md (#189) |
+| `6a6a371` | evidence(v1.33.0): freeze measurement set + post-tag verification at C = 6ab2d24 [HELD behind the T3 quiet re-run] (#196) |
+| `b3faaf1` | fix(release): guard the control-map asset against target-vs-main drift (#197) |
+| `66b9522` | docs(000274): publish the roadmap control map as a release-bound derived view (#195) |
 
-**All four are documentation, evidence and workflow commits. No change under `scripts/` or
-`rulesets/` separates `main` from the released artifact** -- so the runtime a user executes at
-`main` is the runtime that shipped. The same property held at the previous derivation, and it is
+**All three are documentation, evidence and release-workflow commits. No change under `scripts/` or
+`rulesets/` separates `main` from the released artifact** (`git diff --name-only v1.33.0^{}
+origin/main -- scripts/ rulesets/` returns nothing) -- so the runtime a user executes at `main` is
+the runtime that shipped. This property has now held at three consecutive derivations and is
 re-derived here rather than assumed to persist.
 
-> **The release identity has a second commit worth knowing.** The quantitative evidence for
-> v1.32.0 was measured at `af6996f` (the merge of PR #187) and carried to the release identity
-> `fb3116c` (the merge of PR #188, the fix that unblocked the release pipeline). The carry is proven
-> rather than asserted: the `af6996f -> fb3116c` diff touches five paths, none under `scripts/` or
-> `rulesets/`, and every tracked runtime blob is byte-identical between them. See
-> [`SLO-BASELINES.md`](SLO-BASELINES.md) section 1 and `evidence/v1.32.0/`.
+> **`b3faaf1` is worth knowing at planning time, because it inverts the usual reading of a
+> post-tag commit.** The guard it carries is what let the release be cut, yet it is NOT in the
+> tagged tree. The release workflow checks out `ref: main` at run time, so the producing run
+> executed the guard while tagging a commit that predates it: run `32585972425` FAILED at
+> 16:51:30Z on control-map target-vs-main drift, `b3faaf1` merged at 17:31:57Z, and run
+> `32588047316` succeeded at 17:32:40Z against the same target `6ab2d24`, with the tag object
+> written at 17:34:57Z. **The commit being tagged does not pin the pipeline that tags it** -- which
+> is rationale (b) for the release gate's `WINDOW_DAYS` bound, here as a live worked example rather
+> than an argument.
 
 ## 3. Architecture summary
 
@@ -174,38 +206,40 @@ upstream manifest-schema limit in section 7, not a local authoring choice.
 | Code-scanning workflow | `.github/workflows/powershell-lsp-code-scanning.yml`, 153 lines, weekly `cron: '0 6 * * 1'`, ubuntu-24.04, SARIF upload, never fails the job | file header and `on:` block |
 | Release gates | 6, all shipped by v1.29.1 and all green cutting v1.31.0 | `VERIFICATION_SURFACE.md` "Release gates", derived by dispatch 000219 at the tag |
 
-### v1.32.0 release assets
+### v1.33.0 release assets
 
-**Re-derived 2026-08-21** via `gh api repos/manderse21/claude-powershell-lsp/releases/tags/v1.32.0`.
-Release published 2026-08-19T20:31:25Z; not a draft, not a prerelease. The v1.31.0 table this
-section carried is superseded.
+**Re-derived 2026-09-05 (dispatch 000276)** via `gh release view v1.33.0 --json assets`. Release
+published 2026-08-22T17:35:03Z; not a draft. The v1.32.0 table this section carried is superseded.
 
 | Asset | Size (bytes) | Digest listed by the API |
 |---|---:|---|
-| `powershell-lsp-1.32.0.cdx.json` | 2,518 | `sha256:52a3fe814de7c25be00f68dc5e6abdab9f15faa795adac5762f5ba77676ffb4a` |
-| `powershell-lsp-1.32.0.tar.gz` | 2,668,407 | `sha256:1972d7a2867544dc782d87dabaec5d8d196072d17e853a9688da41e6271a7ba0` |
-| `powershell-lsp-airgap-1.32.0.zip` | 34,573,424 | `sha256:3f9a76e311010ed9622bfd5305812f7d745586e83dc346d844f8786f034db101` |
-| `powershell-lsp-evidence-1.32.0.zip` | 64,962 | `sha256:9b38de54e8245888ffbdd3a2736c1c18e6f8814d1f9f19f48e1bfc385e85de92` |
+| `powershell-lsp-1.33.0.cdx.json` | 2,518 | `sha256:e9430cf17238a2b0e252b7e6fae88d9b14d57c1592cf221b3f1221776ef5be7d` |
+| `powershell-lsp-1.33.0.tar.gz` | 2,794,693 | `sha256:1c92e367c454df171e1ff40e425a850e93ee4f39a449a3cdddcc137af382b24e` |
+| `powershell-lsp-airgap-1.33.0.zip` | 34,573,424 | `sha256:3d46686d7d3ae3d2332691aa393c7fcdcf77695d2919fc88f37ae6488a58ea3d` |
 
-**Two new asset classes ship at this release**, and both are substantive rather than packaging
-churn: the **airgap bundle** (R2-15's deliverable -- the offline bootstrap path) and the **evidence
-bundle** (the freeze measurements and gate outputs, which is what makes the release's quantitative
-claims checkable by a reader).
+**THREE assets, not four -- the asset SET changed and this is a real difference, not a listing
+slip.** v1.32.0 shipped a fourth asset, `powershell-lsp-evidence-1.32.0.zip` (64,962 bytes). There
+is **no `powershell-lsp-evidence-1.33.0.zip`**. The v1.33.0 evidence is not missing; it lives
+**in-repo** at `evidence/v1.33.0/` (landed by PR #196, merge `6a6a371`, which is itself post-tag).
+A reader looking for this release's freeze measurements should look in the repository, not in the
+release assets.
+
+**The airgap bundle is byte-for-byte the same SIZE as v1.32.0's (34,573,424) but a DIFFERENT
+digest.** That is consistent rather than surprising -- both pins are unchanged (PSES `v4.6.0`,
+PSScriptAnalyzer `1.25.0`, re-read at the tag), so the payload is the same content while the
+archive's own manifest and metadata carry the new version. Recorded because equal size invites the
+inference that the bytes are identical, and they are not: **size is not identity.**
 
 **The digest-location fact is re-derived and still holds:** the digests live in the GitHub release
 API asset `digest` field, and the release **body carries no asset-digest listing**.
 
-> A naive re-check of the body for `sha256` / `digest` / any 64-hex run returns **5 hits at this
-> release where the previous derivation found zero** -- and every one of them is a **false
-> positive**. They are prose about the new `orgPolicy` `<policy>.sha256` integrity-pinning feature,
-> plus one example hash inside that prose. None is an asset digest. Recorded because the naive
-> count *looks* like the finding changed and it did not: a needle that matches a feature's
-> documentation cannot distinguish it from the feature's output.
->
-> **The digest confirmation pass was NOT re-run at this derivation.** The 2026-08-12 pass
-> downloaded both v1.31.0 assets and re-hashed them; nothing equivalent was done for the four
-> v1.32.0 assets here. The digests above are what the API reports, not what this dispatch verified
-> by re-hashing, and they are recorded as the former.
+> **One asset WAS verified by re-hashing at this derivation** -- an improvement on the previous
+> pass, which recorded that it re-hashed nothing. `powershell-lsp-1.33.0.cdx.json` was downloaded
+> and re-hashed with `Get-FileHash -Algorithm SHA256`, returning
+> `e9430cf17238a2b0e252b7e6fae88d9b14d57c1592cf221b3f1221776ef5be7d` -- equal to the digest the
+> API reports, so that asset is bound at both ends. **The other two were NOT re-hashed** (the
+> airgap bundle is 34 MB and the tarball 2.7 MB); their digests above are what the API reports,
+> not what this dispatch verified, and they are recorded as the former.
 
 ## 5. Capability maturity assessment
 
@@ -266,6 +300,31 @@ number,title,state,stateReason,createdAt,updatedAt,closedAt,comments,labels`.
 "last activity" timestamp in the table is the maintainer's own edit or comment, not an upstream
 reply. The most recent activity of any kind across all four was 2026-07-06 -- **37 days before this
 derivation**.
+
+### Write-time re-check, 2026-09-05 (dispatch 000276) -- the successor re-derivation
+
+**Every tracked issue re-queried live at 2026-09-05T06:00:17Z** with
+`gh issue view <n> --repo <r> --json state,title,labels,updatedAt,closedAt,stateReason`. **No
+STATE changed since the 2026-08-21 re-check.** Three non-state facts did move, and they are
+recorded here rather than folded silently into the block below.
+
+| Issue | State | Last updated | Comments | What moved since 2026-08-21 |
+|---|---|---|---|---|
+| `anthropics/claude-code#86936` | **OPEN** | 2026-08-18T18:12:08Z | 2 | **Its LABEL SET moved.** Now `bug`, `has repro`, `area:lsp`, `area:plugins`, **`reproduced`** -- and **`platform:windows` is GONE**. Mike's 2026-08-18 reply asked for exactly that once `bcherny` reproduced it on Linux, and it has happened. Every other tracked claude-code issue still carries `platform:windows`; this one alone does not |
+| `anthropics/claude-code#73961` | **CLOSED / COMPLETED** | 2026-08-13T16:08:43Z | 1 | State unchanged, but `docs/upstream/claude-code-lsp-registration.md` still described it as **"(open)"** until this dispatch corrected it. The 2026-08-21 pass caught `#66987`, which closed the same day, and missed this one |
+| `anthropics/claude-code#66987` | **CLOSED / COMPLETED** | 2026-08-13T16:09:48Z | 2 | Re-derived unchanged |
+| `anthropics/claude-code#74289` | **OPEN** | **2026-08-28T14:02:04Z** | 2 | Last-updated advanced from 2026-08-13T18:32:37Z and the issue acquired a **`stale`** label, with the comment count unchanged. Automated staleness marking, not upstream engagement |
+| `anthropics/claude-code#86551` | **OPEN** | **2026-08-28T00:55:40Z** | 0 | Last-updated advanced from 2026-08-13T23:54:28Z and the issue acquired a **`stale`** label, still with **zero** comments. Same reading: a bot's clock, not a verdict |
+| `anthropics/claude-plugins-official#1359` | **OPEN** | 2026-08-13T16:10:59Z | -- | Re-derived unchanged; carries no labels |
+
+**Both un-gate conditions are NOT MET, and both are recorded rather than acted on.** The shipped
+`nativeServe` transport suspension lifts on `#86936` (`Get-ServeTransportSuspension`,
+`scripts/lib/lsp-common.ps1`), which is OPEN. The queued item gated on
+`claude-plugins-official#1359` stays queued, which is OPEN. Correcting a status line is not lifting
+a suspension.
+
+**A `stale` label is not a state change and must not be read as one.** Two issues acquired one in
+this window while their comment counts stood still. Nothing upstream engaged; a timer expired.
 
 ### Write-time re-check, 2026-08-21 (dispatch 000269) -- the successor re-derivation
 
