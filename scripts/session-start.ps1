@@ -69,8 +69,8 @@ $ReferenceSurfacing = ConvertTo-ReferenceSurfacingMode (Get-PluginOption 'refere
 $logDir = Get-LogDir
 $sessionDir = Get-SessionDir
 try {
-    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-    New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null
+    New-ContainedDirectory -Path $logDir
+    New-ContainedDirectory -Path $sessionDir
 } catch { }
 $startLog = Join-Path $logDir 'session-start.log'
 function Write-SLog([string]$m) {

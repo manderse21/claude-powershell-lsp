@@ -30,7 +30,7 @@ if (-not (Test-Path -LiteralPath $startScript)) {
 $logDir = $env:CLAUDE_PLUGIN_DATA
 if ([string]::IsNullOrWhiteSpace($logDir)) { $logDir = $env:TEMP }
 $logDir = Join-Path $logDir 'logs'
-New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+New-ContainedDirectory -Path $logDir
 $logPath = Join-Path $logDir 'pses-lsp.log'
 $sessionDetails = Join-Path $logDir 'pses-session.json'
 

@@ -1081,7 +1081,7 @@ function Write-StatsLine {
     )
     try {
         $dir = Get-LogDir
-        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+        if (-not (Test-Path -LiteralPath $dir)) { New-ContainedDirectory -Path $dir }
         $statsFile = Join-Path $dir 'stats.jsonl'
         # Rotate BEFORE appending when the live file has reached the cap: move it to
         # .1 (overwriting any prior .1) and start a fresh live file. Single rollover.
@@ -1096,7 +1096,12 @@ function Write-StatsLine {
         # to \uXXXX, but pwsh 7 emits it literally -- so UTF-8 keeps a non-ASCII path
         # intact across hosts; this is a data file, not a parsed .ps1.)
         $enc = New-Object System.Text.UTF8Encoding($false)
+        # Contain on the absent->present transition only (000277 leg C): the first write
+        # creates the file, so that is the one call that has to set 0600. Every later
+        # append finds it present and never reaches chmod, so the per-edit path is unchanged.
+        $bornHere = -not (Test-Path -LiteralPath $statsFile)
         [System.IO.File]::AppendAllText($statsFile, ($line + "`n"), $enc)
+        if ($bornHere) { [void](Set-ContainedFileMode -Path $statsFile) }
     } catch { }
 }
 
@@ -1350,7 +1355,7 @@ function Add-DiagnosticCaptureEntries {
         if ([string]::IsNullOrWhiteSpace($logPath)) { return }
         $dir = Split-Path -Parent $logPath
         if (-not [string]::IsNullOrWhiteSpace($dir) -and -not (Test-Path -LiteralPath $dir)) {
-            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            New-ContainedDirectory -Path $dir
         }
         # Read the post-edit file ONCE for snippets; tolerate any read failure (snippet '').
         $lines = $null
@@ -1382,7 +1387,10 @@ function Add-DiagnosticCaptureEntries {
             [void]$sb.Append("`n")
         }
         $enc = New-Object System.Text.UTF8Encoding($false)
+        # Contain on the absent->present transition only -- see Write-StatsLine (000277 leg C).
+        $bornHere = -not (Test-Path -LiteralPath $logPath)
         [System.IO.File]::AppendAllText($logPath, $sb.ToString(), $enc)
+        if ($bornHere) { [void](Set-ContainedFileMode -Path $logPath) }
     } catch { }
 }
 
@@ -1551,7 +1559,7 @@ function Add-LifecycleLedgerEntries {
         if ([string]::IsNullOrWhiteSpace($logPath)) { return $false }
         $dir = Split-Path -Parent $logPath
         if (-not [string]::IsNullOrWhiteSpace($dir) -and -not (Test-Path -LiteralPath $dir)) {
-            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            New-ContainedDirectory -Path $dir
         }
         $sb = New-Object System.Text.StringBuilder
         foreach ($r in $recs) {
@@ -1559,7 +1567,10 @@ function Add-LifecycleLedgerEntries {
             [void]$sb.Append("`n")
         }
         $enc = New-Object System.Text.UTF8Encoding($false)
+        # Contain on the absent->present transition only -- see Write-StatsLine (000277 leg C).
+        $bornHere = -not (Test-Path -LiteralPath $logPath)
         [System.IO.File]::AppendAllText($logPath, $sb.ToString(), $enc)
+        if ($bornHere) { [void](Set-ContainedFileMode -Path $logPath) }
         return $true
     } catch { return $false }
 }
@@ -1573,6 +1584,100 @@ function Test-OnWindows {
     # automatic variable and is always Windows. StrictMode-safe existence check.
     if (Test-Path 'Variable:\IsWindows') { return [bool]$IsWindows }
     return $true
+}
+# --- POSIX containment (dispatch 000277 leg C, ruling R4) ------------------
+# THE FINDING THIS CLOSES. THREAT-MODEL T5.1 and T6.2 carried their POSIX arms as
+# *unmeasured* until dispatch 000276 leg F measured them on the two POSIX CI legs
+# (run 33949910984). Both arms came back the same on ubuntu-pwsh and macos-pwsh:
+# the data-root temp fallback and the daemon pipe's Unix-domain-socket endpoint are
+# both created 755 -- 'exposed-beyond-user -- OTHER has 5'. On Linux the containing
+# directory is /tmp at 1777, so nothing above them contains them either; on macOS the
+# per-user temp directory is 700, so that platform contains them by accident of where
+# its temp lives, not by anything this plugin does.
+#
+# THE FIX. Every filesystem object the PLUGIN creates on a POSIX host is made
+# owner-only AT CREATION: 0700 for directories, 0600 for files the plugin writes.
+# That is a default, not a policy knob -- no userConfig key, no status token, no
+# CONTRACT.md line moves.
+#
+# WINDOWS IS BYTE-IDENTICAL. Test-OnWindows short-circuits before any mode work and
+# the create call is the same `New-Item -ItemType Directory -Force` it always was, so
+# the Windows DACL path that 000269 settled for T5.1 is untouched.
+#
+# WHAT IS DELIBERATELY NOT TOUCHED. Only segments THIS call creates are contained.
+# An ancestor that already exists belongs to the user or to the platform -- /tmp, the
+# macOS per-user temp, a data root the user pointed CLAUDE_PLUGIN_DATA at -- and
+# re-moding it would be this plugin reaching outside its own objects. That restraint
+# is why the Linux /tmp 1777 reading stays in THREAT-MODEL after this fix: it is not
+# ours to close.
+#
+# FAIL-SAFE. Containment never fails a create. If chmod is missing or refuses, the
+# directory or file still exists and the caller proceeds; the return value says what
+# happened for the tests that assert on it.
+
+function Set-OwnerOnlyMode {
+    # Contain ONE existing filesystem object to owner-only. Returns $true when the mode
+    # was applied, $false on Windows (by contract) and on any POSIX failure.
+    #
+    # Kind is explicit rather than probed because the caller always knows which it made,
+    # and a probe would be one more thing to get wrong on a socket -- which is neither a
+    # plain file nor a directory, and takes the File mode (0600: connect(2) on a unix
+    # socket needs write, never execute).
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [ValidateSet('Directory', 'File')][string]$Kind = 'Directory'
+    )
+    if (Test-OnWindows) { return $false }
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    $octal = '600'
+    if ($Kind -eq 'Directory') { $octal = '700' }
+    try {
+        # chmod rather than [System.IO.File]::SetUnixFileMode: the managed API landed in
+        # .NET 7 (pwsh 7.3), and this library still has to run on whatever pwsh the user
+        # has. chmod is on every POSIX host, and this path runs once per object created,
+        # not per edit, so the process spawn is not on any hot path.
+        & chmod $octal -- $Path 2>$null | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    }
+    catch { return $false }
+}
+
+function New-ContainedDirectory {
+    # Create a directory the way `New-Item -ItemType Directory -Force` does, then contain
+    # every segment THIS call had to create to 0700 on a POSIX host.
+    #
+    # The two-phase shape (enumerate the missing ancestors FIRST, create, then contain
+    # exactly those) is the whole point. `-Force` silently creates missing ancestors at
+    # the ambient umask, so containing only the leaf would leave a 755 parent that this
+    # plugin, not the platform, had just made. Enumerating first is also what keeps the
+    # restraint above honest: a segment that already existed is never in the list, so it
+    # is never re-moded.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return }
+    $created = New-Object System.Collections.Generic.List[string]
+    if (-not (Test-OnWindows)) {
+        $walk = $Path
+        while (-not [string]::IsNullOrWhiteSpace($walk) -and -not (Test-Path -LiteralPath $walk)) {
+            $created.Add($walk)
+            $parent = Split-Path -Parent $walk
+            if ($parent -eq $walk) { break }
+            $walk = $parent
+        }
+    }
+    New-Item -ItemType Directory -Force -Path $Path | Out-Null
+    # Deepest-first is the order the walk produced; mode order does not matter because
+    # this process owns every one of them and is not traversing them concurrently.
+    foreach ($seg in $created) { [void](Set-OwnerOnlyMode -Path $seg -Kind 'Directory') }
+}
+
+function Set-ContainedFileMode {
+    # Contain a file the plugin has just created. Separate from Set-OwnerOnlyMode only to
+    # give the append-writers a single name to call that reads as what it is at the call
+    # site; the writers call it ONLY on the transition from absent to present, so a
+    # per-edit hot path never spawns chmod.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    return (Set-OwnerOnlyMode -Path $Path -Kind 'File')
 }
 
 function Add-ProcessArguments {
@@ -1683,10 +1788,39 @@ function New-DaemonPipeServer {
     # property the busy-vs-unreachable discriminator in Test-DaemonPipePresent depends on),
     # Byte transmission, Asynchronous (the serve loop accepts via WaitForConnectionAsync) --
     # plus CurrentUserOnly where the host offers it (T5.1, see Get-DaemonPipeOptions).
+    #
+    # POSIX CONTAINMENT (dispatch 000277 leg C). Off-Windows .NET backs this pipe with a unix
+    # domain socket file, and the 000276 measurement (run 33949910984) read that file at 755 on
+    # BOTH posix legs: CurrentUserOnly above is enforced by .NET at accept time, on the peer's
+    # credentials -- it does not narrow the socket file's mode, which lands at 0777 masked by the
+    # ambient umask (0022 on both runners). So the mode is set here, explicitly, as the second
+    # layer: 0600, because connect(2) on a unix socket needs write and never execute.
+    #
+    # THE RESIDUAL RACE, stated rather than hidden: the socket is bound by the constructor and
+    # contained on the next statement, so there is a window in which it exists at the umask
+    # default. CurrentUserOnly covers that window -- a foreign peer that connects inside it is
+    # still rejected on its credentials -- which is why this is defence in depth and not the
+    # only thing standing between the pipe and another local user.
     param([Parameter(Mandatory)][string]$PipeName)
-    return New-Object System.IO.Pipes.NamedPipeServerStream(
+    $server = New-Object System.IO.Pipes.NamedPipeServerStream(
         $PipeName, [System.IO.Pipes.PipeDirection]::InOut, 1,
         [System.IO.Pipes.PipeTransmissionMode]::Byte, (Get-DaemonPipeOptions))
+    if (-not (Test-OnWindows)) {
+        try { [void](Set-OwnerOnlyMode -Path (Get-DaemonPipeSocketPath -PipeName $PipeName) -Kind 'File') } catch { }
+    }
+    return $server
+}
+
+function Get-DaemonPipeSocketPath {
+    # The filesystem path .NET backs a named pipe with OFF-WINDOWS: <temp>/CoreFxPipe_<name>.
+    #
+    # It exists so the three readers of that path -- the presence probe, the containment above,
+    # and the measurement harness -- cannot drift apart. On Windows a named pipe has no such
+    # path (NPFS is kernel-managed), so this returns '' there rather than a lie shaped like a
+    # path; every caller is already inside a non-Windows branch.
+    param([Parameter(Mandatory)][string]$PipeName)
+    if (Test-OnWindows) { return '' }
+    return (Join-Path ([System.IO.Path]::GetTempPath()) ('CoreFxPipe_' + $PipeName))
 }
 
 function Reset-PipeServerConnection {
@@ -1804,7 +1938,7 @@ function Test-DaemonPipePresent {
         # on ubuntu and macos, while both Windows legs passed. The first cut of this arm was
         # written by ANALOGY from the Windows measurement above and never measured off-Windows;
         # the two behave differently, so this arm now carries its own evidence.
-        $sockPath = Join-Path ([System.IO.Path]::GetTempPath()) ('CoreFxPipe_' + $PipeName)
+        $sockPath = Get-DaemonPipeSocketPath -PipeName $PipeName
         if (-not (Test-Path -LiteralPath $sockPath)) { return $false }
         # The path exists; the remaining question is whether anyone is LISTENING on it. A
         # connect to a unix domain socket with no listener is refused by the kernel
@@ -1868,7 +2002,7 @@ function Start-PsesDaemonDetached {
     if ([string]::IsNullOrWhiteSpace($scriptsDir)) { $scriptsDir = Split-Path -Parent $PSScriptRoot }
     $daemon = Join-Path $scriptsDir 'pses-daemon.ps1'
     $logDir = Get-LogDir
-    try { New-Item -ItemType Directory -Force -Path $logDir | Out-Null } catch { }
+    try { New-ContainedDirectory -Path $logDir } catch { }
     # Identical arg shape to the pre-000030 inline session-start launch: DataRoot is passed
     # explicitly (a detached launch may not inherit the env var), rule lists / settings path
     # only when non-empty (an empty positional element would misalign the daemon binding).

@@ -63,7 +63,7 @@ $FormatMode = ConvertTo-FormatOnEditMode (Get-PluginOption 'formatOnEdit' 'off')
 $script:RelaunchCooldownMs = 30000
 
 $logDir = Get-LogDir
-try { New-Item -ItemType Directory -Force -Path $logDir | Out-Null } catch { }
+try { New-ContainedDirectory -Path $logDir } catch { }
 $clientLog = Join-Path $logDir 'lsp-client.log'
 function Write-CLog([string]$m) {
     try { ('[' + (Get-Date -Format 'o') + '] ' + $m) | Out-File -FilePath $clientLog -Append -Encoding ascii } catch { }
@@ -219,7 +219,7 @@ function Start-DaemonRelaunchIfRecoverable {
     # the other backstops honestly (the daemon's NamedPipeServerStream max=1 also makes a racing
     # second daemon throw and die, so at most one ever serves). The stamp only costs a banner.
     try {
-        New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null
+        New-ContainedDirectory -Path $sessionDir
         Set-Content -LiteralPath $stamp -Value ([string]$PID) -Encoding ascii -Force
     } catch { }
     $result.Attempted = $true
