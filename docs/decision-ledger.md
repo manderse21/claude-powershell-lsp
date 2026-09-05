@@ -3918,3 +3918,165 @@ the map is present at the target commit and that its internal date stamp is not 
 version's CHANGELOG entry date. A stale map is a STOP. That gate is **not** the roadmap-currency
 gate 000230 retired -- it asks nothing of ROADMAP.md and compares two dates, one of which the
 runbook itself writes two steps earlier.
+
+## Dispatch 000276 -- the four rulings of 2026-08-22: RULED by Mike 2026-08-22 (SC chat), RECORDED LATE on 2026-09-05
+
+**This entry is dated to the day the rulings were made, 2026-08-22, and was written on 2026-09-05
+by dispatch 000276.** The gap is stated rather than hidden: the dispatch chartered to record them
+(000272) was parked until the next release tag existed, and was abandoned at the acceptance of
+000276, which absorbed it. Nothing here is new; the rulings were in force from the day they were
+made.
+
+### 1. The verbatim `RULE_CANDIDATES.md` PK export is DECLINED-FINAL, replaced by a bounded synopsis
+
+Dispatch 000264's chartered filtered export is declined for good, not deferred. The reason is
+arithmetic and was measured before it was ruled: the export came to 280,947 bytes against 270,554
+bytes of live headroom, so it did not fit and could not be made to fit without moving a budget the
+same ruling holds still. **The replacement is a bounded synopsis** -- counts, family titles and
+promotion-eligible families, with the full evidence one paste away -- regenerated only on a
+promotion event rather than on every observation. A synopsis that moved on every sighting would
+just be a smaller copy of the ledger.
+
+That synopsis now exists, authored by this dispatch at
+`projects/powershell-lsp/RULE_CANDIDATES_SYNOPSIS.md` in the strategic-dispatch hub: 7,730 bytes
+against its 10,240-byte cap.
+
+### 2. The 000270 remainder is closed
+
+Abandoned dispatch 000270 had five legs. Legs B, C and D were found already satisfied -- by
+dispatch 000269 and by hub commit `0330991f9` (the SC session-ledger record of the v1.32.0 arc).
+**`0330991f9` is a commit in the strategic-dispatch hub, not in this repository**, which is worth
+stating in a plugin-repo ledger so a reader does not go looking for it here. Legs A and E were
+closed by dispatch 000276: leg A as a read-only gist byte-anchor (PASS -- see the 2026-09-05 entry
+below) and leg E as a re-check of `ROADMAP.md` against 000270's own acceptance criteria.
+
+### 3. The v1.33.0 cut was security-motivated, and its version was DERIVED rather than chosen
+
+The accumulated `[Unreleased]` band was cut as a release because it carried a shipped-but-unreleased
+security fix -- the T5.1 pipe-DACL restriction, which the cut promoted into its own `### Security`
+section with its exposure scope, affected range, and the still-unmeasured POSIX arm named. The
+version was **derived from the band's own SemVer self-classifications**, not selected: MINOR
+entries present forced `1.32.0 -> 1.33.0`. This is the same discipline the v1.32.0 cut used, and
+the point of it is that nobody gets to pick a number that flatters the release.
+
+### 4. The F2 currency-gate source-repo arm is adopted in principle, and handed off
+
+Extending the F2 currency gate to cover the source-repo merge arm -- so a hub dispatch cannot be
+promoted to `verified` on the strength of a hub merge alone when its deliverable lives in a sibling
+repository -- is **adopted in principle**. It is explicitly **not** this project's to build: it is
+hub machinery, and it was handed to the strategic-dispatch program stream to charter. Recorded here
+because the ruling was made in this project's sitting, not because the work belongs to it.
+
+---
+
+## Dispatch 000276 -- the overnight omnibus of 2026-09-05: rulings Q1-Q6 RATIFIED by acceptance, and the T3 post-release miss recorded as fact
+
+**Ruled by Mike on 2026-09-05 via SC chat and ratified by his acceptance of the 000276 inbox.**
+This entry records what was ruled and what the night found. **It rules nothing itself**, and in one
+place below it deliberately declines to.
+
+### The six rulings, as ratified
+
+**Q1 -- a two-dispatch night.** This omnibus absorbs the parked dispatch 000272 and executes its
+legs by reference from the abandoned inbox (the 000270 precedent). Dispatch 000275 runs after it,
+last, because its measurement is the stall-prone leg and needs the quiet host an overnight run
+provides.
+
+**Q2 -- plugin PR #196 merges before launch.** The evidence bundle carries the T3 FAIL verbatim;
+holding the PR served the reading, and the reading had landed. Confirmed at pre-flight: #196 is
+**MERGED**, 2026-09-05T05:28:08Z, merge commit `6a6a371`.
+
+**Q3 -- the seven gap-fill PK companions are declared and funded by a recency-floor raise** at a
+ledger-distilled arc boundary, with the size budget held still. **This is the one ruling the night
+could not execute, and the reason is recorded under "What the night found" below.**
+
+**Q4 -- the T5.1 / T6.2 POSIX arms are measured from CI, record-only.** A permissive value is a
+finding for the ledger and for Mike, never a fix applied in the same pass.
+
+**Q5 -- the daemon-initializing flake gets instrumentation steps 1 and 2 only.** Step 3, the retry
+or any behaviour change, is **not** authorized.
+
+**Q6 -- the charter was minted against a 2026-08-23 snapshot** and says so, which is why it opens
+with a pre-flight leg whose whole job is to tell the runner what the charter could not know.
+
+### The T3 post-release miss, recorded as a FACT and NOT ruled on
+
+**v1.33.0 shipped missing an adopted target.** T3 is one of the six v1 SLOs ratified by Mike on
+2026-08-21 (G2), and `SLO-BASELINES.md` section 9 states what adoption changes: these stop being
+descriptions of a build and become a regression bar, so a release that misses one is missing an
+adopted target and that is a release-blocking fact to be surfaced.
+
+Measured at C = `6ab2d24` by dispatch 000273 and confirmed on a **compliant quiet host** -- the
+quiescence gate passed at 22% median CPU, 41% p95, zero agent or node processes, 352-376 total
+processes over a 7.5-minute span -- **1 of 15 sessions returned two NOT-checked edits** against a
+target of at most one. **The cold-start clause HOLDS**: the extra edit is still a cold-start edit,
+so what is missed is the count clause alone. The freeze's first table read 6 of 15, but it ran at
+84-97% CPU against 619-677 processes; the quiet re-run is the compliant measurement and 1 of 15 is
+the figure of record.
+
+Section 9 ratified T3 with **spread zero**, and says so explicitly: "a T3 or T4 miss is therefore a
+**behavioural regression** and should be read as one, not as measurement noise." That is what makes
+this a decision rather than a footnote.
+
+**The ruling is NOT made here.** Whether this is documented-and-accepted or calls for a corrective
+release is Mike's, and it waits on dispatch 000275's survey, which characterizes the marginal miss
+and assesses the four release-window runtime changes as candidate contributors. 000275 is
+findings-only by charter and changes no target. The row is listed under PENDING-MIKE in
+`docs/roadmap-ii/PROGRAM.md`.
+
+### What the night found, recorded because it changes what was ruled
+
+**Q3 could not be executed, and the obstacle is a gate rather than a budget.** The floor raise it
+depends on requires two things at once: every dispatch id below the new floor distilled in an SC
+session-ledger entry a planner reads, and the new floor sitting at an arc boundary. Checked id by
+id against the ledger, **three ids inside the range an existing arc entry declares it covers
+(000233-000243) are undistilled: 000238, 000239 and 000242.** The entry's title asserts a coverage
+its body does not deliver. So `N = 000244` -- the charter's own named fallback -- fails the
+distillation half, while `N = 000238` would pass it but cuts mid-arc, which the PK config's own
+stated principle forbids. **No admissible floor exists above the live value.**
+
+Measured with the collector's own arithmetic, the budget picture is independently worse: **at the
+live floor the bundle is already 4,650,165 bytes against a 4,500,000-byte budget -- over by
+150,165 with nothing added, so the next PK refresh halts today.** The seven companions plus the
+synopsis fit only at floor 000244 or higher, which is exactly the floor the distillation gate
+refuses. Gate and budget point in opposite directions and **the gate wins**: a floor that strands
+undistilled work breaks references, which is the failure the gate exists to prevent.
+
+Per the charter's own pre-authorization the declarations and the raise are recorded as a diff for
+Mike rather than committed, the budget was not raised, and no declared companion was dropped. The
+distillation of 000238, 000239 and 000242 is the work that would unblock it, and it is not
+improvised here.
+
+**The gist byte-anchor: PASS.** The published white-paper gist and `docs/whitepaper.md` at the tag
+are byte-identical -- both 42,665 bytes, SHA-256
+`5959b1f8301c9c993d45d768511a6340d233b02791e8827dfe0a6d73b3d4752a`, and the gist's own file blob
+SHA (`7e7e7b4d`) equals git's blob SHA for the repository file, which is an independent agreement
+rather than a second reading of the same number. No gist write was made or needed.
+
+**Two record corrections found by re-deriving rather than reading.** `VERIFICATION_SURFACE.md` had
+recorded the test surface growing "19 to 23" files across v1.31.1 to v1.31.2; re-counted with the
+same command it is **18 to 22** (its four named new files are correct, so the totals were a
+transcription slip). And `docs/upstream/claude-code-lsp-registration.md` still described
+`anthropics/claude-code#73961` as **"(open)"**; it is CLOSED / COMPLETED and has been since
+2026-08-13T16:08:43Z -- the same day `#66987` closed, which is why the pass that caught the one
+missed the other.
+
+### The findings-only outputs this dispatch produced
+
+Each of these assembles evidence and recommends; none of them decides, and none is a charter.
+
+- **`docs/roadmap-ii/DOCTOR-SURFACE-DOCKET.md`** -- a census of what the doctor, status and scan
+  surfaces prove today against the North Star's "the user can prove it is working" bar in headless,
+  SSH, CI and container environments, with the gaps, at most three costed candidate slices, and one
+  recommendation. **No build was executed.**
+- **`projects/powershell-lsp/RULE_CANDIDATES_SYNOPSIS.md`** (hub) -- the bounded synopsis ruling 1
+  of 2026-08-22 called for.
+- **The rule-candidate sweep** found **zero** unbanked observations hub-wide: the mechanical ledger
+  writer is current through 000274. Second-observation status was re-derived for four families as
+  findings only, with nothing promoted.
+
+### External actions: none, as always
+
+No gist write, no catalog or awesome-list submission, no upstream comment or reply, no post of any
+kind. The upstream re-derivation this dispatch performed is entirely read-only `gh` queries. The
+external-publishing gate is Mike's and this dispatch did not approach it.
