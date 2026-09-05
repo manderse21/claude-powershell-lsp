@@ -81,8 +81,13 @@ Queued, not started.
   chartered work.
 - **Agent-facing semantic exposure.** Making more of what PSES already computes reachable by an
   agent, on the surfaces this project already ships.
-- **The measured-baseline follow-through.** Candidate service-level targets have baselines; the
-  targets themselves are not ratified.
+- **The measured-baseline follow-through.** The six candidate service-level targets are no longer
+  candidates: they were **ratified as the project's v1 SLOs on 2026-08-21** and are in force as a
+  regression bar, so a release that misses one is missing an adopted target. This bullet previously
+  said the targets were not ratified; that was true when it was written and is recorded here rather
+  than quietly dropped. What remains open is the part ratification deliberately did **not** close --
+  no target is offered for cold start to first-analysis-ready, because no basis for one exists that
+  is not simply the measured value rounded back into a promise.
 
 ## Gated and paced
 
