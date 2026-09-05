@@ -214,8 +214,10 @@ Describe 'Integration: reference surfacing through the REAL warm daemon (dispatc
             try { [void](Stop-IntegrationDaemon -SessionId $Scn.Sid -DataRoot $script:RsData) } catch { }
             try { if ($null -ne $Scn.Proc -and -not $Scn.Proc.HasExited) { $Scn.Proc.Kill($true) } } catch { }
         }
-        # Request diagnostics for $File, retrying until a CLEAN settled pass (no 'status'); returns the
-        # response object so a test can inspect the referenceFindings field (present or absent). $null on timeout.
+        # Request diagnostics for $File, retrying until a CLEAN settled pass (no 'status' token)
+        # -- so a silent case is proven silent on a REAL analysis, never trivially on an
+        # unsettled/incomplete pass. Returns the response object so a test can inspect the
+        # referenceFindings field (present or absent). $null on timeout.
         function Get-RsResponse { param([string]$Sid, [string]$File)
             $pipeName = 'powershell-lsp-' + $Sid
             $sw = [System.Diagnostics.Stopwatch]::StartNew()

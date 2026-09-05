@@ -102,6 +102,29 @@ jobs:
           -Schema ./tests/sarif/sarif-2.1.0.json
           -RequireHost 5
 
+      # RECORD-ONLY POSIX measurement (dispatch 000276 leg F, Mike's ruling Q4 of 2026-09-05).
+      # THREAT-MODEL.md carries T5.1 (daemon pipe permissions) and T6.2 (data-root temp
+      # fallback permissions) as measured on WINDOWS ONLY, and says in its own words that the
+      # POSIX arm is "a derivation from platform convention, not a measurement". This step takes
+      # the observation on the two POSIX legs so the rows can carry a measured value.
+      #
+      # It is NOT a gate. The script never fails on a measured value -- a permissive mode is a
+      # finding for the record and for the maintainer, not a red build. It fails ONLY when the
+      # JSON was not written or does not parse, which is the same vacuity discipline as the
+      # -RequireHost guard above: green must mean the measurement happened.
+      #
+      # Additive: no runtime script changed, no new required gate, and the four leg identities
+      # are untouched.
+      - name: Measure POSIX pipe and data-root surface (record-only)
+        if: always() && (matrix.label == 'ubuntu-pwsh' || matrix.label == 'macos-pwsh')
+        shell: pwsh
+        env:
+          PSLS_TEST_DATA_DIR: ${{ github.workspace }}/psls-test-data
+          POWERSHELL_LSP_PSSA_CACHE: ${{ env.PSSA_CACHE_DIR }}
+        run: >-
+          ./tests/measure-posix-surface.ps1
+          -OutputPath "${{ github.workspace }}/psls-test-data/posix-surface/posix-surface-${{ matrix.label }}.json"
+
       - name: Upload emitted SARIF artifacts
         if: always() && matrix.label == 'windows-powershell'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -126,6 +149,7 @@ jobs:
           path: |
             psls-test-data/logs/**
             psls-test-data/session/**
+            psls-test-data/posix-surface/**
           if-no-files-found: ignore
 
       # The performance benchmark harness (dispatch 000040) emits its measured

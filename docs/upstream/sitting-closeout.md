@@ -1,6 +1,13 @@
 # Upstream sitting - closeout record
 
-**Status re-derived: 2026-08-21 via gh; live state wins over this file.**
+**Status re-derived: 2026-09-05 via gh (dispatch 000276); live state wins over this file.**
+Every row in the table below was re-queried at 2026-09-05T06:00:17Z and **none moved** since the
+2026-08-21 derivation -- re-checked, not carried. One correction landed ELSEWHERE in this pass and
+is noted here so the directory stays coherent: `claude-code#73961` is **CLOSED / COMPLETED**
+(2026-08-13T16:08:43Z), which `claude-code-lsp-registration.md` still described as open until
+dispatch 000276 corrected it. **UN-GATE CONDITIONS, both NOT MET:** `#86936` is OPEN, so the
+`nativeServe` transport suspension stands; `claude-plugins-official#1359` is OPEN (no labels, last
+updated 2026-08-13T16:10:59Z), so the queued item it gates stays queued. Recorded, not acted on.
 
 This page was a point-in-time snapshot taken 2026-06-10 08:56:52 -04:00, and **every row it
 recorded has since moved.** The live table is first; the original snapshot is retained below it
