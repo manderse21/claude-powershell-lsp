@@ -31,6 +31,17 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.33.1] - 2026-09-05
+PATCH: **every filesystem object the plugin creates on Linux and macOS is now created
+owner-only.** The data root, its temp fallback, the daemon's unix-socket endpoint and the
+files the shared JSONL writers create all landed at `755` under the ambient umask -- readable
+by every other local account on the host, and on Linux contained by nothing above them either.
+They are now created at `0700` (directories) and `0600` (files) at creation time, in one shared
+helper. **Windows is byte-identical**: the mode work short-circuits before it starts, the
+creation call is the one that always ran, and the suite asserts the ACL is unchanged. This is a
+default, not a knob -- **no `userConfig` key is added, removed, renamed or re-defaulted, no
+status token changed, and no line of `CONTRACT.md` moved**, which is why this cut is a PATCH.
+
 ### Security
 
 **Everything the plugin creates on Linux and macOS was world-readable, and is not any more**
