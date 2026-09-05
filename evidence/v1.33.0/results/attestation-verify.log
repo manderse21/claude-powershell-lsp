@@ -1,0 +1,49 @@
+
+================ powershell-lsp-1.33.0.cdx.json ================
+  sha256            : e9430cf17238a2b0e252b7e6fae88d9b14d57c1592cf221b3f1221776ef5be7d
+  bytes             : 2518
+  Release API digest: sha256:e9430cf17238a2b0e252b7e6fae88d9b14d57c1592cf221b3f1221776ef5be7d  match=True
+  verify exit       : 0   attestations returned: 1
+     <- https://github.com/manderse21/claude-powershell-lsp/actions/runs/32588047316/attempts/1
+  BOUND verify exit : 0   returned: 1   binds-to-32588047316=True
+     -> https://github.com/manderse21/claude-powershell-lsp/actions/runs/32588047316/attempts/1
+  subject covers this digest exactly once: True   (statement carries 3 subjects)
+  VERDICT           : PASS
+
+================ powershell-lsp-1.33.0.tar.gz ================
+  sha256            : 1c92e367c454df171e1ff40e425a850e93ee4f39a449a3cdddcc137af382b24e
+  bytes             : 2794693
+  Release API digest: sha256:1c92e367c454df171e1ff40e425a850e93ee4f39a449a3cdddcc137af382b24e  match=True
+  verify exit       : 0   attestations returned: 2
+     <- https://github.com/manderse21/claude-powershell-lsp/actions/runs/32588047316/attempts/1
+     <- https://github.com/manderse21/claude-powershell-lsp/actions/runs/32585972425/attempts/1
+  NOTE: the ORPHAN run 32585972425 also attests this exact digest -- exit 0 alone does NOT bind to the publishing run.
+  BOUND verify exit : 0   returned: 1   binds-to-32588047316=True
+     -> https://github.com/manderse21/claude-powershell-lsp/actions/runs/32588047316/attempts/1
+  subject covers this digest exactly once: True   (statement carries 3 subjects)
+  VERDICT           : PASS
+
+================ powershell-lsp-airgap-1.33.0.zip ================
+  sha256            : 3d46686d7d3ae3d2332691aa393c7fcdcf77695d2919fc88f37ae6488a58ea3d
+  bytes             : 34573424
+  Release API digest: sha256:3d46686d7d3ae3d2332691aa393c7fcdcf77695d2919fc88f37ae6488a58ea3d  match=True
+  verify exit       : 0   attestations returned: 1
+     <- https://github.com/manderse21/claude-powershell-lsp/actions/runs/32588047316/attempts/1
+  BOUND verify exit : 0   returned: 1   binds-to-32588047316=True
+     -> https://github.com/manderse21/claude-powershell-lsp/actions/runs/32588047316/attempts/1
+  subject covers this digest exactly once: True   (statement carries 3 subjects)
+  VERDICT           : PASS
+
+================ RED CONTROLS ================
+  R1 wrong repo                      exit=1  -> PASS
+  R2 one bit flipped at byte 100     exit=1  -> PASS   (mutant sha256 d2e7a1ea35701582...)
+  R3 wrong signer-workflow           exit=1  -> PASS
+  R4 --source-digest = ORPHAN commit  exit=0  returned=1  -> PASS
+       https://github.com/manderse21/claude-powershell-lsp/actions/runs/32585972425/attempts/1
+
+================ SUMMARY ================
+  PASS  powershell-lsp-1.33.0.cdx.json
+  PASS  powershell-lsp-1.33.0.tar.gz
+  PASS  powershell-lsp-airgap-1.33.0.zip
+  RED controls: 4 of 4 PASS
+  GATE: PASS

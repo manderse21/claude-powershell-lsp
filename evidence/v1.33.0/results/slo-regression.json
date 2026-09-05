@@ -1,0 +1,154 @@
+{
+  "commit": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "version": "1.33.0",
+  "generated": "2026-08-22T12:07:06.8410571-04:00",
+  "note": "SLO-BASELINES.md section 9 is a FROZEN regression bar. Targets are read as constants; a FAIL is reported as measured and is not renegotiated here.",
+  "slo_table": [
+    {
+      "id": "T1",
+      "target": "timeoutMs-governed round trip (analysisMs + codeActionMs) within the shipped 5000 ms cap on >= 99% of warm edits",
+      "measured": "100% of 217 warm edits within 5000 ms; worst observed round trip 2496 ms",
+      "verdict": "PASS"
+    },
+    {
+      "id": "T2",
+      "target": "user-visible per-edit wall under 10 s (1 s aspiration, not the pass line)",
+      "measured": "worst per-edit wall 9063 ms across all warm blocks; 1 s aspiration met = False",
+      "verdict": "PASS"
+    },
+    {
+      "id": "T3",
+      "target": "at most ONE edit per session returns NOT checked, and only during cold start",
+      "measured": "max 2 per session; 6 of 15 sessions returned more than one",
+      "verdict": "FAIL"
+    },
+    {
+      "id": "T4",
+      "target": "every shipped .ps1/.psm1 settles on the edit path",
+      "measured": "p100 runtime file (263073 bytes) converged in 5 of 5 sessions, cap 15",
+      "verdict": "PASS"
+    },
+    {
+      "id": "T5",
+      "target": "daemon + PSES steady-state working set under 512 MB",
+      "measured": "median 318.3 MB, peak 326.1 MB",
+      "verdict": "PASS"
+    },
+    {
+      "id": "T6",
+      "target": "no monotonic upward per-edit latency trend; resident memory plateaus",
+      "measured": "wall Q1->Q4 -9.9%, analysisMs Q1->Q4 0%, daemon+PSES WS drift 6.3 MB over 120 edits / 506.6 s, 0 excluded",
+      "verdict": "PASS"
+    }
+  ],
+  "t3_detail": [
+    {
+      "fixture": "small",
+      "i": 1,
+      "unchecked": 1
+    },
+    {
+      "fixture": "small",
+      "i": 2,
+      "unchecked": 1
+    },
+    {
+      "fixture": "small",
+      "i": 3,
+      "unchecked": 1
+    },
+    {
+      "fixture": "small",
+      "i": 4,
+      "unchecked": 1
+    },
+    {
+      "fixture": "small",
+      "i": 5,
+      "unchecked": 1
+    },
+    {
+      "fixture": "small",
+      "i": 6,
+      "unchecked": 1
+    },
+    {
+      "fixture": "small",
+      "i": 7,
+      "unchecked": 2
+    },
+    {
+      "fixture": "small",
+      "i": 8,
+      "unchecked": 1
+    },
+    {
+      "fixture": "small",
+      "i": 9,
+      "unchecked": 2
+    },
+    {
+      "fixture": "small",
+      "i": 10,
+      "unchecked": 2
+    },
+    {
+      "fixture": "large",
+      "i": 1,
+      "unchecked": 1
+    },
+    {
+      "fixture": "large",
+      "i": 2,
+      "unchecked": 2
+    },
+    {
+      "fixture": "large",
+      "i": 3,
+      "unchecked": 1
+    },
+    {
+      "fixture": "large",
+      "i": 4,
+      "unchecked": 2
+    },
+    {
+      "fixture": "large",
+      "i": 5,
+      "unchecked": 2
+    }
+  ],
+  "load_context": [
+    {
+      "block": "m1",
+      "cpu_median_before": 84.0,
+      "cpu_median_after": 95.0,
+      "processes_before": 619
+    },
+    {
+      "block": "m2",
+      "cpu_median_before": 89.0,
+      "cpu_median_after": 86.0,
+      "processes_before": 677
+    },
+    {
+      "block": "m35",
+      "cpu_median_before": 95.0,
+      "cpu_median_after": 86.0,
+      "processes_before": 672
+    },
+    {
+      "block": "m4b",
+      "cpu_median_before": 95.0,
+      "cpu_median_after": 97.0,
+      "processes_before": 666
+    }
+  ],
+  "comparator": {
+    "note": "SLO-BASELINES section 10 names analysisMs the load-insensitive comparator, because wall clock is not comparable between runs of unequal load.",
+    "m1_analysisMs_median_at_C": 1443.0,
+    "m1_wall_median_at_C": 4518.5,
+    "m4b_analysisMs_median_at_C": 2207.0,
+    "m4b_fixture_bytes_at_C": 263073
+  }
+}

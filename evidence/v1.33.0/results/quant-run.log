@@ -1,0 +1,115 @@
+--- equality proof: pre-suite ---
+[pre-suite] tracked_at_C=483 tracked_observed=483 missing=0 differing=0 ignored_byproducts=0 unexplained_extra=0 data_inside_root=False manifest_sha256=d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9 EQUAL=True
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to 6ab2d24bf254787520ad9449c4e6c17f74ee708d
+
+================ BLOCK m1 : M1 warm per-edit latency ================
+--- equality proof: before m1 ---
+[before m1] tracked_at_C=483 tracked_observed=483 missing=0 differing=0 ignored_byproducts=0 unexplained_extra=0 data_inside_root=False manifest_sha256=d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9 EQUAL=True
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to 6ab2d24bf254787520ad9449c4e6c17f74ee708d
+M1 bring-up: hookWall=4276 pingMs=6191
+  prime 1: wall=2489 checked=False delta=1
+  prime 2: wall=2413 checked=False delta=1
+  prime 3: wall=2656 checked=False delta=1
+  prime 4: wall=5228 checked=True delta=1
+  edit 1/30: wall=5376 total=2647 analysis=1459 checked=True
+  edit 2/30: wall=4273 total=2586 analysis=1452 checked=True
+  edit 3/30: wall=4419 total=2696 analysis=1452 checked=True
+  edit 4/30: wall=4426 total=2540 analysis=1438 checked=True
+  edit 5/30: wall=4471 total=2555 analysis=1415 checked=True
+  edit 6/30: wall=3949 total=2500 analysis=1414 checked=True
+  edit 7/30: wall=3507 total=2311 analysis=1403 checked=True
+  edit 8/30: wall=4203 total=2669 analysis=1455 checked=True
+  edit 9/30: wall=5375 total=3093 analysis=1683 checked=True
+  edit 10/30: wall=6761 total=3046 analysis=1506 checked=True
+  edit 11/30: wall=6697 total=3108 analysis=1440 checked=True
+  edit 12/30: wall=6507 total=2759 analysis=1584 checked=True
+  edit 13/30: wall=5426 total=2708 analysis=1479 checked=True
+  edit 14/30: wall=5502 total=2794 analysis=1552 checked=True
+  edit 15/30: wall=4566 total=2476 analysis=1435 checked=True
+  edit 16/30: wall=4588 total=2659 analysis=1439 checked=True
+  edit 17/30: wall=5301 total=2816 analysis=1442 checked=True
+  edit 18/30: wall=4330 total=2485 analysis=1418 checked=True
+  edit 19/30: wall=4177 total=2518 analysis=1432 checked=True
+  edit 20/30: wall=4816 total=2922 analysis=1541 checked=True
+  edit 21/30: wall=5812 total=3138 analysis=1455 checked=True
+  edit 22/30: wall=5193 total=2715 analysis=1430 checked=True
+  edit 23/30: wall=4662 total=2659 analysis=1455 checked=True
+  edit 24/30: wall=5530 total=2515 analysis=1444 checked=True
+  edit 25/30: wall=4460 total=2562 analysis=1437 checked=True
+  edit 26/30: wall=4318 total=2467 analysis=1489 checked=True
+  edit 27/30: wall=4267 total=2333 analysis=1382 checked=True
+  edit 28/30: wall=4427 total=2426 analysis=1393 checked=True
+  edit 29/30: wall=3820 total=2392 analysis=1446 checked=True
+  edit 30/30: wall=3955 total=2518 analysis=1426 checked=True
+wrote C:\Users\mande\AppData\Local\Temp\psl-273\out\m1.json
+BLOCK m1 DONE
+block m1 exit=0 elapsed=182.6s
+--- equality proof: after m1 ---
+[after m1] tracked_at_C=483 tracked_observed=483 missing=0 differing=0 ignored_byproducts=0 unexplained_extra=0 data_inside_root=False manifest_sha256=d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9 EQUAL=True
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to 6ab2d24bf254787520ad9449c4e6c17f74ee708d
+
+================ BLOCK m2 : M2 cold start ================
+--- equality proof: before m2 ---
+[before m2] tracked_at_C=483 tracked_observed=483 missing=0 differing=0 ignored_byproducts=0 unexplained_extra=0 data_inside_root=False manifest_sha256=d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9 EQUAL=True
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to 6ab2d24bf254787520ad9449c4e6c17f74ee708d
+  M2 session 1/10: segA=8307 cold=17656 edits=2 unchecked=1
+  M2 session 2/10: segA=7632 cold=17164 edits=2 unchecked=1
+  M2 session 3/10: segA=7809 cold=17474 edits=2 unchecked=1
+  M2 session 4/10: segA=7607 cold=16735 edits=2 unchecked=1
+  M2 session 5/10: segA=7968 cold=19356 edits=2 unchecked=1
+  M2 session 6/10: segA=7349 cold=16167 edits=2 unchecked=1
+  M2 session 7/10: segA=5887 cold=15561 edits=3 unchecked=2
+  M2 session 8/10: segA=9406 cold=20056 edits=2 unchecked=1
+  M2 session 9/10: segA=15931 cold=28925 edits=3 unchecked=2
+  M2 session 10/10: segA=8773 cold=20650 edits=3 unchecked=2
+wrote C:\Users\mande\AppData\Local\Temp\psl-273\out\m2.json
+BLOCK m2 DONE
+block m2 exit=0 elapsed=241s
+--- equality proof: after m2 ---
+[after m2] tracked_at_C=483 tracked_observed=483 missing=0 differing=0 ignored_byproducts=0 unexplained_extra=0 data_inside_root=False manifest_sha256=d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9 EQUAL=True
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to 6ab2d24bf254787520ad9449c4e6c17f74ee708d
+
+================ BLOCK m35 : M3/M5 memory + 120-edit stability ================
+--- equality proof: before m35 ---
+[before m35] tracked_at_C=483 tracked_observed=483 missing=0 differing=0 ignored_byproducts=0 unexplained_extra=0 data_inside_root=False manifest_sha256=d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9 EQUAL=True
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to 6ab2d24bf254787520ad9449c4e6c17f74ee708d
+M3/M5 bring-up: hookWall=4473 pingMs=5786
+  M5 edit 10/120: wall=3290 analysis=1401 checked=True daemonWS=151.7
+  M5 edit 20/120: wall=4278 analysis=1396 checked=True daemonWS=151.7
+  M5 edit 30/120: wall=4279 analysis=1415 checked=True daemonWS=160.4
+  M5 edit 40/120: wall=5490 analysis=1468 checked=True daemonWS=153
+  M5 edit 50/120: wall=4269 analysis=1415 checked=True daemonWS=153
+  M5 edit 60/120: wall=4622 analysis=1438 checked=True daemonWS=147.4
+  M5 edit 70/120: wall=3675 analysis=1407 checked=True daemonWS=157.3
+  M5 edit 80/120: wall=4470 analysis=1379 checked=True daemonWS=154.6
+  M5 edit 90/120: wall=3152 analysis=1398 checked=True daemonWS=155
+  M5 edit 100/120: wall=4222 analysis=1397 checked=True daemonWS=154.9
+  M5 edit 110/120: wall=4380 analysis=1394 checked=True daemonWS=155
+  M5 edit 120/120: wall=3336 analysis=1366 checked=True daemonWS=155
+wrote C:\Users\mande\AppData\Local\Temp\psl-273\out\m35.json
+BLOCK m35 DONE
+block m35 exit=0 elapsed=532.7s
+--- equality proof: after m35 ---
+[after m35] tracked_at_C=483 tracked_observed=483 missing=0 differing=0 ignored_byproducts=0 unexplained_extra=0 data_inside_root=False manifest_sha256=d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9 EQUAL=True
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to 6ab2d24bf254787520ad9449c4e6c17f74ee708d
+
+================ BLOCK m4b : M4b large-file convergence ================
+--- equality proof: before m4b ---
+[before m4b] tracked_at_C=483 tracked_observed=483 missing=0 differing=0 ignored_byproducts=0 unexplained_extra=0 data_inside_root=False manifest_sha256=d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9 EQUAL=True
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to 6ab2d24bf254787520ad9449c4e6c17f74ee708d
+  M4b session 1/5: converged=True atEdit=2 ms=27578 unchecked=1/15 daemons=1 relaunch=0
+  M4b session 2/5: converged=True atEdit=3 ms=32947 unchecked=2/15 daemons=1 relaunch=0
+  M4b session 3/5: converged=True atEdit=2 ms=32020 unchecked=1/15 daemons=1 relaunch=0
+  M4b session 4/5: converged=True atEdit=3 ms=32901 unchecked=2/15 daemons=1 relaunch=0
+  M4b session 5/5: converged=True atEdit=3 ms=32978 unchecked=2/15 daemons=1 relaunch=0
+wrote C:\Users\mande\AppData\Local\Temp\psl-273\out\m4b.json
+BLOCK m4b DONE
+block m4b exit=0 elapsed=699.4s
+--- equality proof: after m4b ---
+[after m4b] tracked_at_C=483 tracked_observed=483 missing=0 differing=0 ignored_byproducts=0 unexplained_extra=0 data_inside_root=False manifest_sha256=d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9 EQUAL=True
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to 6ab2d24bf254787520ad9449c4e6c17f74ee708d
+--- equality proof: post-suite ---
+[post-suite] tracked_at_C=483 tracked_observed=483 missing=0 differing=0 ignored_byproducts=0 unexplained_extra=0 data_inside_root=False manifest_sha256=d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9 EQUAL=True
+PASS: staged CLAUDE_PLUGIN_ROOT tracked tree is byte-identical to 6ab2d24bf254787520ad9449c4e6c17f74ee708d
+data-root witness: logs files before=0 after=0
+QUANT SUITE DONE

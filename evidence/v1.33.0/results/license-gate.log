@@ -1,0 +1,18 @@
+=== LICENSE / continuity gate at 6ab2d24bf254 (version 1.33.0) ===
+  PASS LICENSE is the Apache-2.0 text  [chars=11358]
+  PASS plugin.json license == Apache-2.0  [license=Apache-2.0]
+  PASS plugin.json version is stamped  [version=1.33.0]
+  PASS NOTICE names Apache-2.0
+  PASS README.md: no moving-edge relicense deixis  [next-release=False current-release=False]
+  PASS CONTINUITY.md: no moving-edge relicense deixis  [next-release=False current-release=False]
+  PASS TRUST.md: no moving-edge relicense deixis  [next-release=False current-release=False]
+  PASS docs/CONTINUITY.md: no moving-edge relicense deixis  [next-release=False current-release=False]
+  PASS README.md: names the Apache-2.0 start version and the fixed GPL band  [names-v1.32.0=True names-band=True]
+  PASS CONTINUITY.md: names the Apache-2.0 start version and the fixed GPL band  [names-v1.32.0=True names-band=True]
+  PASS TRUST.md: names the Apache-2.0 start version and the fixed GPL band  [names-v1.32.0=True names-band=True]
+  PASS docs/CONTINUITY.md: names the Apache-2.0 start version and the fixed GPL band  [names-v1.32.0=True names-band=True]
+  PASS CHANGELOG states the relicense takes effect at this release
+[RED control] C-era wording restored in CONTINUITY.md -> pass=False findings=2
+[RED control restored] pass=True
+
+LICENSE / CONTINUITY GATE: PASS

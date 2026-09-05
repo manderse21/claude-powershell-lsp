@@ -1,0 +1,31 @@
+{
+  "gate": "post-tag TAG SIGNATURE verification (000245 standard, signature half)",
+  "tag": "v1.33.0",
+  "tag_object_type": "tag",
+  "peels_to": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "tagger": "tagger github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 1787420097 +0000",
+  "carries_signature_block": true,
+  "verifier": "gitsign verify-tag (NOT git verify-tag, which reports Validated Certificate claims: false)",
+  "certificate_identity": "https://github.com/manderse21/claude-powershell-lsp/.github/workflows/powershell-lsp-release.yml@refs/heads/main",
+  "certificate_oidc_issuer": "https://token.actions.githubusercontent.com",
+  "green_exit": 0,
+  "validated_git_signature": true,
+  "validated_rekor_entry": true,
+  "validated_certificate_claims": true,
+  "rekor_tlog_index": "2567774015",
+  "red_controls": [
+    {
+      "control": "wrong certificate identity",
+      "exit": 1,
+      "expected": "non-zero + identity mismatch",
+      "pass": true
+    },
+    {
+      "control": "a pre-gitsign tag (v1.24.3)",
+      "exit": 1,
+      "expected": "non-zero",
+      "pass": true
+    }
+  ],
+  "verdict": "PASS"
+}

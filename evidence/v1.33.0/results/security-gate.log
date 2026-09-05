@@ -1,0 +1,25 @@
+=== host capability probe ===
+pwsh       7.6.5 (Core) CurrentUserOnly=True
+powershell 5.1.26100.9168 (Desktop) CurrentUserOnly=False
+
+=== RED control: paired pipe constructors, same instrument, this process ===
+  PRE-FIX  D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;S-1-5-21-4146172374-3427792794-1412385963-1001)(A;;FR;;;WD)(A;;FR;;;AN)
+           everyone=True anonymous=True
+  SHIPPED  D:(A;;0x1f019f;;;S-1-5-21-4146172374-3427792794-1412385963-1001)
+           everyone=False anonymous=False
+  RED control PASS -- the instrument discriminates: pre-fix shows WD+AN, shipped does not.
+
+=== ARM A: live daemon, ps_host=pwsh ===
+  served=True daemon_pid=34504 pses_pid=20488
+  SDDL: D:(A;;0x1f019f;;;S-1-5-21-4146172374-3427792794-1412385963-1001)
+  everyone=False anonymous=False RESTRICTED=True
+
+=== ARM C: live daemon, ps_host=powershell (Windows PowerShell 5.1 residual) ===
+  served=True daemon_pid=16080 pses_pid=47956
+  SDDL: D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;S-1-5-21-4146172374-3427792794-1412385963-1001)(A;;FR;;;WD)(A;;FR;;;AN)
+  everyone=True anonymous=True RESTRICTED=False
+
+=== VERDICT ===
+  pwsh pipe restricted (no Everyone, no Anonymous) : True
+  PS 5.1 residual confirmed as disclosed           : True
+  GATE: PASS

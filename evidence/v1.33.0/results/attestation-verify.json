@@ -1,0 +1,107 @@
+{
+  "gate": "post-tag published-attestation verification at the 000245 standard",
+  "tag": "v1.33.0",
+  "repo": "manderse21/claude-powershell-lsp",
+  "release_target": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "publishing_run": "32588047316",
+  "orphaned_run": "32585972425",
+  "publishing_run_source_digest": "b3faaf1206831d217ce185adab6708a092afe982",
+  "orphaned_run_source_digest": "66b9522433a102b103421dcac40b7aea26a8491e",
+  "method": "gh attestation verify --format json; EXIT CODE is the verdict (000245), but exit 0 is NOT sufficient where an orphan shares a subject digest, so each asset is additionally BOUND with --source-digest + --signer-workflow and the returned invocationId is asserted.",
+  "bound_by": "--source-digest (the SOURCE REPOSITORY commit the workflow ran from) + --signer-workflow",
+  "known_bound": "SLSA provenance records the WORKFLOW source commit (main tip), NOT the release target commit. The attestation therefore does not, by itself, bind the artifact to the release target; that binding comes from the Release object and the signed tag.",
+  "assets": [
+    {
+      "asset": "powershell-lsp-1.33.0.cdx.json",
+      "bytes": 2518,
+      "sha256": "e9430cf17238a2b0e252b7e6fae88d9b14d57c1592cf221b3f1221776ef5be7d",
+      "release_api_digest": "sha256:e9430cf17238a2b0e252b7e6fae88d9b14d57c1592cf221b3f1221776ef5be7d",
+      "release_api_digest_matches": true,
+      "baseline_verify_exit": 0,
+      "baseline_attestations_returned": 1,
+      "baseline_invocation_ids": [
+        "https://github.com/manderse21/claude-powershell-lsp/actions/runs/32588047316/attempts/1"
+      ],
+      "orphan_also_attests_this_digest": false,
+      "bound_verify_exit": 0,
+      "bound_invocation_ids": [
+        "https://github.com/manderse21/claude-powershell-lsp/actions/runs/32588047316/attempts/1"
+      ],
+      "binds_to_publishing_run": true,
+      "subject_covers_digest_once": true,
+      "verdict": "PASS"
+    },
+    {
+      "asset": "powershell-lsp-1.33.0.tar.gz",
+      "bytes": 2794693,
+      "sha256": "1c92e367c454df171e1ff40e425a850e93ee4f39a449a3cdddcc137af382b24e",
+      "release_api_digest": "sha256:1c92e367c454df171e1ff40e425a850e93ee4f39a449a3cdddcc137af382b24e",
+      "release_api_digest_matches": true,
+      "baseline_verify_exit": 0,
+      "baseline_attestations_returned": 2,
+      "baseline_invocation_ids": [
+        "https://github.com/manderse21/claude-powershell-lsp/actions/runs/32588047316/attempts/1",
+        "https://github.com/manderse21/claude-powershell-lsp/actions/runs/32585972425/attempts/1"
+      ],
+      "orphan_also_attests_this_digest": true,
+      "bound_verify_exit": 0,
+      "bound_invocation_ids": [
+        "https://github.com/manderse21/claude-powershell-lsp/actions/runs/32588047316/attempts/1"
+      ],
+      "binds_to_publishing_run": true,
+      "subject_covers_digest_once": true,
+      "verdict": "PASS"
+    },
+    {
+      "asset": "powershell-lsp-airgap-1.33.0.zip",
+      "bytes": 34573424,
+      "sha256": "3d46686d7d3ae3d2332691aa393c7fcdcf77695d2919fc88f37ae6488a58ea3d",
+      "release_api_digest": "sha256:3d46686d7d3ae3d2332691aa393c7fcdcf77695d2919fc88f37ae6488a58ea3d",
+      "release_api_digest_matches": true,
+      "baseline_verify_exit": 0,
+      "baseline_attestations_returned": 1,
+      "baseline_invocation_ids": [
+        "https://github.com/manderse21/claude-powershell-lsp/actions/runs/32588047316/attempts/1"
+      ],
+      "orphan_also_attests_this_digest": false,
+      "bound_verify_exit": 0,
+      "bound_invocation_ids": [
+        "https://github.com/manderse21/claude-powershell-lsp/actions/runs/32588047316/attempts/1"
+      ],
+      "binds_to_publishing_run": true,
+      "subject_covers_digest_once": true,
+      "verdict": "PASS"
+    }
+  ],
+  "red_controls": [
+    {
+      "control": "wrong repository",
+      "exit": 1,
+      "expected": "non-zero",
+      "pass": true
+    },
+    {
+      "control": "one bit flipped at byte 100",
+      "exit": 1,
+      "expected": "non-zero",
+      "pass": true
+    },
+    {
+      "control": "wrong signer-workflow",
+      "exit": 1,
+      "expected": "non-zero",
+      "pass": true
+    },
+    {
+      "control": "--source-digest pinned to the ORPHAN source commit selects ONLY the orphan",
+      "exit": 0,
+      "returned": 1,
+      "invocation_ids": [
+        "https://github.com/manderse21/claude-powershell-lsp/actions/runs/32585972425/attempts/1"
+      ],
+      "expected": "exit 0, exactly the orphan",
+      "pass": true
+    }
+  ],
+  "verdict": "PASS"
+}

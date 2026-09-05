@@ -1,0 +1,17 @@
+tag object type : tag
+peels to        : 6ab2d24bf254787520ad9449c4e6c17f74ee708d
+tagger          : tagger github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 1787420097 +0000
+carries sig     : True
+
+GREEN gitsign verify-tag exit=0
+  tlog index: 2567774015
+  gitsign: Signature made using certificate ID 0xcd1bfe2e0cfc17a6f5f08e5f36d48935f1c7e690 | CN=sigstore-intermediate,O=sigstore.dev
+  gitsign: Good signature from [https://github.com/manderse21/claude-powershell-lsp/.github/workflows/powershell-lsp-release.yml@refs/heads/main](https://token.actions.githubusercontent.com)
+  Validated Git signature: true
+  Validated Rekor entry: true
+  Validated Certificate claims: true
+
+RED 1 wrong cert identity  exit=1 -> PASS
+RED 2 pre-gitsign tag v1.24.3  exit=1 -> PASS
+
+SIGNATURE GATE: PASS

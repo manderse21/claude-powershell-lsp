@@ -1,0 +1,16 @@
+SLO REGRESSION TABLE at C = 6ab2d24bf254787520ad9449c4e6c17f74ee708d
+
+T1  PASS  100% of 217 warm edits within 5000 ms; worst observed round trip 2496 ms
+T2  PASS  worst per-edit wall 9063 ms across all warm blocks; 1 s aspiration met = False
+T3  FAIL  max 2 per session; 6 of 15 sessions returned more than one
+T4  PASS  p100 runtime file (263073 bytes) converged in 5 of 5 sessions, cap 15
+T5  PASS  median 318.3 MB, peak 326.1 MB
+T6  PASS  wall Q1->Q4 -9.9%, analysisMs Q1->Q4 0%, daemon+PSES WS drift 6.3 MB over 120 edits / 506.6 s, 0 excluded
+
+LOAD CONTEXT (CPU _Total median at block boundaries):
+  m1   before=84%  after=95%  processes=619
+  m2   before=89%  after=86%  processes=677
+  m35  before=95%  after=86%  processes=672
+  m4b  before=95%  after=97%  processes=666
+
+MET 5 of 6; MISSED: T3

@@ -1,0 +1,170 @@
+{
+  "gate": "T3 quiet-host re-run -- the compliant measurement the freeze deferred",
+  "commit": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "version": "1.33.0",
+  "rendered_at": "2026-08-22T14:33:45.6688275-04:00",
+  "rendered_from": "the completed run's RAW outputs; NOT re-measured (a second run would be a different sample)",
+  "run_window": {
+    "first_sample": "2026-08-22T14:14:11.7005411-04:00",
+    "last_sample": "2026-08-22T14:21:40.1469886-04:00",
+    "span_minutes": 7.5
+  },
+  "blocks_rerun": [
+    "m2",
+    "m4b"
+  ],
+  "blocks_not_rerun": {
+    "m1": "warm per-edit latency -- produces no per-session unchecked count, cannot move T3",
+    "m35": "one 120-edit session -- not a per-session sample, cannot move T3"
+  },
+  "quiescence": {
+    "bar_cpu_median_pct": 35,
+    "bar_agent_procs": 0,
+    "bar_basis": "the v1.32.0 run that RATIFIED T1-T6 measured 13-32% CPU median with ~385 processes",
+    "samples": 85,
+    "sampled_continuously_every_5s": true,
+    "cpu_median": 22.0,
+    "cpu_p95_nearest_rank": 41.0,
+    "cpu_max": 65.0,
+    "samples_over_bar": 10,
+    "agent_procs_max": 0.0,
+    "total_procs_min": 352.0,
+    "total_procs_max": 376.0,
+    "block_boundary_load": {
+      "m2_before": 17.0,
+      "m2_after": 8.0,
+      "m4b_before": 9.0,
+      "m4b_after": 13.0
+    },
+    "excursion_note": "The bar is a MEDIAN bar because the ratification figures are block-boundary medians. Spikes are expected and reported, not hidden: the daemon and PSES doing the work ARE load. The evidence of a QUIET HOST is ZERO competing agent processes and a total process count in the ratification run's range.",
+    "COMPLIANT": true
+  },
+  "equality_proofs": [
+    {
+      "label": "before-t3",
+      "equal": true,
+      "tracked": 483,
+      "digest": "d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9"
+    },
+    {
+      "label": "after-t3",
+      "equal": true,
+      "tracked": 483,
+      "digest": "d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9"
+    }
+  ],
+  "tracked_tree_digest": "d79b648f5af729c414e86076abb04565c4595d571a2190394630f678b8f03fe9",
+  "t3": {
+    "target": "At most ONE edit per session returns \"NOT checked\", and only during cold start",
+    "target_source": "docs/roadmap-ii/SLO-BASELINES.md section 9 (ratified by Mike 2026-08-21; the file is a frozen regression bar)",
+    "total_sessions": 15,
+    "max_unchecked_per_session": 2.0,
+    "sessions_over_one": 1,
+    "offending_sessions": [
+      {
+        "fixture": "small",
+        "i": 5,
+        "unchecked": 2
+      }
+    ],
+    "cold_start_clause_holds": true,
+    "per_session": [
+      {
+        "fixture": "small",
+        "i": 1,
+        "unchecked": 1
+      },
+      {
+        "fixture": "small",
+        "i": 2,
+        "unchecked": 1
+      },
+      {
+        "fixture": "small",
+        "i": 3,
+        "unchecked": 1
+      },
+      {
+        "fixture": "small",
+        "i": 4,
+        "unchecked": 1
+      },
+      {
+        "fixture": "small",
+        "i": 5,
+        "unchecked": 2
+      },
+      {
+        "fixture": "small",
+        "i": 6,
+        "unchecked": 1
+      },
+      {
+        "fixture": "small",
+        "i": 7,
+        "unchecked": 1
+      },
+      {
+        "fixture": "small",
+        "i": 8,
+        "unchecked": 1
+      },
+      {
+        "fixture": "small",
+        "i": 9,
+        "unchecked": 1
+      },
+      {
+        "fixture": "small",
+        "i": 10,
+        "unchecked": 1
+      },
+      {
+        "fixture": "large",
+        "i": 1,
+        "unchecked": 1
+      },
+      {
+        "fixture": "large",
+        "i": 2,
+        "unchecked": 1
+      },
+      {
+        "fixture": "large",
+        "i": 3,
+        "unchecked": 1
+      },
+      {
+        "fixture": "large",
+        "i": 4,
+        "unchecked": 1
+      },
+      {
+        "fixture": "large",
+        "i": 5,
+        "unchecked": 1
+      }
+    ],
+    "verdict": "FAIL",
+    "how_to_read_a_miss": "SLO-BASELINES section 9: T3 was ratified with SPREAD ZERO, so its evidence is categorical rather than statistical -- \"a T3 or T4 miss is therefore a BEHAVIOURAL regression and should be read as one, not as measurement noise.\""
+  },
+  "comparison_to_the_loaded_freeze_run": {
+    "loaded_cpu_median_by_block": "84-95%",
+    "loaded_total_processes": "619-677",
+    "loaded_sessions_over_one": 6,
+    "compliant_cpu_median": 22.0,
+    "compliant_total_processes": "352-376",
+    "compliant_sessions_over_one": 1,
+    "reading": "Load was a large contributor -- the miss fell from 6 of 15 to 1 of 15 -- but it was NOT the whole cause. The target is categorical, and one session still exceeded it on a quiet host."
+  },
+  "also_observed": {
+    "note": "same blocks, recorded because they came free -- NOT a re-litigation of the frozen bar",
+    "t4_convergence": {
+      "converged": 5,
+      "sessions": 5,
+      "fixture_bytes": 263073,
+      "attempt_cap": 15,
+      "verdict": "PASS"
+    }
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "gate": "Apache-2.0 LICENSE + continuity",
+  "commit": "6ab2d24bf254787520ad9449c4e6c17f74ee708d",
+  "version": "1.33.0",
+  "checks": [
+    {
+      "name": "LICENSE is the Apache-2.0 text",
+      "ok": true,
+      "detail": "chars=11358"
+    },
+    {
+      "name": "plugin.json license == Apache-2.0",
+      "ok": true,
+      "detail": "license=Apache-2.0"
+    },
+    {
+      "name": "plugin.json version is stamped",
+      "ok": true,
+      "detail": "version=1.33.0"
+    },
+    {
+      "name": "NOTICE names Apache-2.0",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "README.md: no moving-edge relicense deixis",
+      "ok": true,
+      "detail": "next-release=False current-release=False"
+    },
+    {
+      "name": "CONTINUITY.md: no moving-edge relicense deixis",
+      "ok": true,
+      "detail": "next-release=False current-release=False"
+    },
+    {
+      "name": "TRUST.md: no moving-edge relicense deixis",
+      "ok": true,
+      "detail": "next-release=False current-release=False"
+    },
+    {
+      "name": "docs/CONTINUITY.md: no moving-edge relicense deixis",
+      "ok": true,
+      "detail": "next-release=False current-release=False"
+    },
+    {
+      "name": "README.md: names the Apache-2.0 start version and the fixed GPL band",
+      "ok": true,
+      "detail": "names-v1.32.0=True names-band=True"
+    },
+    {
+      "name": "CONTINUITY.md: names the Apache-2.0 start version and the fixed GPL band",
+      "ok": true,
+      "detail": "names-v1.32.0=True names-band=True"
+    },
+    {
+      "name": "TRUST.md: names the Apache-2.0 start version and the fixed GPL band",
+      "ok": true,
+      "detail": "names-v1.32.0=True names-band=True"
+    },
+    {
+      "name": "docs/CONTINUITY.md: names the Apache-2.0 start version and the fixed GPL band",
+      "ok": true,
+      "detail": "names-v1.32.0=True names-band=True"
+    },
+    {
+      "name": "CHANGELOG states the relicense takes effect at this release",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "findings": [],
+  "verdict": "PASS"
+}
