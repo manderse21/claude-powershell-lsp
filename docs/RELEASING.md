@@ -27,7 +27,7 @@ unvalidated or wrong commit.
 > because Gate 2 refuses a tag that already exists, it also *blocks* the pipeline until someone
 > deletes it. This is not hypothetical: it happened on the v1.26.0 release, where a pre-existing
 > `v1.26.0` tag had to be deleted before the pipeline could cut its own. **To release, trigger the
-> workflow with the target version** (step 7 below) -- never a printed command.
+> workflow with the target version** (step 8 below) -- never a printed command.
 
 The pipeline is the GitHub Actions workflow [`powershell-lsp release`](../.github/workflows/powershell-lsp-release.yml)
 that the maintainer triggers manually; it never runs on push or merge. At a high level,
@@ -129,9 +129,10 @@ release. The exact steps and the exact checks follow below.
      external surface; it is the maintainer's call and no automation performs it.
 
    **This gate is HUMAN, and it could not be machine-enforced even if we wanted it to be.** (Step 3
-   above used to carry the other human gate in this runbook; it was retired with the state it
-   policed, so this is now the only one -- and it is human for a stronger reason than that one
-   was.) A published release body is **external state** -- it lives in
+   above used to carry another human gate in this runbook; it was retired with the state it
+   policed. Step 5 below adds one back, for the control map -- but this gate is human for a
+   stronger reason than either of those: a date comparison could in principle be automated, and
+   what follows cannot be.) A published release body is **external state** -- it lives in
    GitHub's Releases API, not in the working tree. `tests/doc-claims.psd1` works because it
    derives the true value from a file ON DISK and fails CI when a published number disagrees with
    the thing it counts; there is nothing on disk for it to derive a release body from. A registry
@@ -147,14 +148,39 @@ release. The exact steps and the exact checks follow below.
    Both are the same shape -- a CHANGELOG corrected after publication, and a body that did not
    follow.
 
-5. **Open a pull request and merge it.** The PR runs the four-leg CI. Merge to main once it is
+5. **Confirm the control map is current for the release you are cutting.**
+   [docs/control-map.html](control-map.html) is attached to every release as an asset, so what
+   ships is the map *as of that version*. Before the tag is cut, confirm both of these about the
+   copy on the commit you are releasing:
+
+   - **It is present at that commit.** The release workflow passes `docs/control-map.html` in the
+     `gh release create` asset list, and that step runs *after* the tag has been pushed -- so a
+     target commit that predates the map fails release creation with the tag already cut.
+   - **Its internal date stamp is not older than this version's CHANGELOG entry date.** The stamp
+     is the `-- YYYY-MM-DD revN` in the page `<title>` and the matching `rev N` + date line in the
+     page header; the CHANGELOG date is the `## [<version>] - YYYY-MM-DD` heading you wrote in
+     step 2.
+
+   **A stale map is a STOP, not a note.** Nothing regenerates the map -- the maintainer supplies a
+   refreshed rev by hand. Judge it here, before the pull request, so a refresh rides the same
+   release-prep PR instead of costing a second merge cycle after the fact.
+
+   **This is not the roadmap-currency gate step 3 retired, re-added.** That gate policed per-release
+   *state inside ROADMAP.md*, and 000230 removed the state; nothing is asked of the roadmap here and
+   the "do not edit the roadmap" rule above is unchanged. The map is a **derived view** of
+   [ROADMAP.md](../ROADMAP.md) and the [decision ledger](decision-ledger.md) -- never a second plan
+   of record -- and what is judged is one date against another date this runbook itself just wrote.
+   Whether a re-stamped map still tells the truth about the program is the maintainer's call, which
+   is why the gate is human. Introduced by dispatch 000274 with the map's publication.
+
+6. **Open a pull request and merge it.** The PR runs the four-leg CI. Merge to main once it is
    green and reviewed. **Do not tag here, and do not run the tag commands the bump helper
    prints.** Those are a manual FALLBACK for a broken pipeline (see
    [Manual fallback](#manual-fallback-if-the-pipeline-misbehaves)), never the release path --
-   the pipeline cuts the tag in step 7. A hand-cut tag is unsigned and unattested, and it will
+   the pipeline cuts the tag in step 8. A hand-cut tag is unsigned and unattested, and it will
    make Gate 2 refuse the pipeline run until someone deletes it.
 
-6. **(Optional) Wait for the push CI on main to go green.** After the merge, the
+7. **(Optional) Wait for the push CI on main to go green.** After the merge, the
    [`powershell-lsp CI`](../.github/workflows/powershell-lsp-ci.yml) workflow runs on the
    merge commit on all four legs (`windows-pwsh`, `windows-powershell`, `ubuntu-pwsh`,
    `macos-pwsh`). You no longer have to hand-time the next step to the window after CI
@@ -163,7 +189,7 @@ release. The exact steps and the exact checks follow below.
    release job **wait** for CI rather than refuse. Waiting here yourself is therefore optional --
    it just lets you confirm green before you trigger.
 
-7. **Trigger the release workflow** with the version you just merged:
+8. **Trigger the release workflow** with the version you just merged:
 
    - In the GitHub UI: **Actions -> powershell-lsp release -> Run workflow**, enter the
      version (e.g. `1.13.0`), leave **commit** blank to release the current `main` tip, and
