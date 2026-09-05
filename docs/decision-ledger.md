@@ -4080,3 +4080,135 @@ Each of these assembles evidence and recommends; none of them decides, and none 
 No gist write, no catalog or awesome-list submission, no upstream comment or reply, no post of any
 kind. The upstream re-derivation this dispatch performed is entirely read-only `gh` queries. The
 external-publishing gate is Mike's and this dispatch did not approach it.
+
+---
+
+## Dispatch 000278 -- enterprise program night 2: rulings R5-R7 of 2026-09-05 RATIFIED by acceptance, the review audited, and v1.33.1 DERIVED
+
+**Third entry recorded on 2026-09-05**, after the two that commit `a060c69` appended (the
+2026-08-22 rulings recorded late, and the 000276 omnibus). Appended, never edited into an existing
+entry.
+
+### The rulings, recorded as they are attributable on disk
+
+R5-R7 were ruled in the Strategic-Claude chat and **ratified by Mike accepting the 000278 inbox**,
+which makes that inbox the artifact of record. Two of the three are attributed to a specific clause
+there; one is not, and this entry says so rather than reconstructing it.
+
+| # | What the accepted inbox attributes to it | Where |
+| --- | --- | --- |
+| **R5** | **Cut v1.33.1 as far as an unattended night can take a release.** "LEG R -- v1.33.1 release-prep 1a (ruling R5) ... derive the version from `[Unreleased]`; lockstep-bump via `bump-version.ps1`; cut CHANGELOG `[1.33.1]` dated today with `[Unreleased]` left empty ... ONE plugin PR HELD." The freeze (1b) and the tag are explicitly `scope_out`: "they need a quiet host and Mike's trigger; a separate night" | 000278 inbox `scope_in` leg R; `scope_out` |
+| **R6** | **NOT ATTRIBUTABLE FROM DISK.** The inbox's title and `rule_citations` name "rulings R5-R7 of 2026-09-05 (SC chat, ratified by accepting this inbox)", but no clause in the document attributes anything to R6 specifically. It is recorded here as unattributable rather than inferred; the probe that would settle it is the Strategic-Claude chat transcript of 2026-09-05, which is not on disk | 000278 inbox title, `rule_citations` |
+| **R7** | **The night's hard rails do not move.** "Merging, verifying, f2, tagging, triggering any workflow (dry run included), force-pushing or deleting any branch -- NIGHT_PROTOCOL section 3 unchanged tonight (ruling R7)", and `rule_citations`: "NIGHT_PROTOCOL sections 2, 3, 5, 12 -- unchanged tonight (R7)" | 000278 inbox `scope_out`; `rule_citations` |
+
+**A related gap, recorded because it was found and not because it was looked for.** Dispatch
+000277's charter anchored this ledger for "one dated 2026-09-05 entry ... recording R1-R4 verbatim".
+**No such entry exists.** The newest ledger commit before this one is `a060c69`, which is 000276's,
+and the string `000277` appears nowhere in this file. R1-R4 are therefore recorded in the 000277
+inbox and nowhere in this ledger. This entry does **not** write that entry -- doing so would mean
+reconstructing four rulings whose text is not on disk -- it records the absence so the gap is
+visible.
+
+### The enterprise review was audited, and the docket is now the full instrument
+
+`docs/roadmap-ii/ENTERPRISE-PROGRAM-DOCKET.md` replaces the skeleton 000277 landed under its
+missing-input pre-authorization. The skeleton's provable-health slice is carried forward verbatim --
+S1, S2 and S3 keep their mechanism, effort and freeze-exposure text and are renumbered P0-1a, P0-1c
+and P3 in the phase-ordered queue.
+
+**The file exists and its identity is recorded**: `C:\Users\mande\Downloads\enterprise-review-2026-09-05.md`,
+**29,569 bytes**, SHA-256 `380CFA18059EEF598BA867268BD0DEAEF438CFD380F836A44F33E8C2ACB372AD`,
+1,078 lines.
+
+**The snapshot it read is `v1.33.0`, derived rather than assumed.** The review's item 8 quotes four
+line counts. `doctor.ps1` (2,035), `pses-daemon.ps1` (1,731) and `lsp-client.ps1` (858) match this
+tree exactly. `lsp-common.ps1` at **4,595 lines / 131 functions** matches `v1.33.0^{}` exactly and
+not this branch (4,736 / 135) -- and it is the one file of the four that 000277's leg C touched. So
+the review cannot see the POSIX containment fix, and its own P0 row "strict data-root permissions"
+is **already shipped**. Everything that fix changed is STALE by construction.
+
+**Every claim is scored** -- all seventeen numbered items, the "five things", and every row of the
+review's phase table -- as TRUE, STALE, REFUTED, ALREADY-SHIPPED or UNVERIFIABLE, each with a file
+and line, a live `gh` read, or the exact probe that would settle it. Six claims rest on third-party
+web documentation; external network reads were outside this night's rails, so those are scored
+UNVERIFIABLE with the probe named rather than assumed true.
+
+**Two headline blockers are argued for RE-OPENING, not presented as new.** This is the discipline
+000277 established on derivation and it is inherited rather than re-learned:
+
+- **T6.1 (capture on by default) -- ruling R-A.** The acceptance's stated reason is that the
+  exposure runs "to a local user who already has the source files it quotes". The review names
+  readers for whom that clause is false -- EDR, backups, forensic collection, eDiscovery, DLP, disk
+  imaging, endpoint management. That is a claim T6.1 **mis-scoped the reader set**, which is a new
+  argument reaching the one clause the acceptance rests on. 000277's leg C already closed the local
+  half.
+- **T4.2 (`orgPolicy` fail-open) -- ruling R-B.** The review's argument is **not the one T4.2
+  answered**. T4.2 ruled on the degrade *direction* for a layer whose payload is `ExcludeRules`; the
+  review says the subtract-only payload is itself the defect, because it cannot express an
+  organization *requirement* at all. The cost driver is T4.1's own words: a signed policy needs "a
+  trust anchor the org policy mechanism does not have".
+
+**The review's own phasing was not adopted wholesale.** Six of its fourteen phase rows moved, each
+with the reason recorded: "strict data-root permissions" is already shipped; "SLO release gates" and
+"Claude Code compatibility" drop from P0 to P1; OTel drops from P1 to P2; the architecture split
+drops to P3; and the assurance-pack and deployment-matrix rows split, because half of each is
+human-only or is Pillar H.
+
+**The release-governance slice is re-shaped by the T3 survey, and this is the load-bearing change.**
+`T3-REGRESSION-SURVEY.md` (000275) found no monotone timing threshold explains the miss -- a
+v1.32.0 session slower on every axis did not miss, and the C session that missed was not the
+slowest at C on any axis -- and states its own limit: N=15 per side cannot separate a low-rate
+defect from noise. **A hard gate on T3 today would gate on a statistic the sample cannot support.**
+So the survey's order governs: quiet-host re-runs first (its P1, a human leg), then re-read. Its P3
+(re-ratify the spread basis at N=45) is a **change to a ratified target** and is routed to ruling
+R-F rather than taken. Its P4 (do nothing, record a single-sample event) is folded in as a
+legitimate terminal -- the dispatch charter named three proposals, the survey carries four, and
+dropping the null option would have biased the slice toward building a gate.
+
+**The most useful finding is about cost.** The project already has a ruled, non-frozen,
+**fleet-deployable** `POWERSHELL_LSP_*` environment surface (dispatch 000244: admin plumbing "an
+organization has to deploy *to a fleet* -- via GPO, Intune, or machine-scope environment"). A
+capture mode, an enterprise mode and a policy path can land there at **zero `CONTRACT.md` freeze
+exposure**, which is the difference between a MINOR and a PATCH. Every slice in the docket states
+its freeze answer on that basis.
+
+**Four rulings are appended to `PROGRAM.md`'s PENDING-MIKE table** (R-A, R-B, R-F, R-G); R-C and
+R-D already have rows from 000277 and are not duplicated. **One row leaves**: "The enterprise review
+audit itself (R-E)" is answered by execution and moves to the rows-that-left table.
+
+### v1.33.1 was DERIVED from the CHANGELOG, not chosen
+
+The `[Unreleased]` band carried **exactly one subheading -- `### Security`** -- the POSIX
+containment fix from 000277, whose own text states that "no `userConfig` key, no status token, and
+no line of `CONTRACT.md` changed". Against this CHANGELOG's own Versioning section that is *"bug
+fixes and internal hardening with no user-visible contract change"*: **PATCH**. A MINOR would
+require a new backward-compatible capability in the band and there is none. **`1.33.0 -> 1.33.1`.**
+
+The same discipline the v1.32.0 and v1.33.0 cuts used: the entries present force the number.
+
+- **The cut is additive only** -- 11 lines inserted, 0 removed -- so the carried band is
+  line-identical across it, and `[Unreleased]` is left present and empty.
+- **The lockstep bump used `scripts/bump-version.ps1 1.33.1 -Apply`**, not hand edits. It rewrote
+  exactly the two version surfaces it owns and re-read both from disk to assert lockstep. The
+  version-bearing set was re-derived by `git grep` rather than trusted to the tool: every other hit
+  is historical prose about past releases and must not move; there is no `VERSION` file; and no test
+  pins the tree's own version (every version literal under `tests/` is synthetic fixture data).
+
+**What release-prep 1a deliberately did NOT do, and why.** No dry run, no producing run, no tag, no
+control-map edit. **1b -- the freeze measurement at the merged commit C -- and the tag both wait on
+a quiet host and Mike's trigger**, per this dispatch's own `scope_out`; the T3 clause is the reason,
+and the T3 survey above is why that clause is still open.
+
+**One human gate is recorded rather than approached.** `docs/RELEASING.md` step 5 requires the
+control map's internal date stamp to be no older than the version's CHANGELOG entry date.
+`docs/control-map.html` is stamped **2026-08-22 rev2**; this cut is dated **2026-09-05**. The map is
+therefore **stale for this release**, and the runbook is explicit that "a stale map is a STOP, not a
+note. Nothing regenerates the map -- the maintainer supplies a refreshed rev by hand." It was not
+edited. It needs a refreshed rev before the tag, and the runbook wants that refresh to ride the
+release-prep PR rather than cost a second merge cycle.
+
+### External actions: none
+
+No tag, no workflow trigger of any kind including a dry run, no merge, no promotion to `verified`,
+no publish, post or submission, no force-push, no branch deleted, and nothing touched that belongs
+to another session. The only network reads were `gh` queries against public repositories.
