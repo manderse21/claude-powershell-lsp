@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 
 $logDir = Get-LogDir
 $sessionDir = Get-SessionDir
-try { New-Item -ItemType Directory -Force -Path $logDir | Out-Null } catch { }
+try { New-ContainedDirectory -Path $logDir } catch { }
 $endLog = Join-Path $logDir 'session-end.log'
 function Write-ELog([string]$m) {
     try { ('[' + (Get-Date -Format 'o') + '] ' + $m) | Out-File -FilePath $endLog -Append -Encoding ascii } catch { }

@@ -465,7 +465,7 @@ function Start-ScanDaemon {
     # were proven non-truncating at this cap (Invoke-ScanFileDiagnostics timeoutMs 18000 < lsp-scan.ps1
     # -TimeoutMs 25000; both > 15000). Full arithmetic: the 000133 outbox and CHANGELOG.
     param([string]$ScriptsDir, [string]$DataRoot, [string]$SessionId, [string]$HostExe, [int]$MaxWaitMs = 15000)
-    New-Item -ItemType Directory -Force -Path $DataRoot | Out-Null
+    New-ContainedDirectory -Path $DataRoot
     Invoke-ScanHook -HostExe $HostExe -ScriptPath (Join-Path $ScriptsDir 'session-start.ps1') `
         -StdinJson (@{ session_id = $SessionId } | ConvertTo-Json -Compress) `
         -ExtraArgs @('-PreferredHost', $HostExe, '-MaxWaitMs', [string]$MaxWaitMs) -CapMs 180000 -DataRoot $DataRoot `
@@ -526,7 +526,7 @@ function Invoke-ScanFileDiagnostics {
     try { $full = [System.IO.Path]::GetFullPath($FilePath) } catch { $full = $FilePath }
     if ([string]::IsNullOrWhiteSpace($Cwd)) { $Cwd = [System.IO.Path]::GetDirectoryName($full) }
     if ([string]::IsNullOrWhiteSpace($CaptureDir)) { $CaptureDir = Join-Path $DataRoot 'scan-capture' }
-    if (-not (Test-Path -LiteralPath $CaptureDir)) { New-Item -ItemType Directory -Force -Path $CaptureDir | Out-Null }
+    if (-not (Test-Path -LiteralPath $CaptureDir)) { New-ContainedDirectory -Path $CaptureDir }
     $log = Join-Path $CaptureDir ('scan-' + [guid]::NewGuid().ToString('N').Substring(0, 12) + '.jsonl')
 
     $stdin = (@{ session_id = $SessionId; tool_input = @{ file_path = $full }; cwd = $Cwd } | ConvertTo-Json -Compress)

@@ -104,8 +104,8 @@ $script:RuleExcludeArr = Split-RuleList $RuleExclude
 # --- paths / logging -------------------------------------------------------
 $logDir    = Get-LogDir
 $sessionDir = Get-SessionDir
-New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null
+New-ContainedDirectory -Path $logDir
+New-ContainedDirectory -Path $sessionDir
 $daemonLog = Join-Path $logDir 'pses-daemon.log'
 $sessionFile = Join-Path $sessionDir ($SessionId + '.json')
 
