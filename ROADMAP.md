@@ -78,7 +78,9 @@ Queued, not started.
 
 - **Doctor and command surface.** Closing the gap between "the plugin is installed" and "the user
   can prove it is working". Queued rather than moving: the lane carries no open ruling and no
-  chartered work.
+  chartered work. A findings-only census of what the doctor, status and scan surfaces prove today
+  -- with costed candidate slices and one recommendation, building nothing -- is at
+  [docs/roadmap-ii/DOCTOR-SURFACE-DOCKET.md](docs/roadmap-ii/DOCTOR-SURFACE-DOCKET.md).
 - **Agent-facing semantic exposure.** Making more of what PSES already computes reachable by an
   agent, on the surfaces this project already ships.
 - **The measured-baseline follow-through.** The six candidate service-level targets are no longer
