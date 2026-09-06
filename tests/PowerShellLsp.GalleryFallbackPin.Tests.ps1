@@ -162,8 +162,26 @@ BeforeAll {
             [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR', '')
             [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_PSSA_CACHE', '')
             [Environment]::SetEnvironmentVariable('PSLSP_TEST_ENSURE_SCRIPT', $EnsureScript)
-            $out = & $script:HostExe -NoProfile -File $DriverPath 2>&1
-            $code = $LASTEXITCODE
+            # SEPARATE FILES, not `2>&1`. The script under test is SUPPOSED to write a refusal
+            # to stderr and exit 1 -- that is the behaviour under test -- and merging a native
+            # process's stderr into the pipeline turns each line into an ErrorRecord. Under
+            # Windows PowerShell 5.1 with $ErrorActionPreference = 'Stop' in scope (Pester's
+            # default), that ErrorRecord is a TERMINATING error, so the harness threw on the
+            # very output it exists to read and took the whole Describe with it. Observed live:
+            # the windows-powershell CI leg failed all six its with the refusal banner as the
+            # exception message while windows-pwsh passed. Start-Process with redirected files
+            # gives the same bytes, a reliable exit code, and identical behaviour on both hosts.
+            $outFile = Join-Path $DataRoot 'child.out'
+            $errFile = Join-Path $DataRoot 'child.err'
+            $proc = Start-Process -FilePath $script:HostExe `
+                -ArgumentList @('-NoProfile', '-File', $DriverPath) `
+                -Wait -PassThru -NoNewWindow `
+                -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            $code = $proc.ExitCode
+            $so = ''; $se = ''
+            if (Test-Path -LiteralPath $outFile -PathType Leaf) { $so = [string](Get-Content -LiteralPath $outFile -Raw) }
+            if (Test-Path -LiteralPath $errFile -PathType Leaf) { $se = [string](Get-Content -LiteralPath $errFile -Raw) }
+            $out = $so + [Environment]::NewLine + $se
         } finally {
             foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
         }
@@ -176,7 +194,7 @@ BeforeAll {
         if (Test-Path -LiteralPath $markerPath -PathType Leaf) { $marker = (Get-Content -LiteralPath $markerPath -Raw).Trim() }
         return ([pscustomobject]@{
                 ExitCode     = $code
-                Output       = (@($out) -join [Environment]::NewLine)
+                Output       = $out
                 Log          = $log
                 MarkerExists = (Test-Path -LiteralPath $markerPath -PathType Leaf)
                 Marker       = $marker
