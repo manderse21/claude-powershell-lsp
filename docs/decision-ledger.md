@@ -4215,3 +4215,187 @@ release-prep PR rather than cost a second merge cycle.
 No tag, no workflow trigger of any kind including a dry run, no merge, no promotion to `verified`,
 no publish, post or submission, no force-push, no branch deleted, and nothing touched that belongs
 to another session. The only network reads were `gh` queries against public repositories.
+
+---
+
+## Dispatch 000279 -- enterprise program night 3: rulings R8-R14 of 2026-09-05 RATIFIED by acceptance, the two P0 slices BUILT, and R1-R7 recorded late
+
+**Fourth entry recorded on 2026-09-05**, after the 2026-08-22 rulings recorded late, the 000276
+omnibus, and 000278. Appended, never edited into an existing entry.
+
+**Why this entry quotes rather than cites.** Dispatch 000278 found that a ruling living only in the
+Strategic-Claude chat is **unattributable from disk** -- its R6 could not be recorded at all, and
+000277's chartered entry for R1-R4 was never written. The 000279 charter fixed the input rather than
+the symptom: it carries R8-R14 **verbatim in its own body**, so the accepted inbox is a complete
+artifact of record and this entry can quote it word for word.
+
+### R8-R14, verbatim, from the accepted 000279 inbox body
+
+> **R8 (R-A) = (a).** Re-open T6.1 narrowly: a metadata-only capture mode on the POWERSHELL_LSP_*
+> admin env surface, T6.1 amended to record the management-plane reader the review named (EDR,
+> backup, eDiscovery, DLP). NOT built tonight -- chartered for night 4, because the capture's
+> consumer set deserves its own derivation.
+>
+> **R9 (R-B) = (b).** Charter Policy v2's include-side payload only; the signing half waits until a
+> trust root exists, per THREAT-MODEL T4.1's own words. P1, not tonight.
+>
+> **R10 (R-C) = (a).** Verify the gallery-fallback bytes against the same pin and fail closed.
+> BUILT TONIGHT as legs E and F.
+>
+> **R11 (R-D) = (a).** Build P0-1a+b+c as one dispatch. BUILT TONIGHT as legs A through D.
+>
+> **R12 (R-F) = (c).** Decide T3's spread basis after the quiet-host re-runs. Not tonight; the
+> re-runs are a human leg on a quiet host.
+>
+> **R13 (R-G) = (a).** Claude Code Current-1 is Advisory, not Required. Recorded; P1-3 builds later.
+>
+> **R14.** No re-rule on the custom-rule seam, the native-LSP gate, or PS 5.1 first-class. The
+> docket argued all three both ways and recommended none; the seam's re-open condition is real user
+> demand and a review is not demand.
+
+Each of R8-R13 is now written into
+[`ENTERPRISE-PROGRAM-DOCKET.md`](roadmap-ii/ENTERPRISE-PROGRAM-DOCKET.md) section 7's "Mike's
+answer" column, and no other line of that docket moved. R14 has no row there -- it answers section
+5, which argues the three standing rulings both ways -- so it is recorded here and in
+[`PROGRAM.md`](roadmap-ii/PROGRAM.md)'s rows-that-left table, and **section 5 is left exactly as
+written**, because it is the argument the ruling was made against.
+
+### R1-R7, RECORDED LATE, and only as far as disk attributes them
+
+000277's chartered ledger entry for R1-R4 was never written and 000278 recorded that absence. This
+entry closes the record as far as it honestly can. **The verbatim text of R1-R7 is still not on
+disk** -- neither the 000277 nor the 000278 inbox quotes any of them -- so what follows is what each
+accepted inbox *attributes* to a ruling, with the clause it comes from. Where nothing is attributed,
+that is said, and nothing is reconstructed.
+
+| # | What the accepted inbox attributes to it | Where |
+| --- | --- | --- |
+| **R1** | **A machine-merge amendment to `NIGHT_PROTOCOL.md`, deferred to an attended change.** "the machine-merge amendment (R1) is Mike's attended change tomorrow and is not touched here"; `scope_out`: "R1's amendment is Mike's attended change tomorrow, not this run's" | 000277 inbox anchor for `docs/NIGHT_PROTOCOL.md`; `scope_out`; `rule_citations` |
+| **R2** | **NOT ATTRIBUTABLE FROM DISK.** The 000277 title names "rulings R1-R4"; no clause attributes anything to R2. (The unrelated `R2-nn` identifiers in `PROGRAM.md` are Roadmap II wave rows, not this ruling.) The probe that would settle it is the Strategic-Claude chat transcript of 2026-09-05, which is not on disk | 000277 inbox title, `rule_citations` |
+| **R3** | **NOT ATTRIBUTABLE FROM DISK**, same as R2 and by the same probe | 000277 inbox title, `rule_citations` |
+| **R4** | **Build the POSIX containment fix.** "LEG C -- POSIX containment fix (ruling R4; runs SECOND so its CI cycle overlaps the reading legs) ... Make each creation owner-only (0700 directories, 0600 files where the plugin writes files) at creation time ... with Windows behaviour byte-identical". Delivered by 000277 leg C | 000277 inbox `scope_in` leg C |
+| **R5** | **Cut v1.33.1 as far as an unattended night can take a release.** Recorded in full in the 000278 entry above; not restated here | 000278 inbox `scope_in` leg R |
+| **R6** | **NOT ATTRIBUTABLE FROM DISK.** Recorded as such by the 000278 entry above and unchanged by anything found tonight | 000278 inbox title, `rule_citations` |
+| **R7** | **The night's hard rails do not move.** Recorded in full in the 000278 entry above | 000278 inbox `scope_out`; `rule_citations` |
+
+**The mechanism that fixed this is the charter, not the ledger.** R8-R14 are quotable because the
+000279 charter carried them in its body. Nothing in this repository can recover R2, R3 or R6, and no
+later entry should try.
+
+### P0-1 -- doctor `-Json`, the status envelope, and `-RequireProven` (R11)
+
+Built as `DOCTOR-SURFACE-DOCKET.md` slices S1 and S2, folded into the program docket unchanged.
+
+**`-Json` is a third rendering over the existing `Invoke-Doctor` seam**, beside
+`Format-DoctorReport` and `Format-DoctorSummary` -- not a new code path. The precedent was already
+shipped: `-Summary` is exactly this shape of change, and its own comment states the invariant that
+makes it safe. **The human renderings are byte-identical without the switch, measured rather than
+asserted**: `Format-DoctorReport` and `Format-DoctorSummary` over a fixed three-check fixture hash
+identically at the merge base `e6aed1b` and at this tip (SHA-256
+`908D6B9A7402EAE7DC3D6ED9DC236C938BA8F250C94449255BFA812DA4167DF6`, 1,225 bytes), and two live
+full runs -- the default fix-list and `-Summary` -- are byte-identical with identical exit codes.
+
+**The envelope** carries `schemaVersion` (1), the derived `status`, the resolved plugin / pwsh /
+PSES / PSSA versions, the provenance floor, the summary counts, and the per-check array in the
+`New-DoctorResult` shape. `versions.pwsh` is a host fact; `versions.pses` and `versions.pssa` are
+the **pins this build requires**, not a re-probe of what is installed -- checks 3 and 4 already
+report that, and duplicating their verdict would be a second implementation of it.
+
+**The derivation rule**, stated once in `Get-DoctorEnvelopeStatus` and mirrored in
+`commands/doctor.md`. Each value has a condition; when several apply the most severe wins, in the
+order UNHEALTHY > DEGRADED > UNPROVEN > HEALTHY:
+
+| Value | Applies when |
+| --- | --- |
+| `UNHEALTHY` | at least one check FAILED |
+| `DEGRADED` | at least one check is UNKNOWN **and** at least one PASSED |
+| `UNPROVEN` | **nothing** PASSED -- the run established nothing, so it proves nothing |
+| `HEALTHY` | every check PASSED |
+
+A run with both a fail and an unknown reads UNHEALTHY. A render of **zero** checks reads UNPROVEN,
+never HEALTHY.
+
+**This `status` is a DOCTOR ENVELOPE FIELD, NOT THE FROZEN DIAGNOSTICS STATUS TOKEN SET, and the
+distinction is the reason the freeze exposure is zero.** `CONTRACT.md` Tier 1 freezes exactly two
+enumerable surfaces: the twenty `userConfig` knob names, and the **diagnostics** status token set --
+the words a *finding* wears, drift-guarded to `Get-DiagnosticsStatusBanner` / `Resolve-AnalysisStatus`.
+None of `HEALTHY` / `DEGRADED` / `UNHEALTHY` / `UNPROVEN` is one of those words, nothing in this
+slice emits or reads a diagnostics record, and the doctor's own per-check `pass` / `fail` /
+`unknown` vocabulary is a **third**, separate enum pinned by `New-DoctorResult`'s `ValidateSet`,
+untouched. The three look identical in prose and are not the same surface. `git diff` shows
+`CONTRACT.md` unchanged.
+
+**`-RequireProven`** is a second predicate beside the existing failure count: **exit 2** when
+nothing failed but at least one check is UNKNOWN. Exit 2 rather than 1 keeps 1 meaning "something
+FAILED" for every caller that exists, and matches this repo's own convention for an opt-in gate
+tripping (`lsp-scan.ps1 -FailOn` exits 2). A fail dominates an unknown. **The opt-in is
+load-bearing, not timidity** -- changing what the *default* exit code means would break every
+existing caller and is a breaking change under the 1.x policy.
+
+**Controls.** RED for `-RequireProven`: the prior predicate, the single `$doctorFailures` line the
+file shipped, returns 0 where the new test demands 2 -- and agrees with the new one on every set
+where the switch is not in play, so the control discriminates rather than merely differing. RED for
+the envelope: a status derived from the failure count alone reads HEALTHY on a run that established
+nothing. Discrimination control: a forced-UNKNOWN run never renders HEALTHY. Renderer control (the
+docket's own): forcing one check to FAIL moves both the JSON status and the exit code, which a
+renderer with hardcoded statuses would fail.
+
+### P0-3 -- the gallery-fallback pin gate (R10)
+
+**The gap, derived rather than assumed.** `scripts/ensure-pssa.ps1` resolves PSScriptAnalyzer
+through mirror, bundle, pinned-`.nupkg` cache and direct download; every one passed the single
+`Test-PinnedFileHash` gate and failed closed. The `Save-Module` fallback did not, and the reason is
+mechanical: a live `Save-Module -Name PSScriptAnalyzer -RequiredVersion 1.25.0` leaves **49 files
+under `PSScriptAnalyzer/1.25.0/`** -- an extracted module tree plus PowerShellGet's own
+`PSGetModuleInfo.xml` -- and **no `.nupkg` anywhere**. `$PssaSha256` is a digest *of the `.nupkg`*,
+so it was not computable from what that route produced. Those bytes were installed on the Gallery's
+publisher/catalog integrity alone, and the code's own comment named closing it as its own dispatch.
+
+**Option (a) is buildable, and this is the measurement that proved it.**
+`Save-Package -Name PSScriptAnalyzer -RequiredVersion 1.25.0 -Source https://www.powershellgallery.com/api/v2 -ProviderName NuGet`
+saves `PSScriptAnalyzer.1.25.0.nupkg`, 14,658,674 bytes, SHA-256
+`14E634C828EB98EFB9F40B2918BA90F139ED5ECCDF663A2A747736D996995D60` -- **exactly `$PssaSha256`**. So
+the fallback can hand the gate the same artifact the pinned layers hand it.
+
+**The fix.** The fallback is now a **layer inside the single gate**, not a route after it: when the
+direct download fails all three attempts, the script acquires the `.nupkg` over PackageManagement's
+transport, stages it into the same `$nupkg` the one `Test-PinnedFileHash -Path $nupkg` call reads,
+and fails closed identically on a mismatch -- same banner, same layer name, same `exit 1`, no
+expansion, no marker. The unverified `Save-Module` route and the `Register-PSRepository` bootstrap
+that existed only to serve it are removed. **No acquisition of any kind survives after the
+fail-closed exit**, which is the stronger form of the property the pre-existing suite protected by
+asserting that `Save-Module` sat after it.
+
+**`ensure-pses.ps1` needed no change, and the asymmetry is asserted rather than assumed.** It has
+never had a fallback -- its own comment says so -- so it carries one layered acquisition, one
+`Test-PinnedFileHash`, one fail-closed throw, and the suite asserts it contains no `Save-Module` and
+no `Save-Package` to gate.
+
+**What this costs, deliberately.** A fallback whose bytes cannot be verified no longer installs.
+That is what failing closed means, and the session still degrades honestly: the analyzer reports
+`unavailable` and editing keeps working.
+
+**RED control, and it is the prior implementation rather than a mutant.**
+`tests/fixtures/red-controls/ensure-pssa.pre-000279.ps1` is the pre-change file byte for byte
+(18,739 bytes, SHA-256 `CE52E3E049F1951B392D3AB215EDFC8C7AE0E06D8AD55909134A4606628FEBFD`), pinned
+by hash in the test and asserted to carry the same `$PssaVersion` and `$PssaSha256` as the shipped
+script so the comparison is like for like. Driven by the same harness -- direct download forced to
+fail, the fallback fed bytes that are not the pinned artifact -- the shipped script **refuses**
+(exit 1, banner naming `gallery-fallback`, no marker, nothing vendored) and the prior implementation
+**accepts**: it installs an attacker-supplied module tree wearing the pinned version number and
+records `gallery-fallback` in its marker.
+
+**The doctor's artifact-source note inverted with the gate and kept the case it must not lose.** A
+marker records the *layer*, never the build that wrote it, so a `gallery-fallback` marker left by an
+install predating this gate still describes bytes the pin did not verify. `Test-DoctorArtifactSource`
+now says both things; silently dropping the note would have upgraded a legacy install's provenance
+by implication.
+
+### External actions: none
+
+No merge, no promotion to `verified`, no `dispatch f2`, no tag, no workflow trigger of any kind
+including a dry run, no publish, post or submission, no force-push, no branch deleted, and nothing
+touched that belongs to another session. A live PowerShell Gallery fetch was performed **twice** --
+once to derive the `Save-Module` payload shape and once to derive the `Save-Package` digest -- both
+read-only, both into a scratch directory outside every repository, and both are the derivations this
+entry reports rather than assumes.
