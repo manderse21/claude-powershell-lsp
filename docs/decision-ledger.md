@@ -4231,25 +4231,29 @@ artifact of record and this entry can quote it word for word.
 
 ### R8-R14, verbatim, from the accepted 000279 inbox body
 
-> **R8 (R-A) = (a).** Re-open T6.1 narrowly: a metadata-only capture mode on the POWERSHELL_LSP_*
+Quoted exactly as the charter body states them. The blockquote marker and the line wrapping are
+the container; **no word, emphasis or punctuation of the rulings themselves is added or changed**,
+so a reader can diff this block against the inbox and a check can match it as a string.
+
+> R8 (R-A) = (a). Re-open T6.1 narrowly: a metadata-only capture mode on the POWERSHELL_LSP_*
 > admin env surface, T6.1 amended to record the management-plane reader the review named (EDR,
 > backup, eDiscovery, DLP). NOT built tonight -- chartered for night 4, because the capture's
 > consumer set deserves its own derivation.
 >
-> **R9 (R-B) = (b).** Charter Policy v2's include-side payload only; the signing half waits until a
+> R9 (R-B) = (b). Charter Policy v2's include-side payload only; the signing half waits until a
 > trust root exists, per THREAT-MODEL T4.1's own words. P1, not tonight.
 >
-> **R10 (R-C) = (a).** Verify the gallery-fallback bytes against the same pin and fail closed.
+> R10 (R-C) = (a). Verify the gallery-fallback bytes against the same pin and fail closed.
 > BUILT TONIGHT as legs E and F.
 >
-> **R11 (R-D) = (a).** Build P0-1a+b+c as one dispatch. BUILT TONIGHT as legs A through D.
+> R11 (R-D) = (a). Build P0-1a+b+c as one dispatch. BUILT TONIGHT as legs A through D.
 >
-> **R12 (R-F) = (c).** Decide T3's spread basis after the quiet-host re-runs. Not tonight; the
+> R12 (R-F) = (c). Decide T3's spread basis after the quiet-host re-runs. Not tonight; the
 > re-runs are a human leg on a quiet host.
 >
-> **R13 (R-G) = (a).** Claude Code Current-1 is Advisory, not Required. Recorded; P1-3 builds later.
+> R13 (R-G) = (a). Claude Code Current-1 is Advisory, not Required. Recorded; P1-3 builds later.
 >
-> **R14.** No re-rule on the custom-rule seam, the native-LSP gate, or PS 5.1 first-class. The
+> R14. No re-rule on the custom-rule seam, the native-LSP gate, or PS 5.1 first-class. The
 > docket argued all three both ways and recommended none; the seam's re-open condition is real user
 > demand and a review is not demand.
 
