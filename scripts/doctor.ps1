@@ -2144,6 +2144,19 @@ function Format-DoctorJson {
     # schemaVersion is 1 and is the field a consumer branches on. It is not the plugin version
     # and does not move with it; the plugin version rides in versions.plugin.
     #
+    # ADDITIVE FIELDS DO NOT BUMP schemaVersion; REMOVALS AND RENAMES DO. commands/doctor.md
+    # stated no policy on this before dispatch 000282, which is why 000282 both wrote the policy
+    # there and followed it here: captureMode is a new key and nothing existing moved, so a
+    # consumer written against schemaVersion 1 keeps reading this envelope correctly.
+    #
+    # captureMode exists because a control the fleet cannot verify is half a control (ruling R19).
+    # P0-2's reader is a management plane -- EDR, backup, eDiscovery, DLP -- and it learns whether
+    # the capture control is active by asking a machine-readable surface, NOT by reading the log
+    # the control exists to keep it out of. It carries three things: the RESOLVED mode the writer
+    # will obey, the RAW environment value verbatim ('' when unset), and whether that value was
+    # RECOGNIZED -- so a typo, which resolves to `full` rather than gating the channel, is visible
+    # as a typo instead of reading as a control that is quietly not active.
+    #
     # The seam shape matches $Version / $Provenance in the two human renderings: parameters with
     # inert defaults, so an out-of-band render still produces honest output rather than throwing.
     param([object[]] $Results, [string] $Version = '', [string] $Provenance = '',
@@ -2170,6 +2183,7 @@ function Format-DoctorJson {
             pssa   = $PssaPin
         }
         provenanceFloor = $Provenance
+        captureMode     = (Get-DiagnosticCaptureModeInfo)
         summary         = [ordered]@{
             pass    = @($all | Where-Object { $_.Status -eq 'pass' }).Count
             fail    = @($all | Where-Object { $_.Status -eq 'fail' }).Count

@@ -63,6 +63,7 @@ The envelope:
   "status": "DEGRADED",
   "versions": { "plugin": "1.33.1", "pwsh": "7.6.5", "pses": "v4.6.0", "pssa": "1.25.0" },
   "provenanceFloor": "...",
+  "captureMode": { "resolved": "full", "raw": "", "recognized": false },
   "summary": { "pass": 6, "fail": 0, "unknown": 8, "total": 14 },
   "checks": [ { "status": "pass", "component": "...", "detail": "...", "remediation": "..." } ]
 }
@@ -74,6 +75,25 @@ The envelope:
   **`versions.pses` / `versions.pssa`** are the **pins this build requires**, not a re-probe of
   what is installed. Checks 3 and 4 are what report whether the install matches them.
 - **`checks`** is always a JSON array, including at one element and at zero.
+- **`captureMode`** reports the diagnostics-capture control
+  ([`POWERSHELL_LSP_CAPTURE_MODE`](../docs/configuration.md#powershell_lsp_capture_mode)):
+  `resolved` is the mode the capture writer will actually obey, `raw` is the environment value
+  verbatim (`""` when unset), and `recognized` says whether that value named a real mode. **All
+  three are reported because an unrecognized value resolves to `full`** -- nothing about that
+  variable may become a gate on the diagnostics surface -- so without `raw` and `recognized` a
+  fleet reader could not tell a host deliberately left at `full` from one whose deployed value is
+  misspelled. This is how a management plane confirms the control is active on a host **without
+  reading the capture log the control exists to keep it out of**.
+
+### Adding to this envelope -- the schemaVersion policy
+
+**Additive fields do not bump `schemaVersion`. Removals and renames do.** A consumer written
+against a given `schemaVersion` may therefore encounter keys it does not know and must ignore
+them, but will never find a key it relied on missing or renamed under the same version.
+
+This policy was established by dispatch 000282, which added `captureMode`, **because no policy
+existed** -- the envelope shipped in 000279 said what `schemaVersion` was for and not what moves
+it. It is recorded here rather than inferred from the one example.
 
 ### `status` -- how it is derived
 

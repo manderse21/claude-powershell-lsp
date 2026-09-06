@@ -33,6 +33,22 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ### Added
 
+**A `captureMode` field in the `doctor -Json` envelope** (dispatch 000282, ruling R19 of
+2026-09-06).
+
+A control the fleet cannot verify is half a control. The reader the capture mode above exists for
+is a management plane, and a management plane learns whether a control is active by asking a
+machine-readable surface -- so the envelope now carries `captureMode` with the resolved mode, the
+raw environment value and a `recognized` flag. All three, because an unrecognized value resolves to
+`full` rather than gating the channel: without `raw` and `recognized`, a host whose deployed value
+is misspelled would be indistinguishable from one deliberately left at the default.
+
+It is **additive**, and `schemaVersion` stays 1. `commands/doctor.md` stated no policy on whether an
+additive field bumps the schema, so this dispatch wrote one -- additive fields do not bump,
+removals and renames do -- and recorded that it established it. No check's logic, the four-value
+status vocabulary, the summary counts and the exit code are all unchanged, and both human
+renderings are byte-identical to the previous build.
+
 **A protocol version and capabilities handshake on the daemon IPC** (dispatch 000282, ruling R15 of
 2026-09-06 = `ENTERPRISE-PROGRAM-DOCKET` P1-4).
 
