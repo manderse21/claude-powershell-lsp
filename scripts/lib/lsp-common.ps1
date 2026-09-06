@@ -1208,6 +1208,49 @@ function Get-CaptureLogRotateBytes {
     return $parsed
 }
 
+function Get-DiagnosticCaptureModeInfo {
+    # Resolve $env:POWERSHELL_LSP_CAPTURE_MODE into the three facts both consumers need
+    # (P0-2, ruling R8 of 2026-09-05; the fleet-visible half is ruling R19):
+    #   resolved    'full' | 'metadata' | 'off' -- what the writer obeys.
+    #   raw         the environment value verbatim, '' when unset. NEVER interpreted.
+    #   recognized  $true when raw named one of the three modes, $false otherwise.
+    #
+    # ONE function owns the vocabulary so the writer and the doctor envelope cannot drift
+    # (Hub Rule 18). Add-DiagnosticCaptureEntries takes .resolved; doctor.ps1 renders all three,
+    # which is what lets a fleet reader see a TYPO -- an unrecognized value resolves to `full`
+    # here and says so there, rather than silently reading as a control that is not active.
+    #
+    # INVALID AND EMPTY BOTH FALL BACK TO `full`, and that direction is not a preference:
+    # Get-CaptureLogRotateBytes above sets the precedent in this exact family ("A non-numeric or
+    # non-positive value falls back to the default rather than disabling the bound") and states
+    # the reason -- T6.1 is ACCEPTED-WITH-RECORD, so NOTHING here may become a gate on the
+    # capture channel itself. docs/dogfood.md documents that same fallback for
+    # POWERSHELL_LSP_CAPTURE_ROTATE_BYTES, so this is the capture channel's own written
+    # convention rather than a new one. (docs/configuration.md's admin-env section documents
+    # refuse-and-report for the two BOOTSTRAP artifact-source variables; that path has a banner
+    # surface to refuse ON, and this one is inside a swallow-everything writer that must not
+    # emit -- so the bootstrap policy is not the one that governs here.)
+    #
+    # Case- and whitespace-insensitive: a value deployed by GPO, Intune or machine-scope
+    # environment is not required to match a spelling exactly to be honoured.
+    $raw = $env:POWERSHELL_LSP_CAPTURE_MODE
+    if ($null -eq $raw) { $raw = '' }
+    $info = [ordered]@{ resolved = 'full'; raw = [string]$raw; recognized = $false }
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $info }
+    $norm = ([string]$raw).Trim().ToLowerInvariant()
+    if ($norm -eq 'full' -or $norm -eq 'metadata' -or $norm -eq 'off') {
+        $info.resolved = $norm
+        $info.recognized = $true
+    }
+    return $info
+}
+
+function Get-DiagnosticCaptureMode {
+    # The resolved capture mode alone -- the writer's seam. See Get-DiagnosticCaptureModeInfo
+    # for the vocabulary, the fallback and the precedent it follows.
+    return [string](Get-DiagnosticCaptureModeInfo).resolved
+}
+
 function Invoke-CaptureLogRotation {
     # Bound the capture log (T6.4, threat model section 8, ruled FIX 2026-08-21).
     #
@@ -1347,10 +1390,35 @@ function Add-DiagnosticCaptureEntries {
     # flat hashtables produced by New-CaptureRecordFrom*; the offending-line snippet and the
     # dedup hash are derived here so the two emit call sites stay thin. The verdict field is
     # written EMPTY, reserved for the later annotation pass.
+    #
+    # THREE CAPTURE MODES (P0-2, ruling R8 of 2026-09-05), read from
+    # Get-DiagnosticCaptureMode -- see there for the vocabulary and the fallback:
+    #   full      today's entry, BYTE-IDENTICAL. The [ordered] literal below is untouched, and
+    #             that is why: byte-identity is structural here, not a thing a test restores.
+    #   metadata  `file` demoted to its BASENAME, `message` and `snippet` dropped. The reader
+    #             set the review named (EDR, backup, eDiscovery, DLP) sees no source text and
+    #             no absolute path, and the dogfood corpus channel keeps working.
+    #   off       nothing is written and NO directory is created.
+    #
+    # THE READ IS KEPT IN metadata MODE; ONLY THE WRITE IS SUPPRESSED. `hash` is computed FROM
+    # `$snippet` (below), so an implementation that skipped reading the file to save the write
+    # would hash the EMPTY line instead and silently key every metadata row differently from
+    # the full row for the same finding -- breaking the exact channel this mode exists to
+    # preserve, and breaking it invisibly, because this writer swallows everything. The mode
+    # therefore branches only AFTER the entry is built.
+    #
+    # `message` is dropped rather than kept because PSScriptAnalyzer quotes SOURCE IDENTIFIERS
+    # into it -- measured on the pinned PSSA 1.25.0: PSUseDeclaredVarsMoreThanAssignments emits
+    # "The variable 'customerRecordZZQ9' is assigned but never used." and PSReviewUnusedParameter
+    # emits "The parameter 'InternalTokenABC7' has been declared but not used." A row that
+    # strips the snippet and keeps that has not answered the reader it exists for.
     param([string]$File, [object[]]$Records)
     try {
         $recs = @($Records)
         if ($recs.Count -eq 0) { return }
+        $mode = Get-DiagnosticCaptureMode
+        # `off` returns BEFORE the log path resolves, so no file and no DIRECTORY is created.
+        if ($mode -eq 'off') { return }
         $logPath = Get-DogfoodLogPath
         if ([string]::IsNullOrWhiteSpace($logPath)) { return }
         $dir = Split-Path -Parent $logPath
@@ -1382,6 +1450,18 @@ function Add-DiagnosticCaptureEntries {
                 snippet  = $snippet
                 hash     = (Get-DiagnosticShapeHash -RuleId $ruleId -OffendingLine $snippet)
                 verdict  = ''
+            }
+            if ($mode -eq 'metadata') {
+                # Remove() on an [ordered] dictionary preserves the order of what remains, so a
+                # metadata row is the full row minus two keys -- never a differently-shaped
+                # object. `hash` is already computed from $snippet above and is carried through
+                # UNCHANGED, which is what makes the two modes key identically.
+                # The basename is split on BOTH separators rather than with Split-Path -Leaf:
+                # Split-Path is host-relative, so a Windows path handed to it on a POSIX CI leg
+                # comes back whole -- with the absolute path still in the row.
+                $entry['file'] = [string](([string]$File) -split '[\\/]')[-1]
+                $entry.Remove('message')
+                $entry.Remove('snippet')
             }
             [void]$sb.Append(($entry | ConvertTo-Json -Depth 5 -Compress))
             [void]$sb.Append("`n")
