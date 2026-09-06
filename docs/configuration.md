@@ -170,6 +170,11 @@ no repo-local `PSScriptAnalyzerSettings.psd1` and no `settingsPath` override res
   `PSAvoidUsingConvertToSecureStringWithPlainText`, and `PSAvoidUsingUsernameAndPasswordParams`
   start surfacing where the built-in set omits them.
 
+**This knob selects among PSScriptAnalyzer rule sets only.** Six of the rules this plugin can
+surface are **not** PSScriptAnalyzer rules -- they are written here, because the judgment each makes
+cannot be reached from a file's own syntax tree. They are named, with the test that decides what
+belongs among them, in [the Assurance Pack](assurance-pack.md), and this knob does not select them.
+
 **Precedence: repo settings always win.** An explicit `settingsPath` and a repo-local
 `PSScriptAnalyzerSettings.psd1` **both win over the base** -- the base only fills the gap when
 neither is present. The existing noise controls (`scopeToEdit`, `perFileCap`,
