@@ -4403,3 +4403,135 @@ touched that belongs to another session. A live PowerShell Gallery fetch was per
 once to derive the `Save-Module` payload shape and once to derive the `Save-Package` digest -- both
 read-only, both into a scratch directory outside every repository, and both are the derivations this
 entry reports rather than assumes.
+## Dispatch 000282 -- enterprise program night 4: rulings R15-R19 of 2026-09-06 RATIFIED by acceptance, R8 EXECUTED, and P0-2 / P1-4 / P2-2 BUILT
+
+### The rulings, verbatim
+
+Carried verbatim per **R18**, which this entry both records and complies with, so each ruling is
+attributable from disk without the chat that produced it.
+
+**R8 (R-A), ruled by Mike 2026-09-05, EXECUTED tonight.** *"R8 (R-A) = (a). Re-open T6.1 narrowly:
+a metadata-only capture mode on the POWERSHELL_LSP_* admin env surface, T6.1 amended to record the
+management-plane reader the review named (EDR, backup, eDiscovery, DLP). NOT built tonight --
+chartered for night 4, because the capture's consumer set deserves its own derivation."*
+
+**R15 -- pull P1-4 forward.** *"Build the protocol handshake now. It is zero freeze exposure on
+both frozen surfaces, the docket prices it at 3-4 hours today and materially more once P1-2 ships a
+second consumer, and it is the ordering finding the review did not draw: P1-4 must lead P1-2. Build
+it as the smallest additive shape -- version and capabilities on request and response, absent
+version means 1, unknown version is answered not refused -- and leave P1-2 for its own night."*
+
+**R16 -- pull P2-2 forward.** *"Write the assurance-pack document. No code, zero freeze, and it
+names a set that already exists frozen. It must say what it is not: not a custom-rule seam, not a
+new rule, not an org extension. Derive the rule set; do not restate the docket's count."*
+
+**R17 -- 000279's gallery-fallback test question, answered.** *"The structural proof plus
+Test-PinnedFileHash's own unit coverage is the stopping point. A CI-only test that fetches the
+14.6 MB pinned artifact on every run buys one end-to-end assertion at the price of a network
+dependency in the suite that proves the plugin works offline. If a live fetch is ever wanted it is
+a scheduled job, not a PR gate, and it is not chartered."*
+
+**R18 -- verbatim rulings are a standing convention.** *"Every charter carries every ruling it
+executes or establishes verbatim in its own body, in a section titled for it, so the ruling is
+attributable from disk without the chat that produced it. Strategic-Claude adopts this as a
+drafting rule from this charter forward; the ledger records it once here."*
+
+**R19 -- P0-2 gets a fleet-visible half.** *"A control the fleet cannot verify is half a control.
+The doctor -Json envelope carries captureMode -- resolved mode, raw env value, recognized flag --
+as an additive field, so the EDR / backup / eDiscovery / DLP reader P0-2 exists for can confirm the
+mode is active on a host without reading the log it is trying not to read. No userConfig key, no
+diagnostics token, no human-rendering change."*
+
+R17 is recorded and nothing is built for it.
+
+### What was built
+
+**P0-2 -- the metadata-only capture mode (R8).** `POWERSHELL_LSP_CAPTURE_MODE` on the admin env
+surface, read at `Add-DiagnosticCaptureEntries`. `full` is today's entry and is byte-identical
+*structurally*: the `[ordered]` literal is untouched and `metadata` is expressed as two `Remove()`
+calls on it, so byte-identity is a property of the shape rather than something a test restores.
+`metadata` demotes `file` to a basename and drops `snippet` and `message`. `off` returns before the
+log path resolves, creating neither file nor directory.
+
+**The read is kept and only the write suppressed, and that is the whole correctness argument.**
+`hash` is computed from the snippet, and the docket's case for this shape is that the corpus
+derivation reads `ruleId` + `hash`. An implementation that skipped the read to save the write would
+hash the empty line and key every metadata row differently from its full-mode twin -- silently,
+because the writer swallows everything. Two assertions guard it: full-versus-metadata equality, and
+equality against the hash of the real source line, first shown to differ from the hash of an empty
+one.
+
+**`message` is dropped, on a measurement rather than an argument.** The docket's metadata field list
+does not mention `message` at all. Measured on the pinned PSScriptAnalyzer 1.25.0:
+`PSUseDeclaredVarsMoreThanAssignments` emits *"The variable 'customerRecordZZQ9' is assigned but
+never used."* and `PSReviewUnusedParameter` emits *"The parameter 'InternalTokenABC7' has been
+declared but not used."* Both quote a user-chosen identifier verbatim, so the first arm of the
+charter's fork applies.
+
+**An unrecognized value resolves to `full`**, following `Get-CaptureLogRotateBytes`, whose own
+comment states the constraint for this whole family: T6.1 is ACCEPTED-WITH-RECORD, so nothing here
+may become a gate on the capture channel. `docs/dogfood.md` already documents that same fallback for
+`POWERSHELL_LSP_CAPTURE_ROTATE_BYTES`, making it the capture channel's written convention rather
+than a new one. `docs/configuration.md`'s refuse-and-report policy governs the two **bootstrap**
+artifact-source variables, which have a banner to refuse on; this path is inside a writer that must
+not emit, so the typo is surfaced by the doctor envelope instead.
+
+**P1-4 -- the protocol handshake (R15).** `protocolVersion` and `capabilities` on request and
+response; absent means 1; an unknown version is answered with the daemon's own version, never
+refused. The IPC is confirmed against `CONTRACT.md` to be outside both frozen surfaces.
+
+**P2-2 -- the assurance pack (R16).** `docs/assurance-pack.md`, linked from the `ruleset` knob. The
+count was derived from the emitters and **the docket's six is correct**. The eligibility test is
+derived rather than asserted: a rule belongs to the pack when its judgment cannot be reached from
+the file's own AST -- it needs the host, the machine, a sibling file, or the bytes beneath the parse.
+
+**R19 -- `captureMode` in the doctor envelope.** Resolved mode, raw value, recognized flag.
+Additive; `schemaVersion` stays 1. `commands/doctor.md` stated no policy on whether an additive
+field bumps the schema, so this dispatch wrote one there -- additive does not bump, removals and
+renames do -- and recorded that it established it.
+
+### The freeze answers, one per leg
+
+| Leg | Surface touched | Freeze exposure |
+|---|---|---|
+| B/C/D (P0-2) | an environment variable, not a knob | **ZERO.** `.claude-plugin/plugin.json`, `CONTRACT.md` and `tests/doc-claims.psd1` are byte-unchanged against the merge base |
+| E (captureMode) | a doctor **envelope** field, not a diagnostics status token | **ZERO.** The frozen token set is the words a *finding* wears; the four-value envelope vocabulary is unchanged and no check's logic moved |
+| F (P1-4) | the daemon IPC | **ZERO.** Not one of the two enumerable Tier 1 surfaces, asserted rather than assumed |
+| G (P2-2) | a document naming a set that already exists | **ZERO.** No rule added, renamed or removed |
+
+### Findings that corrected the charter or the docket
+
+- **The docket named one request-building site for P1-4; there are three.** `lsp-client.ps1`'s
+  `diagnostics` and `format` paths and the doctor's check-11 probe. All three announce the
+  handshake, and all five daemon response paths were routed through one write seam, because a
+  handshake present on one path and absent on another is not a handshake.
+- **The set-equality guard is not in `tests/doc-claims.psd1`.** The charter placed it there.
+  `doc-claims.psd1` guards `README.md` numbers only -- every row is `Document = 'README.md'`. The
+  knob guard is in `tests/PowerShellLsp.Unit.Tests.ps1`, comparing `plugin.json`'s `userConfig` keys
+  to `CONTRACT.md`'s `FROZEN-KNOBS` block, and it never reads `docs/configuration.md`. The
+  instruction was satisfiable either way; the citation was not right.
+- **T6.1 appears in five places in `THREAT-MODEL.md`, not the four the charter named.** All five are
+  amended. The acceptance is **narrowed, not withdrawn**: its stated reason is kept verbatim and the
+  management-plane reader is recorded beside it.
+- **`regen-rule-rationales.ps1:85` says "the 5 plugin-owned finders" over a block of six.** Recorded
+  in `docs/assurance-pack.md` and deliberately not fixed -- P2-2 is a document and changes no code.
+- **A live vacuous security assertion, found by the leg I census.**
+  `tests/PowerShellLsp.Unit.Tests.ps1:2272` anchors on the bare name `Test-PinnedFileHash`, which
+  resolves to a header **comment** on line 5 of `ensure-pses.ps1` rather than to the call. The test
+  claims to prove the pin gate runs before extraction and **passes with the pin-gate call deleted**,
+  verified by mutating the source. Its own stated adversarial control is false. Recorded, not fixed:
+  the fix night is chartered against the census.
+
+### The two open questions 000279 asked back
+
+Both are answered by ruling rather than by this dispatch: **R17** settles the gallery-fallback test
+question (the structural proof is the stopping point), and **R18** settles whether verbatim rulings
+should be standing (they are, from this charter forward). Nothing was built for either.
+
+### External actions: none
+
+No merge, no promotion to `verified`, no `dispatch f2`, no tag, no workflow trigger of any kind
+including a dry run, no publish, post or submission, no force-push, no branch deleted, no version
+bump, and nothing touched that belongs to another session. `v1.33.1` remains cut on `main` and
+untagged with PR 204's MINOR-class work above it, exactly as found. One container image was pulled
+from a public registry for the leg K feasibility census, which is a read.

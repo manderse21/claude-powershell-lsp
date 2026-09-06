@@ -42,6 +42,23 @@ Neither changes what the daemon or hooks run, and neither alters the diagnostics
   the rule id + the normalized offending-line shape, for analysis-time de-duplication), and
   `verdict` -- written **empty**, reserved for you to annotate later with
   `scripts/review-dogfood.ps1` (see [Review](#review) below).
+- **How much it records is administrator-selectable (threat-model finding T6.1, amended).** The
+  fields listed above are the default (`full`). `POWERSHELL_LSP_CAPTURE_MODE` also offers
+  **`metadata`** -- the same row with `snippet` and `message` dropped and `file` reduced to a
+  basename, so no source text and no absolute path is written -- and **`off`**, which writes
+  nothing and creates no log at all. The variable, its values and its invalid-value behaviour are
+  specified once, in
+  [configuration.md](configuration.md#powershell_lsp_capture_mode); this page does not restate
+  them.
+
+  > **`metadata` does not narrow what a review or the efficacy ledger can see.** Both derive from
+  > `ruleId` and `hash`, and `hash` is computed from the offending line in *every* mode -- the
+  > read is kept and only the write is suppressed -- so the same finding keys identically whichever
+  > mode captured it, and a log that changed mode mid-life still reads as one corpus. What a
+  > metadata row cannot give you is the line itself: `review-dogfood.ps1` renders `(no snippet)`
+  > for those rows, and the source-dimension split reports them as `other-genuine`, which is the
+  > classifier's existing answer for a path it cannot place.
+
 - **Invisible side channel:** capture runs *after* the diagnostics are surfaced and is fully
   fail-safe. If the write fails for any reason, the diagnostics you see and the hook's exit code
   are byte-for-byte unchanged; logging never changes, reorders, delays, or gates what is surfaced.

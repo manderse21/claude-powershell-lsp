@@ -262,3 +262,88 @@ Describe 'doctor.ps1 -Json end to end on this host (dispatch 000279, leg A accep
         }
     }
 }
+
+Describe 'captureMode -- the fleet-visible half of P0-2 (dispatch 000282, ruling R19)' {
+    BeforeAll {
+        $script:PrevCapMode = [Environment]::GetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE')
+    }
+    AfterAll {
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $script:PrevCapMode)
+    }
+
+    It 'carries resolved, raw and recognized for <Raw>' -TestCases @(
+        @{ Raw = $null; Resolved = 'full'; ExpRaw = ''; Recognized = $false }
+        @{ Raw = 'metadata'; Resolved = 'metadata'; ExpRaw = 'metadata'; Recognized = $true }
+        @{ Raw = 'off'; Resolved = 'off'; ExpRaw = 'off'; Recognized = $true }
+        @{ Raw = 'full'; Resolved = 'full'; ExpRaw = 'full'; Recognized = $true }
+        @{ Raw = 'metadta'; Resolved = 'full'; ExpRaw = 'metadta'; Recognized = $false }
+    ) {
+        param($Raw, $Resolved, $ExpRaw, $Recognized)
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $Raw)
+        $o = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd'))) | ConvertFrom-Json
+        $o.captureMode.resolved | Should -BeExactly $Resolved
+        $o.captureMode.raw | Should -BeExactly $ExpRaw
+        $o.captureMode.recognized | Should -Be $Recognized
+    }
+
+    It 'A TYPO IS VISIBLE AS A TYPO, not as a control that is quietly not active' {
+        # The reason the field carries all three values rather than just the resolved mode. An
+        # unrecognized value resolves to `full` -- the mode logic must never gate the capture
+        # channel -- so without `raw` and `recognized` a fleet reader could not tell a host that
+        # was deliberately left at `full` from one where the GPO value is misspelled.
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', 'metadataa')
+        $typo = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd'))) | ConvertFrom-Json
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $null)
+        $unset = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd'))) | ConvertFrom-Json
+
+        $typo.captureMode.resolved | Should -BeExactly $unset.captureMode.resolved
+        $typo.captureMode.raw | Should -Not -BeExactly $unset.captureMode.raw
+        $typo.captureMode.recognized | Should -Be $false
+    }
+
+    It 'RED CONTROL: a mutant reporting the DEFAULT instead of the resolved mode fails' {
+        # The plausible wrong implementation is one that reports the shipped default rather than
+        # what the writer will actually obey -- a field that always says `full` looks healthy and
+        # tells the fleet nothing. With the environment set to metadata the shipped envelope must
+        # say metadata, and the mutant that hard-codes the default must not.
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', 'metadata')
+        $shipped = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd'))) | ConvertFrom-Json
+        $mutant = [ordered]@{ resolved = 'full'; raw = ''; recognized = $false }
+
+        $shipped.captureMode.resolved | Should -BeExactly 'metadata'
+        $mutant.resolved | Should -Not -BeExactly $shipped.captureMode.resolved
+        $mutant.raw | Should -Not -BeExactly $shipped.captureMode.raw
+    }
+
+    It 'is ADDITIVE -- schemaVersion does not move and no existing key changed' {
+        # commands/doctor.md stated no policy on whether an additive field bumps schemaVersion.
+        # Dispatch 000282 established one -- additive fields do not bump, removals and renames do
+        # -- and this asserts the envelope follows it. The merge-base key list is spelled out
+        # because the point is that every one of them is still present, in order, ahead of the new
+        # one.
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $null)
+        $o = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd'))) | ConvertFrom-Json
+        $o.schemaVersion | Should -Be 1
+        (@($o.PSObject.Properties.Name) -join ',') |
+            Should -BeExactly 'schemaVersion,status,versions,provenanceFloor,captureMode,summary,checks'
+    }
+
+    It 'no check status, count or exit code moved -- captureMode is not a check' {
+        # R19 adds a field to the envelope, not a check. The four-value status vocabulary, the
+        # per-check vocabulary and the summary counts are all untouched by the mode.
+        $results = @(
+            (New-DoctorResult -Status 'pass' -Component 'a' -Detail 'd')
+            (New-DoctorResult -Status 'unknown' -Component 'b' -Detail 'd')
+        )
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', 'off')
+        $withOff = (Format-DoctorJson -Results $results) | ConvertFrom-Json
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $null)
+        $withUnset = (Format-DoctorJson -Results $results) | ConvertFrom-Json
+
+        $withOff.status | Should -BeExactly $withUnset.status
+        $withOff.summary.total | Should -Be $withUnset.summary.total
+        $withOff.summary.unknown | Should -Be $withUnset.summary.unknown
+        (Get-DoctorExitCode -Results $results) | Should -Be (Get-DoctorExitCode -Results $results)
+        $withOff.captureMode.resolved | Should -Not -BeExactly $withUnset.captureMode.resolved
+    }
+}
