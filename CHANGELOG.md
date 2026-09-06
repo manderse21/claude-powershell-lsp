@@ -33,6 +33,38 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ### Added
 
+**A protocol version and capabilities handshake on the daemon IPC** (dispatch 000282, ruling R15 of
+2026-09-06 = `ENTERPRISE-PROGRAM-DOCKET` P1-4).
+
+The IPC between the client and the warm daemon has never carried a version, so a client and a
+daemon from different installs could only discover a mismatch by misbehaving. Every request now
+carries `protocolVersion` and a `capabilities` object, and every response carries the **daemon's
+own** version and capabilities.
+
+Two rules make it additive rather than breaking. **Absent means 1** -- a request with no
+`protocolVersion` is version 1, which is precisely the protocol as it stood before anyone announced
+one, so every existing client keeps working and the response it receives is its old response plus a
+suffix. **An unknown version is answered, not refused** -- a client claiming a version the daemon
+does not know is processed as version 1 and told the daemon's own version, because refusing would
+make the first version bump a flag day, which is the failure announcing a version exists to prevent.
+
+The daemon's advertised capabilities are derived from what it actually serves -- the request loop's
+own action set and the request fields it really reads -- and a test asserts that action list against
+the switch's clause labels read from the AST, so an action added to the loop without being
+advertised fails CI rather than shipping a lie.
+
+The docket named one request-building site; a census found **three** (the client's `diagnostics` and
+`format` paths, and the doctor's check-11 probe) and all three announce the handshake, because one
+present on one path and absent on another is not a handshake. On the daemon side all five response
+paths were routed through a single write seam for the same reason.
+
+**Zero freeze exposure**: the daemon IPC is not one of the two enumerable surfaces `CONTRACT.md`
+freezes, which a test confirms rather than assumes. No `userConfig` key, no diagnostics status
+token, no line of `CONTRACT.md`.
+
+This lands before the query surface (P1-2) deliberately: the handshake costs a few hours now and
+materially more once a second consumer exists.
+
 **`doctor -Json`, a status vocabulary, and an opt-in `-RequireProven` gate** (dispatch 000279,
 ruling R11 of 2026-09-05 = `ENTERPRISE-PROGRAM-DOCKET` R-D option (a), folding
 `DOCTOR-SURFACE-DOCKET` slices S1 and S2 unchanged).

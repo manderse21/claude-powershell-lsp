@@ -1208,6 +1208,56 @@ function Get-CaptureLogRotateBytes {
     return $parsed
 }
 
+# --- daemon IPC protocol handshake (dispatch 000282 leg F; ruling R15) ------
+# P1-4 of ENTERPRISE-PROGRAM-DOCKET section 4.3. The daemon IPC has never carried a version, so a
+# client and a daemon from different installs could only discover a mismatch by misbehaving. The
+# handshake is deliberately the SMALLEST additive shape that makes P1-2 negotiable later:
+#
+#   * every request carries protocolVersion and a capabilities object;
+#   * every response carries the DAEMON's own protocolVersion and capabilities;
+#   * a request with NO protocolVersion is version 1, so every existing client keeps working
+#     byte-identically -- that is what makes this additive rather than breaking;
+#   * a request carrying a version the daemon does not know is ANSWERED, never refused: the daemon
+#     replies with its own version and capabilities and processes the request as version 1. A
+#     refusal would make the first version bump a flag day, which is the failure this exists to
+#     prevent. Forward compatibility is the whole point of announcing a version at all.
+#
+# NOT a Tier 1 surface. CONTRACT.md freezes exactly two enumerable surfaces -- the twenty
+# userConfig knob names and the diagnostics status token set. The IPC is neither, so this costs
+# ZERO freeze exposure. Confirmed against CONTRACT.md rather than assumed.
+#
+# THE VERSION LIVES HERE, ONCE. Client, daemon and doctor all dot-source this file, so there is
+# exactly one place the integer is written (Hub Rule 18).
+
+function Get-LspProtocolVersion {
+    # The wire protocol version this build speaks. Bump ONLY for a change a peer must know about.
+    return 1
+}
+
+function Resolve-RequestProtocolVersion {
+    # The version a REQUEST claims. Absent, empty, non-numeric or non-positive all read as 1 --
+    # version 1 is precisely "the protocol as it was before anyone announced a version", which is
+    # what every pre-000282 client speaks. This never refuses and never throws.
+    param($Request)
+    $raw = $null
+    try { $raw = Get-Prop $Request 'protocolVersion' } catch { $raw = $null }
+    if ($null -eq $raw) { return 1 }
+    $parsed = 0
+    if (-not [int]::TryParse([string]$raw, [ref]$parsed)) { return 1 }
+    if ($parsed -le 0) { return 1 }
+    return $parsed
+}
+
+function Get-LspClientCapabilities {
+    # What a CLIENT of this daemon can make use of, derived from what the shipped client actually
+    # reads off a response -- never a wish list. Both request-building callers (lsp-client.ps1 and
+    # the doctor's check-11 probe) send this, so one client cannot claim more than another.
+    return [ordered]@{
+        touchedRanges = $true      # the client derives and sends edit ranges (dispatch 000019)
+        jsonResponse  = $true      # it parses the response as one line of JSON, nothing else
+    }
+}
+
 function Get-DiagnosticCaptureModeInfo {
     # Resolve $env:POWERSHELL_LSP_CAPTURE_MODE into the three facts both consumers need
     # (P0-2, ruling R8 of 2026-09-05; the fleet-visible half is ruling R19):

@@ -1502,6 +1502,12 @@ function Get-DoctorTestDiagnosticObservation {
         # The SAME one-line JSON request lsp-client.ps1 sends. No touchedRanges -> whole-file, which
         # is what the client also does when the edit range is indeterminate.
         $req = [ordered]@{ action = 'diagnostics'; file = $probeFile; cwd = $probeDir }
+        # Protocol handshake (dispatch 000282, P1-4). This probe is a real client of the daemon,
+        # so it announces itself like one -- a handshake present on the hook path and absent on
+        # the doctor's path would tell a daemon nothing it could rely on. The check's own logic,
+        # its verdict and its rendering are untouched: only the request gained two keys.
+        $req['protocolVersion'] = Get-LspProtocolVersion
+        $req['capabilities'] = Get-LspClientCapabilities
         $writer.WriteLine(($req | ConvertTo-Json -Compress))
         $writer.Flush()
         $readTask = $reader.ReadLineAsync()
