@@ -241,3 +241,64 @@ observation does not support and which would tax every negative finding in the p
 
 **Zero promotions executed.** Three promote recommendations, two holds, one of which recommends
 adopting a gate that is itself currently only a finding. All of it is Mike's call.
+---
+
+## Refresh, 2026-09-06 (dispatch 000282 leg J) -- FINDINGS ONLY
+
+**Nothing below changes any candidate's status, here or anywhere else.** Promotion is Mike's, the
+candidate ledger it would be recorded in lives in the hub, and this section is a derivation of what
+has accumulated since the docket above was assembled by dispatch 000269. The five candidates above
+are untouched.
+
+Derived by reading `rule_observations` in every `projects/powershell-lsp/outbox/` entry from 000270
+through 000281 as they stand on disk. **Nine** carry `second_observation: true`.
+
+| # | Candidate, in short | Declared pair | Does the pair hold? |
+|---|---|---|---|
+| A | At a release cut, diff the `[Unreleased]` band against the merge log, not against itself | **000266 -> 000271** | **Yes.** Two dispatches, the second reproducing the first independently across three PRs |
+| B | A latency freeze must record host load at every block boundary and report a load-insensitive comparator | `SLO-BASELINES.md` sections 2 and 10 -> **000273** | **Partly.** The predecessor is a *document* that established the discipline at v1.31.0/v1.32.0, not a second dispatch's independent sighting |
+| C | A quiescence probe rooted at its own parent measures the wrong thing when an agent launches it | 000275's own build-time sighting -> **000275** | **No, by the two-dispatch standard.** Both sightings are inside one dispatch's arc; the earlier one is recorded in the probe's own header |
+| D | A scriptblock parameter silently captures a same-named outer variable differing only in case | **strategic-dispatch:000251:2 -> 000278** | **Yes.** Two independent dispatches, two different shapes (loop variable, then scriptblock parameter) |
+| E | A count written in prose must be recomputed against its own adjacent enumeration | **claude-skills:000004:1 -> 000278** | **Yes**, and unusually well: the 2026-05-27 predecessor names this exact variant and explicitly declines to bank it |
+| F | Anchor a structural assertion on the CALL form, never a bare cmdlet or function name | `AirgapBootstrap.Tests.ps1:165` -> **000279** at `f02bbeb` | **Yes on evidence, imprecise on form** -- see below |
+| G | Hash a checked-in fixture's CONTENT with EOL normalized, never the bytes git checked out | the standing never-assert-a-worktree-EOL rule -> **000279** | **It is a confirmation, not a crossing** -- see below |
+| H | A check naming a local collection and a nearby scalar with the same letters in different case has already broken | cites **000251** -> **000280** | **Yes**, but it is the *same family as D*. Counted separately by the two outboxes; on the family view this is a third sighting, not a second |
+| I | A recorded check whose control arm anchors on a mutable ref cannot be falsified | **000280 -> 000281** | **Yes**, and 000281 declares it the family's THIRD sighting with both predecessors cited |
+
+> **000280 and 000281 are filed under `powershell-lsp` and are hub-side work** (the PK collector).
+> They are included because the charter's scope is the project's outbox directory, and excluded from
+> nothing else; a promoter should know their subject is not the plugin.
+
+### The two 000279 self-declarations, tested rather than accepted
+
+The charter asked specifically whether these two hold. Dispatch 000282's own leg I census swept
+`tests/` for both hazards tonight, which is the evidence they were missing.
+
+**F -- anchor on the call form. The self-declaration holds, and tonight it got stronger.** The
+declared pair is imprecise in *form*: the predecessor is a correction recorded in a code comment at
+`tests/PowerShellLsp.AirgapBootstrap.Tests.ps1:165`, not a second dispatch id, so this is not
+strictly two dispatches independently observing one failure. On *evidence* it is stronger than the
+bar asks: the leg I census found a **third, live, currently-shipping instance** --
+`tests/PowerShellLsp.Unit.Tests.ps1:2272`, where `$src.IndexOf('Test-PinnedFileHash')` resolves to a
+header comment on line 5 of `ensure-pses.ps1` rather than to the call. That test claims to prove the
+pin gate runs before extraction, and it **passes with the pin-gate call deleted**, which was
+verified by mutating the source and re-running the comparison. Its own stated adversarial control is
+therefore false. A rule with a live third instance that hides a vacuous security assertion is the
+strongest promotion case in this table.
+
+**G -- hash content, not the checkout. It is a confirmation of an already-standing rule, not a
+candidate crossing a gate.** Its own reference says so: it is the *"second observation of the
+standing never-assert-a-worktree-EOL-property rule, this time in its hash form rather than its
+byte-count form."* A standing rule does not get promoted twice. And the leg I census found **zero**
+live instances of the hazard under `tests/` -- every hash or byte assertion over a checked-in file
+is checkout-invariant by construction (ASCII-only scans, CR-stripped comparisons, or before/after
+self-comparisons within one run), and
+`tests/PowerShellLsp.SignPlugin.Tests.ps1:110-111` states the correct rule in a comment before
+using it. The lesson is absorbed. **Recommendation: record the confirmation, promote nothing.**
+
+### What this refresh recommends
+
+Nothing is promoted here and nothing is ranked against the five candidates above, because those were
+argued at length and these have not been. The one finding that deserves a decision rather than a
+row is **F**, on the strength of the live instance leg I found. Everything else is recorded so that
+a future promoter reads an accumulated set rather than re-deriving it.
