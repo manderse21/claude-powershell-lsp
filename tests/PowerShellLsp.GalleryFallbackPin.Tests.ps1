@@ -30,11 +30,26 @@ BeforeAll {
     $script:ShippedEnsure = Join-Path $script:ScriptsDir 'ensure-pssa.ps1'
     $script:PriorEnsure = Join-Path $PSScriptRoot 'fixtures/red-controls/ensure-pssa.pre-000279.ps1'
 
-    # SHA-256 of the prior implementation as this dispatch branched from it. Re-derive with
-    #   git show <the commit this dispatch branched from>:scripts/ensure-pssa.ps1 | Get-FileHash
+    # SHA-256 of the prior implementation as this dispatch branched from it, over the file's
+    # CONTENT with line endings normalized to LF -- never over the bytes git happened to check
+    # out. A .ps1 lands CRLF on a Windows checkout and LF on a POSIX one, so Get-FileHash over
+    # the working tree measures the CHECKOUT, not the fixture: it agreed on the two POSIX CI legs
+    # and disagreed on both Windows legs, which is a property of git's eol handling and says
+    # nothing about whether the fixture drifted. Re-derive with:
+    #   git show <the commit this dispatch branched from>:scripts/ensure-pssa.ps1
+    # (git hands out the blob, which is LF) piped through Get-FileHash.
     # A fixture that drifts stops being the prior implementation, and the RED control below
     # would then be measuring an arbitrary mutant instead.
     $script:PriorEnsureSha256 = 'CE52E3E049F1951B392D3AB215EDFC8C7AE0E06D8AD55909134A4606628FEBFD'
+
+    function Get-ContentSha256 {
+        # Hash the CONTENT, not the checkout. The fixture is ASCII, so its UTF-8 encoding is its
+        # bytes; the only thing normalized away is the line terminator git chose.
+        param([string] $Path)
+        $text = [System.IO.File]::ReadAllText($Path) -replace "`r`n", "`n"
+        $bytes = [Text.Encoding]::UTF8.GetBytes($text)
+        return [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)).Replace('-', '')
+    }
 
     # The child host is THIS host, so the suite proves the branch on whichever interpreter the
     # CI leg runs (windows-powershell 5.1 as well as the three pwsh legs).
@@ -173,10 +188,13 @@ BeforeAll {
 Describe 'RED-control fixture is the PRIOR implementation, not a mutant (dispatch 000279)' {
     # Read the FIXTURE'S OWN BYTES. Nothing here routes through the changed script, so a bug in
     # the change cannot make its own control look valid.
-    It 'exists and is byte-pinned to the implementation this dispatch replaced' {
+    It 'exists and is content-pinned to the implementation this dispatch replaced' {
         Test-Path -LiteralPath $script:PriorEnsure -PathType Leaf | Should -BeTrue
-        (Get-FileHash -Algorithm SHA256 -LiteralPath $script:PriorEnsure).Hash |
-            Should -Be $script:PriorEnsureSha256
+        Get-ContentSha256 -Path $script:PriorEnsure | Should -Be $script:PriorEnsureSha256
+        # Anti-vacuity: the normalizer must not be able to hash anything to the pin.
+        $decoy = Join-Path $TestDrive 'decoy.ps1'
+        Set-Content -LiteralPath $decoy -Value 'not the prior implementation' -Encoding ascii
+        Get-ContentSha256 -Path $decoy | Should -Not -Be $script:PriorEnsureSha256
     }
     It 'carries the UNVERIFIED Save-Module fallback and no pinned gallery acquisition' {
         $prior = Get-Content -LiteralPath $script:PriorEnsure -Raw
