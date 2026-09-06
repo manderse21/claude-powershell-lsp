@@ -54,8 +54,8 @@ jobs:
       # Test-PinnedFileHash pin verify STILL runs on the restored .nupkg before use (a poisoned or
       # stale entry fails closed). The cache KEY binds to the pinned version AND SHA-256 -- resolved
       # from the SINGLE source (scripts/ensure-pssa.ps1) -- so a pin bump can never draw a stale
-      # artifact. On a miss the 000047 retry + register-PSGallery fallback still vendor and then
-      # populate the cache for the next run.
+      # artifact. On a miss the 000047 retry and, behind it, the 000279 pin-gated gallery
+      # fallback still vendor, and the run then populates the cache for the next one.
       - name: Resolve PSSA pin (cache key binds to version + SHA-256)
         id: pin
         shell: pwsh

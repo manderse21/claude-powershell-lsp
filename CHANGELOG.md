@@ -31,6 +31,82 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+### Added
+
+**`doctor -Json`, a status vocabulary, and an opt-in `-RequireProven` gate** (dispatch 000279,
+ruling R11 of 2026-09-05 = `ENTERPRISE-PROGRAM-DOCKET` R-D option (a), folding
+`DOCTOR-SURFACE-DOCKET` slices S1 and S2 unchanged).
+
+**The gap.** `exit 0` from the doctor never meant "it is working" -- it meant "nothing FAILED",
+and in exactly the headless, CI and container environments where that question matters, the checks
+that would prove it *is* working do not fail, they go UNKNOWN. The information that separates a
+healthy install from a container where nothing works was printed correctly and existed **only as
+English prose**, so a CI job could not assert on it without grepping human sentences. Meanwhile
+`lsp-scan.ps1` -- whose job is finding defects -- has emitted SARIF by default for releases, while
+the one surface whose whole job is proving the plugin works was the one a machine could not read.
+
+**`-Json`** is a third rendering beside the default fix-list and `-Summary`, over the same
+`Invoke-Doctor` seam: the checks that run, their statuses and the exit code are identical to a
+normal run, and only the presentation differs. The envelope carries `schemaVersion`, the derived
+`status`, the resolved plugin / pwsh / PSES / PSSA versions, the provenance floor, the summary
+counts and the per-check array (`status`, `component`, `detail`, `remediation`).
+
+**The `status` vocabulary** is `HEALTHY` / `DEGRADED` / `UNHEALTHY` / `UNPROVEN`, derived from the
+existing per-check `pass` / `fail` / `unknown` results and from nothing else -- no check's own
+logic changed. Most severe applicable value wins: `UNHEALTHY` when anything failed, `DEGRADED`
+when something is UNKNOWN and something was established, `UNPROVEN` when nothing was established
+at all, `HEALTHY` when everything passed. A render of zero checks reads `UNPROVEN`, never
+`HEALTHY`. **This is a doctor envelope field, not a diagnostics status token** -- `CONTRACT.md`
+freezes the *diagnostics* token set, the words a finding wears, and none of these four is one of
+them.
+
+**`-RequireProven`** is an opt-in second predicate beside the existing failure count: it exits
+**2** when nothing failed but at least one check is UNKNOWN, so "everything was actually
+established" becomes an exit code instead of a paragraph. Exit 2 rather than 1 keeps 1 meaning
+"something FAILED" for every existing caller and matches `lsp-scan.ps1 -FailOn`'s convention; a run
+with both a fail and an unknown exits 1. **Without the switch the exit code and both human
+renderings are byte-identical to before** -- proven against the merge base, not asserted.
+
+No `userConfig` key, no diagnostics status token, no line of `CONTRACT.md`. Both switches are CLI
+parameters, the same category `CONTRACT.md` already records for `lsp-scan.ps1 -Format`.
+
+### Security
+
+**The last dependency-acquisition route the SHA-256 pin did not gate is now gated, and fails
+closed** (dispatch 000279, ruling R10 of 2026-09-05 = `ENTERPRISE-PROGRAM-DOCKET` R-C option
+(a)).
+
+**The gap.** `scripts/ensure-pssa.ps1` vendors PSScriptAnalyzer through several acquisition
+layers -- internal mirror, pre-staged bundle, pinned-`.nupkg` cache, direct download -- and
+every one of them passed a single `Test-PinnedFileHash` gate and failed closed on a mismatch.
+One did not. When the direct download could not complete (offline, proxy, a transient Gallery
+403) the script fell back to `Save-Module`, which leaves an **extracted module tree and no
+`.nupkg`** -- and the pin is a digest *of the `.nupkg`*, so it could not be computed from what
+that route produced. Those bytes were installed on the PowerShell Gallery's own
+publisher/catalog integrity alone. The code said so in its own comment, and named closing it as
+its own dispatch.
+
+**The fix.** The fallback now acquires the package with `Save-Package` over the NuGet provider,
+which retrieves the `.nupkg` itself, and hands those bytes to the **same single gate** every
+other layer feeds. A mismatch is refused exactly as a tampered mirror artifact is: nothing is
+expanded, nothing is installed, no install marker is written, and the failure banner names the
+`gallery-fallback` layer. There is now **no acquisition route in either `ensure-*` script whose
+bytes the pin does not verify**, and none after the fail-closed exit at all. `ensure-pses.ps1`
+needed no change and did not get one: it has never had a fallback -- one layered acquisition,
+one gate, one fail-closed throw.
+
+**What this costs, deliberately.** A fallback whose bytes cannot be verified no longer installs.
+That is the point of failing closed, and the session still degrades honestly -- the analyzer
+reports `unavailable` and editing keeps working.
+
+**Reported provenance is unchanged in shape and more honest in content.** `/doctor` still names
+the `gallery-fallback` layer, so an operator can still tell which transport supplied an install.
+Its note inverted with the gate and kept the case it must not lose: a marker records the *layer*
+and never the build that wrote it, so a `gallery-fallback` marker left by an install predating
+this gate still describes bytes the pin did not verify, and the check says so.
+
+No `userConfig` key, no diagnostics status token, no line of `CONTRACT.md`.
+
 ## [1.33.1] - 2026-09-05
 PATCH: **every filesystem object the plugin creates on Linux and macOS is now created
 owner-only.** The data root, its temp fallback, the daemon's unix-socket endpoint and the

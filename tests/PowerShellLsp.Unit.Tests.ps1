@@ -2327,8 +2327,17 @@ Describe 'PSSA .nupkg cache is verify-gated and pin-bound (dispatch 000049)' {
         # -- so the anchor moved from `if (-not $fromCache)` to the widened condition. The
         # property under test is unchanged and strictly stronger: strictly fewer paths reach the
         # Gallery than before.
+        #
+        # 000279: ANCHOR ON THE CALL, not the bare cmdlet name -- the same correction the airgap
+        # suite already applies to Test-PinnedFileHash. The file's prose names the cmdlet when it
+        # explains why the gallery fallback reaches the Gallery over a different transport, and
+        # that comment sits ABOVE the guard, so an IndexOf over the bare name resolved to prose
+        # and reported a regression that was not one. The property under test is unchanged; only
+        # what the assertion points at is, and the count assertion keeps it pointing at one call.
         $guardIdx = $script:EnsurePssaSrc.IndexOf('if (-not $sourced.Resolved -and -not $fromCache)')
-        $downloadIdx = $script:EnsurePssaSrc.IndexOf('Invoke-WebRequest')
+        $downloadIdx = $script:EnsurePssaSrc.IndexOf('Invoke-WebRequest -Uri $url')
+        @([regex]::Matches($script:EnsurePssaSrc, [regex]::Escape('Invoke-WebRequest -Uri $url'))).Count |
+            Should -Be 1 -Because 'the anchor must name exactly one call, or the ordering below compares nothing in particular'
         $guardIdx | Should -BeGreaterThan 0
         $downloadIdx | Should -BeGreaterThan $guardIdx
     }
