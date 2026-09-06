@@ -676,6 +676,33 @@ exactly the back-fill this document forbids. Ratification did **not** close this
 figure in section 6.2 is a baseline, not a promise. Adopting a seventh target here would require a
 basis that does not yet exist.
 
+### Standing at v1.33.0 -- recorded 2026-09-06, ruling nothing
+
+**This block records a fact and rules nothing.** No target above moves, no figure above is
+re-rendered, and the v1.32.0 standing column is left exactly as ratified. It exists because the
+v1.33.0 re-measurement lives in `PROGRAM.md`'s R2-06 row and in `evidence/`, and a reader of this
+document should not have to find it there.
+
+**5 of 6 MET at v1.33.0. T3 MISSED.** Measured by dispatch 000273 at commit `6ab2d24` and confirmed
+on a **compliant quiet host** -- the quiescence gate passed at CPU median 22%, p95 41%, with zero
+agent or node processes and 352-376 total over a 7.5-minute span. **1 of 15 sessions** returned two
+NOT-checked edits against a target of at most one. Evidence:
+`evidence/v1.33.0/results/t3-quiet-rerun.{json,log}` and `slo-regression.log`.
+
+**What is missed is the count clause alone.** T3 has two clauses -- at most one NOT-checked edit,
+and only during cold start. The extra edit was itself a cold-start edit, so the **cold-start clause
+holds**; only the bound of one is exceeded. An earlier table in the freeze read 6 of 15, but it ran
+at 84-97% CPU against 619-677 processes and is not the measurement of record; the quiet re-run is.
+
+**Section 9 ratified T3 with spread zero**, and says in as many words that a T3 miss is to be read
+as a behavioural regression rather than measurement noise. This block does not soften that reading.
+
+**T3's disposition and its spread basis are both PENDING-MIKE.** Whether this is documented-and-
+accepted or calls for a corrective release is Mike's, and re-ratifying the spread basis at N=45
+rather than N=15 is ruling **R12** of 2026-09-05, which defers it until the quiet-host re-runs the
+`T3-REGRESSION-SURVEY.md` P1 proposal describes have been run. Neither is settled here, and nothing
+in this document may be read as settling either.
+
 ## 10. What these baselines do not establish
 
 - **One host, one OS, one PowerShell version, one analyzer pin.** No cross-platform claim. The four
