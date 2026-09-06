@@ -124,6 +124,10 @@ function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, 
         $reader = New-Object System.IO.StreamReader($client, [System.Text.Encoding]::UTF8, $false, 4096, $true)
 
         $reqObj = [ordered]@{ action = 'diagnostics'; file = $filePath; cwd = $cwd }
+        # Protocol handshake (dispatch 000282, P1-4). Additive: a daemon that predates it
+        # ignores both keys, and a daemon that has it treats an absent version as 1.
+        $reqObj['protocolVersion'] = Get-LspProtocolVersion
+        $reqObj['capabilities'] = Get-LspClientCapabilities
         # Edit-range scoping (000019): send the touched ranges only when present.
         # Omitting them is the whole-file path (scoping off or an indeterminate range).
         if ($null -ne $touchedRanges -and @($touchedRanges).Count -gt 0) { $reqObj['touchedRanges'] = @($touchedRanges) }
@@ -164,6 +168,10 @@ function Get-FormatResponse([string]$pipeName, [string]$filePath, [int]$connectM
         $writer.NewLine = "`n"; $writer.AutoFlush = $true
         $reader = New-Object System.IO.StreamReader($client, [System.Text.Encoding]::UTF8, $false, 4096, $true)
         $reqObj = [ordered]@{ action = 'format'; file = $filePath; cwd = $cwd }
+        # Protocol handshake (dispatch 000282, P1-4). Additive: a daemon that predates it
+        # ignores both keys, and a daemon that has it treats an absent version as 1.
+        $reqObj['protocolVersion'] = Get-LspProtocolVersion
+        $reqObj['capabilities'] = Get-LspClientCapabilities
         if ($Apply) { $reqObj['apply'] = $true }   # 000099: request the daemon's guarded write-back
         $writer.WriteLine(($reqObj | ConvertTo-Json -Compress)); $writer.Flush()
         $remaining = [Math]::Max(1, $hardCapMs - [int]$sw.ElapsedMilliseconds)

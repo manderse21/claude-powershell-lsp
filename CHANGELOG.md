@@ -33,6 +33,54 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ### Added
 
+**A `captureMode` field in the `doctor -Json` envelope** (dispatch 000282, ruling R19 of
+2026-09-06).
+
+A control the fleet cannot verify is half a control. The reader the capture mode above exists for
+is a management plane, and a management plane learns whether a control is active by asking a
+machine-readable surface -- so the envelope now carries `captureMode` with the resolved mode, the
+raw environment value and a `recognized` flag. All three, because an unrecognized value resolves to
+`full` rather than gating the channel: without `raw` and `recognized`, a host whose deployed value
+is misspelled would be indistinguishable from one deliberately left at the default.
+
+It is **additive**, and `schemaVersion` stays 1. `commands/doctor.md` stated no policy on whether an
+additive field bumps the schema, so this dispatch wrote one -- additive fields do not bump,
+removals and renames do -- and recorded that it established it. No check's logic, the four-value
+status vocabulary, the summary counts and the exit code are all unchanged, and both human
+renderings are byte-identical to the previous build.
+
+**A protocol version and capabilities handshake on the daemon IPC** (dispatch 000282, ruling R15 of
+2026-09-06 = `ENTERPRISE-PROGRAM-DOCKET` P1-4).
+
+The IPC between the client and the warm daemon has never carried a version, so a client and a
+daemon from different installs could only discover a mismatch by misbehaving. Every request now
+carries `protocolVersion` and a `capabilities` object, and every response carries the **daemon's
+own** version and capabilities.
+
+Two rules make it additive rather than breaking. **Absent means 1** -- a request with no
+`protocolVersion` is version 1, which is precisely the protocol as it stood before anyone announced
+one, so every existing client keeps working and the response it receives is its old response plus a
+suffix. **An unknown version is answered, not refused** -- a client claiming a version the daemon
+does not know is processed as version 1 and told the daemon's own version, because refusing would
+make the first version bump a flag day, which is the failure announcing a version exists to prevent.
+
+The daemon's advertised capabilities are derived from what it actually serves -- the request loop's
+own action set and the request fields it really reads -- and a test asserts that action list against
+the switch's clause labels read from the AST, so an action added to the loop without being
+advertised fails CI rather than shipping a lie.
+
+The docket named one request-building site; a census found **three** (the client's `diagnostics` and
+`format` paths, and the doctor's check-11 probe) and all three announce the handshake, because one
+present on one path and absent on another is not a handshake. On the daemon side all five response
+paths were routed through a single write seam for the same reason.
+
+**Zero freeze exposure**: the daemon IPC is not one of the two enumerable surfaces `CONTRACT.md`
+freezes, which a test confirms rather than assumes. No `userConfig` key, no diagnostics status
+token, no line of `CONTRACT.md`.
+
+This lands before the query surface (P1-2) deliberately: the handshake costs a few hours now and
+materially more once a second consumer exists.
+
 **`doctor -Json`, a status vocabulary, and an opt-in `-RequireProven` gate** (dispatch 000279,
 ruling R11 of 2026-09-05 = `ENTERPRISE-PROGRAM-DOCKET` R-D option (a), folding
 `DOCTOR-SURFACE-DOCKET` slices S1 and S2 unchanged).
@@ -71,6 +119,43 @@ No `userConfig` key, no diagnostics status token, no line of `CONTRACT.md`. Both
 parameters, the same category `CONTRACT.md` already records for `lsp-scan.ps1 -Format`.
 
 ### Security
+
+**The diagnostics capture can now record a diagnostic without recording the source line or the
+path it came from** (dispatch 000282, ruling R8 of 2026-09-05 = `ENTERPRISE-PROGRAM-DOCKET` R-A
+option (a)).
+
+**The gap.** Every surfaced diagnostic is teed to a local append-only log carrying the absolute
+path of the edited file and the offending source line, verbatim, and nothing gated that.
+`THREAT-MODEL.md` accepts it as **T6.1** on stated reasoning: the log never leaves the machine, so
+its exposure is to *a local user who already has the source files it quotes*. That reasoning is
+sound for the reader it names and **does not reach a management plane** -- an EDR, backup,
+eDiscovery or DLP agent reads the log without being the person at the keyboard, and copies what it
+reads off the host. The acceptance mis-scoped the reader set rather than mis-stating the exposure.
+
+**`POWERSHELL_LSP_CAPTURE_MODE`** takes `full` (the unchanged default), `metadata` -- `file`
+reduced to a basename, `snippet` and `message` not written -- or `off`, which writes nothing and
+creates no log directory. `message` is dropped rather than kept because PSScriptAnalyzer quotes
+identifiers out of the source into it, which was measured on the pinned 1.25.0 rather than assumed.
+
+**`metadata` costs the analysis nothing, and that is the reason this shape was buildable.** The
+rule-curation lane derives from `ruleId` + `hash`, and `hash` is computed from the offending line
+in every mode: the read is kept and only the write is suppressed, so the same finding hashes
+identically in either mode and a log that changes mode mid-life still reads as one corpus. The
+suite proves that equality against the hash of the real source line, so an implementation that
+dropped the read to save the write could not pass.
+
+**It is an environment variable, not a knob**, which is what makes it deployable to a fleet by GPO
+or Intune -- the reader this control exists for -- and what keeps it off the frozen surface. An
+unset, empty or unrecognized value resolves to `full`, following
+`POWERSHELL_LSP_CAPTURE_ROTATE_BYTES`: nothing about this variable may become a gate on the
+diagnostics surface. A typo is surfaced instead by the new `captureMode` field in the `doctor
+-Json` envelope, which reports the resolved mode, the raw value and whether it was recognized, so a
+fleet reader can confirm the control is live on a host without reading the log it is avoiding.
+
+`THREAT-MODEL.md` T6.1 is **amended, not withdrawn**: the local-reader acceptance stands as
+written, and the management-plane reader is recorded beside it with the mode that answers it.
+
+No `userConfig` key, no diagnostics status token, no line of `CONTRACT.md`.
 
 **The last dependency-acquisition route the SHA-256 pin did not gate is now gated, and fails
 closed** (dispatch 000279, ruling R10 of 2026-09-05 = `ENTERPRISE-PROGRAM-DOCKET` R-C option

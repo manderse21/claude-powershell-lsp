@@ -155,7 +155,7 @@ for reading *this* file directly where the settings path deliberately is not rea
 | Bootstrap and daemon logs | the data root, `logs/` | `scripts/lib/lsp-common.ps1:66` | always |
 | Vendored PSES bundle and PSScriptAnalyzer | the data root | `scripts/ensure-pses.ps1:110`, `scripts/ensure-pssa.ps1:206-212` | first run |
 | Per-session state files | the data root, session dir | `scripts/pses-daemon.ps1:1431` | always |
-| Diagnostics capture (`dogfood/diagnostics.jsonl`) | as derived: **`CLAUDE_PLUGIN_ROOT`**, not the data root -- **since FIXED, now the data root** (T2.3) | `scripts/lib/lsp-common.ps1`, `Get-DogfoodLogPath` | **ungated** (T6.1, accepted) |
+| Diagnostics capture (`dogfood/diagnostics.jsonl`) | as derived: **`CLAUDE_PLUGIN_ROOT`**, not the data root -- **since FIXED, now the data root** (T2.3) | `scripts/lib/lsp-common.ps1`, `Get-DogfoodLogPath` | **ungated by any `userConfig` knob** (T6.1, accepted); the source text it records is suppressible on the admin env surface by `POWERSHELL_LSP_CAPTURE_MODE` (dispatch 000282) |
 | Timing telemetry (`logs/stats.jsonl`) | the data root, `logs/` | gated by `enableStats` (`scripts/lsp-client.ps1:40`) | opt-in, default off |
 | **The user's own source file** | in place | `scripts/pses-daemon.ps1:1403`, via `Write-FormatResultAtomic` (`scripts/lib/lsp-common.ps1:3801`) | `formatOnEdit = apply`, default `off` |
 | PowerShell repository registration | user profile, **outside the data root** | `scripts/ensure-pssa.ps1:233-237` | fallback path only, and only when PSGallery is absent |
@@ -172,7 +172,10 @@ treats this fallback as a legibility hazard and ships a provenance-carrying vari
 appends one JSONL record containing `ts, file, line, col, ruleId, source, severity, message,
 snippet, hash, verdict` (`scripts/lib/lsp-common.ps1:880-891`), where `file` is the absolute path of
 the edited file and `snippet` is **the offending source line, verbatim**
-(`:876-878`). It is protected from commit by `.gitignore:7`, which ignores the whole `dogfood/`
+(`:876-878`). That is the shape in the default `full` mode; since dispatch 000282 the admin env
+variable `POWERSHELL_LSP_CAPTURE_MODE` also offers `metadata` (`file` demoted to a basename,
+`snippet` and `message` not written, everything else including `hash` unchanged) and `off`
+(nothing written at all) -- see the T6.1 amendment in section 8. It is protected from commit by `.gitignore:7`, which ignores the whole `dogfood/`
 directory, and the capture is fail-safe: any failure is swallowed and nothing reaches stdout
 (`:851-853`, `:898`).
 
@@ -184,7 +187,10 @@ unconditional.
 > **The first of those two has since been fixed** (T2.3, 2026-08-21): the capture now writes under
 > `CLAUDE_PLUGIN_DATA`, so the plugin-root property no longer holds and D1 is resolved. The second
 > stands and was **accepted with record** (T6.1) -- gating the capture would strangle the
-> rule-curation lane it feeds. The capture log is now also **size-bounded** (T6.4), which the
+> rule-curation lane it feeds. **Amended 2026-09-06 (dispatch 000282):** the capture is still
+> ungated by any knob and still on by default, and that acceptance is unchanged; what is new is
+> that an administrator can now suppress the source text itself without gating the channel, via
+> `POWERSHELL_LSP_CAPTURE_MODE`. The capture log is now also **size-bounded** (T6.4), which the
 > paragraph below on `.gitignore` protection predates: the log lives outside every git tree now, so
 > it is structurally uncommittable rather than merely ignored.
 
@@ -455,6 +461,27 @@ log stores absolute paths and verbatim offending source lines
 (`scripts/lsp-client.ps1:412,418,802`), so a user who has enabled no data-collection knob is still
 accumulating snippets of every file with a finding. The relevant knob, `enableStats`, gates a
 *different* log.
+
+> **Amended 2026-09-06 (dispatch 000282, ruling R8 of 2026-09-05).** The finding above is
+> unchanged and its ACCEPTED-WITH-RECORD disposition is **not withdrawn**. What the acceptance did
+> not reach is recorded here: its stated reason scopes the exposure to *"a local user who already
+> has the source files it quotes,"* and the 2026-09-05 enterprise review named a reader set that is
+> not that user -- **EDR, backup, eDiscovery and DLP agents**, a management plane that reads the
+> disk without being the person at it, and that copies what it reads off the host. That is not a
+> restatement of the exposure; it is a claim that T6.1 **mis-scoped the reader set**, and it is
+> correct for those readers.
+>
+> **What answers it, and what does not change.** `POWERSHELL_LSP_CAPTURE_MODE` (`metadata`) writes
+> `ruleId`, `severity`, `line`, `col`, `hash`, `ts`, `verdict` and `file` as a **basename only** --
+> no absolute path, no `snippet`, and no `message` (PSScriptAnalyzer quotes source identifiers into
+> that field, measured on the pinned 1.25.0). `off` writes nothing. The dogfood corpus derivation
+> keys on `ruleId` + `hash`, and the hash is still computed **from the offending line the writer
+> reads** in every mode, so `metadata` costs the rule-curation lane nothing -- which is what makes
+> this a narrower answer than gating the channel would have been.
+>
+> It lands on the **admin env surface**, not as a `userConfig` knob: that is the surface an estate
+> can deploy by GPO or Intune, which is the reader this control exists for, and it keeps the frozen
+> twenty knobs untouched. The default is unchanged, so no existing install's behaviour moves.
 
 **T6.2 Data-root fallback permissions.** *Measured on all three platforms; fixed on POSIX.* When
 `CLAUDE_PLUGIN_DATA` is unset, logs and session files land under a `powershell-lsp-data`
@@ -760,7 +787,7 @@ measurement that had never been taken, and six by an explicit decision to carry 
 | T3.2 | B3 | Repo-local settings file is handed to PSES unread; upstream handling of a hostile settings file not derived | **ACCEPTED WITH RECORD** (still unknown) |
 | T4.1 | B4 | Org policy content trusted as delivered; the opt-in `<policy>.sha256` gate pins it only where opted in, and only against an attacker who cannot also rewrite the companion | **ACCEPTED WITH RECORD** (residual) |
 | T4.2 | B4 | Fail-open by design: making the policy unreachable disables exclusions, signalled only in a log line | **ACCEPTED WITH RECORD** |
-| T6.1 | B6 | Capture log records absolute paths and verbatim source lines, ungated by any knob | **ACCEPTED WITH RECORD** |
+| T6.1 | B6 | Capture log records absolute paths and verbatim source lines, ungated by any knob | **ACCEPTED WITH RECORD**, **AMENDED** 2026-09-06 (000282): the acceptance stands for the local reader; the management-plane reader set is recorded and answered by `POWERSHELL_LSP_CAPTURE_MODE` |
 | D1 | -- | Documentation drift: the data-root claim vs the capture log (section 7) | **RESOLVED** by T2.3 |
 | D2-D4 | -- | Documentation drift, section 7 | **OPEN** -- re-derived 2026-08-21, all three stand |
 
@@ -851,7 +878,7 @@ rationale, so a future reader can re-open the decision rather than re-discover t
 | **T3.2** | The finding is *unknown*, not *exposed*: it names upstream PSES behaviour on a hostile settings file that this project has not derived. Guessing a mitigation for undetermined upstream behaviour would ship a defence against an unmeasured threat. |
 | **T4.1** | The residual is bounded to an attacker who can rewrite **both** the policy and its `.sha256` companion, which is materially harder than rewriting the policy alone -- the opt-in pin closed the gap it was designed to close, and closing the rest needs a trust anchor the org policy mechanism does not have. |
 | **T4.2** | Fail-open is the deliberate trade: an unreachable policy that disabled the plugin's diagnostics would turn an availability problem into a silent loss of linting, which is the worse failure for a tool whose whole contract is never being silent. |
-| **T6.1** | Gating the capture behind a knob would strangle the dogfood channel the entire rule-curation lane depends on, and the log is local-only, never transmitted, and now both bounded (T6.4) and outside every git tree (T2.3) -- so the exposure it carries is to a local user who already has the source files it quotes. |
+| **T6.1** | Gating the capture behind a knob would strangle the dogfood channel the entire rule-curation lane depends on, and the log is local-only, never transmitted, and now both bounded (T6.4) and outside every git tree (T2.3) -- so the exposure it carries is to a local user who already has the source files it quotes. **Amended 2026-09-06 (000282):** that reason is unchanged and still holds for the reader it names. It does not reach a management plane -- EDR, backup, eDiscovery, DLP -- which reads the log without being that local user and carries what it reads off the host. `POWERSHELL_LSP_CAPTURE_MODE` answers those readers without gating the channel: `metadata` drops the absolute path, the snippet and the message while preserving `ruleId` + `hash`, which is what the rule-curation lane actually derives from. The acceptance is therefore **narrowed, not withdrawn**. |
 
 **What is left genuinely open.** D2, D3 and D4 -- all documentation drift, all re-derived and still
 standing, all cheap to fix and none of them fixed here because this dispatch's threat-model scope was
