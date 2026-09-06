@@ -13,6 +13,16 @@ form that still works **outside** a session, where the slash command does not ex
 pwsh -File scripts/doctor.ps1   # out-of-session (several checks then report UNKNOWN)
 ```
 
+Two switches exist for machines rather than people. `-Json` renders the same run as a structured
+envelope -- a `schemaVersion`, a one-word `status` from `HEALTHY` / `DEGRADED` / `UNHEALTHY` /
+`UNPROVEN`, the resolved versions, the summary counts and the check array -- over the same seam,
+so the verdicts and the exit code are identical to a normal run. `-RequireProven` is an **opt-in**
+second predicate that exits **2** when nothing failed but at least one check is UNKNOWN, which is
+how a CI job asserts "everything was actually established" rather than "nothing failed". Without
+the switch the exit code is unchanged: **exit 0 when no check FAILED** (passes and honest unknowns
+are not failures), exit 1 when at least one check failed. The derivation rule for `status` and the
+full exit-code table live in [`commands/doctor.md`](../commands/doctor.md).
+
 It verifies, in order: PowerShell 7 (`pwsh`) is present and new enough; the plugin is enabled; the
 PSES bundle and PSScriptAnalyzer finished bootstrapping; the first-run download hosts are
 reachable; the **warm per-session daemon** is alive and answering on its named pipe; **which rule

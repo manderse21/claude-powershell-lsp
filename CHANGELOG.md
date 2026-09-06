@@ -31,6 +31,45 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+### Added
+
+**`doctor -Json`, a status vocabulary, and an opt-in `-RequireProven` gate** (dispatch 000279,
+ruling R11 of 2026-09-05 = `ENTERPRISE-PROGRAM-DOCKET` R-D option (a), folding
+`DOCTOR-SURFACE-DOCKET` slices S1 and S2 unchanged).
+
+**The gap.** `exit 0` from the doctor never meant "it is working" -- it meant "nothing FAILED",
+and in exactly the headless, CI and container environments where that question matters, the checks
+that would prove it *is* working do not fail, they go UNKNOWN. The information that separates a
+healthy install from a container where nothing works was printed correctly and existed **only as
+English prose**, so a CI job could not assert on it without grepping human sentences. Meanwhile
+`lsp-scan.ps1` -- whose job is finding defects -- has emitted SARIF by default for releases, while
+the one surface whose whole job is proving the plugin works was the one a machine could not read.
+
+**`-Json`** is a third rendering beside the default fix-list and `-Summary`, over the same
+`Invoke-Doctor` seam: the checks that run, their statuses and the exit code are identical to a
+normal run, and only the presentation differs. The envelope carries `schemaVersion`, the derived
+`status`, the resolved plugin / pwsh / PSES / PSSA versions, the provenance floor, the summary
+counts and the per-check array (`status`, `component`, `detail`, `remediation`).
+
+**The `status` vocabulary** is `HEALTHY` / `DEGRADED` / `UNHEALTHY` / `UNPROVEN`, derived from the
+existing per-check `pass` / `fail` / `unknown` results and from nothing else -- no check's own
+logic changed. Most severe applicable value wins: `UNHEALTHY` when anything failed, `DEGRADED`
+when something is UNKNOWN and something was established, `UNPROVEN` when nothing was established
+at all, `HEALTHY` when everything passed. A render of zero checks reads `UNPROVEN`, never
+`HEALTHY`. **This is a doctor envelope field, not a diagnostics status token** -- `CONTRACT.md`
+freezes the *diagnostics* token set, the words a finding wears, and none of these four is one of
+them.
+
+**`-RequireProven`** is an opt-in second predicate beside the existing failure count: it exits
+**2** when nothing failed but at least one check is UNKNOWN, so "everything was actually
+established" becomes an exit code instead of a paragraph. Exit 2 rather than 1 keeps 1 meaning
+"something FAILED" for every existing caller and matches `lsp-scan.ps1 -FailOn`'s convention; a run
+with both a fail and an unknown exits 1. **Without the switch the exit code and both human
+renderings are byte-identical to before** -- proven against the merge base, not asserted.
+
+No `userConfig` key, no diagnostics status token, no line of `CONTRACT.md`. Both switches are CLI
+parameters, the same category `CONTRACT.md` already records for `lsp-scan.ps1 -Format`.
+
 ### Security
 
 **The last dependency-acquisition route the SHA-256 pin did not gate is now gated, and fails

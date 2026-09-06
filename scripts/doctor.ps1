@@ -27,9 +27,14 @@
 # Usage:  pwsh -File scripts/doctor.ps1
 #         pwsh -File scripts/doctor.ps1 -SessionId <claude-code-session-id>   # scope check 6
 #         pwsh -File scripts/doctor.ps1 -ProbeNativeServe                     # add opt-in check 7
+#         pwsh -File scripts/doctor.ps1 -Json                                 # machine rendering
+#         pwsh -File scripts/doctor.ps1 -RequireProven                        # gate on proof
 #
 # Exit 0 when no check FAILED (passes and honest unknowns are not failures); exit 1
-# when at least one check failed. The script is dot-source safe: dot-sourcing defines
+# when at least one check failed. With the OPT-IN -RequireProven, exit 2 when nothing
+# failed but at least one check is UNKNOWN -- see Get-DoctorExitCode for why that code
+# and why the switch is opt-in. Without the switch the exit code is byte-identical to
+# what it has always been. The script is dot-source safe: dot-sourcing defines
 # the functions without running the checks (so the unit tests can exercise the pure
 # decision functions in isolation).
 #
@@ -57,7 +62,26 @@ param(
     # byte-for-byte identical to a normal run; only the presentation differs. This is what the
     # /powershell-lsp:status command surfaces, so a health glance costs one screen instead of
     # scrolling a full fix-list.
-    [switch] $Summary
+    [switch] $Summary,
+
+    # MACHINE RENDERING (dispatch 000279, P0-1a). A THIRD rendering beside Format-DoctorReport
+    # and Format-DoctorSummary over the SAME Invoke-Doctor seam: the checks that run, their
+    # statuses and the exit code are identical to a normal run, and only the presentation
+    # differs. It exists because the one surface whose whole job is "prove it is working" was
+    # the one surface a machine could not read, while lsp-scan.ps1 has emitted SARIF by default
+    # for releases. A CLI switch, deliberately NOT a userConfig knob -- the same category as
+    # lsp-scan.ps1's -Format, which CONTRACT.md already calls out as exactly that.
+    #
+    # It wins over -Summary when both are given: -Json is the machine answer and -Summary is a
+    # display preference, so there is no sensible reading in which the compact HUMAN view
+    # should suppress the structured one.
+    [switch] $Json,
+
+    # OPT-IN PROOF GATE (dispatch 000279, P0-1c). Exit non-zero when any check is UNKNOWN, as a
+    # SECOND predicate beside the existing fail-count one -- so an operator can gate on
+    # "everything was actually established" instead of on "nothing failed". No check's own logic
+    # changes and the default exit code is untouched; see Get-DoctorExitCode.
+    [switch] $RequireProven
 )
 
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
@@ -1774,6 +1798,22 @@ function Invoke-Doctor {
     }
     $results += (Test-DoctorPssa -DataRootKnown $dataRootKnown -MarkerPresent $pssaMarker -Importable $pssaImportable -PinVersion $pssaPin)
 
+    # Publish the version facts THIS run resolved, for the -Json envelope (dispatch 000279).
+    # Same hand-off rule as $script:DoctorDaemonObs below and for the same reason: the renderer
+    # describes what this run resolved rather than re-deriving it, because a re-derivation can
+    # disagree with the real one and report confidently while being wrong. Invoke-Doctor's
+    # RETURN shape is unchanged, so every existing caller is untouched.
+    #
+    # pwsh is a HOST fact (the interpreter actually found on PATH). pses/pssa are the PINS this
+    # build requires -- what the bootstrap demands, not a re-probe of what is installed; checks
+    # 3 and 4 are the ones that report whether the install matches, and duplicating that verdict
+    # here would be a second implementation of it.
+    $script:DoctorVersionFacts = [pscustomobject]@{
+        PwshVersion = $(if ($null -ne $pwsh.Version) { $pwsh.Version.ToString() } else { '' })
+        PsesPin     = $psesPin
+        PssaPin     = $pssaPin
+    }
+
     # 4a/4b) artifact source + offline readiness (dispatch 000244). The IMPURE half lives here,
     # matching every other check in this file: read the world, then hand plain values to a pure
     # decider. Both deciders are unit-testable without a data root, a bundle, or a network.
@@ -2011,6 +2051,135 @@ function Format-DoctorSummary {
     return ($lines -join [Environment]::NewLine)
 }
 
+function Get-DoctorEnvelopeStatus {
+    # The -Json envelope's one-word verdict (dispatch 000279, P0-1b). DERIVED from the per-check
+    # results and from nothing else: no check's logic changes, no new per-check status exists,
+    # and this function performs no I/O. It is a SUMMARY of the pass/fail/unknown objects
+    # Invoke-Doctor already returns.
+    #
+    # THE DERIVATION RULE, stated here once and mirrored in commands/doctor.md. Each value has an
+    # applicability condition, and when more than one applies the MOST SEVERE wins, in the order
+    # UNHEALTHY > DEGRADED > UNPROVEN > HEALTHY:
+    #
+    #   UNHEALTHY   applies when at least one check FAILED -- something the doctor could
+    #               establish is broken.
+    #   DEGRADED    applies when at least one check is UNKNOWN and at least one PASSED -- some
+    #               of the picture was established and some of it was not.
+    #   UNPROVEN    applies when NOTHING passed -- the run established nothing at all, so it
+    #               proves nothing. This is the headless / container case the vocabulary exists
+    #               for, and it is the whole point: exit 0 there means "nothing failed", not
+    #               "it is working".
+    #   HEALTHY     applies when every check PASSED.
+    #
+    # Worked cases: one fail among passes -> UNHEALTHY. One unknown among passes -> DEGRADED. A
+    # fail AND an unknown -> UNHEALTHY, the most severe applicable. Every check unknown ->
+    # UNPROVEN. ZERO checks -> UNPROVEN, because an empty run proves nothing and must never read
+    # HEALTHY -- a renderer handed nothing is the one case where a cheerful default would lie.
+    #
+    # THIS IS A DOCTOR ENVELOPE FIELD, NOT A DIAGNOSTICS STATUS TOKEN. CONTRACT.md Tier 1
+    # freezes the DIAGNOSTICS status token set -- the words a FINDING wears, drift-guarded to
+    # Get-DiagnosticsStatusBanner / Resolve-AnalysisStatus. None of the four words below is one
+    # of those, nothing here emits or touches a diagnostics record, and no line of CONTRACT.md
+    # moves. The doctor's OWN per-check vocabulary is a third, separate enum pinned by
+    # New-DoctorResult's ValidateSet, and it is untouched too. The three look alike in prose and
+    # are not the same surface.
+    param([object[]] $Results)
+    $all = @($Results)
+    $failN = @($all | Where-Object { $_.Status -eq 'fail' }).Count
+    $unkN = @($all | Where-Object { $_.Status -eq 'unknown' }).Count
+    $passN = @($all | Where-Object { $_.Status -eq 'pass' }).Count
+    if ($failN -gt 0) { return 'UNHEALTHY' }
+    if ($unkN -gt 0 -and $passN -gt 0) { return 'DEGRADED' }
+    if ($passN -eq 0) { return 'UNPROVEN' }
+    return 'HEALTHY'
+}
+
+function Get-DoctorExitCode {
+    # The exit code, computed from the SAME results every rendering consumes -- a rendering
+    # never changes the verdict. Two predicates (dispatch 000279, P0-1c):
+    #
+    #   1. THE EXISTING ONE, unchanged: exit 1 when at least one check FAILED, exit 0 otherwise.
+    #      Passes and honest unknowns are not failures. $RequireProven defaults to $false, so
+    #      every caller that exists today sees exactly this and nothing else.
+    #   2. -RequireProven (OPT-IN): exit 2 when nothing failed but at least one check is UNKNOWN.
+    #      OPT-IN IS LOAD-BEARING, not timidity: changing what the DEFAULT exit code MEANS would
+    #      break every existing caller and is a breaking change under the 1.x policy. What
+    #      protects those callers is the opt-in, not the contract.
+    #
+    # WHY 2 AND NOT 1. Keeping 1 to mean "something FAILED" preserves that code's meaning
+    # exactly, and 2 is this repo's own convention for an opt-in gate tripping -- lsp-scan.ps1
+    # -FailOn exits 2 when findings reach the requested level. So a CI job can tell "broken"
+    # from "unproven" without parsing prose, which is the entire point of the switch.
+    #
+    # FAIL DOMINATES: a run carrying both a fail and an unknown exits 1 even under the switch,
+    # because the failure is the more actionable fact and the caller already had to handle 1.
+    param([object[]] $Results, [bool] $RequireProven = $false)
+    $all = @($Results)
+    $failN = @($all | Where-Object { $_.Status -eq 'fail' }).Count
+    if ($failN -gt 0) { return 1 }
+    if ($RequireProven) {
+        $unkN = @($all | Where-Object { $_.Status -eq 'unknown' }).Count
+        if ($unkN -gt 0) { return 2 }
+    }
+    return 0
+}
+
+function Format-DoctorJson {
+    # THE THIRD RENDERING over the same Invoke-Doctor seam (dispatch 000279, P0-1a + P0-1b).
+    # Like Format-DoctorSummary it is a PURE function of the results: it re-runs nothing,
+    # re-decides nothing, and cannot disagree with either human rendering about any check's
+    # status, because all three consume the identical objects.
+    #
+    # The envelope carries schemaVersion, the derived status, the resolved versions, the same
+    # header facts the two human renderings print, the summary counts, and the check array.
+    # Per-check keys are the New-DoctorResult shape lower-cased -- status, component, detail,
+    # remediation -- so the JSON says exactly what the report says.
+    #
+    # schemaVersion is 1 and is the field a consumer branches on. It is not the plugin version
+    # and does not move with it; the plugin version rides in versions.plugin.
+    #
+    # The seam shape matches $Version / $Provenance in the two human renderings: parameters with
+    # inert defaults, so an out-of-band render still produces honest output rather than throwing.
+    param([object[]] $Results, [string] $Version = '', [string] $Provenance = '',
+        [string] $PwshVersion = '', [string] $PsesPin = '', [string] $PssaPin = '')
+    if ([string]::IsNullOrWhiteSpace($Version)) { $Version = [string](Get-PluginVersion) }
+    if ([string]::IsNullOrWhiteSpace($Provenance)) { $Provenance = Get-DoctorProvenanceHeader }
+    $all = @($Results)
+    $checks = @()
+    foreach ($r in $all) {
+        $checks += [ordered]@{
+            status      = [string] $r.Status
+            component   = [string] $r.Component
+            detail      = [string] $r.Detail
+            remediation = [string] $r.Remediation
+        }
+    }
+    $envelope = [ordered]@{
+        schemaVersion   = 1
+        status          = (Get-DoctorEnvelopeStatus -Results $all)
+        versions        = [ordered]@{
+            plugin = $Version
+            pwsh   = $PwshVersion
+            pses   = $PsesPin
+            pssa   = $PssaPin
+        }
+        provenanceFloor = $Provenance
+        summary         = [ordered]@{
+            pass    = @($all | Where-Object { $_.Status -eq 'pass' }).Count
+            fail    = @($all | Where-Object { $_.Status -eq 'fail' }).Count
+            unknown = @($all | Where-Object { $_.Status -eq 'unknown' }).Count
+            total   = $all.Count
+        }
+        # @() and nothing else. A unary comma here would be the WRONG reflex -- it wraps the
+        # array in another array and emits "checks": [[...]]. ConvertTo-Json preserves a
+        # hashtable property's array shape on both hosts, one element and zero elements alike;
+        # measured under pwsh 7.6.5 and Windows PowerShell 5.1 rather than assumed, and the
+        # suite asserts the one-check and no-check cases so the shape stays a claim.
+        checks          = @($checks)
+    }
+    return ($envelope | ConvertTo-Json -Depth 8)
+}
+
 # ===========================================================================
 # Entry point -- runs ONLY on direct invocation (pwsh -File ...), not when the script
 # is dot-sourced (so the unit tests load the functions without running live probes).
@@ -2028,13 +2197,29 @@ if ($MyInvocation.InvocationName -ne '.') {
         try { $dVer = [string]$dObs.DaemonVersion } catch { $dVer = '' }
         try { $dPresent = [bool]$dObs.DaemonPresent } catch { $dPresent = $false }
     }
-    if ($Summary) {
+    # The version facts this run resolved, for the -Json envelope (dispatch 000279). Absent or
+    # malformed -> the renderer's inert defaults, which produce honest blanks rather than a
+    # fabricated version.
+    $vFacts = $script:DoctorVersionFacts
+    $pwshV = ''; $psesV = ''; $pssaV = ''
+    if ($null -ne $vFacts) {
+        try { $pwshV = [string]$vFacts.PwshVersion } catch { $pwshV = '' }
+        try { $psesV = [string]$vFacts.PsesPin } catch { $psesV = '' }
+        try { $pssaV = [string]$vFacts.PssaPin } catch { $pssaV = '' }
+    }
+    if ($Json) {
+        # Write-Output, not Write-Host, and only here. The two human renderings write to the
+        # host because they are display; this one is DATA, and Write-Host would put it on the
+        # information stream, where an in-process caller piping the script into ConvertFrom-Json
+        # would receive nothing. Under "pwsh -File" both reach stdout, so this costs the shipped
+        # command surfaces nothing and buys the machine case correctness.
+        Write-Output (Format-DoctorJson -Results $doctorResults -PwshVersion $pwshV -PsesPin $psesV -PssaPin $pssaV)
+    } elseif ($Summary) {
         Write-Host (Format-DoctorSummary -Results $doctorResults -DaemonVersion $dVer -DaemonPresent $dPresent)
     } else {
         Write-Host (Format-DoctorReport -Results $doctorResults -DaemonVersion $dVer -DaemonPresent $dPresent)
     }
-    # The exit code is computed from the SAME results either way -- the rendering never
-    # changes the verdict, and 'unknown' is never a failure.
-    $doctorFailures = @($doctorResults | Where-Object { $_.Status -eq 'fail' }).Count
-    if ($doctorFailures -gt 0) { exit 1 } else { exit 0 }
+    # The exit code is computed from the SAME results whichever rendering ran -- the rendering
+    # never changes the verdict, and 'unknown' is never a failure unless -RequireProven asked.
+    exit (Get-DoctorExitCode -Results $doctorResults -RequireProven:([bool]$RequireProven))
 }
