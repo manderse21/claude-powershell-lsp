@@ -674,6 +674,55 @@ fails closed loudly rather than being silently substituted.
 
 ---
 
+## Diagnostics capture, and what it records
+
+**This is not a `userConfig` knob either, and for the same reason as the two above.** It is an
+environment variable, it does not appear in the `/plugin` config panel, and it is not part of the
+frozen 1.x knob surface in [CONTRACT.md](../CONTRACT.md). It is administrator plumbing, and it is
+the kind an organization deploys *to a fleet* by GPO, Intune or machine-scope environment.
+
+### The problem it solves
+
+Every diagnostic the plugin surfaces is also appended to a local, append-only capture log --
+`dogfood/diagnostics.jsonl` under `CLAUDE_PLUGIN_DATA` -- which the rule-curation lane derives
+from. Each row records the **absolute path** of the edited file and the **offending source line,
+verbatim**. See [dogfood.md](dogfood.md) for what the channel is and how to review it.
+
+That is recorded and accepted in [`THREAT-MODEL.md`](roadmap-ii/THREAT-MODEL.md) as **T6.1**, on
+the stated reasoning that the log never leaves the machine and so its exposure is to *a local user
+who already has the source files it quotes*. **That reasoning does not reach a management plane.**
+An EDR, backup, eDiscovery or DLP agent reads the log without being the person at the keyboard, and
+copies what it reads off the host. This variable exists for those readers.
+
+### `POWERSHELL_LSP_CAPTURE_MODE`
+
+**What it does.** Chooses how much of each diagnostic the capture log records.
+
+| Value | What a row carries |
+|---|---|
+| `full` | The shipped behaviour, unchanged: `ts`, `file` (absolute), `line`, `col`, `ruleId`, `source`, `severity`, `message`, `snippet` (the verbatim offending line), `hash`, `verdict` |
+| `metadata` | The same row **without** `snippet` and **without** `message`, and with `file` reduced to a **basename** -- no absolute path, no source text |
+| `off` | Nothing. No row, no log file, and no `dogfood` directory is created |
+
+**Type:** one of `full`, `metadata`, `off` (case- and whitespace-insensitive).
+**Default:** `full` -- with the variable unset, capture behaves exactly as it always has.
+
+**An unrecognized value resolves to `full`, and the doctor reports it.** A typo does not disable
+capture and does not fail the edit: nothing about this variable may become a gate on the
+diagnostics surface, which is the same rule
+[`POWERSHELL_LSP_CAPTURE_ROTATE_BYTES`](dogfood.md#capture) follows when given a non-numeric value.
+So that a typo is not merely swallowed, `doctor -Json` carries a `captureMode` field reporting the
+resolved mode, the raw value it read, and whether that value was recognized -- which is how a fleet
+tool confirms the control is actually active on a host without reading the log it is trying not to
+read.
+
+**What `metadata` costs the analysis it protects: nothing.** The corpus derivation keys on `ruleId`
+and `hash`, and `hash` is computed from the offending line in **every** mode -- `metadata` keeps
+the read and suppresses only the write, so the same finding hashes identically either way. A log
+that switches mode mid-life still reads as one corpus.
+
+---
+
 ## The config panel and this reference
 
 Claude Code's `/plugin` "Configure options" panel renders the selected knob's **entire**

@@ -72,6 +72,43 @@ parameters, the same category `CONTRACT.md` already records for `lsp-scan.ps1 -F
 
 ### Security
 
+**The diagnostics capture can now record a diagnostic without recording the source line or the
+path it came from** (dispatch 000282, ruling R8 of 2026-09-05 = `ENTERPRISE-PROGRAM-DOCKET` R-A
+option (a)).
+
+**The gap.** Every surfaced diagnostic is teed to a local append-only log carrying the absolute
+path of the edited file and the offending source line, verbatim, and nothing gated that.
+`THREAT-MODEL.md` accepts it as **T6.1** on stated reasoning: the log never leaves the machine, so
+its exposure is to *a local user who already has the source files it quotes*. That reasoning is
+sound for the reader it names and **does not reach a management plane** -- an EDR, backup,
+eDiscovery or DLP agent reads the log without being the person at the keyboard, and copies what it
+reads off the host. The acceptance mis-scoped the reader set rather than mis-stating the exposure.
+
+**`POWERSHELL_LSP_CAPTURE_MODE`** takes `full` (the unchanged default), `metadata` -- `file`
+reduced to a basename, `snippet` and `message` not written -- or `off`, which writes nothing and
+creates no log directory. `message` is dropped rather than kept because PSScriptAnalyzer quotes
+identifiers out of the source into it, which was measured on the pinned 1.25.0 rather than assumed.
+
+**`metadata` costs the analysis nothing, and that is the reason this shape was buildable.** The
+rule-curation lane derives from `ruleId` + `hash`, and `hash` is computed from the offending line
+in every mode: the read is kept and only the write is suppressed, so the same finding hashes
+identically in either mode and a log that changes mode mid-life still reads as one corpus. The
+suite proves that equality against the hash of the real source line, so an implementation that
+dropped the read to save the write could not pass.
+
+**It is an environment variable, not a knob**, which is what makes it deployable to a fleet by GPO
+or Intune -- the reader this control exists for -- and what keeps it off the frozen surface. An
+unset, empty or unrecognized value resolves to `full`, following
+`POWERSHELL_LSP_CAPTURE_ROTATE_BYTES`: nothing about this variable may become a gate on the
+diagnostics surface. A typo is surfaced instead by the new `captureMode` field in the `doctor
+-Json` envelope, which reports the resolved mode, the raw value and whether it was recognized, so a
+fleet reader can confirm the control is live on a host without reading the log it is avoiding.
+
+`THREAT-MODEL.md` T6.1 is **amended, not withdrawn**: the local-reader acceptance stands as
+written, and the management-plane reader is recorded beside it with the mode that answers it.
+
+No `userConfig` key, no diagnostics status token, no line of `CONTRACT.md`.
+
 **The last dependency-acquisition route the SHA-256 pin did not gate is now gated, and fails
 closed** (dispatch 000279, ruling R10 of 2026-09-05 = `ENTERPRISE-PROGRAM-DOCKET` R-C option
 (a)).
