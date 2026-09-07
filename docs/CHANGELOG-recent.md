@@ -3,7 +3,7 @@
      Produced by scripts/gen-changelog-recent.ps1 from CHANGELOG.md, which is the release
      artifact and the only file to edit. This companion is a strict PREFIX of that file:
      the header, the versioning policy, [Unreleased], and every entry down to and including
-     the ## [1.31.0] - 2026-08-10 band -- the third-most-recent MINOR line, derived at
+     the ## [1.32.0] - 2026-08-19 band -- the third-most-recent MINOR line, derived at
      generation time rather than pinned. Nothing is rephrased and nothing is dropped from
      the middle; the file stops.
 
@@ -48,6 +48,36 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+
+## [1.34.0] - 2026-09-07
+MINOR: **the doctor now answers machine-readably, and will tell you when it cannot prove an
+answer.** `doctor -Json` is a third rendering beside the fix-list and `-Summary`, carrying a
+four-value `status` vocabulary over the same checks, and the new opt-in **`-RequireProven`** exits
+**2** when nothing failed but something is merely UNKNOWN -- so "everything was actually verified"
+stops being indistinguishable from "nothing complained". Read the **Security** entries too: the
+diagnostics capture can now be told to record a finding **without the source line or the path**
+(`POWERSHELL_LSP_CAPTURE_MODE=metadata`, an environment variable rather than a knob, so a fleet can
+set it by GPO), and the **last dependency-acquisition route the SHA-256 pin did not gate is now
+gated and fails closed**. The daemon IPC also gained a **protocol version and capabilities
+handshake**, so a client and a warm daemon from different installs can discover a mismatch instead
+of misbehaving; absent means 1, which keeps it additive. **No `userConfig` key is added, removed,
+renamed or re-defaulted, no diagnostics status token changed, and no line of `CONTRACT.md` moved** --
+the 1.x freeze holds. This is a MINOR because it adds capability, not because it changes any
+promise.
+
+**This release also carries the POSIX containment fix written up below under `[1.33.1]`, and
+that section is part of these release notes.** `1.33.1` was cut on `main` and superseded
+before it was ever tagged, so it has no release of its own and never will -- it is a skipped,
+never-published version number. Its change is nevertheless in **this** artifact: on Linux and
+macOS the data root, its temp fallback, the daemon's unix-socket endpoint and the files the
+shared JSONL writers create are now created `0700` (directories) and `0600` (files) at
+creation time, instead of inheriting `755` from the ambient umask. Windows is byte-identical.
+
+The change is commit **`a89fe0c`** (*fix(security): contain every POSIX object the plugin
+creates to its owner*), which is in `v1.33.0..v1.34.0`. It is named here rather than left to
+the CHANGELOG alone so that a reader of the published release can trace the fix to a commit
+without knowing that `1.33.1` was skipped: **a security change that ships in an artifact must
+be readable from that artifact's own notes.**
 
 ### Added
 
@@ -211,6 +241,7 @@ this gate still describes bytes the pin did not verify, and the check says so.
 No `userConfig` key, no diagnostics status token, no line of `CONTRACT.md`.
 
 ## [1.33.1] - 2026-09-05
+> Cut on `main` and superseded before tagging -- a skipped, never-published number.
 PATCH: **every filesystem object the plugin creates on Linux and macOS is now created
 owner-only.** The data root, its temp fallback, the daemon's unix-socket endpoint and the
 files the shared JSONL writers create all landed at `755` under the ambient umask -- readable
@@ -724,351 +755,3 @@ they named a remedy the reader had already tried, or quoted a banner the code do
 
 One unit test pinned the exact D3 string that was removed; its assertion now tracks the corrected
 remedy and adds a regression guard against the old text.
-
-## [1.31.2] - 2026-08-15
-PATCH: **a client that walks away from a reply no longer kills the analyzer daemon**, and
-**`nativeServe` / `ps_host` finally reach the process that acts on them**. Every external GitHub
-Action is also pinned to an immutable commit SHA. No new `userConfig` knob, no knob removed or
-renamed, no default changed, and no diagnostics change. **Read [Known issues](#known-issues) before
-upgrading** -- on Claude Code 2.1.233 the serve-transport mappings are SUSPENDED behind an upstream
-defect, so `nativeServe = shim` cannot take effect. No tagged release is affected.
-
-### Fixed
-
-**A client that abandoned one reply killed the whole daemon** (dispatch 000237). When an edit
-reached the client's hard cap the client exited -- correctly, having already emitted an honest
-banner -- and the daemon, finishing a moment later, wrote its reply into a pipe with nobody on
-the other end. The write raised `Pipe is broken.`, the serve loop's per-request handler caught
-and logged it, and **the daemon exited anyway**: four deaths per session across five measured
-sessions, and the binding reason a large-file session never converged once the relaunch thrash
-was gone.
-
-The mechanism, derived from the live loop rather than guessed. The failed write moves the
-`NamedPipeServerStream`'s internal state from `Connected` to `Broken`, and `IsConnected` is
-`State == Connected` -- so the per-request cleanup, written as
-`if ($server.IsConnected) { $server.Disconnect() }`, **skipped the disconnect on exactly the
-path that needed it**. The stream stayed `Broken`, and the loop's next
-`WaitForConnectionAsync()` -- which sat *outside* the per-request `try` -- threw
-`Pipe is broken.` synchronously, past the handler and into the loop's outer `finally`. That is
-why the daemon log showed the handled error followed immediately by `main loop ended; cleanup`,
-with no second handled error between them.
-
-Two changes, both inside daemon lifecycle. The per-request cleanup now calls the new
-`Reset-PipeServerConnection`, which asks for the disconnect **unconditionally** -- `Disconnect()`
-is willing to take a `Broken` stream back to `Disconnected`; only the guard stopped it being
-asked. And the accept region is now guarded, so a pipe server that cannot be armed for any
-reason is rebuilt on the same name (via the new single-source `New-DaemonPipeServer`) instead of
-ending the process. One abandoned reply is one discarded write.
-
-Measured red-to-green at the daemon level, same scenario, same host: the pre-fix daemon exits
-after ONE abandoned reply and serves no further request (`main loop ended; cleanup` and
-`--- daemon exit ---` both present in its log); the fixed daemon survives one and then three
-consecutive abandonments, keeps answering, and its log carries the handled error with neither
-of those two lines. The controls ship in
-`tests/PowerShellLsp.DaemonSurvival.Tests.ps1`, which keeps the pre-fix implementation verbatim
-and runnable so the RED can be re-run rather than merely cited.
-**Setting `nativeServe` or `ps_host` had no effect on the LSP serve subprocess** (dispatch 000233).
-Both knobs resolve through `Get-PluginOption`, which reads the environment variable
-`CLAUDE_PLUGIN_OPTION_<KEY>`. Claude Code exports those variables to plugin **hooks** -- which is why
-the diagnostics path was never affected -- but **not** to plugin **LSP server subprocesses**. The
-manifest had never declared the supported alternative, a `${user_config.*}` expansion inside the
-server's own `env` block. So a user could set `nativeServe = "shim"`, the shim would resolve `off`,
-and the log would say `nativeServe=off` -- the same line it prints when the knob was never set at
-all. Native hover / go-to-definition / find-references consequently failed at init for every user
-who opted in, in every release up to and including 1.31.1. `ps_host` was affected identically, and
-it matters even at `nativeServe = off`, because the shim launches PSES through it in
-transparent-relay mode too: the PSES child host was always `pwsh` regardless of what was configured.
-**`ps_host` becoming live is a real behaviour change for anyone who had set it.**
-
-The manifest now maps `nativeServe`, `ps_host` and `profile` into `lspServers.powershell.env`
-through `${user_config.*}` -- the supported transport, and the one Claude Code honours.
-
-**The fix carries a generic invariant, not a three-knob patch.** A new structural regression
-(`tests/PowerShellLsp.ServeUserConfig.Tests.ps1`) parses the serve subprocess's entry point, walks
-its dot-source closure and call graph, **derives** every knob key reachable from it, and asserts each
-has a mapping -- so a knob added to the shim tomorrow is covered with nothing to remember. It is
-demonstrated RED five ways against mutated in-memory copies of the manifest, including a mapping
-whose value is hardcoded rather than an expansion, and one pointing at the wrong knob.
-
-**Observability, so this cannot go silent again.** The serve log now states each knob's effective
-value **and its provenance** -- `env`, `profile`, or `default` -- on every launch, including the
-default case, which is the case that used to be indistinguishable from a knob that never arrived. It
-also logs the effective PSES host and names a substitution when the configured host does not resolve
-on PATH. `/doctor` gains a **configured vs effective** check for the serve subprocess that FAILS when
-a knob is set but the manifest declares no transport for it -- measured RED against the pre-fix
-manifest (`configured=shim effective=off [NO TRANSPORT]`) and GREEN against this one.
-
-**The transport is now PROVEN end-to-end against a real installed plugin** (dispatch 000233's
-blocked acceptance criterion, discharged 2026-08-15). A marketplace install carrying the
-`${user_config.*}` mappings registered its LSP server, answered `documentSymbol` / `hover` /
-`goToDefinition` against `demo.ps1`, produced the expected `PSUseApprovedVerbs` diagnostic, and
-logged all three knobs with `provenance: env` and `configured=shim effective=shim`. Details in
-[docs/decision-ledger.md](docs/decision-ledger.md).
-
-**A release test encoded the dependency version instead of the invariant** (dispatch 000240).
-`tests/PowerShellLsp.Release.Tests.ps1` asserted the literal `actions/attest-build-provenance@v3`,
-so a clean Dependabot major bump failed a *structural* release test although nothing structural
-had changed -- and bumping the literal would have reproduced the same failure at the next major.
-The assertion is now a family invariant (any numbered release, either upstream action name,
-pinned by commit SHA) paired with an explicit floating-ref rejection, mirroring the idiom the
-same `Describe` already used for gitsign. The `New-PluginSbom.ps1` companion assertion is
-unchanged, and the block gained an executable anti-vacuity control that mutates an in-memory
-copy of the workflow text rather than claiming in prose that it could.
-
-### Security
-
-**Immutable action pinning is now the repository convention, not a deferred hardening.** All
-eleven external action references across the three workflows moved from movable tags to full
-40-character upstream commit SHAs with the resolved release in a trailing comment. A tag is a
-label its upstream owner can repoint at different code; a commit SHA cannot be repointed.
-Dispatches 000042 and 000064 each booked this as a defensible-but-deferred hardening; it is no
-longer deferred.
-
-| Action | Was | Now |
-|---|---|---|
-| `actions/checkout` (x3) | `@v7` | `@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1` |
-| `actions/cache` (x2) | `@v6` | `@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0` |
-| `actions/upload-artifact` (x5) | `@v7` | `@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1` |
-| `github/codeql-action/upload-sarif` | `@5595ccaf...` (v4.37.6) | `@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7` |
-| `actions/attest-build-provenance` | `@v3` | `actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2` |
-
-**A CI gate that discovers the surface instead of consulting a list.** New
-`tests/PowerShellLsp.ActionPinning.Tests.ps1` walks every YAML under `.github/` plus every
-composite `action.yml` in the tree, extracts every `uses:` line, and fails on any external
-reference that is not a 40-hex commit SHA carrying a version comment. It ships with its own
-anti-vacuity controls: discovery floors so an empty scan cannot pass, an acceptance case so a
-reject-everything classifier cannot pass, and mutation cases proving each movable form
-(`@v7`, `@v7.0.1`, `@main`, `@latest`, an abbreviated SHA, a SHA with no comment) is rejected.
-Measured RED against the pre-change workflows: 11 named offenders.
-
-### Changed
-
-**The release pipeline attests provenance through `actions/attest` directly** (this supersedes
-Dependabot PR #158, which proposed `actions/attest-build-provenance` v3 -> v4). Upstream made
-`attest-build-provenance@v4` a thin composite wrapper whose only step is
-`uses: actions/attest@<sha>` with every input forwarded unchanged, and recommends
-`actions/attest` for new implementations. The pipeline now calls the wrapped action, preserving
-the wrapper's `NODE_OPTIONS=--max-http-header-size=32768` verbatim. Provenance semantics are
-unchanged: `actions/attest` auto-generates a SLSA build-provenance predicate whenever no SBOM
-and no predicate input is supplied, which is exactly how this pipeline calls it. Same two
-subjects (source archive + CycloneDX SBOM), same `id-token: write` / `attestations: write`
-grants, same `!inputs.dry_run` gating, same release gates.
-
-### Known issues
-
-**RESOLVED in this release -- a zero-configuration install registers its LSP server again.** For a
-window before this release, tracking `main` on Claude Code 2.1.233 required `profile`, `ps_host`
-and `nativeServe` to be set by hand or **no LSP server loaded at all**:
-
-```
-Failed to load LSP servers for plugin powershell-lsp: Error: Plugin option "profile" isn't set.
-```
-
-Claude Code resolves `${user_config.*}` inside `lspServers` against the options a user has
-explicitly set, **ignoring the defaults declared in `userConfig`** (the sibling MCP path merges
-them), and one unset key discards every LSP server the plugin declares. Opening `/plugin` and
-pressing Save did not help: the panel seeds an unset field **empty** rather than from its declared
-default, and skips blank optional keys on save, so it wrote nothing. **No tagged release was ever
-affected** -- the mappings landed after `v1.31.1` and are not in it.
-
-**What ships in this release (dispatch 000241):** the `${user_config.*}` mappings are
-**SUSPENDED** -- removed from the manifest, and recorded in `Get-ServeTransportSuspension`
-(`scripts/lib/lsp-common.ps1`) together with the exact condition that restores them, so lifting
-the gate is a mechanical edit. Filed upstream as
-[`anthropics/claude-code#86936`](https://github.com/anthropics/claude-code/issues/86936).
-
-**The remaining limitation, stated plainly:** while the gate holds, `profile`, `ps_host` and
-`nativeServe` are read at their shipped defaults (`safe`, `pwsh`, `off`) **inside the LSP serve
-subprocess**, regardless of what you configure -- so **`nativeServe = shim` cannot take effect**.
-**Diagnostics are unaffected**: they run through the hooks, which do receive plugin options and
-resolve your `profile` normally. `scripts/doctor.ps1` reports this as `SUSPENDED BY UPSTREAM GATE`
-and still FAILs for a knob with genuinely broken transport; the serve log names the gate on every
-launch rather than reporting a bare `provenance: default`. See
-[docs/troubleshooting.md](docs/troubleshooting.md) and
-[docs/upstream/claude-code-lspservers-userconfig-defaults.md](docs/upstream/claude-code-lspservers-userconfig-defaults.md).
-
-
-## [1.31.1] - 2026-08-13
-PATCH: **a live-but-busy analyzer daemon is no longer mistaken for an unreachable one, and is no
-longer relaunched because of it -- on every supported platform.** Two fixes on a single edit-path
-failure mode: the discriminator that tells a busy or still-analyzing daemon apart from a genuinely
-absent one (dispatch 000225), and the off-Windows correction that makes its probe prove a daemon is
-*listening* rather than merely that a socket file exists (dispatch 000231). No new `userConfig`
-knob, no new status token, and no change to the hook registration or fail-safe edit behavior.
-
-### Fixed
-
-**A live-but-busy daemon is no longer mistaken for an unreachable one, and is never relaunched
-because of it** (dispatch 000225). On the edit path the client treated *every* failed diagnostics
-round-trip as "there is no daemon" and fired an auto-relaunch. `$null` from `Get-Diagnostics`
-actually covers three conditions, and only one of them is a missing daemon:
-
-1. the connect timed out because the daemon's single pipe instance was **busy** serving another
-   edit (its serve loop is serial, so it does not accept while it analyzes);
-2. the connect **succeeded** and the response did not arrive within the hard cap -- the daemon is
-   alive and still analyzing (the large-file case, where its 5000 ms settle cap and the client's
-   5000 ms hard cap are the same number, so the client can lose the race);
-3. there is genuinely no pipe -- a clean idle-TTL self-terminate, a crash, or the ~150 ms pre-pipe
-   launch sliver. This is the only condition a relaunch can repair.
-
-In cases 1 and 2 the daemon is alive and holding the pipe, so the replacement could not even take
-the name (the server allows one instance) and died before serving, while the user was told the
-analyzer *"had stopped (e.g. after idle) and is being restarted"*. Worse, the first such edit burnt
-the 30-second relaunch cooldown stamp, so every busy edit for the next 30 seconds fell through to
-*"the analyzer was not reachable and could not be restarted automatically ... Start a new session to
-restart it"* -- advice to restart a working session, about an analyzer that was fine.
-
-The client now asks whether the daemon's named pipe is **present** before concluding it is absent
-(`Test-DaemonPipePresent`, a read-only namespace probe, ~4 ms, and only ever on the failure path).
-A failed connect cannot answer that question on its own: measured on Windows, a busy pipe and an
-absent pipe raise the *same* `TimeoutException` after the *same* elapsed time. If the pipe is
-present the edit resolves through the existing transient `incomplete` status -- "analysis did not
-complete -- this edit was NOT checked" -- with no process spawned and the cooldown budget left
-intact for a real outage. If the pipe is absent, the 000030 relaunch-and-recover path runs exactly
-as before.
-
-**No new `userConfig` knob and no new status token** -- the four-token taxonomy
-(`ok` / `incomplete` / `degraded` / `unavailable`) is unchanged and the 000027 drift-guard is
-untouched. Reusing the transient `incomplete` here follows the precedent 000030 itself set. The warm
-path is unaffected by construction: a healthy pass never reaches the branch, so neither the probe nor
-the relaunch runs, verified by comparing the emitted context against pre-fix code byte for byte.
-
-Classified **PATCH**, derived from this changelog's own Versioning section: this is a bug fix with no
-user-visible *contract* change -- no knob added or renamed, no status token added, no change to the
-hook registration or fail-safe edit behavior. The banner a user sees in the busy case does change,
-but from a false statement to a true one, which is the fix rather than a contract change.
-
-Covered by five controls in `tests/` -- a RED reproduction on pre-000225 routing, the GREEN result on
-the same scenario, a positive control proving a genuinely unreachable daemon still relaunches, a
-warm-path regression control, and a bounded observation showing relaunches in the busy scenario at
-**0** -- plus unit coverage of the discriminator itself. `docs/roadmap-ii/POST-FIX-REMEASUREMENT-relaunch-thrash.md`
-remeasures the large-file behavior against the frozen v1.31.0 baseline.
-
-**Follow-on correction: off-Windows, the pipe probe now proves liveness rather than file presence**
-(dispatch 000231). The paragraphs above describe the discriminator as a namespace probe measured at
-~4 ms. That measurement was taken on Windows, and it holds there: NPFS is kernel-managed, so the pipe
-name disappears the moment its owner dies, however it dies. The first cut of the **unix** arm was
-written by analogy from that same measurement and never measured off-Windows -- and off-Windows the
-analogy does not hold. .NET backs a named pipe with a socket file that is unlinked only when the
-server stream is *disposed*, so a daemon that dies without running its exit finally -- killed,
-crashed, or reaped -- leaves the file behind. A bare presence test read that orphan as a live daemon,
-suppressed the relaunch, and left the session with no analyzer at all. CI caught it: the
-idle-stopped-recovery test failed on ubuntu and macos while both Windows legs passed.
-
-The unix arm now asks whether anyone is **listening** on that socket, not merely whether the file
-exists. The file check remains as a cheap first filter; when the file is present, a short non-owning
-client connect settles it, because a connect to a unix socket with no listener is refused by the
-kernel. A live-but-*busy* daemon still answers present -- the kernel completes the connection into
-the listen backlog even while the serve loop is analyzing and not accepting -- so the property the
-fix above exists to protect is preserved. The connect is non-owning: a client can never hold a pipe
-name against its server, so the probe still cannot race a daemon that is legitimately starting. The
-Windows arm is untouched.
-
-Still **no new `userConfig` knob and no new status token**, and still classified **PATCH**: this
-repairs the off-Windows half of the fix above, on the same failure path, with no contract change.
-The three required behaviors are each covered by a test that runs on every leg -- a live-but-busy
-daemon is not relaunched, a genuinely absent one still recovers, and an idle-stopped one is silently
-relaunched and the next edit gets real analysis -- and the unix defect itself is asserted directly by
-two off-Windows unit controls that reproduce a stale socket file and a leftover regular file at the
-derived path.
-
-## [1.31.0] - 2026-08-10
-MINOR: **the doctor and `/status` state the clearance provenance floor beside the version, and the
-README answers "what version am I on, and how far back is my data attributable?"** One
-backward-compatible capability addition, on the self-check surface a user reads when something is
-wrong, plus the user-facing documentation that points at it.
-
-Classified MINOR -- derived, not asserted. This changelog's own Versioning section calls MINOR "a
-new backward-compatible capability" and PATCH "bug fixes and internal hardening with no
-user-visible contract change". This adds a new header line to two shipped user-facing command
-surfaces (`/powershell-lsp:doctor` and `/powershell-lsp:status`), plus the user-facing
-documentation for it, so it is a capability rather than hardening.
-
-The precedent settles it without stretching: the v1.30.0 entry directly below classified **the
-version header line itself** MINOR on exactly this reasoning, and the doctor-surface precedent in
-this file is unanimous -- including one addition that was OPT-IN, never-`fail`, and explicitly
-left the default doctor byte-for-byte unchanged. A default, always-rendered line cannot classify
-below an opt-in probe.
-
-**Report-only, and nothing else moves.** No knob is added, removed, renamed, or re-defaulted
-(no `userConfig` entry in `.claude-plugin/plugin.json` is touched, and the count stays at 20 --
-this release changes only that file's `version`); `CONTRACT.md` is untouched;
-the frozen `pass`/`fail`/`unknown` status vocabulary is unchanged; the default doctor stays at
-**11 checks**; and the exit code is computed from exactly the inputs it was before. The new line
-contributes no result object at all.
-
-### Added
-
-- **The doctor and `/status` state the clearance provenance floor beside the version.** Every
-  support interaction opens with "what version are you on?", which v1.30.0 answered. The question
-  immediately behind it -- *and how far back can that answer be trusted?* -- could until now be
-  answered only by running `scripts/rule-efficacy-ledger.ps1`, which is not something a user in a
-  support thread is going to do. The floor now prints as a second **header line above the check
-  table**, under the same ruling that placed the version there: a floor is a plain fact, the
-  frozen status vocabulary has no word for one, and a row would have inflated the "of N checks"
-  count with a non-check. Being a header also makes it unconditional -- it is there even when
-  every check below it is UNKNOWN, which is exactly the run a stranger pastes into a bug report.
-
-  **Surfaced, never re-derived.** The value comes from `Get-LifecycleProvenanceFloor`, exactly as
-  the version line comes from `Get-PluginVersion`. The doctor grows no opinion of its own about
-  what counts as an attributable version, so the readout and the ledger cannot disagree about the
-  same log. Giving that function a second consumer is what turned it into a shared library: the
-  lifecycle **read** side (`Resolve-LifecycleLogSearch`, `Read-LifecycleLog`,
-  `Get-LifecycleProvenanceFloor` and their two helpers) moved from
-  `scripts/rule-efficacy-ledger.ps1` to a new `scripts/lib/lifecycle-provenance.ps1`, **bodies
-  unchanged** -- no computation, ruling, or rendering differs. Reaching into the ledger directly
-  was not an option: it is an entry point with a `param()` block, and dot-sourcing a `.ps1` runs
-  that block in the caller's scope, which the G1 purity guard refuses as an invariant with no
-  baseline.
-
-  **Five states, five renderings, because they are five different claims:** a floor; records with
-  none attributable; a log holding no record yet; no lifecycle log at all under a *known* data
-  root -- the only case entitled to say `(absent)`; and a search that ran under a *fallback* data
-  root, where "nothing was ever captured" and "this run could not find it" cannot be told apart,
-  so it reports `(undetermined)` rather than picking the flattering reading.
-
-- **The efficacy ledger's printed provenance-floor caveat states that the floor is
-  window-relative.** The floor names the earliest version-attributable release among the records
-  **still retained**, and it *rises* as `session-start.ps1`'s `Invoke-LogSweep` trims the
-  `lifecycle-*.jsonl` family to `keepLastN`. That was always true and always load-bearing -- read
-  as "the earliest release this plugin ever had data for", the number is a claim about history --
-  but it lived only in a source comment, where the reader quoting the figure never saw it. It now
-  prints directly under the value it qualifies, and only in the floored state: where no floor is
-  named there is nothing for it to be relative to.
-
-- **README: "What version am I on, and how far back is my data attributable?"** A support subsection
-  under the install-and-release verification material stating both facts, what each means, and
-  every rendering the readout can produce. It points at the live doctor/`status` line as *the*
-  answer and names the two sources behind it rather than restating a value that would go stale --
-  so the docs, the runtime, and the ledger are one fact surfaced in three places rather than three
-  copies to keep in sync.
-
-### Fixed
-
-The items below are **PATCH-level and do not move this section's MINOR classification** -- a MINOR
-cut already carries them. They are recorded rather than folded into "internal hardening" for one
-reason: the first changes what an operator can verify about a released artifact, and the second
-corrects a published instruction that could not succeed as written. The Gate 6 and pipeline
-mechanics behind them are internal and are deliberately NOT itemized here; they live in the
-decision ledger, Section 3.
-
-- **Release tags cut from the next release forward are findable in the Rekor transparency log, and
-  the documented way to verify one now runs.** `docs/RELEASING.md` told a reader to run `gitsign
-  verify <tag>`, which is the **commit** subcommand -- it resolves the tag to its commit, finds no
-  signature block, and dies. The tag subcommand is `gitsign verify-tag`, and correcting that alone
-  would not have been enough: it then failed at its transparency-log step for every tag this
-  project has ever cut. The pipeline pinned gitsign v0.16.1, whose signer keyed a tag's log entry
-  on the hash of the tag reassembled as a *commit* while every verifier looks up the real
-  tag-object hash, so the two could never meet. The pin is now v0.17.1, where upstream routes both
-  through one helper. Nothing about signing changes otherwise -- same keyless GitHub-OIDC identity,
-  same certificate authority and log, same signature format on the tag.
-
-- **Stated plainly, because it affects anyone verifying an existing release: `gitsign verify-tag`
-  cannot pass for v1.30.0 or any earlier tag, and never will.** Those tags are not re-signed -- the
-  released history stays exactly as cut -- so their log entries remain keyed where no verifier
-  reads, and the corrected command will keep failing on them by design rather than because
-  something is wrong with the tag. What that costs is transparency-log inclusion *for the tag*
-  only. Signer identity and the signature over the tag payload remain fully verifiable offline for
-  every release, and the release **assets** carry their own inclusion proofs throughout, which is
-  why `gh attestation verify` is now documented as the primary integrity check. `docs/RELEASING.md`
-  gives the offline tag procedure that does succeed on those tags.
