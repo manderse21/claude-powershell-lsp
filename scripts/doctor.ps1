@@ -972,14 +972,155 @@ function Test-DoctorServeTransport {
 # the decision logic stays unit-testable; these are exercised by the end-to-end run.
 # ===========================================================================
 
+function Get-DoctorPwshVersion {
+    # THE VERSION DECISION, pure and unit-testable (dispatch 000285, P2-3). Kept out of the live
+    # probe so it can be exercised with hand-written inputs on any platform, including the case
+    # the live probe cannot produce on Windows.
+    #
+    # TWO SOURCES, IN-PROCESS FIRST.
+    #
+    # The probe used to read ONLY $FileVersion -- ApplicationInfo.Version, the executable's
+    # file-version RESOURCE. That resource is a WINDOWS-ONLY artifact. On Linux and macOS pwsh is
+    # an ELF/Mach-O binary that has none, so .NET reports 0.0.0.0, and check 1 then failed with
+    # "found pwsh 0.0.0.0 but PowerShell 7+ is required" on a host running PowerShell 7.4.2 -- a
+    # confident, precise, WRONG answer, and the blocker that kept the doctor from being gated in
+    # the official PowerShell container.
+    #
+    # $HostVersion (the caller's $PSVersionTable.PSVersion) is authoritative on every platform
+    # and costs no child process, but it describes THIS process. It is therefore used only when
+    # $IsCoreHost AND $IsSelf -- the resolved pwsh is the very executable this process is running.
+    # Without the $IsSelf arm, a pwsh elsewhere on PATH would be reported with this host's
+    # version, which is a new wrong answer in place of the old one.
+    #
+    # A 0.0.0.0 from the fallback is normalised to $null -- "undeterminable", which check 1
+    # already reports honestly as a WARN. A zero version is the ABSENCE of a version, never a
+    # real one below the 7.0 floor, and reporting it as a real one is the whole defect.
+    param(
+        [version] $HostVersion,
+        [version] $FileVersion,
+        [bool] $IsCoreHost,
+        [bool] $IsSelf
+    )
+    if ($IsCoreHost -and $IsSelf -and $null -ne $HostVersion) { return $HostVersion }
+    $v = $FileVersion
+    if ($null -ne $v -and $v.Major -eq 0 -and $v.Minor -eq 0 -and $v.Build -le 0) { $v = $null }
+    return $v
+}
+
+function ConvertTo-DoctorVersion {
+    # Coerce whatever a host reports as its version into a [version], or $null.
+    #
+    # WHY THIS EXISTS, and it is the SECOND defect CI found in this fix. Windows PowerShell 5.1
+    # exposes $PSVersionTable.PSVersion as [System.Version]. PowerShell 7 exposes it as
+    # [System.Management.Automation.SemanticVersion] -- a DIFFERENT type that is not a [version]
+    # and does not derive from one. A `-is [version]` guard therefore silently discards the host
+    # version on exactly the hosts this fix exists for, and the in-process arm never fires.
+    #
+    # The Windows legs could not catch it: there the file-version fallback returns a real version,
+    # so the probe answers correctly for the wrong reason. macos-pwsh reported
+    # `PSHOME=/usr/local/microsoft/powershell/7 fileVersion=0.0.0.0 edition=Core` with the path
+    # resolving correctly -- every input right, and still $null out.
+    #
+    # Built from PARTS, not by parsing the string: a prerelease PSVersion stringifies as
+    # "7.5.0-preview.3", which [version] cannot parse at all.
+    param([object] $Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [version]) { return $Value }
+    try {
+        $mj = [int]$Value.Major
+        $mn = [int]$Value.Minor
+        $bl = 0
+        # SemanticVersion calls it Patch; anything else that got here may call it Build.
+        try { if ($null -ne $Value.Patch) { $bl = [int]$Value.Patch } } catch { }
+        if ($bl -eq 0) { try { if ($null -ne $Value.Build) { $bl = [int]$Value.Build } } catch { } }
+        if ($bl -lt 0) { $bl = 0 }
+        return [version]('{0}.{1}.{2}' -f $mj, $mn, $bl)
+    } catch { }
+    # Last resort: parse the string with any prerelease label stripped.
+    try { return [version](([string]$Value) -replace '[-+].*$', '') } catch { return $null }
+}
+
+function Get-DoctorRealPath {
+    # A path with SYMLINKS FOLLOWED, or the plain full path when they cannot be.
+    #
+    # WHY THIS EXISTS, measured rather than anticipated. The first version of the IsSelf test
+    # below compared [System.IO.Path]::GetFullPath on both sides. GetFullPath normalises
+    # separators and resolves . and .. -- it does NOT follow symbolic links. On Linux and macOS
+    # `Get-Command pwsh` resolves to /usr/bin/pwsh or /usr/local/bin/pwsh, which is a SYMLINK
+    # into /opt/microsoft/powershell/7/ (or the Homebrew Cellar), while the running process
+    # reports the real file. The two never compared equal, IsSelf was always false, and the fix
+    # fell straight back to the 0.0.0.0 file version it exists to replace -- INERT on exactly
+    # the platform it was written for. CI caught it: ubuntu-pwsh and macos-pwsh both failed the
+    # live payload-floor test with "Expected a value, but got $null or empty" while all four
+    # Windows-side assertions passed.
+    param([string] $Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        # ResolveLinkTarget(-Recurse) follows the WHOLE chain and is PS 7.1+. This helper is
+        # only consulted from the Core-only branch, but it degrades rather than throws so it
+        # stays safe if that ever changes.
+        try {
+            $target = $item.ResolveLinkTarget($true)
+            if ($null -ne $target -and -not [string]::IsNullOrWhiteSpace($target.FullName)) {
+                return [System.IO.Path]::GetFullPath($target.FullName)
+            }
+        } catch { }
+        return [System.IO.Path]::GetFullPath($item.FullName)
+    } catch {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+}
+
 function Get-DoctorPwsh {
-    # Resolve pwsh on PATH and its version WITHOUT launching a child process (read the
-    # ApplicationInfo.Version -- the exe file version, which for pwsh is the PS version).
+    # Resolve pwsh on PATH and its version WITHOUT launching a child process. The version
+    # DECISION lives in Get-DoctorPwshVersion above; this function only gathers its inputs.
     try {
         $cmd = Get-Command 'pwsh' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $cmd) { return [pscustomobject]@{ Found = $false; Version = $null } }
-        $v = $null
-        try { if ($cmd.Version -is [version]) { $v = $cmd.Version } } catch { $v = $null }
+
+        $fileVersion = $null
+        try { if ($cmd.Version -is [version]) { $fileVersion = $cmd.Version } } catch { $fileVersion = $null }
+
+        $isCore = ($PSVersionTable.PSEdition -eq 'Core')
+        $isSelf = $false
+        if ($isCore) {
+            # THREE independent ways to establish "the pwsh on PATH is the one running this
+            # process", tried in order. Any one of them is sufficient; needing all three would
+            # make the guard fail closed on ordinary installs, and needing none would let a
+            # different pwsh borrow this host's version.
+            $resolved = Get-DoctorRealPath -Path ([string]$cmd.Source)
+            if (-not [string]::IsNullOrWhiteSpace($resolved)) {
+
+                # (1) The running executable, symlinks followed on both sides.
+                try {
+                    $self = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+                    if (-not [string]::IsNullOrWhiteSpace($self)) {
+                        if ((Get-DoctorRealPath -Path $self) -eq $resolved) { $isSelf = $true }
+                    }
+                } catch { }
+
+                # (2) $PSHOME is the running installation's own directory, and it needs no
+                # MainModule -- which is the part most likely to be unavailable in a container
+                # or under a restricted process ACL. If the resolved pwsh lives inside this
+                # install, it IS this host.
+                if (-not $isSelf -and -not [string]::IsNullOrWhiteSpace($PSHOME)) {
+                    try {
+                        $home7 = Get-DoctorRealPath -Path $PSHOME
+                        $sep = [System.IO.Path]::DirectorySeparatorChar
+                        if (-not $home7.EndsWith([string]$sep)) { $home7 = $home7 + [string]$sep }
+                        if ($resolved.StartsWith($home7, [System.StringComparison]::OrdinalIgnoreCase)) { $isSelf = $true }
+                    } catch { }
+                }
+            }
+        }
+        # NOT `-is [version]`: PowerShell 7 reports PSVersion as a SemanticVersion, which that
+        # test rejects, so the in-process arm never fired on any PS 7 host. See
+        # ConvertTo-DoctorVersion.
+        $hostVersion = ConvertTo-DoctorVersion -Value $PSVersionTable.PSVersion
+
+        $v = Get-DoctorPwshVersion -HostVersion $hostVersion -FileVersion $fileVersion `
+            -IsCoreHost $isCore -IsSelf $isSelf
         return [pscustomobject]@{ Found = $true; Version = $v }
     } catch { return [pscustomobject]@{ Found = $false; Version = $null } }
 }

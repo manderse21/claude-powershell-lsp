@@ -3288,6 +3288,170 @@ Describe 'Preflight doctor -- per-check status decisions (dispatch 000036)' {
         }
     }
 
+    Context 'Get-DoctorPwshVersion -- check 1 version SOURCE (dispatch 000285, P2-3)' {
+        # THE DEFECT. The probe read only ApplicationInfo.Version -- the executable file-version
+        # RESOURCE, a Windows-only artifact. On Linux and macOS pwsh has none, .NET reports
+        # 0.0.0.0, and check 1 answered "found pwsh 0.0.0.0 but PowerShell 7+ is required" on a
+        # host running 7.4.2. The decision is extracted as a pure function precisely so the
+        # non-Windows case can be exercised FROM Windows, which the live probe cannot do.
+
+        It 'RED CONTROL -- the PRIOR implementation, on the Linux shape, produces the wrong answer' {
+            # Not an arbitrary mutant: this is the exact expression the probe used before this
+            # dispatch, `$v = $cmd.Version`, applied to what Linux actually reports. If this
+            # assertion ever stops holding, the defect being fixed was never real.
+            $priorImplementation = { param($fileVersion) $fileVersion }
+            $prior = & $priorImplementation ([version]'0.0.0.0')
+
+            $prior | Should -Not -BeNullOrEmpty
+            $prior.Major | Should -Be 0
+            # ...and fed to check 1, that is a confident FAIL on a perfectly good host.
+            (Test-DoctorPwsh -Found $true -Version $prior).Status | Should -Be 'fail'
+        }
+
+        It 'the FIXED probe prefers the in-process host version on that same Linux shape' {
+            $v = Get-DoctorPwshVersion -HostVersion ([version]'7.4.2') -FileVersion ([version]'0.0.0.0') `
+                -IsCoreHost $true -IsSelf $true
+            $v | Should -Be ([version]'7.4.2')
+            (Test-DoctorPwsh -Found $true -Version $v).Status | Should -Be 'pass'
+        }
+
+        It 'a 0.0.0.0 file version with NO usable host version degrades to UNKNOWN, never a fabricated fail' {
+            # The other half of the fix. Zero is the ABSENCE of a version, not a version below
+            # the 7.0 floor, and check 1 already reports "undeterminable" honestly.
+            $v = Get-DoctorPwshVersion -HostVersion $null -FileVersion ([version]'0.0.0.0') `
+                -IsCoreHost $false -IsSelf $false
+            $v | Should -BeNullOrEmpty
+            (Test-DoctorPwsh -Found $true -Version $v).Status | Should -Be 'unknown'
+        }
+
+        It 'does NOT borrow this host version for a DIFFERENT pwsh on PATH (the over-correction guard)' {
+            # Without the IsSelf arm the fix would replace one wrong answer with another: a
+            # separate pwsh install reported at this process's version. Both the not-self and
+            # not-Core cases must fall back to the file version.
+            (Get-DoctorPwshVersion -HostVersion ([version]'7.4.2') -FileVersion ([version]'7.2.1') `
+                -IsCoreHost $true -IsSelf $false) | Should -Be ([version]'7.2.1')
+            (Get-DoctorPwshVersion -HostVersion ([version]'5.1.19041') -FileVersion ([version]'7.4.2') `
+                -IsCoreHost $false -IsSelf $true) | Should -Be ([version]'7.4.2')
+        }
+
+        It 'the ordinary Windows path is UNCHANGED: a real file version is returned as-is' {
+            # The regression gate. Windows PowerShell 5.1 running the doctor, pwsh a separate
+            # executable with a real version resource -- the shape every existing run takes.
+            (Get-DoctorPwshVersion -HostVersion ([version]'5.1.19041') -FileVersion ([version]'7.4.2') `
+                -IsCoreHost $false -IsSelf $false) | Should -Be ([version]'7.4.2')
+            (Get-DoctorPwshVersion -HostVersion $null -FileVersion ([version]'7.5.0') `
+                -IsCoreHost $false -IsSelf $false) | Should -Be ([version]'7.5.0')
+        }
+
+        It 'a genuinely old pwsh is still reported as old -- the fix does not launder a real failure' {
+            # Both-directions: the fix must not turn every version into a pass. A 6.2.4 file
+            # version with no in-process claim stays 6.2.4, and check 1 still fails it.
+            $v = Get-DoctorPwshVersion -HostVersion ([version]'5.1.19041') -FileVersion ([version]'6.2.4') `
+                -IsCoreHost $false -IsSelf $false
+            $v | Should -Be ([version]'6.2.4')
+            (Test-DoctorPwsh -Found $true -Version $v).Status | Should -Be 'fail'
+        }
+
+        It 'ConvertTo-DoctorVersion coerces a Major/Minor/Patch host version, on EITHER edition' {
+            # THE SECOND DEFECT CI FOUND, pinned so it cannot come back -- and pinned in a way
+            # that RUNS ON BOTH EDITIONS, which the first attempt did not.
+            #
+            # Windows PowerShell 5.1 reports $PSVersionTable.PSVersion as [System.Version];
+            # PowerShell 7 reports [System.Management.Automation.SemanticVersion], which is NOT a
+            # [version] and does not derive from one. The guard here was `-is [version]`, so it
+            # silently discarded the host version on every PS 7 host -- and the Windows legs could
+            # not catch it, because there the file-version fallback answers correctly for the
+            # wrong reason.
+            #
+            # The first version of THIS test then failed on windows-powershell with "Unable to
+            # find type [System.Management.Automation.SemanticVersion]" -- the type does not exist
+            # before PowerShell 6. A test that names a type only one edition has cannot run on the
+            # edition the fallback exists to serve. So the contract is exercised through a
+            # DUCK-TYPED stand-in, which is all the coercion actually reads, and the real
+            # SemanticVersion is used only where it exists.
+            $duck = [pscustomobject]@{ Major = 7; Minor = 4; Patch = 2 }
+            $duck -is [version] | Should -BeFalse -Because 'this is the trap: the host version need not be a [version]'
+            (ConvertTo-DoctorVersion -Value $duck) | Should -Be ([version]'7.4.2')
+
+            # A plain [version] passes through untouched (the 5.1 path).
+            (ConvertTo-DoctorVersion -Value ([version]'5.1.19041')) | Should -Be ([version]'5.1.19041')
+
+            # Built from PARTS, never by parsing: a prerelease stringifies as "7.5.0-preview.3",
+            # which [version] cannot parse at all.
+            $pre = [pscustomobject]@{ Major = 7; Minor = 5; Patch = 0 }
+            (ConvertTo-DoctorVersion -Value $pre) | Should -Be ([version]'7.5.0')
+
+            (ConvertTo-DoctorVersion -Value $null) | Should -BeNullOrEmpty
+            { ConvertTo-DoctorVersion -Value 'not a version at all' } | Should -Not -Throw
+
+            # THE REAL TYPE, where the edition has it. Skipped rather than faked on 5.1, and the
+            # duck-typed assertions above still ran there.
+            if ($null -ne ('System.Management.Automation.SemanticVersion' -as [type])) {
+                $semver = [System.Management.Automation.SemanticVersion]::new(7, 4, 2)
+                $semver -is [version] | Should -BeFalse
+                (ConvertTo-DoctorVersion -Value $semver) | Should -Be ([version]'7.4.2')
+                $prerelease = [System.Management.Automation.SemanticVersion]::new(7, 5, 0, 'preview.3')
+                (ConvertTo-DoctorVersion -Value $prerelease) | Should -Be ([version]'7.5.0')
+            }
+        }
+
+        It 'THIS HOST version coerces, whatever type this edition reports it as' {
+            # The live half, and it is edition-agnostic BY CONSTRUCTION: whatever
+            # $PSVersionTable.PSVersion is here, the coercion must produce a usable [version].
+            # On 5.1 that exercises the passthrough; on 7 it exercises the SemanticVersion path.
+            $v = ConvertTo-DoctorVersion -Value $PSVersionTable.PSVersion
+            $v | Should -Not -BeNullOrEmpty -Because ("PSVersion is a " + $PSVersionTable.PSVersion.GetType().FullName)
+            $v | Should -BeOfType ([version])
+            $v.Major | Should -Be ([int]$PSVersionTable.PSVersion.Major)
+        }
+
+        It 'the in-process arm fires end-to-end when the host version is not a [version]' {
+            # The integration this dispatch got wrong twice: every input can be correct while the
+            # arm still never fires. Feeds the pure decision the SHAPE a PS 7 host produces -- a
+            # coerced non-[version] host version, a 0.0.0.0 file version, Core, IsSelf -- and
+            # requires the host version to win.
+            $hv = ConvertTo-DoctorVersion -Value ([pscustomobject]@{ Major = 7; Minor = 4; Patch = 2 })
+            $v = Get-DoctorPwshVersion -HostVersion $hv -FileVersion ([version]'0.0.0.0') `
+                -IsCoreHost $true -IsSelf $true
+            $v | Should -Be ([version]'7.4.2')
+            (Test-DoctorPwsh -Found $true -Version $v).Status | Should -Be 'pass'
+        }
+
+        It 'Get-DoctorRealPath follows what it can and never throws' {
+            # The helper the IsSelf test depends on. It cannot be given a symlink here without
+            # elevation on Windows, so what is asserted is the contract that matters: a real
+            # file resolves to its full path, and NOTHING makes it throw -- a throw inside the
+            # probe would surface as Found=$false and read as "pwsh is missing".
+            $me = Get-DoctorRealPath -Path $PSCommandPath
+            $me | Should -Not -BeNullOrEmpty
+            (Test-Path -LiteralPath $me) | Should -BeTrue
+            { Get-DoctorRealPath -Path '' } | Should -Not -Throw
+            { Get-DoctorRealPath -Path 'Z:\no\such\path\at\all.txt' } | Should -Not -Throw
+            (Get-DoctorRealPath -Path '') | Should -Be ''
+        }
+
+        It 'the LIVE probe reports a determinable 7+ version on this host (the probe is wired, not just the pure function)' {
+            # PAYLOAD FLOOR, and it has already earned its place: the pure function above could
+            # be perfect while Get-DoctorPwsh never calls it, or calls it with inputs that never
+            # satisfy the in-process arm. That is exactly what happened -- the first version of
+            # this fix compared paths with GetFullPath, which does not follow symlinks, so on
+            # Linux and macOS (where /usr/bin/pwsh is a link) IsSelf was always false and the
+            # fix was INERT on the platform it was written for. ubuntu-pwsh and macos-pwsh
+            # failed here while every Windows assertion passed.
+            #
+            # pwsh is a hard requirement of this repo's own test suite, so Found must be true on
+            # every leg, and a 7+ version must be determinable on every leg.
+            $p = Get-DoctorPwsh
+            $p.Found | Should -BeTrue
+            $cmd = Get-Command 'pwsh' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+            $diag = ("source={0} real={1} PSHOME={2} fileVersion={3} edition={4}" -f
+                $cmd.Source, (Get-DoctorRealPath -Path ([string]$cmd.Source)), $PSHOME,
+                $cmd.Version, $PSVersionTable.PSEdition)
+            $p.Version | Should -Not -BeNullOrEmpty -Because $diag
+            $p.Version.Major | Should -BeGreaterOrEqual 7 -Because $diag
+        }
+    }
+
     Context 'Test-DoctorEnabled -- check 2: plugin enablement' {
         It 'PASS when the plugin subprocess environment is present' {
             (Test-DoctorEnabled -PluginRootResolved $true).Status | Should -Be 'pass'
