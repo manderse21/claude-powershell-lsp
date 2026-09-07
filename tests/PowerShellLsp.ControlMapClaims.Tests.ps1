@@ -185,19 +185,58 @@ Describe 'Control-map claims -- every claim the map makes, against its derived s
 
     Context 'RED CONTROL -- rev 2, restored from git history, must FAIL' {
         BeforeAll {
-            # Rev 2 is the real published revision, not a mutant: docs/control-map.html at commit
-            # 66b9522 ("publish the roadmap control map as a release-bound derived view", PR #195).
-            $script:Rev2Raw = ''
-            try {
-                $script:Rev2Raw = (& git -C $script:RepoRoot show '66b9522:docs/control-map.html' 2>$null | Out-String)
-            } catch { $script:Rev2Raw = '' }
+            # REV 2 IS A COMMITTED FIXTURE, NOT A `git show` (dispatch 000285, after CI).
+            #
+            # It was first read straight from history -- `git show 66b9522:docs/control-map.html`
+            # -- and that is exactly what the charter asks for. CI proved it unportable: the
+            # workflow checks out SHALLOW, so commit 66b9522 is not present on the runner,
+            # `git show` returned nothing, and the RED control then "passed" against an EMPTY
+            # document, because a document with no text trivially satisfies every
+            # forbidden-phrase assertion. The retrievability guard below is what caught it --
+            # ubuntu-pwsh and macos-pwsh failed with "got 0" before the two controls could report
+            # a vacuous green.
+            #
+            # A RED CONTROL MUST BE HERMETIC. Reading it from history makes the control's
+            # existence depend on clone depth, on history never being rewritten, and on the
+            # commit never being GC'd -- three ways for a control to disappear silently. The
+            # fixture is the same bytes, committed once, and its PROVENANCE is asserted
+            # separately below wherever the history is actually available.
+            $script:Rev2Path = Join-Path $PSScriptRoot 'fixtures/control-map-rev2.html'
+            $script:Rev2Raw  = ''
+            if (Test-Path -LiteralPath $script:Rev2Path -PathType Leaf) {
+                $script:Rev2Raw = Get-Content -LiteralPath $script:Rev2Path -Raw
+            }
+            $script:Rev2Commit = '66b9522433a102b103421dcac40b7aea26a8491e'
         }
 
         It 'rev 2 is retrievable and is a different document from the tip' {
             # If this ever fails the two assertions below become vacuous, so it is asserted first
-            # and separately rather than folded into them.
-            $script:Rev2Raw.Length | Should -BeGreaterThan 5000 -Because 'git show of rev 2 must return the real document'
+            # and separately rather than folded into them. This is not hypothetical: it is the
+            # assertion that caught the shallow-clone defect described above.
+            $script:Rev2Raw.Length | Should -BeGreaterThan 5000 -Because 'the rev 2 fixture must be present and whole'
             $script:Rev2Raw | Should -Not -Be (Get-Content -LiteralPath $script:MapPath -Raw)
+        }
+
+        It 'the rev 2 fixture is byte-identical to the commit it claims to be' {
+            # PROVENANCE. A fixture is only a faithful RED control while it still matches the
+            # revision it names, and nothing else would notice it drifting. This runs wherever
+            # the history is present -- which is every developer clone and every full checkout --
+            # and reports honestly rather than passing when it is not. It is deliberately NOT
+            # folded into the control above: the control must run everywhere, and this cannot.
+            $have = $false
+            try {
+                & git -C $script:RepoRoot cat-file -e ($script:Rev2Commit + '^{commit}') 2>$null
+                $have = ($LASTEXITCODE -eq 0)
+            } catch { $have = $false }
+
+            if (-not $have) {
+                Set-ItResult -Skipped -Because 'this checkout is shallow, so commit 66b9522 is absent and provenance cannot be checked here; the RED control itself still ran against the fixture'
+                return
+            }
+            $fromGit = (& git -C $script:RepoRoot show ($script:Rev2Commit + ':docs/control-map.html') | Out-String)
+            $fromGit.Length | Should -BeGreaterThan 5000
+            ($script:Rev2Raw -replace "`r`n", "`n").TrimEnd() |
+                Should -Be (($fromGit -replace "`r`n", "`n").TrimEnd()) -Because 'the fixture must still BE rev 2'
         }
 
         It 'rev 2 FAILS the T5.1 claim -- it called a shipped security fix unreleased' {

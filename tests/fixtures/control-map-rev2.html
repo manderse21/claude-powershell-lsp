@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>powershell-lsp -- Roadmap Control Map -- 2026-08-22 rev2</title>
+<style>
+  :root{
+    --ground:#0b1220; --panel:#121b2c; --panel2:#0f1726; --line:#22304a;
+    --ink:#dfe7f2; --dim:#8fa1b8; --faint:#5c6d85;
+    --amber:#f0a832; --cyan:#41c9da; --coral:#f2726d; --green:#3ddc97; --violet:#9d8cff;
+    --mono:'Cascadia Mono','Consolas',ui-monospace,monospace;
+    --disp:'Bahnschrift','Barlow Condensed','Arial Narrow',Arial,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--ground);color:var(--ink);font-family:var(--disp);padding:28px 20px 48px}
+  .wrap{max-width:1280px;margin:0 auto}
+  header{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:10px;
+         border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:6px}
+  h1{font-size:30px;letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+  h1 .thin{color:var(--dim);font-weight:300}
+  .stamp{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  .northstar{margin:14px 0 4px;padding:12px 16px;border-left:3px solid var(--amber);background:var(--panel2);
+             font-size:14px;color:var(--ink);line-height:1.55}
+  .northstar b{color:var(--amber)}
+  .northstar .src{font-family:var(--mono);font-size:10.5px;color:var(--faint);display:block;margin-top:6px}
+  .chips{display:flex;gap:8px;margin:12px 0 4px;flex-wrap:wrap}
+  .chip{font-family:var(--mono);font-size:11.5px;padding:4px 10px;border-radius:3px;border:1px solid var(--line)}
+  .chip.g{color:var(--green);border-color:rgba(61,220,151,.45)}
+  .chip.a{color:var(--amber);border-color:rgba(240,168,50,.45)}
+  .chip.c{color:var(--cyan);border-color:rgba(65,201,218,.4)}
+  .chip.r{color:var(--coral);border-color:rgba(242,114,109,.45)}
+  svg{width:100%;height:auto;display:block;margin-top:10px}
+  text{font-family:var(--disp)}
+  .mono{font-family:var(--mono)}
+  footer{margin-top:14px;border-top:1px solid var(--line);padding-top:12px;
+         font-family:var(--mono);font-size:11.5px;color:var(--faint);line-height:1.7}
+  .legend{display:flex;gap:22px;flex-wrap:wrap;margin-top:10px;font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .legend span{display:inline-flex;align-items:center;gap:7px}
+  .sw{width:14px;height:14px;border-radius:2px;display:inline-block}
+  .tally{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0 4px}
+  .tcard{border:1px solid var(--line);border-radius:8px;padding:14px 16px;background:var(--panel2)}
+  .tcard .k{font-family:var(--mono);font-size:11px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase}
+  .tcard .v{font-size:34px;font-weight:700;line-height:1.1;margin-top:6px}
+  .tcard .s{font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:6px;line-height:1.5}
+  .tcard.done .v{color:var(--green)}
+  .tcard.decide .v{color:var(--amber)}
+  .tcard.sec .v{color:var(--coral)}
+  .bar{height:14px;border-radius:7px;background:#0f1726;border:1px solid var(--line);overflow:hidden;margin:14px 0 2px;display:flex}
+  .bar i{display:block;height:100%}
+  .bar .b-done{background:#3ddc97}
+  .bar .b-cut{background:#f2726d;opacity:.8}
+  .bar .b-left{background:#f0a832;opacity:.55}
+  .barkey{display:flex;gap:22px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:6px}
+  .sect{font-family:var(--mono);font-size:13px;letter-spacing:.18em;color:var(--cyan);
+        margin:26px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  .sect.warm{color:var(--amber)}
+  .sect.cool{color:var(--violet)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .card{border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:var(--panel2)}
+  .card h3{font-size:15px;color:var(--ink);font-weight:600;margin-bottom:6px}
+  .card p{font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.55}
+  .declines{display:grid;grid-template-columns:repeat(2,1fr);gap:6px 18px}
+  .decl{display:flex;gap:10px;align-items:baseline;font-family:var(--mono);font-size:11.5px;
+        padding:7px 10px;border:1px solid var(--line);border-radius:4px;background:var(--panel2)}
+  .decl b{color:var(--coral);font-weight:600;white-space:nowrap}
+  .decl span{color:var(--dim)}
+  .decl.pend b{color:var(--amber)}
+  @media (max-width:900px){.tally,.grid4{grid-template-columns:repeat(2,1fr)}.grid2,.declines{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>powershell-lsp <span class="thin">/ Roadmap Control Map</span></h1>
+  <div class="stamp">rev 2 &middot; 2026-08-22 &middot; whole-roadmap view &middot; counter 000270 &middot; released v1.32.0 &middot; Apache-2.0 fwd</div>
+</header>
+
+<div class="northstar">
+  Be the PowerShell layer a coding agent can be trusted with -- every diagnostic honest about whether
+  analysis ran, every release and policy cryptographically attributable, every effectiveness claim
+  measured -- <b>in headless, automated, and enterprise environments where editor-bound tooling is
+  insufficient or unavailable</b>. Settled consequences: the plugin is a <b>client of PSES</b>, never an
+  analysis engine; a custom-rule seam is declined pending demand.
+  <span class="src">North Star, ROADMAP.md -- the bolded clause names the environment the work is for</span>
+</div>
+
+<!-- ============ TALLY ============ -->
+<div class="tally">
+  <div class="tcard done">
+    <div class="k">Roadmap II initiatives delivered</div>
+    <div class="v">9 / 9</div>
+    <div class="s">R2-01..02, 04..08, 14, 15 -- every chartered initiative delivered, merged, and its gate decision now taken. Actual.</div>
+  </div>
+  <div class="tcard done">
+    <div class="k">2026-08-21 gate clearance</div>
+    <div class="v">G1-G9</div>
+    <div class="s">Every open ruling decided in one sitting and executed overnight by 000269 (PR #193). All PENDING-MIKE rows resolved.</div>
+  </div>
+  <div class="tcard sec">
+    <div class="k">Unreleased security fix</div>
+    <div class="v">T5.1</div>
+    <div class="s">Pipe DACL was Everyone + Anonymous readable; fixed in #193, unreleased. The CUT node is the program's critical decision.</div>
+  </div>
+  <div class="tcard decide">
+    <div class="k">Attended decisions open</div>
+    <div class="v">5 + 1</div>
+    <div class="s">Release cut &middot; promotion sitting (5 cand.) &middot; Arc B publication &middot; capture-history consolidation &middot; ROADMAP public facts. Standing: second maintainer.</div>
+  </div>
+</div>
+
+<div class="bar" title="chartered work vs open decision surface vs paced arcs">
+  <i class="b-done" style="width:72%"></i>
+  <i class="b-cut" style="width:6%"></i>
+  <i class="b-left" style="width:22%"></i>
+</div>
+<div class="barkey">
+  <span><b style="color:#3ddc97">delivered</b> RI archived + RII 9/9 + gate clearance + launch executed</span>
+  <span><b style="color:#f2726d">cut</b> the security-carrying release decision</span>
+  <span><b style="color:#f0a832">open by design</b> 2 queued items + 6 gated/paced lanes (never "complete" -- they close on gates, not effort)</span>
+  <span style="color:#5c6d85">bar is a planning read; the paced lanes are open-ended by construction</span>
+</div>
+
+<div class="chips">
+  <span class="chip g">Roadmap I ARCHIVED &middot; Roadmap II chartered set FULLY DELIVERED</span>
+  <span class="chip g">Now lane EMPTY by statement -- zero accepted dispatches on the board</span>
+  <span class="chip r">T5.1 fixed-unreleased -- next cut carries a security fix</span>
+  <span class="chip c">Arc B at publication decision &middot; Arc D awaiting next adoption signal</span>
+  <span class="chip a">#86936 OPEN gates nativeServe &middot; #66987 CLOSED (fixed 2.1.205) &middot; #73961 CLOSED</span>
+</div>
+
+<!-- ================= SVG: SPINE + INITIATIVES + QUEUE + HORIZON ================= -->
+<svg viewBox="0 0 1250 900" role="img" aria-label="Program spine Roadmap I to open arcs; Roadmap II initiative panel; Next-lane queue; horizon; gated and paced lanes; release rail">
+<defs>
+  <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M1 1L9 5L1 9" fill="none" stroke="#f0a832" stroke-width="1.6" stroke-linecap="round"/>
+  </marker>
+  <marker id="arc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M1 1L9 5L1 9" fill="none" stroke="#41c9da" stroke-width="1.5" stroke-linecap="round"/>
+  </marker>
+</defs>
+
+<text x="24" y="30" fill="#f0a832" font-size="13" letter-spacing=".18em" class="mono">PROGRAM SPINE&#160;&#160;ROADMAP I &#8594; ROADMAP II &#8594; GATE CLEARANCE &#8594; CUT &#8594; OPEN ARCS</text>
+<line x1="24" y1="38" x2="1226" y2="38" stroke="#22304a" stroke-width="1"/>
+
+<!-- RI -->
+<g>
+  <rect x="24" y="56" width="212" height="110" rx="8" fill="#101d18" stroke="#3ddc97" stroke-width="1.2"/>
+  <text x="38" y="82" fill="#3ddc97" font-size="17" font-weight="600">Roadmap I</text>
+  <text x="38" y="102" fill="#8fa1b8" font-size="11.5">Core build: daemon, hooks,</text>
+  <text x="38" y="117" fill="#8fa1b8" font-size="11.5">corpus, trust chain, 1.x freeze.</text>
+  <text x="38" y="138" fill="#dfe7f2" font-size="11" class="mono">ARCHIVED (R2-02, 000230)</text>
+  <text x="38" y="155" fill="#5c6d85" font-size="10.5" class="mono">docs/ROADMAP-I-ARCHIVE.md</text>
+</g>
+<line x1="236" y1="110" x2="272" y2="110" stroke="#f0a832" stroke-width="2.2" marker-end="url(#ar)"/>
+
+<!-- RII -->
+<g>
+  <rect x="280" y="56" width="222" height="110" rx="8" fill="#101d18" stroke="#3ddc97" stroke-width="1.2"/>
+  <text x="294" y="82" fill="#3ddc97" font-size="17" font-weight="600">Roadmap II</text>
+  <text x="294" y="102" fill="#8fa1b8" font-size="11.5">Nine initiatives, waves A/B +</text>
+  <text x="294" y="117" fill="#8fa1b8" font-size="11.5">slices. Baseline + audits + fixes.</text>
+  <text x="294" y="138" fill="#dfe7f2" font-size="11" class="mono">DELIVERED 9/9 (panel below)</text>
+  <text x="294" y="155" fill="#5c6d85" font-size="10.5" class="mono">releases v1.31.x .. v1.32.0</text>
+</g>
+<line x1="502" y1="110" x2="538" y2="110" stroke="#f0a832" stroke-width="2.2" marker-end="url(#ar)"/>
+
+<!-- GATE CLEARANCE -->
+<g>
+  <rect x="546" y="56" width="230" height="110" rx="8" fill="#101d18" stroke="#3ddc97" stroke-width="1.4"/>
+  <text x="560" y="82" fill="#3ddc97" font-size="17" font-weight="600">Gate clearance</text>
+  <text x="560" y="102" fill="#8fa1b8" font-size="11.5">G1-G9 ruled 08-21, executed</text>
+  <text x="560" y="117" fill="#8fa1b8" font-size="11.5">overnight (000269, 7 legs).</text>
+  <text x="560" y="138" fill="#dfe7f2" font-size="11" class="mono">SLOs ADOPTED &middot; register done</text>
+  <g transform="rotate(-8 716 74)">
+    <rect x="662" y="58" width="110" height="30" rx="4" fill="none" stroke="#f2726d" stroke-width="2"/>
+    <text x="717" y="78" fill="#f2726d" font-size="13" font-weight="700" text-anchor="middle" letter-spacing=".06em">CLOSED 08-22</text>
+  </g>
+  <text x="560" y="155" fill="#5c6d85" font-size="10.5" class="mono">PR #193 held at map time</text>
+</g>
+<line x1="776" y1="110" x2="812" y2="110" stroke="#f0a832" stroke-width="2.2" marker-end="url(#ar)"/>
+
+<!-- CUT -->
+<g>
+  <rect x="820" y="62" width="182" height="98" rx="8" fill="#141522" stroke="#f2726d" stroke-width="1.4"/>
+  <text x="834" y="88" fill="#f2726d" font-size="17" font-weight="600">CUT&#160;&#160;next release</text>
+  <text x="834" y="108" fill="#8fa1b8" font-size="11.5">Carries T5.1. Version</text>
+  <text x="834" y="123" fill="#8fa1b8" font-size="11.5">derives from [Unreleased].</text>
+  <text x="834" y="144" fill="#f0a832" font-size="11" class="mono">DECISION: Mike</text>
+</g>
+<line x1="1002" y1="110" x2="1038" y2="110" stroke="#f0a832" stroke-width="2.2" marker-end="url(#ar)"/>
+
+<!-- OPEN ARCS -->
+<g>
+  <rect x="1046" y="62" width="180" height="98" rx="8" fill="#141522" stroke="#f0a832" stroke-width="1.2"/>
+  <text x="1060" y="88" fill="#f0a832" font-size="17" font-weight="600">Open arcs</text>
+  <text x="1060" y="108" fill="#8fa1b8" font-size="11.5">Gated / demand-paced.</text>
+  <text x="1060" y="123" fill="#8fa1b8" font-size="11.5">Close on gates, not effort.</text>
+  <text x="1060" y="144" fill="#dfe7f2" font-size="11" class="mono">lanes panel below</text>
+</g>
+
+<!-- human gate diamonds on spine -->
+<path d="M256 132 l9 11 l-9 11 l-9 -11 z" fill="#0b1220" stroke="#f2726d" stroke-width="1.5"/>
+<path d="M522 132 l9 11 l-9 11 l-9 -11 z" fill="#0b1220" stroke="#f2726d" stroke-width="1.5"/>
+<path d="M796 132 l9 11 l-9 11 l-9 -11 z" fill="#0b1220" stroke="#f2726d" stroke-width="1.5"/>
+<path d="M1022 132 l9 11 l-9 11 l-9 -11 z" fill="#0b1220" stroke="#f2726d" stroke-width="1.5"/>
+<text x="639" y="176" fill="#f2726d" font-size="10.5" text-anchor="middle" class="mono">every arrow crosses a human gate: accept &middot; merge &middot; verified flip &middot; tag &middot; product calls (Operating posture, ROADMAP.md)</text>
+
+<!-- ================= R2 INITIATIVE PANEL ================= -->
+<g>
+  <rect x="24" y="200" width="724" height="298" rx="10" fill="#12202e" stroke="#41c9da" stroke-width="1.6"/>
+  <text x="42" y="230" fill="#41c9da" font-size="20" font-weight="700">Roadmap II&#160;&#160;initiative set (PROGRAM.md)</text>
+  <rect x="474" y="212" width="152" height="24" rx="3" fill="none" stroke="#3ddc97"/>
+  <text x="550" y="229" fill="#3ddc97" font-size="12.5" text-anchor="middle" letter-spacing=".08em" class="mono">ALL DELIVERED</text>
+
+  <g font-size="12" class="mono">
+    <circle cx="52" cy="254" r="5" fill="#3ddc97"/><text x="66" y="259" fill="#dfe7f2">R2-01&#160; current-state baseline (000221)</text><text x="420" y="259" fill="#8fa1b8">re-derived at fb3116c by 000269-G</text>
+    <circle cx="52" cy="278" r="5" fill="#3ddc97"/><text x="66" y="283" fill="#dfe7f2">R2-02&#160; ROADMAP canonicalized, RI archived (000230)</text><text x="420" y="283" fill="#8fa1b8">no-counts constraint standing</text>
+    <circle cx="52" cy="302" r="5" fill="#3ddc97"/><text x="66" y="307" fill="#dfe7f2">R2-04&#160; threat model + least privilege (000226)</text><text x="420" y="307" fill="#3ddc97">register DISPOSITIONED (G3); hardening built</text>
+    <circle cx="52" cy="326" r="5" fill="#3ddc97"/><text x="66" y="331" fill="#dfe7f2">R2-05&#160; corpus licensing + provenance audit (000222)</text><text x="420" y="331" fill="#3ddc97">PASS; Apache-2.0 ruled (G1)</text>
+    <circle cx="52" cy="350" r="5" fill="#3ddc97"/><text x="66" y="355" fill="#dfe7f2">R2-06&#160; SLO baselines (000223)</text><text x="420" y="355" fill="#3ddc97">T1-T6 ADOPTED 08-21, all six met (G2)</text>
+    <circle cx="52" cy="374" r="5" fill="#3ddc97"/><text x="66" y="379" fill="#dfe7f2">R2-07&#160; relaunch-thrash fix on the edit path (000225/231)</text><text x="420" y="379" fill="#8fa1b8">shipped v1.31.1; successor 000237 shipped</text>
+    <circle cx="52" cy="398" r="5" fill="#3ddc97"/><text x="66" y="403" fill="#dfe7f2">R2-08&#160; DX journey audit (000228)</text><text x="420" y="403" fill="#3ddc97">triage RATIFIED (G4): 8 fixed via 000265, 3 accepted</text>
+    <circle cx="52" cy="422" r="5" fill="#3ddc97"/><text x="66" y="427" fill="#dfe7f2">R2-14&#160; governance surface (000227)</text><text x="420" y="427" fill="#8fa1b8">CODEOWNERS inert by design (2nd maintainer)</text>
+    <circle cx="52" cy="446" r="5" fill="#3ddc97"/><text x="66" y="451" fill="#dfe7f2">R2-15&#160; offline / air-gapped bootstrap (000244)</text><text x="420" y="451" fill="#8fa1b8">Arc D slice vs the 08-15 signal; rode v1.32.0</text>
+  </g>
+  <text x="42" y="478" fill="#5c6d85" font-size="10.5" class="mono">R2-03, R2-09..13: absent-not-unstarted (never carried into a committed doc) &middot; pillar catalog B-G RETIRED never-reused (G7) &middot; pillar A reshaped to exposure, pillar H declined-pending-demand</text>
+</g>
+
+<!-- ================= NEXT LANE + HORIZON (right column) ================= -->
+<g>
+  <rect x="764" y="200" width="462" height="140" rx="8" fill="#12202e" stroke="#f0a832" stroke-width="1.2"/>
+  <text x="780" y="228" fill="#f0a832" font-size="17" font-weight="600">NEXT&#160;&#160;queued, not started (ROADMAP.md)</text>
+  <g font-size="12" class="mono">
+    <circle cx="792" cy="252" r="5" fill="none" stroke="#f0a832"/><text x="806" y="257" fill="#dfe7f2">Doctor + command surface -- prove-it-works gap</text>
+    <circle cx="792" cy="276" r="5" fill="none" stroke="#f0a832"/><text x="806" y="281" fill="#dfe7f2">Agent-facing semantic exposure of PSES capability</text>
+    <circle cx="792" cy="300" r="5" fill="#3ddc97"/><text x="806" y="305" fill="#8fa1b8">Measured-baseline follow-through -- CLOSED by T1-T6 adoption</text>
+  </g>
+  <text x="780" y="328" fill="#5c6d85" font-size="10.5" class="mono">Now lane: EMPTY by statement. Nothing chartered or accepted on the board.</text>
+</g>
+
+<g opacity="0.8">
+  <rect x="764" y="356" width="462" height="142" rx="8" fill="none" stroke="#9d8cff" stroke-width="1" stroke-dasharray="6 5"/>
+  <text x="780" y="382" fill="#9d8cff" font-size="14" font-weight="600">HORIZON&#160;&#160;(human or upstream; cannot be built here)</text>
+  <g font-size="11.5" class="mono">
+    <text x="780" y="406" fill="#dfe7f2">Second maintainer</text><text x="1000" y="406" fill="#5c6d85">human half; unlocks CODEOWNERS</text>
+    <text x="780" y="428" fill="#dfe7f2">nativeServe restoration</text><text x="1000" y="428" fill="#5c6d85">lifts on #86936 upstream fix</text>
+    <text x="780" y="450" fill="#dfe7f2">Bus-factor continuity</text><text x="1000" y="450" fill="#5c6d85">Apache-2.0 path, CONTINUITY.md</text>
+    <text x="780" y="472" fill="#dfe7f2">Arc A dogfood accrual</text><text x="1000" y="472" fill="#5c6d85">behavioral: real CC edits only</text>
+  </g>
+</g>
+
+<!-- ================= GATED AND PACED LANES ================= -->
+<text x="24" y="536" fill="#41c9da" font-size="13" letter-spacing=".18em" class="mono">GATED AND PACED LANES -- deliberately not moving; each waits on a NAMED thing (ROADMAP.md)</text>
+<line x1="24" y1="544" x2="1226" y2="544" stroke="#22304a" stroke-width="1"/>
+
+<g font-size="12" class="mono">
+  <rect x="24" y="558" width="1202" height="196" rx="8" fill="#0f1726" stroke="#22304a"/>
+  <!-- header row -->
+  <text x="42" y="582" fill="#5c6d85" font-size="11" letter-spacing=".1em">LANE</text>
+  <text x="420" y="582" fill="#5c6d85" font-size="11" letter-spacing=".1em">GATE (the named thing)</text>
+  <text x="900" y="582" fill="#5c6d85" font-size="11" letter-spacing=".1em">STANDING AT 08-22</text>
+  <line x1="36" y1="590" x2="1214" y2="590" stroke="#22304a"/>
+
+  <text x="42" y="612" fill="#dfe7f2">Native code navigation</text>
+  <text x="420" y="612" fill="#8fa1b8">#86936 interpolation + client init handling</text>
+  <text x="900" y="612" fill="#f0a832">gated x2; shim shipped, transport suspended</text>
+
+  <text x="42" y="638" fill="#dfe7f2">Corpus commons (Arc B)</text>
+  <text x="420" y="638" fill="#8fa1b8">publication decision at activation</text>
+  <text x="900" y="638" fill="#41c9da">package PREPARED-NOT-PUBLISHED (000269-D)</text>
+
+  <text x="42" y="664" fill="#dfe7f2">Attested diagnostics (Arc C)</text>
+  <text x="420" y="664" fill="#8fa1b8">real efficacy data + a real consumer</text>
+  <text x="900" y="664" fill="#8fa1b8">waiting; docket adjudicated (000257)</text>
+
+  <text x="42" y="690" fill="#dfe7f2">Enterprise control plane (Arc D)</text>
+  <text x="420" y="690" fill="#8fa1b8">one slice per real adoption signal</text>
+  <text x="900" y="690" fill="#3ddc97">signal #1 answered (R2-15); awaiting next</text>
+
+  <text x="42" y="716" fill="#dfe7f2">Scale + robustness (Arc E)</text>
+  <text x="420" y="716" fill="#8fa1b8">a real reported scale problem</text>
+  <text x="900" y="716" fill="#8fa1b8">floors measured: spawn ~35% of an edit</text>
+
+  <text x="42" y="742" fill="#dfe7f2">Deeper rule curation + fix quality</text>
+  <text x="420" y="742" fill="#8fa1b8">dogfood log + real interactive usage</text>
+  <text x="900" y="742" fill="#f0a832">5-cand. docket HELD; 150 rows lost -- consolidate?</text>
+</g>
+
+<!-- ================= RELEASE RAIL ================= -->
+<text x="24" y="796" fill="#8fa1b8" font-size="13" letter-spacing=".18em" class="mono">RELEASE RAIL (v1.x line -- semver freeze is a trust asset; newest right)</text>
+<line x1="24" y1="820" x2="1226" y2="820" stroke="#22304a" stroke-width="4" stroke-linecap="round"/>
+<line x1="24" y1="820" x2="1000" y2="820" stroke="#3ddc97" stroke-width="4" stroke-linecap="round"/>
+<g class="mono" font-size="11">
+  <circle cx="360" cy="820" r="5" fill="#3ddc97"/>
+  <text x="360" y="842" fill="#8fa1b8" text-anchor="middle">v1.29.x .. v1.30.0</text>
+  <circle cx="560" cy="820" r="5" fill="#3ddc97"/>
+  <text x="560" y="842" fill="#8fa1b8" text-anchor="middle">v1.31.0 .. v1.31.2</text>
+  <text x="560" y="858" fill="#5c6d85" text-anchor="middle">thrash fix &middot; daemon survival &middot; SHA pins</text>
+  <circle cx="800" cy="820" r="5" fill="#3ddc97"/>
+  <text x="800" y="842" fill="#3ddc97" text-anchor="middle">v1.32.0 (08-19)</text>
+  <text x="800" y="858" fill="#5c6d85" text-anchor="middle">relicense &middot; convergence resolved &middot; DX close &middot; paper's release</text>
+  <circle cx="1000" cy="820" r="6" fill="#0b1220" stroke="#f2726d" stroke-width="2"/>
+  <text x="1000" y="842" fill="#f2726d" text-anchor="middle">NEXT CUT -- carries T5.1</text>
+  <text x="1000" y="858" fill="#5c6d85" text-anchor="middle">after #189 + #193 merge</text>
+  <text x="1226" y="842" fill="#5c6d85" text-anchor="end">version never projected: it derives from [Unreleased]</text>
+</g>
+</svg>
+
+<!-- ================= DECLINED ================= -->
+<div class="sect warm">DECLINED, AND WHY -- settled decisions, not backlog (ROADMAP.md declines table + D4; reasoning in docs/decision-ledger.md)</div>
+<div class="declines">
+  <div class="decl"><b>Renaming the plugin</b><span>breaks marketplace identity + every published link</span></div>
+  <div class="decl"><b>File watcher / background sweep</b><span>fails cost + safety bar; lsp-scan.ps1 covers whole-repo</span></div>
+  <div class="decl"><b>Loosening the 1.x semver freeze</b><span>trades a trust asset for speculative flexibility</span></div>
+  <div class="decl"><b>New custom rules</b><span>rule freeze stands; guidance overrides are the path</span></div>
+  <div class="decl pend"><b>Custom-rule seam (Pillar H)</b><span>declined PENDING DEMAND -- real user demand reopens it, nothing else</span></div>
+  <div class="decl"><b>Broader ruleset on by default</b><span>a missing finding beats a wrong finding; base = opt-in</span></div>
+  <div class="decl"><b>Reducing documentation volume</b><span>documentation is restructured, never reduced</span></div>
+  <div class="decl"><b>Doctor security-classifier verdicts</b><span>declined-final; bootstrap-failure banner already carries it</span></div>
+  <div class="decl"><b>Publisher Authenticode signing</b><span>trust boundary is the keyless-signed tag; org-signing paved path ships instead</span></div>
+  <div class="decl"><b>Quiet-window SLO remeasure (D4)</b><span>would measure a machine no user has</span></div>
+</div>
+
+<!-- ================= RISKS ================= -->
+<div class="sect">TOP RISKS (ROADMAP.md)</div>
+<div class="grid4">
+  <div class="card"><h3>Single-maintainer bus factor</h3><p>Stated plainly; Apache-2.0 continuity path in CONTINUITY.md. The one gap engineering cannot close.</p></div>
+  <div class="card"><h3>Upstream dependence</h3><p>Native tier depends on Claude Code's LSP client and on PSES; this project can file against both, fix neither. #86936 is the live instance.</p></div>
+  <div class="card"><h3>Wrong &gt; missing</h3><p>A wrong finding costs more than a missing one. Every broadening is gated on the corpus FP bar, recomputed every CI run -- defaults stay narrow.</p></div>
+  <div class="card"><h3>Documentation drift</h3><p>Mitigated structurally: knob table, frozen-knob contract, and manifest are set-equality guarded in CI. Drift is a red build, not a stale doc.</p></div>
+</div>
+
+<!-- ================= ATTENDED QUEUE ================= -->
+<div class="sect warm">ATTENDED QUEUE -- Mike's hand, no dispatch needed to start any</div>
+<div class="grid4">
+  <div class="card"><h3>1&#160; Release cut</h3><p>T5.1 DACL fix + T2.3/T6.4 + O2 sit unreleased on main post-merge. Security character argues for promptness. Version derives from [Unreleased].</p></div>
+  <div class="card"><h3>2&#160; Promotion sitting</h3><p>Five rule candidates (charter said four; corrected), docket written, zero executed. Promotion is attended, standing.</p></div>
+  <div class="card"><h3>3&#160; Arc B publication</h3><p>Package prepared-not-published, Apache-2.0 clean, SARIF rider closed (G8). Publication is your hand, always.</p></div>
+  <div class="card"><h3>4&#160; Capture history + public facts</h3><p>150 rows lost to cache eviction -- consolidate surviving logs? And ROADMAP's public relaunch facts (marketplace, first post) enter only by your statement.</p></div>
+</div>
+
+<div class="legend">
+  <span><span class="sw" style="background:#3ddc97"></span>delivered / decided</span>
+  <span><span class="sw" style="background:#f0a832"></span>queued / gated / decision pending</span>
+  <span><span class="sw" style="background:#f2726d"></span>security-relevant / declined</span>
+  <span><span class="sw" style="background:#41c9da"></span>prepared, at its gate</span>
+  <span><span class="sw" style="border:1.5px solid #f2726d;background:transparent;transform:rotate(45deg)"></span>human gate (never leaves)</span>
+  <span><span class="sw" style="border:1.5px dashed #9d8cff;background:transparent"></span>horizon</span>
+</div>
+
+<footer>
+  Coverage claim, checked against the canonical pages section by section: this rev carries the North Star and its two settled consequences; the relaunch record (executed under the Path-A ruling, G9); the Now lane (empty by statement); all three Next items with the closed one marked; all six gated/paced lanes with their named gates; the full declines surface (nine ROADMAP rows + the D4 quiet-window decline, with Pillar H carried on its own row); all four top risks; the operating-posture human gates as the spine diamonds; and the complete PROGRAM.md initiative table including the identifier-gap and retired-pillar records. Not carried: the evidence-location table (a pointer table; this map cites the same files inline) and per-initiative merge SHAs (in PROGRAM.md).
+  <br>Provenance, by layer. Structure and gate definitions: ROADMAP.md and docs/roadmap-ii/PROGRAM.md from the project-knowledge bundle (repo derivation 2026-08-12, page revisions through the 000246-era true-ups). Progress state past that point -- G1-G9 rulings executed, T1-T6 adopted, threat register dispositioned, DX triage ratified, Arc B package assembled, five-candidate docket, T5.1 measurement and fix, capture-history loss, #66987/#73961 closed vs #86936 open -- is verified-from-paste: dispatch CLI and runner output from the 2026-08-21/22 overnight session. PR #189/#193 were OPEN-HELD at authoring; the merge sequence was issued but unconfirmed here.
+  <br>Deliberate omissions, matching the runner's discipline: Console/marketplace submission state is maintainer-held and API-invisible (never inferred from a catalog poll); channel outcomes are not asserted. The completion bar is a planning read; the paced lanes are open-ended by construction and their "progress" is gate-state, not percent.
+  <br>The canonical plan of record remains ROADMAP.md + docs/decision-ledger.md + PROGRAM.md + CURRENT-STATE.md + live dispatch state; wherever this view and those pages differ, the pages win -- and leg G of 000269 revised several of them after the bundle snapshot this map's structural layer reads from, so a rev 3 should re-derive from the merged tree.
+  <br>Rev 2 (2026-08-22): whole-roadmap view superseding rev 1's decision-surface view, on Mike's instruction that the map carry the entire canonical roadmap with phases and whole-program progress.
+</footer>
+</div>
+</body>
+</html>
