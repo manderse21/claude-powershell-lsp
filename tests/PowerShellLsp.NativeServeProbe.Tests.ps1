@@ -37,9 +37,18 @@ Describe 'Native-serve removability probe e2e: the direct launcher is still #135
         # porcelain before and after; equal == the probe wrote nothing tracked (it writes only to the
         # scratch data root + a temp result file, both OUTSIDE the repo). Robust to a dirty dev tree
         # (assert before == after, not clean); on a clean CI checkout both are empty.
-        $script:PorcelainBefore = @(& git -C $repoRoot status --porcelain 2>$null)
+        #
+        # GIT MAY NOT BE PRESENT. The container CI leg (dispatch 000286) runs this suite inside
+        # mcr.microsoft.com/powershell, which ships no git at all, and an unguarded `& git` there
+        # throws CommandNotFoundException out of this BeforeAll and fails the WHOLE Describe --
+        # which is exactly what it did on the first container run. Guarded here, and the assertion
+        # that consumes these snapshots SKIPS rather than comparing empty to empty: two absent
+        # porcelains are equal to each other, so an unskipped comparison would pass vacuously and
+        # report a mutation check that never actually happened.
+        $script:GitAvailable = [bool](Get-Command git -ErrorAction SilentlyContinue)
+        $script:PorcelainBefore = if ($script:GitAvailable) { @(& git -C $repoRoot status --porcelain 2>$null) } else { @() }
         $script:NSObs = Get-DoctorNativeServeObservation -ScriptsDir (Join-Path $repoRoot 'scripts') -InitTimeoutMs 20000
-        $script:PorcelainAfter = @(& git -C $repoRoot status --porcelain 2>$null)
+        $script:PorcelainAfter = if ($script:GitAvailable) { @(& git -C $repoRoot status --porcelain 2>$null) } else { @() }
         $script:NSResult = Test-DoctorNativeServe -Determinable $script:NSObs.Determinable -Reason $script:NSObs.Reason `
             -InitReceived $script:NSObs.InitReceived -HasStaticNav $script:NSObs.HasStaticNav -ProbeError $script:NSObs.Error `
             -ElapsedMs $script:NSObs.ElapsedMs -TimeoutMs 20000
@@ -69,6 +78,13 @@ Describe 'Native-serve removability probe e2e: the direct launcher is still #135
         $script:NSResult.Detail | Should -Match 'still GATED'
     }
     It 'the probe mutated NOTHING in the repo tree (report-only contract)' {
+        if (-not $script:GitAvailable) {
+            # NOT a silent pass. Without git both snapshots are empty, so the comparison below
+            # would compare '' to '' and report a mutation check it never performed. Every host
+            # that HAS git still runs it, which is all four original CI legs and every dev clone.
+            Set-ItResult -Skipped -Because 'git is not on PATH here (the official PowerShell container ships none), so the porcelain could not be snapshotted; comparing two absent snapshots would pass vacuously'
+            return
+        }
         ($script:PorcelainAfter -join "`n") | Should -BeExactly ($script:PorcelainBefore -join "`n") -Because 'the probe writes only to the scratch data root + a temp result file, both outside the repo'
     }
 }

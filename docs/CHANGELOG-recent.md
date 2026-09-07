@@ -48,6 +48,53 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **A fifth CI leg runs the whole suite inside the official PowerShell container**
+(enterprise docket P2-3, the open half). `container-pwsh` is its OWN job with its OWN name, not a
+fifth entry in the existing matrix: that job is named `${{ matrix.label }}`, so adding a dimension
+would have re-keyed the four existing legs and renamed their check contexts, which silently removes
+a required check. The four identities -- `windows-pwsh`, `windows-powershell`, `ubuntu-pwsh`,
+`macos-pwsh` -- are untouched. The leg runs non-root, with no TTY and no profile, with Pester
+installed in-job, and pins the image **by digest**: `powershell:latest` is 7.4.2, and the
+PSScriptAnalyzer 1.25.0 pin this repository carries refuses to import below 7.4.6, so on `latest`
+the analyzer never loads and the corpus tier silently returns EMPTY findings (measured: 41 corpus
+and 13 integration failures, every one an artefact of the image). On `7.5-ubuntu-24.04` the same
+tree runs those tiers 266/0 and 66/0. The leg also asserts the doctor's **census** rather than
+gating on `-RequireProven`, which cannot pass in a container and no change here can make pass: six
+of its eight unknowns are unknowable outside a live plugin subprocess, one reports the shipped
+offline default, and one is unknown by design while `ps_host` is default. Instead the leg pins the
+KNOWN posture -- zero failures, check 1 naming the REAL in-process version, the exact unknown set,
+and `-RequireProven` exiting 2 rather than 0 or 1. Restoring the pre-fix probe turns it red on
+seven counts, including check 1 reporting `found pwsh 0.0.0.0` on a 7.5.0 host, which is the
+defect that blocked this slice. One test needed adjusting for the container and no more: the
+native-serve probe's *report-only* "mutated nothing in the repo tree" snapshot shells out to `git`,
+which the image does not have, and an unguarded call took the whole `Describe` down with it. It is
+now guarded, and the assertion that consumes the snapshot **skips** rather than comparing an absent
+porcelain to an absent porcelain -- which would have passed vacuously and reported a mutation check
+that never ran. Every host that has `git`, which is all four original legs and every dev clone,
+still runs it. Two further constraints came from CI rather than from any local run, and both are
+properties of the LEG rather than of the suite: the container runs with `--init`, because otherwise
+`pwsh` is PID 1 and a control asserting that an unrelated process is *not* excluded finds its
+synthetic foreign pid legitimately inside a subtree rooted at PID 1; and `HOME` sits on a tmpfs
+**outside** the mounted workspace, because the CurrentUser Pester install otherwise lands its own
+source inside the repository and the repo-wide scans then walk the harness that is scanning them.
+No runtime script changed and no existing gate moved.
+
+PATCH: **`audit-release-bodies.ps1` now PINS the repository it sweeps instead of letting `gh`
+resolve it.** The repo-identity assertion added previously fired only on an explicit `-Repo`; with
+`-Repo` omitted the script passed no `--repo` at all, on the recorded premise that "`gh` resolves
+the same remote". Measured at `gh` 2.95.0, it does not: `GH_REPO` overrides the git remote for both
+commands the sweep issues, so exporting `GH_REPO` made the sweep read a foreign repository's
+published bodies and compare them against THIS repository's `CHANGELOG.md` -- reported in the
+vocabulary of a currency finding, with nothing naming which repository was read. The obvious fix
+would not have closed it: `gh repo view --json nameWithOwner` reports the git remote and *ignores*
+`GH_REPO`, so a guard built on "ask `gh` what it resolved" would have agreed with itself and passed
+while the sweep read someone else's releases. The fix is structural rather than another guard --
+`scripts/lib/audit-repo-target.ps1` decides the target once and it is passed as `--repo` on every
+call, which beats `GH_REPO` (measured) and closes the `gh repo set-default` door with it, at
+**zero** added subprocesses. An unpinnable target is now refused rather than guessed, and a
+`GH_REPO` that disagrees with the checkout is refused by name unless `-AllowForeignRepo` is given.
+No user-visible contract changed.
+
 PATCH: **`docs/control-map.html` now has a real currency guard, and the map is corrected to rev 4.**
 The map ships as a release ASSET and had no automated guard of any kind -- nothing under `tests/`,
 `scripts/` or `release/` referenced it, and the release workflow's only mention was a
