@@ -65,12 +65,19 @@ renamed or re-defaulted, no diagnostics status token changed, and no line of `CO
 the 1.x freeze holds. This is a MINOR because it adds capability, not because it changes any
 promise.
 
-**This release also carries the POSIX containment fix written up below under `[1.33.1]`.**
-That version was cut on `main` and superseded before it was ever tagged, so it has no release
-of its own -- but its change is in this artifact: on Linux and macOS the data root, its temp
-fallback, the daemon's unix-socket endpoint and the shared JSONL writers are now created
-`0700` / `0600` instead of inheriting `755` from the ambient umask. Windows is byte-identical.
-Read that section as part of these notes; it is not a separate release.
+**This release also carries the POSIX containment fix written up below under `[1.33.1]`, and
+that section is part of these release notes.** `1.33.1` was cut on `main` and superseded
+before it was ever tagged, so it has no release of its own and never will -- it is a skipped,
+never-published version number. Its change is nevertheless in **this** artifact: on Linux and
+macOS the data root, its temp fallback, the daemon's unix-socket endpoint and the files the
+shared JSONL writers create are now created `0700` (directories) and `0600` (files) at
+creation time, instead of inheriting `755` from the ambient umask. Windows is byte-identical.
+
+The change is commit **`a89fe0c`** (*fix(security): contain every POSIX object the plugin
+creates to its owner*), which is in `v1.33.0..v1.34.0`. It is named here rather than left to
+the CHANGELOG alone so that a reader of the published release can trace the fix to a commit
+without knowing that `1.33.1` was skipped: **a security change that ships in an artifact must
+be readable from that artifact's own notes.**
 
 ### Added
 
