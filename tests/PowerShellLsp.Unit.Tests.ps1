@@ -3352,6 +3352,41 @@ Describe 'Preflight doctor -- per-check status decisions (dispatch 000036)' {
             (Test-DoctorPwsh -Found $true -Version $v).Status | Should -Be 'fail'
         }
 
+        It 'ConvertTo-DoctorVersion accepts a SemanticVersion, which is what PowerShell 7 actually reports' {
+            # THE SECOND DEFECT CI FOUND, pinned so it cannot come back. Windows PowerShell 5.1
+            # reports $PSVersionTable.PSVersion as [System.Version]; PowerShell 7 reports a
+            # SemanticVersion, which is NOT a [version] and does not derive from one. The first
+            # guard here was `-is [version]`, so it silently discarded the host version on every
+            # PS 7 host -- and the Windows legs could not catch it, because there the
+            # file-version fallback answers correctly for the wrong reason.
+            $semver = [System.Management.Automation.SemanticVersion]::new(7, 4, 2)
+            $semver -is [version] | Should -BeFalse -Because 'this is the whole trap: a SemanticVersion is not a Version'
+            (ConvertTo-DoctorVersion -Value $semver) | Should -Be ([version]'7.4.2')
+
+            # A plain [version] passes through untouched (the 5.1 path).
+            (ConvertTo-DoctorVersion -Value ([version]'5.1.19041')) | Should -Be ([version]'5.1.19041')
+
+            # A PRERELEASE stringifies as "7.5.0-preview.3", which [version] cannot parse -- so
+            # the coercion is built from PARTS, not from the string.
+            $pre = [System.Management.Automation.SemanticVersion]::new(7, 5, 0, 'preview.3')
+            (ConvertTo-DoctorVersion -Value $pre) | Should -Be ([version]'7.5.0')
+
+            (ConvertTo-DoctorVersion -Value $null) | Should -BeNullOrEmpty
+            { ConvertTo-DoctorVersion -Value 'not a version at all' } | Should -Not -Throw
+        }
+
+        It 'the in-process arm fires end-to-end when the host reports a SemanticVersion' {
+            # The integration this dispatch got wrong twice: every input can be correct while the
+            # arm still never fires. Feeds the pure decision the SHAPE a PS 7 host produces --
+            # a coerced SemanticVersion, a 0.0.0.0 file version, Core, IsSelf -- and requires the
+            # host version to win.
+            $hv = ConvertTo-DoctorVersion -Value ([System.Management.Automation.SemanticVersion]::new(7, 4, 2))
+            $v = Get-DoctorPwshVersion -HostVersion $hv -FileVersion ([version]'0.0.0.0') `
+                -IsCoreHost $true -IsSelf $true
+            $v | Should -Be ([version]'7.4.2')
+            (Test-DoctorPwsh -Found $true -Version $v).Status | Should -Be 'pass'
+        }
+
         It 'Get-DoctorRealPath follows what it can and never throws' {
             # The helper the IsSelf test depends on. It cannot be given a symlink here without
             # elevation on Windows, so what is asserted is the contract that matters: a real

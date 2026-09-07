@@ -1007,6 +1007,39 @@ function Get-DoctorPwshVersion {
     return $v
 }
 
+function ConvertTo-DoctorVersion {
+    # Coerce whatever a host reports as its version into a [version], or $null.
+    #
+    # WHY THIS EXISTS, and it is the SECOND defect CI found in this fix. Windows PowerShell 5.1
+    # exposes $PSVersionTable.PSVersion as [System.Version]. PowerShell 7 exposes it as
+    # [System.Management.Automation.SemanticVersion] -- a DIFFERENT type that is not a [version]
+    # and does not derive from one. A `-is [version]` guard therefore silently discards the host
+    # version on exactly the hosts this fix exists for, and the in-process arm never fires.
+    #
+    # The Windows legs could not catch it: there the file-version fallback returns a real version,
+    # so the probe answers correctly for the wrong reason. macos-pwsh reported
+    # `PSHOME=/usr/local/microsoft/powershell/7 fileVersion=0.0.0.0 edition=Core` with the path
+    # resolving correctly -- every input right, and still $null out.
+    #
+    # Built from PARTS, not by parsing the string: a prerelease PSVersion stringifies as
+    # "7.5.0-preview.3", which [version] cannot parse at all.
+    param([object] $Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [version]) { return $Value }
+    try {
+        $mj = [int]$Value.Major
+        $mn = [int]$Value.Minor
+        $bl = 0
+        # SemanticVersion calls it Patch; anything else that got here may call it Build.
+        try { if ($null -ne $Value.Patch) { $bl = [int]$Value.Patch } } catch { }
+        if ($bl -eq 0) { try { if ($null -ne $Value.Build) { $bl = [int]$Value.Build } } catch { } }
+        if ($bl -lt 0) { $bl = 0 }
+        return [version]('{0}.{1}.{2}' -f $mj, $mn, $bl)
+    } catch { }
+    # Last resort: parse the string with any prerelease label stripped.
+    try { return [version](([string]$Value) -replace '[-+].*$', '') } catch { return $null }
+}
+
 function Get-DoctorRealPath {
     # A path with SYMLINKS FOLLOWED, or the plain full path when they cannot be.
     #
@@ -1081,8 +1114,10 @@ function Get-DoctorPwsh {
                 }
             }
         }
-        $hostVersion = $null
-        if ($PSVersionTable.PSVersion -is [version]) { $hostVersion = $PSVersionTable.PSVersion }
+        # NOT `-is [version]`: PowerShell 7 reports PSVersion as a SemanticVersion, which that
+        # test rejects, so the in-process arm never fired on any PS 7 host. See
+        # ConvertTo-DoctorVersion.
+        $hostVersion = ConvertTo-DoctorVersion -Value $PSVersionTable.PSVersion
 
         $v = Get-DoctorPwshVersion -HostVersion $hostVersion -FileVersion $fileVersion `
             -IsCoreHost $isCore -IsSelf $isSelf
