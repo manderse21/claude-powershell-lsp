@@ -3288,6 +3288,81 @@ Describe 'Preflight doctor -- per-check status decisions (dispatch 000036)' {
         }
     }
 
+    Context 'Get-DoctorPwshVersion -- check 1 version SOURCE (dispatch 000285, P2-3)' {
+        # THE DEFECT. The probe read only ApplicationInfo.Version -- the executable file-version
+        # RESOURCE, a Windows-only artifact. On Linux and macOS pwsh has none, .NET reports
+        # 0.0.0.0, and check 1 answered "found pwsh 0.0.0.0 but PowerShell 7+ is required" on a
+        # host running 7.4.2. The decision is extracted as a pure function precisely so the
+        # non-Windows case can be exercised FROM Windows, which the live probe cannot do.
+
+        It 'RED CONTROL -- the PRIOR implementation, on the Linux shape, produces the wrong answer' {
+            # Not an arbitrary mutant: this is the exact expression the probe used before this
+            # dispatch, `$v = $cmd.Version`, applied to what Linux actually reports. If this
+            # assertion ever stops holding, the defect being fixed was never real.
+            $priorImplementation = { param($fileVersion) $fileVersion }
+            $prior = & $priorImplementation ([version]'0.0.0.0')
+
+            $prior | Should -Not -BeNullOrEmpty
+            $prior.Major | Should -Be 0
+            # ...and fed to check 1, that is a confident FAIL on a perfectly good host.
+            (Test-DoctorPwsh -Found $true -Version $prior).Status | Should -Be 'fail'
+        }
+
+        It 'the FIXED probe prefers the in-process host version on that same Linux shape' {
+            $v = Get-DoctorPwshVersion -HostVersion ([version]'7.4.2') -FileVersion ([version]'0.0.0.0') `
+                -IsCoreHost $true -IsSelf $true
+            $v | Should -Be ([version]'7.4.2')
+            (Test-DoctorPwsh -Found $true -Version $v).Status | Should -Be 'pass'
+        }
+
+        It 'a 0.0.0.0 file version with NO usable host version degrades to UNKNOWN, never a fabricated fail' {
+            # The other half of the fix. Zero is the ABSENCE of a version, not a version below
+            # the 7.0 floor, and check 1 already reports "undeterminable" honestly.
+            $v = Get-DoctorPwshVersion -HostVersion $null -FileVersion ([version]'0.0.0.0') `
+                -IsCoreHost $false -IsSelf $false
+            $v | Should -BeNullOrEmpty
+            (Test-DoctorPwsh -Found $true -Version $v).Status | Should -Be 'unknown'
+        }
+
+        It 'does NOT borrow this host version for a DIFFERENT pwsh on PATH (the over-correction guard)' {
+            # Without the IsSelf arm the fix would replace one wrong answer with another: a
+            # separate pwsh install reported at this process's version. Both the not-self and
+            # not-Core cases must fall back to the file version.
+            (Get-DoctorPwshVersion -HostVersion ([version]'7.4.2') -FileVersion ([version]'7.2.1') `
+                -IsCoreHost $true -IsSelf $false) | Should -Be ([version]'7.2.1')
+            (Get-DoctorPwshVersion -HostVersion ([version]'5.1.19041') -FileVersion ([version]'7.4.2') `
+                -IsCoreHost $false -IsSelf $true) | Should -Be ([version]'7.4.2')
+        }
+
+        It 'the ordinary Windows path is UNCHANGED: a real file version is returned as-is' {
+            # The regression gate. Windows PowerShell 5.1 running the doctor, pwsh a separate
+            # executable with a real version resource -- the shape every existing run takes.
+            (Get-DoctorPwshVersion -HostVersion ([version]'5.1.19041') -FileVersion ([version]'7.4.2') `
+                -IsCoreHost $false -IsSelf $false) | Should -Be ([version]'7.4.2')
+            (Get-DoctorPwshVersion -HostVersion $null -FileVersion ([version]'7.5.0') `
+                -IsCoreHost $false -IsSelf $false) | Should -Be ([version]'7.5.0')
+        }
+
+        It 'a genuinely old pwsh is still reported as old -- the fix does not launder a real failure' {
+            # Both-directions: the fix must not turn every version into a pass. A 6.2.4 file
+            # version with no in-process claim stays 6.2.4, and check 1 still fails it.
+            $v = Get-DoctorPwshVersion -HostVersion ([version]'5.1.19041') -FileVersion ([version]'6.2.4') `
+                -IsCoreHost $false -IsSelf $false
+            $v | Should -Be ([version]'6.2.4')
+            (Test-DoctorPwsh -Found $true -Version $v).Status | Should -Be 'fail'
+        }
+
+        It 'the LIVE probe reports a determinable 7+ version on this host (the probe is wired, not just the pure function)' {
+            # Payload floor: the pure function above could be perfect while Get-DoctorPwsh never
+            # calls it. This runs the real probe. pwsh is a hard requirement of this repo's own
+            # test suite, so Found must be true here.
+            $p = Get-DoctorPwsh
+            $p.Found | Should -BeTrue
+            $p.Version | Should -Not -BeNullOrEmpty
+            $p.Version.Major | Should -BeGreaterOrEqual 7
+        }
+    }
+
     Context 'Test-DoctorEnabled -- check 2: plugin enablement' {
         It 'PASS when the plugin subprocess environment is present' {
             (Test-DoctorEnabled -PluginRootResolved $true).Status | Should -Be 'pass'

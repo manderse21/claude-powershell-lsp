@@ -48,6 +48,16 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **the doctor no longer reports `pwsh 0.0.0.0` on Linux and macOS.** Check 1 read the
+executable's file-version *resource*, which is a Windows-only artifact -- on Linux and macOS
+`pwsh` has none, .NET reports `0.0.0.0`, and the doctor answered *"found pwsh 0.0.0.0 but
+PowerShell 7+ is required"* on a host running **7.4.2**. It now prefers `$PSVersionTable.PSVersion`
+when the doctor is itself running under PowerShell 7+ **and** the `pwsh` it resolved on PATH is
+that same executable, so a *different* `pwsh` install is never reported at this process's version.
+A `0.0.0.0` with no in-process answer degrades to **UNKNOWN**, which check 1 already reports
+honestly, rather than to a fabricated `fail`: a zero version is the absence of a version, not a
+version below the 7.0 floor. Windows behaviour is unchanged, and a genuinely old `pwsh` is still
+failed. No `userConfig` key, diagnostics status token or `CONTRACT.md` line is touched.
 
 ## [1.34.0] - 2026-09-07
 MINOR: **the doctor now answers machine-readably, and will tell you when it cannot prove an

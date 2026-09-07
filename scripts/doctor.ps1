@@ -972,14 +972,67 @@ function Test-DoctorServeTransport {
 # the decision logic stays unit-testable; these are exercised by the end-to-end run.
 # ===========================================================================
 
+function Get-DoctorPwshVersion {
+    # THE VERSION DECISION, pure and unit-testable (dispatch 000285, P2-3). Kept out of the live
+    # probe so it can be exercised with hand-written inputs on any platform, including the case
+    # the live probe cannot produce on Windows.
+    #
+    # TWO SOURCES, IN-PROCESS FIRST.
+    #
+    # The probe used to read ONLY $FileVersion -- ApplicationInfo.Version, the executable's
+    # file-version RESOURCE. That resource is a WINDOWS-ONLY artifact. On Linux and macOS pwsh is
+    # an ELF/Mach-O binary that has none, so .NET reports 0.0.0.0, and check 1 then failed with
+    # "found pwsh 0.0.0.0 but PowerShell 7+ is required" on a host running PowerShell 7.4.2 -- a
+    # confident, precise, WRONG answer, and the blocker that kept the doctor from being gated in
+    # the official PowerShell container.
+    #
+    # $HostVersion (the caller's $PSVersionTable.PSVersion) is authoritative on every platform
+    # and costs no child process, but it describes THIS process. It is therefore used only when
+    # $IsCoreHost AND $IsSelf -- the resolved pwsh is the very executable this process is running.
+    # Without the $IsSelf arm, a pwsh elsewhere on PATH would be reported with this host's
+    # version, which is a new wrong answer in place of the old one.
+    #
+    # A 0.0.0.0 from the fallback is normalised to $null -- "undeterminable", which check 1
+    # already reports honestly as a WARN. A zero version is the ABSENCE of a version, never a
+    # real one below the 7.0 floor, and reporting it as a real one is the whole defect.
+    param(
+        [version] $HostVersion,
+        [version] $FileVersion,
+        [bool] $IsCoreHost,
+        [bool] $IsSelf
+    )
+    if ($IsCoreHost -and $IsSelf -and $null -ne $HostVersion) { return $HostVersion }
+    $v = $FileVersion
+    if ($null -ne $v -and $v.Major -eq 0 -and $v.Minor -eq 0 -and $v.Build -le 0) { $v = $null }
+    return $v
+}
+
 function Get-DoctorPwsh {
-    # Resolve pwsh on PATH and its version WITHOUT launching a child process (read the
-    # ApplicationInfo.Version -- the exe file version, which for pwsh is the PS version).
+    # Resolve pwsh on PATH and its version WITHOUT launching a child process. The version
+    # DECISION lives in Get-DoctorPwshVersion above; this function only gathers its inputs.
     try {
         $cmd = Get-Command 'pwsh' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $cmd) { return [pscustomobject]@{ Found = $false; Version = $null } }
-        $v = $null
-        try { if ($cmd.Version -is [version]) { $v = $cmd.Version } } catch { $v = $null }
+
+        $fileVersion = $null
+        try { if ($cmd.Version -is [version]) { $fileVersion = $cmd.Version } } catch { $fileVersion = $null }
+
+        $isCore = ($PSVersionTable.PSEdition -eq 'Core')
+        $isSelf = $false
+        if ($isCore) {
+            try {
+                $self = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+                $resolved = [string]$cmd.Source
+                if (-not [string]::IsNullOrWhiteSpace($self) -and -not [string]::IsNullOrWhiteSpace($resolved)) {
+                    $isSelf = ([System.IO.Path]::GetFullPath($self) -eq [System.IO.Path]::GetFullPath($resolved))
+                }
+            } catch { $isSelf = $false }
+        }
+        $hostVersion = $null
+        if ($PSVersionTable.PSVersion -is [version]) { $hostVersion = $PSVersionTable.PSVersion }
+
+        $v = Get-DoctorPwshVersion -HostVersion $hostVersion -FileVersion $fileVersion `
+            -IsCoreHost $isCore -IsSelf $isSelf
         return [pscustomobject]@{ Found = $true; Version = $v }
     } catch { return [pscustomobject]@{ Found = $false; Version = $null } }
 }
