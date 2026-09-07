@@ -65,7 +65,13 @@ offline default, and one is unknown by design while `ps_host` is default. Instea
 KNOWN posture -- zero failures, check 1 naming the REAL in-process version, the exact unknown set,
 and `-RequireProven` exiting 2 rather than 0 or 1. Restoring the pre-fix probe turns it red on
 seven counts, including check 1 reporting `found pwsh 0.0.0.0` on a 7.5.0 host, which is the
-defect that blocked this slice. No runtime script changed and no existing gate moved.
+defect that blocked this slice. One test needed adjusting for the container and no more: the
+native-serve probe's *report-only* "mutated nothing in the repo tree" snapshot shells out to `git`,
+which the image does not have, and an unguarded call took the whole `Describe` down with it. It is
+now guarded, and the assertion that consumes the snapshot **skips** rather than comparing an absent
+porcelain to an absent porcelain -- which would have passed vacuously and reported a mutation check
+that never ran. Every host that has `git`, which is all four original legs and every dev clone,
+still runs it. No runtime script changed and no existing gate moved.
 
 PATCH: **`audit-release-bodies.ps1` now PINS the repository it sweeps instead of letting `gh`
 resolve it.** The repo-identity assertion added previously fired only on an explicit `-Repo`; with
