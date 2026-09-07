@@ -12,6 +12,52 @@ restated. Nothing in this file is asserted from memory.
 **Derivation moment.** This document was first derived 2026-08-12 (dispatch 000221, R2-01) at
 `origin/main` = `7f34277`, plugin version `1.31.0`.
 
+> ### SUCCESSOR RE-DERIVATION: 2026-09-07, dispatch 000284, at v1.34.0
+>
+> **Lineage: 000221 (v1.31.0, `7f34277`) -> 000269 (v1.32.0, main `78ddcee`) -> 000276 (v1.33.0,
+> main `6a6a371`) -> 000284 (v1.34.0, main `69f2a4e4`).** Derived at release **v1.34.0**, peeled
+> commit `69f2a4e40d5e6476a86bd2503abb896544813c11`, annotated tag object
+> `bfe26a24714f88b878c727a4a77e6e2f69d78ae9`. At this derivation the tag **IS** `origin/main`'s
+> tip -- `git rev-list --count v1.34.0^{}..origin/main` reads **0** -- so this page is exact at
+> the tag and identical to main, which is not usually true and is recorded because it will stop
+> being true.
+>
+> **The re-derivation set was DERIVED, not chosen.** `git diff --name-only v1.33.0^{} v1.34.0^{}`
+> returns **132 files** over **37 commits**. Grouped: `evidence/v1.33.0/results` 50,
+> `evidence/v1.33.0/harness` 16, `tests` 12, `scripts` 10, `docs/upstream` 10, `docs` 10,
+> `docs/roadmap-ii` 8, `scripts/lib` 3, `tests/fixtures/red-controls` 2, `evidence/v1.33.0` 2,
+> `.github/workflows` 2, `.claude-plugin` 2. The evidence tree dominates the count and is the
+> v1.33.0 freeze landing after that tag was cut, not v1.34.0 content.
+>
+> **Version and lockstep.** `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
+> both read **1.34.0 at the tag**, read from the tag rather than from a working tree. The pipeline
+> enforced the same equality independently as gate 3 before the tag existed.
+>
+> **Test surface: 29 `*.Tests.ps1` files.** Suite at the release tree: **2216 passed / 0 failed /
+> 13 skipped**, exit 0.
+>
+> **Upstream dependencies: NOT re-queried in this pass, and that is stated rather than implied.**
+> All nine tracked ids were re-queried live on 2026-09-06 by dispatch 000283 with **zero** state
+> changes against what `docs/upstream/` records, and nothing in this release touches that surface.
+> The gating facts are unchanged: `anthropics/claude-code#86936` **OPEN** (still gates
+> nativeServe), `#66987` and `#73961` **CLOSED**, PSES `#2297`/`#2300` **CLOSED**, PR `#2296`
+> **MERGED**, PR `#2299` **CLOSED unmerged**.
+>
+> **`1.33.1` is a skipped, never-published version number** (R4 fallback, ruled by Mike Andersen
+> 2026-09-07). Cut on `main`, superseded before tagging, and **structurally untaggable now**: the
+> pipeline's gate 4 requires a push-event CI run at the exact target sha, and an intermediate
+> commit inside a merged PR branch never has one. The 1.33.1 cut commit `3150679` has **0** and
+> cannot acquire one. Its work -- the POSIX owner-only containment, commit `a89fe0c` -- ships in
+> v1.34.0, and is named in the v1.34.0 release notes so a reader of the published body can trace
+> it without knowing the number was skipped.
+>
+> **Release integrity, verified consumer-side.** `gh attestation verify` on a freshly downloaded
+> `powershell-lsp-1.34.0.tar.gz` exits **0** with `--source-digest 69f2a4e4...` and
+> `--signer-workflow .../powershell-lsp-release.yml`; the certificate's `sourceRepositoryDigest`
+> is the frozen commit exactly. All six pipeline gates passed on producing run `34126120180`,
+> paired with judged dry run `34125958366`, and the tag-absence probe read 0 refs both before and
+> after that rehearsal.
+
 > ### SUCCESSOR RE-DERIVATION: 2026-09-05, dispatch 000276, at v1.33.0
 >
 > **Lineage: 000221 (v1.31.0, `7f34277`) -> 000269 (v1.32.0, main `78ddcee`) -> 000276 (v1.33.0,
