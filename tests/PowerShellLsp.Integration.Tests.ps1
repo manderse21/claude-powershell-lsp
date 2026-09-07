@@ -70,7 +70,19 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
                 return ''
             }
             $script:LastHookExit = $p.ExitCode
-            [void]$stdoutTask.Wait(1500)
+            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
+            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
+            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
+            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
+            # for output the plugin DID produce -- indistinguishable at the assertion from the
+            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
+            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
+            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
+            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
+            # Bounded by the caller's cap instead, floored at the old constant so no call site
+            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
+            # redirected stream reaches EOF once its buffer is drained.
+            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
             if (-not $stdoutTask.IsCompleted) {
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
@@ -495,7 +507,19 @@ Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -S
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
             }
-            [void]$stdoutTask.Wait(1500)
+            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
+            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
+            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
+            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
+            # for output the plugin DID produce -- indistinguishable at the assertion from the
+            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
+            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
+            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
+            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
+            # Bounded by the caller's cap instead, floored at the old constant so no call site
+            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
+            # redirected stream reaches EOF once its buffer is drained.
+            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
             if (-not $stdoutTask.IsCompleted) {
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
@@ -723,7 +747,19 @@ Describe 'Integration: opt-in ruleset=base broadens the live surface (dispatch 0
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
             }
-            [void]$stdoutTask.Wait(1500)
+            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
+            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
+            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
+            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
+            # for output the plugin DID produce -- indistinguishable at the assertion from the
+            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
+            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
+            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
+            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
+            # Bounded by the caller's cap instead, floored at the old constant so no call site
+            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
+            # redirected stream reaches EOF once its buffer is drained.
+            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
             if (-not $stdoutTask.IsCompleted) {
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
@@ -1066,7 +1102,19 @@ Describe 'Integration: edit-range diagnostic scoping (dispatch 000019)' -Skip:$s
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
             }
-            [void]$stdoutTask.Wait(1500)
+            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
+            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
+            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
+            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
+            # for output the plugin DID produce -- indistinguishable at the assertion from the
+            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
+            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
+            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
+            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
+            # Bounded by the caller's cap instead, floored at the old constant so no call site
+            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
+            # redirected stream reaches EOF once its buffer is drained.
+            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
             if (-not $stdoutTask.IsCompleted) {
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
@@ -1239,7 +1287,19 @@ Describe 'Integration: supervised restart + incomplete/degraded status (dispatch
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
             }
-            [void]$stdoutTask.Wait(1500)
+            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
+            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
+            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
+            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
+            # for output the plugin DID produce -- indistinguishable at the assertion from the
+            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
+            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
+            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
+            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
+            # Bounded by the caller's cap instead, floored at the old constant so no call site
+            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
+            # redirected stream reaches EOF once its buffer is drained.
+            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
             if (-not $stdoutTask.IsCompleted) {
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
@@ -1526,7 +1586,19 @@ Describe 'Integration: first-start install-incomplete is VISIBLE (dispatch 00002
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
             }
-            [void]$stdoutTask.Wait(1500)
+            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
+            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
+            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
+            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
+            # for output the plugin DID produce -- indistinguishable at the assertion from the
+            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
+            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
+            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
+            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
+            # Bounded by the caller's cap instead, floored at the old constant so no call site
+            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
+            # redirected stream reaches EOF once its buffer is drained.
+            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
             if (-not $stdoutTask.IsCompleted) {
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
@@ -1750,7 +1822,19 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
             }
-            [void]$stdoutTask.Wait(1500)
+            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
+            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
+            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
+            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
+            # for output the plugin DID produce -- indistinguishable at the assertion from the
+            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
+            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
+            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
+            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
+            # Bounded by the caller's cap instead, floored at the old constant so no call site
+            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
+            # redirected stream reaches EOF once its buffer is drained.
+            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
             if (-not $stdoutTask.IsCompleted) {
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
@@ -1987,7 +2071,19 @@ Describe 'Integration: auto-relaunch the idle-stopped daemon (dispatch 000030)' 
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
             }
-            [void]$stdoutTask.Wait(1500)
+            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
+            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
+            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
+            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
+            # for output the plugin DID produce -- indistinguishable at the assertion from the
+            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
+            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
+            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
+            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
+            # Bounded by the caller's cap instead, floored at the old constant so no call site
+            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
+            # redirected stream reaches EOF once its buffer is drained.
+            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
             if (-not $stdoutTask.IsCompleted) {
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
@@ -2359,7 +2455,19 @@ Describe 'Integration: dogfood diagnostic capture (dispatch 000039)' -Skip:$scri
                 return ''
             }
             $script:DfHookExit = $p.ExitCode
-            [void]$stdoutTask.Wait(1500)
+            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
+            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
+            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
+            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
+            # for output the plugin DID produce -- indistinguishable at the assertion from the
+            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
+            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
+            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
+            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
+            # Bounded by the caller's cap instead, floored at the old constant so no call site
+            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
+            # redirected stream reaches EOF once its buffer is drained.
+            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
             if (-not $stdoutTask.IsCompleted) {
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs 9000 -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath 'lsp-client.ps1' -DataRoot $script:DfData
                 return ''
@@ -2554,7 +2662,19 @@ Describe 'Integration: closed-loop agentic correction (dispatch 000061)' -Skip:$
                 return ''
             }
             $script:LastHookExit = $p.ExitCode
-            [void]$stdoutTask.Wait(1500)
+            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
+            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
+            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
+            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
+            # for output the plugin DID produce -- indistinguishable at the assertion from the
+            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
+            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
+            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
+            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
+            # Bounded by the caller's cap instead, floored at the old constant so no call site
+            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
+            # redirected stream reaches EOF once its buffer is drained.
+            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
             if (-not $stdoutTask.IsCompleted) {
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
@@ -2767,7 +2887,19 @@ Describe 'Integration: format-on-edit suggestion (dispatch 000059)' -Skip:$scrip
                 return ''
             }
             $script:F_LastExit = $p.ExitCode
-            [void]$stdoutTask.Wait(1500)
+            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
+            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
+            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
+            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
+            # for output the plugin DID produce -- indistinguishable at the assertion from the
+            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
+            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
+            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
+            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
+            # Bounded by the caller's cap instead, floored at the old constant so no call site
+            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
+            # redirected stream reaches EOF once its buffer is drained.
+            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
             if (-not $stdoutTask.IsCompleted) {
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''
@@ -2950,7 +3082,19 @@ Describe 'Integration: format-on-edit APPLY -- the guarded write-back (dispatch 
                 return ''
             }
             $script:AP_LastExit = $p.ExitCode
-            [void]$stdoutTask.Wait(1500)
+            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
+            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
+            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
+            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
+            # for output the plugin DID produce -- indistinguishable at the assertion from the
+            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
+            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
+            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
+            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
+            # Bounded by the caller's cap instead, floored at the old constant so no call site
+            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
+            # redirected stream reaches EOF once its buffer is drained.
+            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
             if (-not $stdoutTask.IsCompleted) {
                 $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
                 return ''

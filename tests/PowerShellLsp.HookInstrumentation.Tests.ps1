@@ -69,7 +69,19 @@ BeforeAll {
             $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath
             return ''
         }
-        [void]$stdoutTask.Wait(1500)
+        # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
+        # wait on work, so bounding it by a constant unrelated to the caller's cap is what
+        # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
+        # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
+        # for output the plugin DID produce -- indistinguishable at the assertion from the
+        # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
+        # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
+        # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
+        # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
+        # Bounded by the caller's cap instead, floored at the old constant so no call site
+        # gets a shorter drain than it had. It cannot hang: the process has exited, so the
+        # redirected stream reaches EOF once its buffer is drained.
+        [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
         if (-not $stdoutTask.IsCompleted) {
             $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath
             return ''
@@ -495,5 +507,62 @@ Describe 'Flake instrumentation: isolated data-root logs reach the uploaded arti
                 $saveAt | Should -BeLessThan $killAt
             }
         }
+    }
+}
+
+Describe 'The harness stdout drain is bounded by the CALLER''S cap, not a constant (dispatch 000283)' {
+    # Invoke-PluginHook drains the child's stdout AFTER WaitForExit has already returned, so the
+    # bytes are in the pipe and the wait is a scheduling question, not a work question. It used to
+    # be bounded by a hardcoded 1500ms at every definition, regardless of the CapMs the caller
+    # passed -- so on a loaded runner the drain of an ALREADY-EXITED process could miss it, the
+    # harness returned '', and the assertion downstream read that as the silent connect-fail it
+    # exists to catch. That is a test failing for a reason that is not a defect, and it cost this
+    # dispatch two red CI legs before the harness's own outcome log named it.
+    #
+    # This guard is a SOURCE census, and it is here rather than in the integration suite on
+    # purpose: the defect is that a constant was copied to thirteen places, so the guard has to
+    # see all thirteen at once. Both directions are asserted -- the constant is gone AND the
+    # cap-derived form is present in the expected number -- because "no matches" alone would pass
+    # just as happily if someone deleted the drain entirely.
+    BeforeAll {
+        $script:HdRoot = $PSScriptRoot
+        # THIS FILE IS EXCLUDED FROM ITS OWN CENSUS. It has to SPELL the needles it looks
+        # for, so scanning itself counts the guard as a fourteenth drain site and as a
+        # would-be offender. A census that matches its own text measures the wrong thing,
+        # and the miscount is silent because both needles look exactly like real ones.
+        $script:HdSelf = [System.IO.Path]::GetFileName($PSCommandPath)
+        $script:HdFiles = @(Get-ChildItem -LiteralPath $script:HdRoot -Filter '*.Tests.ps1' -File |
+            Where-Object { $_.Name -ne $script:HdSelf })
+    }
+
+    It 'no test file bounds the drain by a bare constant any more' {
+        @($script:HdFiles).Count | Should -BeGreaterThan 20 -Because 'the census must actually have files to read'
+        $script:HdFiles.Name | Should -Not -Contain $script:HdSelf -Because 'the census must not read itself'
+        $offenders = @()
+        foreach ($f in $script:HdFiles) {
+            $src = [System.IO.File]::ReadAllText($f.FullName)
+            if ($src -match '\$stdoutTask\.Wait\(\s*\d+\s*\)') { $offenders += $f.Name }
+        }
+        $offenders.Count | Should -Be 0 -Because ("these still bound the drain by a constant: " + ($offenders -join ', '))
+    }
+
+    It 'EVERY drain site is cap-bounded -- the bounded count equals the total count' {
+        # Compared against the TOTAL number of drains, not against a literal and not against
+        # a count of helper definitions. Two of the thirteen drains sit in helpers that are
+        # not named Invoke-PluginHook, so keying the expectation to that name reported a
+        # shortfall that was really a naming assumption -- the check would have been claiming
+        # a defect that did not exist. The property that actually matters is simply that no
+        # drain is left unbounded, and this states exactly that, with a floor on both sides so
+        # it cannot be satisfied by a census that found nothing.
+        $bounded = 0
+        $total = 0
+        foreach ($f in $script:HdFiles) {
+            $src = [System.IO.File]::ReadAllText($f.FullName)
+            $bounded += @([regex]::Matches($src, [regex]::Escape('$stdoutTask.Wait([Math]::Max(1500, $CapMs))'))).Count
+            $total += @([regex]::Matches($src, [regex]::Escape('$stdoutTask.Wait('))).Count
+        }
+        $total | Should -BeGreaterThan 10 -Because 'a floor, so this cannot pass by finding nothing'
+        $bounded | Should -BeGreaterThan 10 -Because 'the same floor on the other side of the comparison'
+        $bounded | Should -Be $total -Because 'a drain that is not cap-bounded is the defect this guards'
     }
 }
