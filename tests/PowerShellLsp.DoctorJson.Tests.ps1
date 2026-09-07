@@ -230,12 +230,21 @@ Describe 'doctor.ps1 -Json end to end on this host (dispatch 000279, leg A accep
     BeforeAll {
         $script:HostExe = (Get-Process -Id $PID).Path
         $script:DoctorPath = Join-Path $script:ScriptsDir 'doctor.ps1'
+        # EVERY EXIT CODE JUDGED BELOW COMES BACK WITH THE VERDICTS THAT EXPLAIN IT
+        # (dispatch 000283). These are live-host probes: each one re-derives all fourteen
+        # checks against a machine that is free to move between them -- a daemon finishing its
+        # warm-up, a pinned artifact arriving, a path appearing. The -RequireProven assertion
+        # used to branch on the counts from the -Json run and then judge the exit code of a
+        # SEPARATE -Summary -RequireProven run, so a single check flipping between the two
+        # probes made it fail for a reason that is not a defect -- and the failure message
+        # would have named the assertion, not the drift. doctor.ps1 accepts -Json and
+        # -RequireProven together, so the proven exit code now arrives with its own summary.
         $script:LiveJson = (& $script:HostExe -NoLogo -NoProfile -File $script:DoctorPath -Json) -join [Environment]::NewLine
         $script:LiveJsonExit = $LASTEXITCODE
+        $script:ProvenJson = (& $script:HostExe -NoLogo -NoProfile -File $script:DoctorPath -Json -RequireProven) -join [Environment]::NewLine
+        $script:LiveProvenExit = $LASTEXITCODE
         (& $script:HostExe -NoLogo -NoProfile -File $script:DoctorPath -Summary) | Out-Null
         $script:LiveDefaultExit = $LASTEXITCODE
-        (& $script:HostExe -NoLogo -NoProfile -File $script:DoctorPath -Summary -RequireProven) | Out-Null
-        $script:LiveProvenExit = $LASTEXITCODE
     }
 
     It 'a real run emits JSON that ConvertFrom-Json parses' {
@@ -251,14 +260,126 @@ Describe 'doctor.ps1 -Json end to end on this host (dispatch 000279, leg A accep
         $script:LiveJsonExit | Should -Be $script:LiveDefaultExit
     }
     It '-RequireProven only ever RAISES the code, and only over an UNKNOWN' {
-        $o = $script:LiveJson | ConvertFrom-Json
-        if ($o.summary.fail -gt 0) {
+        # Branches on the summary from the SAME process whose exit code it judges.
+        $p = $script:ProvenJson | ConvertFrom-Json
+        $d = $script:LiveJson | ConvertFrom-Json
+        # If the host moved between the two probes, nothing below is a statement about
+        # doctor. Say that and skip: a skipped test is honest, a red one would be a lie
+        # about the code under test. This is the ONLY branch that tolerates drift, and it
+        # names it -- it does not widen any assertion to absorb it.
+        if ($p.summary.fail -ne $d.summary.fail -or $p.summary.unknown -ne $d.summary.unknown) {
+            Set-ItResult -Skipped -Because ('the host moved between probes: default run saw ' +
+                $d.summary.fail + ' fail / ' + $d.summary.unknown + ' unknown, the -RequireProven run saw ' +
+                $p.summary.fail + ' fail / ' + $p.summary.unknown + ' unknown')
+        }
+        # RAISES, never lowers -- the half the old branch table never stated.
+        $script:LiveProvenExit | Should -BeGreaterOrEqual $script:LiveJsonExit
+        if ($p.summary.fail -gt 0) {
             $script:LiveProvenExit | Should -Be 1
-        } elseif ($o.summary.unknown -gt 0) {
+        } elseif ($p.summary.unknown -gt 0) {
             $script:LiveProvenExit | Should -Be 2
-            $script:LiveDefaultExit | Should -Be 0
+            $script:LiveJsonExit | Should -Be 0
         } else {
             $script:LiveProvenExit | Should -Be 0
         }
+    }
+    It 'the -RequireProven probe really carries proven semantics, not a second default run' {
+        # The control for the coupling above: if -Json -RequireProven silently dropped the
+        # switch, ProvenJson would be a second default run and every branch above would still
+        # pass while proving nothing. On a host with an UNKNOWN the two exits MUST differ; on
+        # a fully proven host they must both be 0, and that is stated rather than skipped.
+        $p = $script:ProvenJson | ConvertFrom-Json
+        $p.schemaVersion | Should -Be 1
+        @($p.checks).Count | Should -Be $p.summary.total
+        if ($p.summary.fail -eq 0 -and $p.summary.unknown -gt 0) {
+            $script:LiveProvenExit | Should -Not -Be $script:LiveJsonExit
+        } else {
+            $script:LiveProvenExit | Should -Be $script:LiveJsonExit
+        }
+    }
+}
+
+Describe 'captureMode -- the fleet-visible half of P0-2 (dispatch 000282, ruling R19)' {
+    BeforeAll {
+        $script:PrevCapMode = [Environment]::GetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE')
+    }
+    AfterAll {
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $script:PrevCapMode)
+    }
+
+    It 'carries resolved, raw and recognized for <Raw>' -TestCases @(
+        @{ Raw = $null; Resolved = 'full'; ExpRaw = ''; Recognized = $false }
+        @{ Raw = 'metadata'; Resolved = 'metadata'; ExpRaw = 'metadata'; Recognized = $true }
+        @{ Raw = 'off'; Resolved = 'off'; ExpRaw = 'off'; Recognized = $true }
+        @{ Raw = 'full'; Resolved = 'full'; ExpRaw = 'full'; Recognized = $true }
+        @{ Raw = 'metadta'; Resolved = 'full'; ExpRaw = 'metadta'; Recognized = $false }
+    ) {
+        param($Raw, $Resolved, $ExpRaw, $Recognized)
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $Raw)
+        $o = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd'))) | ConvertFrom-Json
+        $o.captureMode.resolved | Should -BeExactly $Resolved
+        $o.captureMode.raw | Should -BeExactly $ExpRaw
+        $o.captureMode.recognized | Should -Be $Recognized
+    }
+
+    It 'A TYPO IS VISIBLE AS A TYPO, not as a control that is quietly not active' {
+        # The reason the field carries all three values rather than just the resolved mode. An
+        # unrecognized value resolves to `full` -- the mode logic must never gate the capture
+        # channel -- so without `raw` and `recognized` a fleet reader could not tell a host that
+        # was deliberately left at `full` from one where the GPO value is misspelled.
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', 'metadataa')
+        $typo = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd'))) | ConvertFrom-Json
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $null)
+        $unset = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd'))) | ConvertFrom-Json
+
+        $typo.captureMode.resolved | Should -BeExactly $unset.captureMode.resolved
+        $typo.captureMode.raw | Should -Not -BeExactly $unset.captureMode.raw
+        $typo.captureMode.recognized | Should -Be $false
+    }
+
+    It 'RED CONTROL: a mutant reporting the DEFAULT instead of the resolved mode fails' {
+        # The plausible wrong implementation is one that reports the shipped default rather than
+        # what the writer will actually obey -- a field that always says `full` looks healthy and
+        # tells the fleet nothing. With the environment set to metadata the shipped envelope must
+        # say metadata, and the mutant that hard-codes the default must not.
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', 'metadata')
+        $shipped = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd'))) | ConvertFrom-Json
+        $mutant = [ordered]@{ resolved = 'full'; raw = ''; recognized = $false }
+
+        $shipped.captureMode.resolved | Should -BeExactly 'metadata'
+        $mutant.resolved | Should -Not -BeExactly $shipped.captureMode.resolved
+        $mutant.raw | Should -Not -BeExactly $shipped.captureMode.raw
+    }
+
+    It 'is ADDITIVE -- schemaVersion does not move and no existing key changed' {
+        # commands/doctor.md stated no policy on whether an additive field bumps schemaVersion.
+        # Dispatch 000282 established one -- additive fields do not bump, removals and renames do
+        # -- and this asserts the envelope follows it. The merge-base key list is spelled out
+        # because the point is that every one of them is still present, in order, ahead of the new
+        # one.
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $null)
+        $o = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd'))) | ConvertFrom-Json
+        $o.schemaVersion | Should -Be 1
+        (@($o.PSObject.Properties.Name) -join ',') |
+            Should -BeExactly 'schemaVersion,status,versions,provenanceFloor,captureMode,summary,checks'
+    }
+
+    It 'no check status, count or exit code moved -- captureMode is not a check' {
+        # R19 adds a field to the envelope, not a check. The four-value status vocabulary, the
+        # per-check vocabulary and the summary counts are all untouched by the mode.
+        $results = @(
+            (New-DoctorResult -Status 'pass' -Component 'a' -Detail 'd')
+            (New-DoctorResult -Status 'unknown' -Component 'b' -Detail 'd')
+        )
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', 'off')
+        $withOff = (Format-DoctorJson -Results $results) | ConvertFrom-Json
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $null)
+        $withUnset = (Format-DoctorJson -Results $results) | ConvertFrom-Json
+
+        $withOff.status | Should -BeExactly $withUnset.status
+        $withOff.summary.total | Should -Be $withUnset.summary.total
+        $withOff.summary.unknown | Should -Be $withUnset.summary.unknown
+        (Get-DoctorExitCode -Results $results) | Should -Be (Get-DoctorExitCode -Results $results)
+        $withOff.captureMode.resolved | Should -Not -BeExactly $withUnset.captureMode.resolved
     }
 }

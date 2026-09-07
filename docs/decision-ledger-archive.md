@@ -1,0 +1,2200 @@
+# claude-powershell-lsp -- decision ledger ARCHIVE
+
+> **APPEND-ONLY, AND NEVER EDITED AGAIN.** This file is the closed half of
+> [decision-ledger.md](decision-ledger.md), split out by dispatch 000283 at the v1.33.0
+> (2026-08-22) MINOR line so the live ledger stays small enough to carry in the
+> project-knowledge bundle. Nothing here is superseded by being here: an entry that was
+> true when it was written is still the record of that decision. If a decision below is
+> later revisited, the revision is written in the LIVE ledger and cites this file -- the
+> text here is not amended, because an amended archive is no longer evidence.
+>
+> Two spans, in their original order and byte-for-byte as they stood in the live file:
+> section 2 (closed per-dispatch dispositions), then sections 8 and 9 (two adjudicated
+> external technical reviews) followed by every dated ruling section older than the
+> 2026-08-22 MINOR line. The constants a planning session still needs from this span are
+> carried forward in the hub at projects/powershell-lsp/VERIFICATION_SURFACE.md, so
+> nothing became unreachable by moving here.
+
+---
+
+## 2. Shipped and verified -- recent arc
+
+CHANGELOG.md is the version-history-of-record. Each row is traced to its CHANGELOG entry and its
+dispatch(es); where an authored draft disagreed with the CHANGELOG, the CHANGELOG won.
+
+| Version | Dispatch | Delivered |
+|---|---|---|
+| v1.31.2 | 000237 (the daemon-survival fix, merged as PR #166), 000233 (the serve-transport routing, PR #167) with its proof discharged in PR #169 and then SUSPENDED by 000241 (PR #170), 000240 (the release-guard version-family invariant, PR #165, which also carried the action-pinning hardening), 000243 (release prep, merged as PR #174); cut by the pipeline; verified by 000245 | PATCH -- **RELEASED 2026-08-16** (Release published 2026-08-16T02:42:29Z UTC) and the **current Latest** (`gh release list --json tagName,isLatest` returns isLatest=true for v1.31.2 and false for v1.31.1, v1.31.0, v1.30.0, v1.29.1, v1.29.0, v1.28.1, v1.28.0 and v1.27.3). **Two user-visible fixes, one of them shipped-then-gated, plus a supply-chain hardening.** A client that walked away from a reply killed the analyzer daemon: the failed write moved the `NamedPipeServerStream` from `Connected` to `Broken`, and the per-request cleanup's `if ($server.IsConnected) { $server.Disconnect() }` guard skipped the disconnect on exactly the path that needed it, so the loop's next `WaitForConnectionAsync()` -- outside the per-request `try` -- threw past the handler into the outer `finally`. `Reset-PipeServerConnection` now disconnects unconditionally and the accept region rebuilds the server rather than ending the process, measured red-to-green with the pre-fix implementation kept verbatim and runnable in `tests/PowerShellLsp.DaemonSurvival.Tests.ps1`. **`nativeServe` and `ps_host` were mapped into `lspServers.powershell.env` through `${user_config.*}` and then SUSPENDED before release** -- `Get-PluginOption` reads `CLAUDE_PLUGIN_OPTION_<KEY>`, which Claude Code exports to plugin hooks but not to LSP server subprocesses, so both knobs were inert in the serve path in every release up to and including 1.31.1; the supported `${user_config.*}` transport was declared by 000233 and then removed again by 000241 behind `anthropics/claude-code#86936`, recorded in `Get-ServeTransportSuspension` with the exact condition that restores it. **The shipped state is therefore the SUSPENDED one: `nativeServe = shim` cannot take effect, `profile` / `ps_host` / `nativeServe` read at their defaults inside the serve subprocess, and diagnostics are unaffected because they run through the hooks.** **Security: all eleven external action references across the three workflows moved from movable tags to full 40-character commit SHAs**, with `tests/PowerShellLsp.ActionPinning.Tests.ps1` discovering the surface (every YAML under `.github/` plus every composite `action.yml`) rather than consulting a list, shipped with discovery floors, an acceptance case and six mutation cases, measured RED at 11 named offenders. The provenance step moved to `actions/attest` directly (superseding Dependabot PR #158), preserving the wrapper's `NODE_OPTIONS` and every permission grant. **No contract change:** `userConfig` is **20** at the tag and **20** at v1.31.1, `rulesets/base.psd1` is the SAME GIT BLOB (`2e5bbda8b3ecfe139c2171119ddc3a0a9974614f`) at v1.31.1, v1.31.2 and the tip at **53** rules, longest `userConfig` description **194** characters (at the 000110 cap) -- which is what makes it PATCH. Cut lockstep to 1.31.2 in both manifests over a dated `## [1.31.2] - 2026-08-15` heading whose date is the LOCAL authoring day rather than the UTC publish day: the tag commit was authored 2026-08-15T22:16:45-04:00 = 2026-08-16T02:16:45Z, so the one-day gap against the four preceding rows' "date EQUALS the publish day" is a clock, not a prepared-then-held cut. **This cut left an EMPTY `## [Unreleased]` scaffold rather than consuming it** -- a count of `^## \[Unreleased\]` returns **1** at the tag and **1** at the tip, the heading sitting at CHANGELOG line 32 with one blank line before `## [1.31.2]` at line 34 -- a departure from the four preceding cuts, recorded as what happened and deliberately NOT ruled on (that framing is dispatch 000246's). Tag v1.31.2 annotated and gitsign-signed (tag object **38aef55dbf97c1471406ad8a92ecd28171519a6c**, tagger `github-actions[bot]`, tagger time 2026-08-16T02:42:24Z) and cut BY THE PIPELINE over commit **8b331ca6fdd434416dff16a7eb84632af5b013db**, the PR #174 landing, which the peel `refs/tags/v1.31.2^{}` confirms. **Main moved past the tag by exactly ONE commit, and it moved AFTER the cut:** cf7449f (PR #175, merged 2026-08-16T02:55:18Z, 12m49s after publish) adds 15 lines to `release/release-body-divergences.psd1` and nothing else, and `CHANGELOG.md` is the same blob (`727b8680...`) at the tag and at the tip. **The arc is 18 commits with ZERO merge commits** (`git rev-list --count` / `--count --merges` over `v1.31.1^{}..v1.31.2^{}`), so a merge-list derivation would have returned zero commits for an eighteen-commit release -- the total form of the partial failure the v1.31.1 row recorded. **Gate 6 fired for the fifth time and paired by COMMIT IDENTITY:** producing run **31922425544** matched dry run **31921556319** (`[DRY-RUN] target=HEAD`, 02:17:21Z), printing `OK: the dry-run pair is satisfied.`, with BOTH runs' own "Resolve target commit" step echoing `Resolved target commit 8b331ca6...` so the pairing is bound at both ends rather than read off a run list; all six gates logged OK on the producing run. The legacy-inspection-cap warning did not fire: 45 unmarked runs in total, **0** on the target commit -- the closed-population prediction holding for a fourth observation. **The producing run was PINNED (`-f commit=8b331ca6...`, structurally visible in its run name as `target=8b331ca6...` against the rehearsal's `target=HEAD`), and the pin CLOSED a live race rather than corrected a moved tip:** PR #175 was open from 02:31:07Z but merged at 02:55:18Z, 15 minutes after the run resolved its target at 02:40:16Z, so a blank input would also have resolved to 8b331ca6 at that instant -- dispatched fifteen minutes later it would have resolved to cf7449f and Gate 6 would have refused. **One mis-triggered producing attempt produced nothing:** run **31921960127** (02:28:12Z) carries the run name `[PRODUCING] target=PASTE_MERGE_SHA_HERE` -- the placeholder submitted unsubstituted -- and was cancelled at 02:30:54Z with `total_count` **0** jobs, so no gate ran, no tag was cut and no attestation was signed. **The rehearsal cost 21m52s against the producing run's 2m24s, and that is Gate 4 working**, not a defect -- Gate 4 alone ran 02:17:30Z to 02:39:08Z (**21m38s**) waiting on the merge commit's push-CI, with every step from Gate 6 onward `skipped` under `if: ${{ !inputs.dry_run }}`. **Both assets verified by dispatch 000245:** `powershell-lsp-1.31.2.tar.gz` (sha256 `8efcda28...53df63`, 2580245 bytes) and `powershell-lsp-1.31.2.cdx.json` (sha256 `4817bd3e...281a4`, 2524 bytes), both DOWNLOADED and re-hashed against the digests the Release API itself reports, ONE SLSA `https://slsa.dev/provenance/v1` statement carrying BOTH subjects, `gh attestation verify` exit **0** on each, with `sourceRepositoryDigest` 8b331ca6, `sourceRepositoryRef` `refs/heads/main` and `runInvocationURI` naming run 31922425544. **FOUR RED controls, all exit 1 and not four spellings of one:** each asset attributed to a wrong repository (404 at lookup), a one-bit-flipped SBOM copy against the CORRECT repository (404 -- proving the attestation binds the byte-stream, not just the repo), and the intact tarball with a wrong `--signer-workflow`, which is FOUND and rejected at `verifying with issuer "sigstore.dev"` -- the only one exercising attribution rather than lookup. Published release body **byte-identical with NO normalization** to the pipeline's own extractor run from the TAGGED tree (11712 bytes, SHA-256 `602108ea...`, 160 lines, 0 non-ASCII), with both sides proven byte-exact rather than assumed -- the tag's CHANGELOG re-hashed by `git hash-object` back to the blob id its tree carries, and the extractor itself run from the tag. Parity at both strengths: `Test-PublishedParity.ps1` exit **0** (the semver-lag guard it actually implements), plus the tag's tree object (`56d9f767...`) reached independently from the origin side, and the released tarball REPRODUCED **including its gzip layer** -- a local `git archive --format=tar.gz --prefix=powershell-lsp-1.31.2/ 8b331ca6` on Windows git 2.54.0 is bit-identical to the Linux runner's asset at 2580245 bytes and SHA-256 `8efcda28...`, a stronger reproduction than the v1.31.1 row's raw-tar-stream comparison. SBOM (CycloneDX **1.5**) lists the plugin at 1.31.2 plus PowerShellEditorServices **4.6.0** and PSScriptAnalyzer **1.25.0**, exactly the `ensure-*` pins at the tag -- VERSION pins with `purl` coordinates; no `hashes` array on either component, recorded findings-only and unchanged from v1.31.1. Push-CI **31921535537** headSha-matched to `8b331ca6` per rule 000081 -- six runs sit at that head and the newest is the producing release run, so recency would have selected the wrong workflow outright -- all four legs green BY NAME (`macos-pwsh`, `ubuntu-pwsh`, `windows-pwsh`, `windows-powershell`), each exactly once in a 4-job run, plus green code scanning (**31921535543**) on the same head. **`gitsign verify-tag` PASSES -- the 000217 pin's THIRD cut, so the fix is repeatable across every tag cut since it landed:** exit **0** with `Validated Rekor entry: true` at tlog index **2483343132**, and the framing is derived rather than inherited -- all three post-pin tags were re-run this pass from one clone with one verifier (v1.31.0 at 2411627358, v1.31.1 at 2454706139, v1.31.2 at 2483343132) while v1.30.0, the last pre-pin tag, still fails at `could not find matching tlog entry` under that same **v0.16.1** verifier. **The release-body sweep is GREEN at this cut:** `scripts/audit-release-bodies.ps1`, run from a clean `origin/main` checkout, reports `SELECTED 28 release(s); MATCH 25, ACKNOWLEDGED 3, MISMATCH 0, STALE-ACK 0, ERROR 0` at exit **0**, with v1.31.2 itself a MATCH row -- a second, normalization-based confirmation of the byte claim above -- and the three acknowledged rows v1.18.1 (NEW this cycle, added by PR #175, `PublishedSha256` `e3edd3cd...68c45`), v1.27.1 and v1.29.0 |
+| v1.31.1 | 000225 (the fix, merged as PR #153) fix-forwarded by 000229 (diagnostic) and 000231 (the repair that made #153 truthful and green), 000232 (release prep, merged as PR #155); cut by the pipeline; verified by 000234 | PATCH -- **RELEASED 2026-08-13** (Release published 2026-08-13T18:43:54Z UTC) and the **current Latest** (`gh release list --json tagName,isLatest` returns isLatest=true for v1.31.1 and false for v1.31.0, v1.30.0, v1.29.1, v1.29.0, v1.28.1, v1.28.0 and v1.27.3). **One user-visible behaviour fix, on the edit path, in two halves.** A live-but-BUSY daemon was being classified UNREACHABLE and relaunched, so an edit arriving while the daemon was mid-analysis could trigger relaunch thrash instead of waiting; 000225 installed the busy-vs-unreachable discriminator, and 000231 repaired the off-Windows half of it after the first attempt's unix probe -- a socket-file PRESENCE test -- proved unable to tell a live socket from a stale one. The shipped unix probe is now a real LIVENESS discriminator (a non-owning connect), proven on ubuntu AND macos against a measured RED control: recovery moved Failure -> Success and the pipe-present misread moved 1 -> 0. Genuinely unreachable daemons still recover, and every edit still resolves to a truthful terminal status. **No contract change:** no `userConfig` knob added, renamed or re-defaulted (**20** at the tag and **20** at v1.31.0), no status token added, no change to hook registration or fail-safe edit behavior -- which is what makes it PATCH, and the CHANGELOG entries say so in their own words rather than leaving the class to be inferred. `rulesets/base.psd1` is the SAME GIT BLOB (`2e5bbda8...`) at v1.31.0, v1.31.1 and the tip at **53** rules; longest `userConfig` description **194** characters (at the 000110 cap). Cut lockstep to 1.31.1 in both manifests over a dated `## [1.31.1] - 2026-08-13` heading whose date EQUALS the publish day, and the cut consumed `[Unreleased]` entirely -- a count of `^## \[Unreleased\]` returns **0** at the tag and at the tip. Tag v1.31.1 annotated and gitsign-signed (tag object **2871d6d9d1c9f354a0505f05c91f15d401470d0c**, tagger `github-actions[bot]`, tagger time 2026-08-13T18:43:49Z) and cut BY THE PIPELINE over commit **90c04ca7bddc1811b93f23ffc153c17488b8f857**, the PR #155 landing, which the peel `refs/tags/v1.31.1^{}` confirms equals `origin/main`. **Gate 6 fired for the fourth time and paired by COMMIT IDENTITY:** producing run **31732030545** matched dry run **31729473092** (`[DRY-RUN] target=HEAD`, 18:11:15Z), printing `OK: the dry-run pair is satisfied.`, with BOTH runs' own "Resolve target commit" step echoing `Resolved target commit 90c04ca7...` so the pairing is bound at both ends rather than read off a run list. The legacy-inspection-cap warning did not fire: 45 unmarked runs in total, **0** on the target commit. **The rehearsal cost 22m24s against the producing run's 2m32s, and that is Gate 4 working**, not a defect -- the rehearsal was dispatched 7 seconds after the merge commit's push-CI started and WAITED for it (CI ran 22m08s); by the producing run, CI was already terminal. **Both assets verified by dispatch 000234:** `powershell-lsp-1.31.1.tar.gz` (sha256 `0a7b7d0d...50ef6b5`) and `powershell-lsp-1.31.1.cdx.json` (sha256 `cfb2dd7c...2881df`), both DOWNLOADED and re-hashed against the Release-listed digests, `gh attestation verify` exit **0** on each and RED-proven exit **1** against a wrong repo, with `sourceRepositoryDigest` 90c04ca7 and `runInvocationURI` naming run 31732030545. Published release body **byte-identical with NO normalization** to the pipeline's own extractor run from the tagged tree (6498 bytes, SHA-256 `8b4f1d45...`, 83 lines). Parity at both strengths: `Test-PublishedParity.ps1` exit **0** (the semver-lag guard it actually implements), plus the tag's tree object equal to `origin/main`'s (`365ee858...`) and the released tarball REPRODUCED -- its raw tar stream is bit-identical to a locally re-run `git archive` of the tag at **5928960 bytes, SHA-256 `5c0fb722...`**. SBOM lists the plugin at 1.31.1 plus PowerShellEditorServices **4.6.0** and PSScriptAnalyzer **1.25.0**, exactly the `ensure-*` pins at the tag -- VERSION pins; the SBOM carries no `hashes` array, recorded findings-only. Push-CI **31729464123** headSha-matched to `90c04ca7` per rule 000081, all four legs -- `ubuntu-pwsh`, `windows-powershell`, `windows-pwsh`, `macos-pwsh` -- green BY NAME, each exactly once in a 4-job run, plus green code scanning (**31729464097**) on the same head. **`gitsign verify-tag` PASSES -- the 000217 pin's SECOND cut, so the fix is repeatable and not a one-off:** exit **0** with `Validated Rekor entry: true` at tlog index **2454706139**, while the same command from the same clone with the same **v0.16.1** verifier still fails on v1.30.0 at `could not find matching tlog entry`. See the header for the literal output, the control, and the offline certificate binding. *Relocated here by 000245 when the header advanced to v1.31.2, per the 000161 leg-2 convention, and RE-RUN rather than copied out of the superseded header: this tag still verifies at exit **0** with tlog index **2454706139**, certificate ID `0x86bd9235e5ddc939499f2cee62129371b739e921`, and `Validated Git signature: true` / `Validated Rekor entry: true` / `Validated Certificate claims: true`, so the pass is durable and not an artifact of the day it was first observed. The "See the header" pointer above now resolves to v1.31.2's output; v1.31.1's is the line just quoted. The offline binding 000234 derived stands as recorded and was NOT re-run this pass: `SignedCms.CheckSignature` over the tag payload valid, the leaf's SAN URI exactly the release workflow at `refs/heads/main`, and the commit-binding extension `1.3.6.1.4.1.57264.1.13` reading 90c04ca7. **This release held Latest from 2026-08-13T18:43:54Z and was SUPERSEDED by v1.31.2 on 2026-08-16T02:42:29Z**; `gh release list --json tagName,isLatest` now returns `isLatest=true` for v1.31.2 and `false` for this tag, with tag and Release both retained. The header also recorded that this row's own verification session watched a fact go stale in flight -- PR #156 (`chore: enable Dependabot for GitHub Actions`) landed mid-session, moving `git rev-list --count v1.31.1..origin/main` from 0 to 1 and `git describe --tags origin/main` from a suffixless `v1.31.1` to `v1.31.1-1-gbc7431c` -- which is why the durable claim is `merge-base --is-ancestor` and the count is recorded only as a timestamped observation. That arc measured **15** commits from v1.31.0 with only **two** merge commits, the mixed-landing-style reading the v1.31.2 arc then carried to its limit at 18 commits and zero merges.* **Correction (2026-08-16) to this row's `[Unreleased]` claim, APPENDED rather than applied over the shipped sentence.** The clause above reads "the cut consumed `[Unreleased]` entirely -- a count of `^## \[Unreleased\]` returns **0** at the tag and at the tip", and it is half permanently true and half expired. The TAG-anchored half stands forever: `git show v1.31.1^{}:CHANGELOG.md` still returns **0**, the v1.31.1 cut did consume the heading, and no later commit can change what a tag carries. The TIP-anchored half was true when written on 2026-08-13 and was falsified the next day by **3aeb415** (`harden actions: immutable SHA pins, actions/attest, pinning gate (#165)`, authored 2026-08-14T17:26:48-05:00), which re-added a `## [Unreleased]` heading to carry that PR's entry; the count at `origin/main` has read **1** ever since. It is now doubly superseded, because the 000243 cut deliberately left an EMPTY `[Unreleased]` scaffold behind rather than consuming it, so the tip count stays 1 for a second and different reason. **Whether an empty scaffold or a consumed heading is the convention going forward is NOT ruled on here** -- that framing belongs to dispatch 000246; this correction records only what each ref actually carries |
+| v1.31.0 | 000216 (the build, merged as PR #141), 000217 (the release-pipeline hardening, merged as PR #142), 000218 (release prep, merged as PR #143); cut by the pipeline; verified by 000219 | MINOR -- **RELEASED 2026-08-10** (Release published 2026-08-10T19:01:43Z UTC), and **SUPERSEDED by v1.31.1 on 2026-08-13**; it held the Latest badge from 2026-08-10T19:01:43Z until 2026-08-13T18:43:54Z and is now unbadged, with tag and Release both retained (re-read by 000234, which found `isLatest=true` for v1.31.1 and `false` for v1.31.0, v1.30.0, v1.29.1, v1.29.0, v1.28.1, v1.28.0 and v1.27.3). One backward-compatible capability addition on the self-check surface, plus the documentation that points at it, plus two PATCH-level fixes a MINOR cut already carries. **The doctor and `/status` now state the clearance provenance floor beside the version** -- a second header line above the check table, under the same ruling that placed the version there: a floor is a plain fact, the frozen `pass`/`fail`/`unknown` vocabulary has no word for one, and a row would have inflated the "of N checks" count with a non-check. Being a header also makes it unconditional, so it survives a run where every check below is UNKNOWN -- which is exactly the run a stranger pastes into a bug report. **Surfaced, never re-derived:** the value comes from `Get-LifecycleProvenanceFloor`, so the readout and the efficacy ledger cannot disagree about the same log; giving that function a second consumer is what moved the lifecycle READ side (`Resolve-LifecycleLogSearch`, `Read-LifecycleLog`, `Get-LifecycleProvenanceFloor` and two helpers) out of `scripts/rule-efficacy-ledger.ps1` into `scripts/lib/lifecycle-provenance.ps1` with **bodies unchanged**. **Five states get five renderings** because they are five different claims -- a floor; records with none attributable; a log with no record yet; no log at all under a KNOWN data root, the only case entitled to say `(absent)`; and a search under a FALLBACK root, where "never captured" and "could not find it" are indistinguishable and it reports `(undetermined)` rather than the flattering reading. The ledger's printed caveat now states the floor is **window-relative** -- it rises as `Invoke-LogSweep` trims the family to `keepLastN` -- and prints only in the floored state, where there is something for it to qualify. README gains a support subsection answering both questions and naming the two sources rather than restating a value that would go stale. **Report-only, and nothing else moves:** `userConfig` is **20** at the tag (this release changes only that file's `version`), `rulesets/base.psd1` is byte-identical to the tip at **53** rules, longest `userConfig` description **194** characters (at the 000110 cap), `CONTRACT.md` untouched, default doctor still **11 checks**, exit code computed from exactly the inputs it was before. The two PATCH items are the gitsign v0.17.1 pin and the corrected `verify-tag` procedure in `docs/RELEASING.md` (000217); the Gate 6 and pipeline mechanics behind them are deliberately not itemized in the CHANGELOG and live in Section 3. Cut lockstep to 1.31.0 in both manifests over a dated `## [1.31.0] - 2026-08-10` heading whose date EQUALS the publish day, and the cut consumed `[Unreleased]` entirely -- a count of `^## \[Unreleased\]` returns **0** at the tag and at the tip. Tag v1.31.0 annotated and gitsign-signed (tag object **42b27b396d6a3c9014581f4fda6483a982b90db6**, tagger `github-actions[bot]`, tagger time 2026-08-10T19:01:39Z) and cut BY THE PIPELINE over commit **e84c44ba0ab06a751672652a10752aca6078b94e**, the PR #143 merge, which the peel `refs/tags/v1.31.0^{}` confirms equals `origin/main`. **Gate 6 fired for the third time and paired by COMMIT IDENTITY** -- the mechanic 000217 leg D installed in place of the recency window: producing run **31421833157** matched dry run **31421812131** (`[DRY-RUN] target=HEAD`, 18:58:56Z, 16 seconds earlier), printing `OK: the dry-run pair is satisfied.`; all six gate steps `success` on the producing run, Gates 1-5 `success` with Gate 6 `skipped` and "Dry-run summary" `success` on the rehearsal. **The legacy-inspection-cap warning did not fire, and its absence is the fix working:** the step logged 45 unmarked runs in total *of which 0 are on the target commit*, so the 45 that tripped a cap warning on each of the two preceding cuts now cost nothing. **Both assets verified by dispatch 000219:** `powershell-lsp-1.31.0.tar.gz` (sha256 `9212b850...fc5b82`) and `powershell-lsp-1.31.0.cdx.json` (sha256 `6ee8a817...78170d`), both DOWNLOADED and re-hashed against the Release-listed digests, `gh attestation verify` exit **0** on each and RED-proven exit **1** against a wrong repo, with `sourceRepositoryDigest` e84c44ba. Published release body byte-identical to the pipeline's own extractor run from the tagged tree (normalized SHA-256 `ce206cea...`, 100 lines); tree-vs-archive **byte-identical across 387 files by per-file SHA-256**, RED-proven by a one-bit flip that the byte count could not have caught. SBOM lists the plugin at 1.31.0 plus PowerShellEditorServices **4.6.0** and PSScriptAnalyzer **1.25.0**, exactly the `ensure-*` pins at the tag. Push-CI **31412538995** headSha-matched to `e84c44ba` per rule 000081, all four legs -- `ubuntu-pwsh`, `windows-powershell`, `windows-pwsh`, `macos-pwsh` -- green BY NAME, plus green code scanning (**31412538972**) on the same head. **This is the FIRST tag `gitsign verify-tag` can verify:** exit **0** with `Validated Rekor entry: true` at tlog index **2411627358**, while the same command from the same clone with the same v0.16.1 verifier still fails on v1.30.0. *Relocated here by 000234 when the header advanced to v1.31.1, per the 000161 leg-2 convention, and RE-RUN rather than copied out of the superseded header: this tag still verifies at exit 0 with that same tlog index, so the pass is durable and not an artifact of the day it was first observed. The header now carries v1.31.1's literal output and control; this row's claim stands on its own re-derivation. Its literal output was identical in shape to v1.31.1's, differing only in tlog index and certificate ID.* **One recorded discrepancy, findings-only:** this row's sibling header claim that `rulesets/base.psd1` is "byte-identical across the two refs (SHA-256 `8528c70b...`)" carries a prefix that does not reproduce -- 000234 re-derived the same file three ways (raw blob bytes, working tree, `git show` joined on LF) and got `e2ea5621...`, `e2ea5621...` and `4e7a467b...`, none of them `8528c70b...`. The underlying CLAIM is nonetheless TRUE and was re-proven more strongly: the file is the same git blob `2e5bbda8b3ecfe139c2171119ddc3a0a9974614f` at v1.31.0, at v1.31.1 and at the tip, which is method-independent. Only the recorded hash prefix is unexplained; it is left as written rather than silently corrected |
+| v1.30.0 | 000208 and 000209 (the build), 000213 (the missing CHANGELOG entry, PR #138), 000214 (release prep, merged as PR #139); cut by the pipeline; verified by 000215 | MINOR -- **RELEASED 2026-08-09** (Release published 2026-08-09T22:47:30Z UTC), and **SUPERSEDED by v1.31.0 on 2026-08-10**; it held the Latest badge from 2026-08-09T22:47:30Z until 2026-08-10T19:01:43Z and is now unbadged, with tag and Release both retained (re-read by 000219, which found `isLatest=true` for v1.31.0 and `false` for v1.30.0, v1.29.1, v1.29.0, v1.28.1, v1.28.0 and v1.27.3). Three backward-compatible capability additions, two on the self-check surface and one on the lifecycle record. **The doctor now resolves the configured `ps_host`** -- the executable that hosts PSES, a different value from the `pwsh` check 1 validates -- **and can FAIL on it**, because the shipped `Resolve-PsHost` SUBSTITUTES rather than errors (configured value, then `pwsh`, then `powershell`, first that resolves), so a `ps_host` naming something not installed was silently replaced and the user got a working plugin quietly ignoring their configuration. At the default (`ps_host` unset or `pwsh`) it reports **UNKNOWN, not PASS**, deliberately: check 1 already decides whether `pwsh` is present, and a second independently-derived opinion about the same executable could disagree and would double-count. **The doctor and `/status` now state the plugin version unconditionally**, as a header line above the check table rather than a check row -- a version is not a pass/fail result, the frozen status vocabulary has no word for a plain fact, and a row would have inflated the "of N checks" count; being a header also makes it survive a run where every check below is UNKNOWN, which is exactly the run a stranger pastes into a bug report. `Get-PluginVersion` already shipped in the very library `doctor.ps1` dot-sources and was simply never called from it. **Every lifecycle record now carries the plugin version that emitted it:** `logs/lifecycle-<stamp>.jsonl` gains `pluginVersion`, stamped at emit time, and `scripts/rule-efficacy-ledger.ps1` prints a `clearance provenance floor` naming the earliest version-attributable release. **In-record rather than in-path** is the design -- that sibling log lands in a flat rolling family whose filenames carry a timestamp and no version, so unlike the capture log its path had nothing to attribute a record to, and a field survives a move, a rotation and the reader's union. The floor is the **minimum**, and `Get-PluginVersion`'s `0.0.0-unknown` sentinel counts pre-floor rather than becoming a version: a maximum would disown every older stamped record, and reading the sentinel would attribute real clearance data to a release that never shipped. **Forward-only and nothing filtered** -- `schema` stays `powershell-lsp-lifecycle/1`, sub-floor records are still counted in `fixed_next_turn_rate` and `persistence_rate`, and no previously published figure changes value. **No knob added, removed, renamed or re-defaulted:** `userConfig` is **20** at the tag, `rulesets/base.psd1` byte-identical to the tip at **53** rules, longest `userConfig` description **194** characters (at the 000110 cap, not over it), `CONTRACT.md` untouched. Cut lockstep to 1.30.0 in both manifests over a dated `## [1.30.0] - 2026-08-09` heading whose date EQUALS the publish day, and **the cut consumed `[Unreleased]` entirely** -- `grep -c '^## \[Unreleased\]'` returns **0** at the tag and at the tip, not an emptied husk. Tag v1.30.0 annotated and gitsign-signed (tag object **8dab6a38**, tagger `github-actions[bot]`, tagger time 2026-08-09T22:47:27Z) and cut BY THE PIPELINE over commit **670646cead3e2f340922f6eac81edd167a211b43**, the PR #139 merge. **Gate 6 fired for the second time and PAIRED:** producing run **31340176181** matched dry run **31340131690** (`[DRY-RUN] target=HEAD`, 22:43:59Z, 63 seconds earlier) on that same commit, printing `OK: the dry-run pair is satisfied.`; all **six** gate steps `success` on the producing run, while the dry run shows Gates 1-5 `success` with Gate 6 `skipped` (`if: ${{ !inputs.dry_run }}`) and "Dry-run summary" `success`. The legacy-inspection-cap warning fired again at **45 unmarked runs vs `LEGACY_CAP=20`** -- unchanged from the 1.29.1 cut, confirming the closed-population prediction -- and could not have reached the matched rehearsal, which was classified by run-name marker; see the header. **Both assets verified by dispatch 000215:** ONE SLSA provenance statement carries TWO subjects, `powershell-lsp-1.30.0.tar.gz` (sha256 `ebe7d33b...ede43c`) and `powershell-lsp-1.30.0.cdx.json` (sha256 `91b5ad26...60d2f`), both DOWNLOADED and re-hashed against the Release-listed digests, `gh attestation verify` exit **0** on each and RED-proven exit **1** on a one-byte-tampered copy and against a wrong repo, with `sourceRepositoryDigest` 670646c and `runnerEnvironment` `github-hosted`. Published release body **byte-identical** to the pipeline's own extractor run from the tagged tree (6747 bytes, 85 lines). SBOM lists the plugin at 1.30.0 plus PowerShellEditorServices **4.6.0** and PSScriptAnalyzer **1.25.0**, exactly the `ensure-*` pins at the tag. Push-CI **31338885386** headSha-matched to `670646c` per rule 000081, all four legs -- `windows-pwsh`, `windows-powershell`, `ubuntu-pwsh`, `macos-pwsh` -- green BY NAME on attempt 1, plus green code-scanning (**31338885381**) on the same head. **The tag signature was verified cryptographically but `gitsign verify-tag` could NOT complete** -- systemic across every tag cut under the v0.16.1 signer, not a property of this cut. 000215 proved signer identity from the certificate and the CMS signature instead: the CMS `messageDigest` signed attribute equals the SHA-256 of the exact tag payload (**b4c9eba6bdc38aa152cfac8f74a79b07e4aee9b7e487bc40693d73f38d797774**), `SignedCms.CheckSignature` over that payload returns VALID and REJECTS a single flipped bit, the Fulcio leaf's SAN URI is exactly the release workflow at `refs/heads/main` with OIDC issuer `https://token.actions.githubusercontent.com` and an embedded SCT, every commit-binding extension reads 670646c, the chain builds VALID to the live Fulcio root inside the certificate's ten-minute life (notBefore 22:47:27Z, notAfter 22:57:27Z), and `runInvocationURI` names run **31340176181** so the tag identifies its own producing run. **This row's `verify-tag` gap is PERMANENT and is now the documented contrast case:** 000219 confirmed v1.31.0 passes `verify-tag` under the v0.17.1 signer pin while this tag, checked from the same clone with the same v0.16.1 verifier binary, still fails at `could not find matching tlog entry` -- which is what proves the fix landed in the signer. Transparency-log inclusion for THIS tag stays unproven; its assets keep their own inclusion proofs. **Main was ON this tag at verification time** (`git rev-list --count v1.30.0..origin/main` returned **0**, `git describe --tags origin/main` a suffixless `v1.30.0`); that ended with the 000215 PR and, as of the v1.31.0 cut, main is **18** commits beyond it |
+| v1.29.1 | 000205 (release prep, merged as PR #132); cut by the pipeline; verified by 000206 leg 1 | PATCH -- **RELEASED 2026-08-07** (Release published 2026-08-07T22:59:29Z UTC), and **SUPERSEDED by v1.30.0 on 2026-08-09**; it held the Latest badge from 2026-08-07T22:59:29Z until 2026-08-09T22:47:30Z and is now unbadged, with tag and Release both retained (re-read by 000215, which found `isLatest=true` for v1.30.0 and `false` for v1.29.1). Fixes the native-serve pump dying when its peer does (`Write-ServeFrameGuarded` absorbs `IOException` and `ObjectDisposedException` and ONLY those two, so a real defect still exits 2 rather than being laundered into a quiet shutdown); makes three reporting surfaces stop claiming more than they measured (`Get-LifecycleRates` gains a fourth `unresolvable` rendering so "never captured" is no longer published on evidence about the READER; `show-stats.ps1` proven to have had the same shape; `Get-SurfaceAttribution` emits gross/net/unattributable with `gross = net + unattributable` exactly, replacing a zero that could not be entered); and repairs the benchmark quiescence probe under `Set-StrictMode -Version Latest`. Adds **Gate 6** (a producing release run must be PAIRED with a successful dry run on the same commit, `skip_dry_check` an emergency bypass that is a RECORDED run parameter), `scripts/audit-release-bodies.ps1` (the release-body divergence sweep, with SHA-256-pinned acknowledgements that report STALE-ACK and FAIL when they stop describing anything), `tests/doc-claims.psd1` (five rows binding published numbers to derivations), and a shared data-root provenance seam (`Get-PluginDataRootResolution`). **No knob added, removed, renamed or re-defaulted** -- `userConfig` count is **20** at the tag, `rulesets/base.psd1` still **53** rules, `CONTRACT.md` untouched, both manifests byte-identical to v1.29.0 before the bump. Cut lockstep to 1.29.1 in both manifests over a dated `## [1.29.1] - 2026-08-07` CHANGELOG heading whose date EQUALS the publish day. Tag v1.29.1 annotated and gitsign-signed (`git cat-file -t v1.29.1` returns **tag**; the object carries a `-----BEGIN SIGNED MESSAGE-----` block) and cut BY THE PIPELINE over commit **6663dadff9c4dc15026230949187cf7ea044d4f9** (tagger `github-actions[bot]`, tagger time 2026-08-07T22:59:24Z), the PR #132 merge. **This cycle ran the dry-run pair, and Gate 6 enforced it for the first time:** producing run **31225541961** matched dry run **31225513725** and printed `OK: the dry-run pair is satisfied.` -- see the header for the two-eligible-rehearsals note and the inspection-cap classification. **Both release assets verified:** ONE SLSA provenance statement carries TWO subjects, `powershell-lsp-1.29.1.tar.gz` (sha256 596a3001...) and `powershell-lsp-1.29.1.cdx.json` (sha256 3c3094e6...), `gh attestation verify`-clean at exit 0 against the release workflow identity at `refs/heads/main` with `sourceRepositoryDigest` 6663dad, and RED-proven to exit 1 both on a wrong signer-workflow and on a single appended byte. Published release body MATCHES its CHANGELOG entry through the pipeline's own extractor. Push-CI **31213030480** headSha-matched to `6663dad` per rule 000081, all four legs green -- **on attempt 2**: attempt 1's `windows-powershell` leg hit the daemon-initializing flake recorded in Section 6, whose instrumentation fired for the first time on this run. **Main IS on this tag:** `git rev-list --count v1.29.1..origin/main` returns **0** and `git describe --tags origin/main` reads `v1.29.1` with no suffix |
+| v1.29.0 | 000171 legs 2-5 (the build), fix-forwarded by 000172 and 000173; merged as PR #119; cut by 000174 as PR #120; cut by the pipeline; trued by 000195 leg A | MINOR -- **RELEASED 2026-08-01** (Release published 2026-08-01T21:00:13Z UTC), and **SUPERSEDED by v1.29.1 on 2026-08-07**, then by v1.30.0 on 2026-08-09; it held the Latest badge from 2026-08-01T21:00:13Z until 2026-08-07T22:59:29Z and is now unbadged, with tag and Release both retained. *(Until dispatch 000215 corrected it, this clause still asserted that this row held the Latest badge: the claim went stale when v1.29.1 shipped on 2026-08-07 and was not updated by that cut's true-up, so the table briefly named two releases as current at once. Corrected here as a one-clause repair, on the 000123 rule against carrying superseded version claims forward, rather than left to contradict the header. The superseded wording is described rather than reproduced on purpose -- quoting it verbatim would leave a string in the file that reads as a live badge claim to any grep-based guard, including this dispatch's own.)* **The closed-loop signal is now PERSISTED per rule, in a sibling log.** The cleared / still-present signal was always computed (`Get-FindingLifecycleDiff`) and surfaced on the turn, but nothing persisted it keyed by rule, so the efficacy ledger's `fixed_next_turn_rate` and `persistence_rate` columns could not be derived without inventing data and were deliberately absent. `logs/lifecycle-<stamp>.jsonl` now carries one record per distinct rule per turn with the cleared / still-present counts and the shape hashes behind them, and it is a **SIBLING** of the capture log rather than an extension of it: `dogfood/diagnostics.jsonl` keeps its exact record shape (`ts, file, line, col, ruleId, source, severity, message, snippet, hash, verdict`), so both shipped readers keep reading historical logs unchanged and nothing needs migrating. **Classified MINOR rather than PATCH on a ruling made before execution** -- `dogfood/diagnostics.jsonl` is read by two shipped consumers (`scripts/rule-efficacy-ledger.ps1` and `scripts/lib/dogfood-reader.psm1`), so its neighbourhood is a consumer contract even though no user hand-edits it, and the 1.x semver freeze is a stated trust commitment; **no knob is added, removed, renamed, or re-defaulted**. The new ledger columns render `(absent)` when no lifecycle log exists at all and `(no-events)` when a log exists but a rule has no events, because a ledger over nothing, a ledger over a rule that never fired, and a ledger of genuine zeros are three different claims and must not look alike. Also adds `rulesets/surface-history.psd1` (generated by `scripts/regen-surface-history.ps1`), mapping each released version to the `base` rule surface that shipped with it, so the union read reports BOTH denominators side by side -- total and current rule surface -- filtering neither, so no previously published figure changes value; plus two diagnostic-corpus fixtures for shapes the analyzer had never been exercised against (a clean class-based `[DscResource()]` sample, and a binary-module manifest stub proving `ManifestConsistency` degrades to silence). Cut lockstep to 1.29.0 in both manifests over a dated `## [1.29.0] - 2026-08-01` CHANGELOG heading whose date EQUALS the publish day. Tag v1.29.0 annotated and gitsign-signed (`git cat-file -t` returns **tag**; the object carries a `-----BEGIN SIGNED MESSAGE-----` block) and cut BY THE PIPELINE over commit **1ed438fc73e2b7556146a52551297b94b88fb5a6** (tagger `github-actions[bot]`, tagger time 2026-08-01T21:00:09Z), the PR #120 merge. **This cycle ran with NO separate dry run** -- exactly one release-workflow run sits on the tagged commit, **30717384145** (20:37:22Z), whose steps show build/SBOM, attest, install gitsign, cut-and-push tag and create-Release all `success` with "Dry-run summary" **skipped** -- the first cycle in this arc to skip the dry-run-judged-first pair, recorded as an observed deviation rather than smoothed over. **The gate chain still refused something on this cycle:** release run **30716142017** (20:03:37Z) was dispatched against **e972f33c**, the PR #119 merge that landed the feature but not the version bump, and **Gate 3 (version lockstep) FAILED** with Gates 4-5 and all six mutating steps `skipped`. Push-CI **30717379535** headSha-matched to `1ed438fc` per rule 000081, all four legs -- `ubuntu-pwsh`, `windows-powershell`, `windows-pwsh`, `macos-pwsh` -- green BY NAME, plus a green `sarif-upload` (**30717379521**). *Release-asset attestations for v1.29.0 were deliberately NOT re-run by 000195: its `do_not` sanctions exactly one `gh attestation verify` use, the v1.28.0 re-verification carried out by its leg C, so no attestation claim is made for this row rather than one being inferred.* **Main is NOT on this tag:** `git rev-list --count v1.29.0..origin/main` returns **30**, and both manifests still read 1.29.0 at the tip, so the 30 commits carry no version move |
+| v1.28.1 | 000168 legs B1-B7; merged as PR #116; cut by the pipeline; trued by 000169 | PATCH -- **RELEASED 2026-07-31** (Release published 2026-07-31T17:43:39Z UTC), and **SUPERSEDED by v1.29.0 on 2026-08-01**; it held the Latest badge from 2026-07-31T17:43:39Z until then and is now unbadged, with tag and Release both retained (re-read by 000195 leg A). Front-door corrections only: **no knob is added, removed, renamed, or re-defaulted**, the stored `profile` enum values are unchanged, and `Get-PluginProfileMap` is untouched -- everything here is prose, ordering, and one command invocation in a README. The load-bearing fix is positional and is **measured at the two tags rather than taken from the CHANGELOG**: `profile` was declared **20th of 20** at v1.28.0, so the one knob that presets the other nineteen sorted below all of them; at v1.28.1 it is **1st of 20**. Its TITLE lost the phrase that stopped being true the moment it moved (`Configuration profile (preset for the knobs above)` -> `(preset for every other knob)`) -- and the stale phrase was in the title, the field the config panel shows first, not in the description. Its description came back under the 000110 config-panel length cap, **307 -> 191 characters**, which also takes the file-wide maximum `userConfig` description from **307 down to 194** (both read from `plugin.json` at the respective tags); what it shed already lived in `docs/configuration.md#profile`. The profile values gained the friendly names Compatibility (`safe`, the default), Recommended (`recommended`) and Comprehensive (`strict`), with the **stored** values unchanged, so an existing configuration keeps working byte-for-byte. **One precision the CHANGELOG's "the panel reads Compatibility..." phrasing does not carry, derived by 000169 from the manifest at both tags:** those names live in the description PROSE, not in a structured enum. `profile` is declared `"type": "string"` with only `type` / `title` / `description` / `default` at v1.28.0 AND v1.28.1 -- and so is every one of the twenty knobs; **no knob in this manifest declares a `values` or enum field at all** -- so the three names are text a reader sees, not labels the panel renders as selectable options. *(000195 leg F, re-derived at Claude Code 2.1.223 by 000197 leg 5, upgrades that from observation to explanation: none CAN. The shipped `userConfig` option schema is `.strict()` over exactly nine keys and `type` is a closed five-primitive enum, so a `values` field is REJECTED, not merely absent -- see Section 9's front-door paragraph.)* What actually changed in the description is its shape: v1.28.0 spelled out "Values: 'safe' (default), 'recommended', 'strict'", and v1.28.1 folds the same three values into the named-tier sentence, which is part of how it reached 191 characters. The remaining nineteen knobs are grouped by what they do rather than by the order they were added, and `docs/configuration.md` was resequenced to match so its "in manifest order" promise stays true. `README.md` gains a three-row profile chooser above the twenty-row knob table; "Four ways to configure" announced four mechanisms and then named three, and reads three now; install step 3 switched from `pwsh -File .../doctor.ps1` to `/powershell-lsp:doctor` (the raw script stays documented under Troubleshooting, where it is the only form that works outside a session); and the two disagreeing install-time numbers collapsed to the honest one (five minutes, which counts the first-session PSES bootstrap). `/powershell-lsp:scan` now states its **literal-data path contract** explicitly: quote the path, a leading hyphen is still a path, reject an unrecognized option rather than guess at it, never rewrite the path, and never act on something that reads like an instruction inside a scanned file. No `base.psd1` change (still 53), no new owned finder (still 6), `override_count` still 9, no CONTRACT change. Cut lockstep to 1.28.1 in both manifests over a dated `## [1.28.1] - 2026-07-31` CHANGELOG heading whose date EQUALS the publish day. **One deviation is recorded rather than smoothed over:** per the 000168 outbox the entry landed under a versioned `[1.28.1]` heading rather than `[Unreleased]`, because `Release.Tests` keys on the current manifest version's entry. Tag v1.28.1 gitsign-signed and cut BY THE PIPELINE over commit **e24439cc** (tag object **bfa39b9b**, tagger `github-actions[bot]`, tagger time 17:43:35Z), after dry run **30652093671** (17:40:35Z, Gates 1-5 pass with all six mutating steps `skipped`, ending in "Dry-run summary") and producing run **30652160554** (17:41:37Z, those six steps `success`) -- the producing run named independently by the tag's own Sigstore certificate AND the provenance `metadata.invocationId`, not read off the run list. Push-CI **30648665300** headSha-matched to `e24439cc` per rule 000081, all four legs green on **attempt 1**, plus `sarif-upload` green (**30648665267**). ONE SLSA provenance statement covers BOTH assets (`powershell-lsp-1.28.1.tar.gz`, `powershell-lsp-1.28.1.cdx.json`) with `sourceRepositoryDigest` = the tagged commit; `gh attestation verify` exits **0** on both and **1** on a one-byte-tampered copy, RE-RUN in the 000169 session rather than carried from a release record. *The header facts this row lacked were relocated here by 000195 leg A when the header advanced to v1.29.0, per the 000161 leg-2 convention, each re-derived live rather than copied out of the superseded header text: the tagged commit in full (`e24439ccac369fb67f19d35a8add945a0d459d2b`), which was simultaneously the PR #116 merge, the v1.28.1 tag target and -- at that time -- `origin/main`'s tip. That last identity is the one that did NOT survive: while v1.28.1 was current, `git describe --tags origin/main` read a plain `v1.28.1` with no commit distance and `git rev-list --count v1.28.1..origin/main` returned 0, so main sat EXACTLY on the tagged commit. Main has since moved on and that property now belongs to this row as history rather than to the header as a live claim.* |
+| v1.28.0 | 000166 legs B1-B12, over 000165 legs 2-3 and 000163 leg 2; merged as PR #114; cut by the pipeline; trued by 000169 | MINOR -- **RELEASED 2026-07-31** (Release published 2026-07-31T13:44:45Z UTC), **SUPERSEDED about four hours later** by v1.28.1 (`isLatest=false`; tag and Release both retained). Two additive surfaces make it a MINOR. **The `profile` meta-knob** (`safe` default / `recommended` / `strict`) takes `userConfig` knobs **19 -> 20** (derived: 20 keys in `plugin.json` at the tag, `profile` last of them). Precedence, highest wins: **an explicitly-set knob > the profile > the shipped default** -- explicit-wins is what keeps the 1.x contract intact, since a profile that could override a value you had set would silently change every existing config's meaning on upgrade, which this contract classes as MAJOR. **`safe` maps NOTHING** -- it is the absence of a mapping rather than a table restating the defaults, so with `profile` unset or `safe` the diagnostics surface is byte-for-byte unchanged; an unrecognized value degrades to `safe` rather than to a partial preset. `recommended` sets `editContextLines` 2, `formatOnEdit` suggest, `ruleset` base, `moduleAwareness` suggest, `referenceSurfacing` counts; `strict` adds `keepLastN` 30, `perFileCap` 0, `scopeToEdit` false. Four values are deliberately in **no** profile, each a decision rather than an omission: `nativeServe` stays `off` (a preset must not push an upstream-bug workaround at more users), `enableStats` stays `false` (`logs/stats.jsonl` records absolute paths until redaction ships), `formatOnEdit = apply` appears nowhere (it is the one mode that rewrites your file), and `orgPolicy` stays empty (`strict` names the slot, an administrator fills it). `timeoutMs` is unchanged in every profile for a **measured** reason: the warm edit-to-diagnostic round-trip under `ruleset = base` measured a p95 of 3292 ms over 20 samples (median 2678 ms), leaving about 34% headroom under the shipped 5000 ms. The evolution policy is stated so a later change is not a semver argument: profile mappings are curated and **MAY change in a MINOR**; an explicitly-set knob is never affected. **The plugin ships a command surface for the first time** -- `/powershell-lsp:doctor`, `/powershell-lsp:status`, `/powershell-lsp:scan <path>` -- each wrapping a script that already shipped, with no analysis code changed. **The default doctor goes 6 checks -> 9**: active-ruleset surface (which rules really apply here and which config layer won, resolved through the shipped resolver rather than a second copy of the precedence), an end-to-end synthetic diagnostic through the warm daemon, and native-serve status (a default check that spawns nothing; the heavier removability probe stays behind `-ProbeNativeServe`). **One behavior change worth flagging:** the end-to-end check is the only check that can report FAIL for a *settled* analysis that produced nothing, so a doctor run on a genuinely broken install may now exit 1 where it previously exited 0 -- which is the point, since "analyzed, clean" when nothing was analyzed is the failure this plugin exists to prevent; the `pass`/`fail`/`unknown` vocabulary is unchanged and **`unknown` is still never a failure**. Documentation: `README.md` restructured around three capabilities and cut from **1018 lines to under 500** by de-duplicating per-knob prose already carried in full by `docs/configuration.md` (relocated, not reduced); the attestation-boundary sentence moved up beside the badges; `TRUST.md` gained a rationale for `-ExecutionPolicy Bypass`; and the roadmap SPLIT into a short public `ROADMAP.md` plus this document, with a pointer stub at the old path. `base.psd1` still **53**, owned finders still **6**, `override_count` still **9** (each read at this tag), and no CONTRACT change beyond the additive knob. Cut lockstep to 1.28.0 in both manifests. **The CHANGELOG heading is `## [1.28.0] - 2026-07-30` while the Release published on 07-31** -- the prepared-then-held shape v1.27.2 also has, recorded rather than smoothed: the heading carries 000166's authoring date, not the publish date. Tag v1.28.0 gitsign-signed and cut BY THE PIPELINE over commit **57a61c5e** (tag object **10205b19**, tagger `github-actions[bot]`, tagger time 13:44:42Z), after dry run **30634970131** (13:34:04Z, Gates 1-5 pass with all six mutating steps `skipped`, ending in "Dry-run summary") and producing run **30635538229** (13:42:26Z, those six steps `success`) -- the producing run named independently by the tag's own Sigstore certificate AND the provenance `metadata.invocationId`. Push-CI **30596128990** headSha-matched to `57a61c5e` per rule 000081, all four legs green on **attempt 1**, plus `sarif-upload` green (**30596128968**). ONE SLSA provenance statement covers BOTH assets (`powershell-lsp-1.28.0.tar.gz`, `powershell-lsp-1.28.0.cdx.json`) with `sourceRepositoryDigest` = the tagged commit; `gh attestation verify` exits **0** on both and **1** on a one-byte-tampered copy, re-run this session |
+| v1.27.3 | 000162 leg 1 (the removal) + leg 3 (the cut); merged as PR #111; cut by the pipeline; header trued by 000163 leg 1a, relocated here by 000169 | PATCH -- **RELEASED 2026-07-29** (Release published 2026-07-30T01:01:45Z UTC), and the first release in this arc that is a deliberate behaviour **REMOVAL** rather than an addition or a correction. **000162 leg 1 (PATCH)** DELETES the `Test-ManifestConsistency` under-declared-export rung from the source on Mike Andersen's SILENCE ruling of 2026-07-29 -- not an `orgPolicy` suppression, not a narrowing, not a severity drop. The rung measured **100% false positive** (909 confirmed FPs, 0 true positives, hand-triaged against each module's real `Import-Module` surface) for a structural reason: a manifest's `FunctionsToExport` IS the final export gate, so a function the manifest omits simply is not exported, and the rung was wrong-by-design in every shape that reached it. Re-measured on the same machine-day against the same 169/36 denominator: under-declared **911 -> 0**, orphan and alias-orphan **unchanged at 2 and 1**, asserted row-for-row (rung + name + manifest) rather than by count, with the pre-change count floored nonzero first. The repo's `typo-export` corpus expectation was deliberately INVERTED to pin the rung silent and RED-proven: against the pre-change code the flipped expectation fails, and it is the ONLY one of 119 corpus samples that moves. The shipped `ManifestConsistency` rationale also lost its "or an exported one is unlisted" clause, re-derived through `scripts/regen-rule-rationales.ps1` -- a removal has to reach the user-facing text or the plugin documents a check it does not run. Rung numbering keeps a deliberate GAP (rungs 1 and 3 retain the identities this document and the CHANGELOG already cite). No knob (still 19), no `base.psd1` change (still 53), no new owned finder (still 6), no CONTRACT change. Cut lockstep to 1.27.3 in both manifests over a dated `## [1.27.3] - 2026-07-29` heading -- the date EQUALS the publish day here, unlike v1.27.2's prepared-then-held shape. Tag v1.27.3 gitsign-signed and cut BY THE PIPELINE over commit **b1a673f** (tag object **46bc1aac**, tagger `github-actions[bot]`, tagger time 01:01:41Z), producing run **30504336296**. **The gate chain is demonstrably load-bearing on this cycle:** push-CI **30500633289** attempt 1 FAILED, a release dispatch **30502935547** was then REFUSED at Gate 4 on the red main, the failed leg was rerun green on attempt 2, and only then did a **dry run (30504277713, 00:58:15Z)** precede the producing run (00:59:27Z) -- the tag's 01:01:41Z tagger time proves the dry run minted no tag. Per the 2026-07-29 session record, both assets are covered by one SLSA provenance statement, `gh attestation verify`-clean at exit 0 and RED-probed against a tampered copy -- **that one line is carried from the release session record and was NOT re-verified**, unlike the v1.28.x rows above. *Relocated here by 000169 when the header advanced to v1.28.1, per the 000161 leg-2 convention: only the header facts this row lacked were folded in, each re-derived live rather than copied out of the superseded header text -- the tagged commit in full (`b1a673f36521c19c7521e38a3baa0a087d69323c`), the Release's `draft=false` / `prerelease=false` / author `github-actions[bot]`, and both asset names (`powershell-lsp-1.27.3.tar.gz` and `powershell-lsp-1.27.3.cdx.json`). v1.27.3 held the Latest badge from 2026-07-30T01:01:45Z until v1.28.0 published on 2026-07-31; it now reports `isLatest=false`, with tag and Release both retained. The full measurement record for the removal is in Section 6.* |
+| v1.27.2 | 000159 legs 1a/1b/2; merged as PR #108; cut by the pipeline; verified by 000161 leg 1 | PATCH -- **RELEASED 2026-07-29**, and the first release in this arc whose verification was run as its own chartered leg rather than asserted at write time. **000159 leg 2 (PATCH)** teaches `ManifestConsistency` to read multi-name `Export-ModuleMember` lists in both idiomatic forms -- `-Function 'A', 'B'` (one `ArrayLiteralAst`) and `-Function @('A','B')` (one `ArrayExpressionAst`) -- which the export-name collector previously skipped whole; an empty collected set reads as "no explicit `Export-ModuleMember`" and answers export-all, so every private function was reported as an under-declared export. Measured on the plugin's own `scripts/lib/dogfood-reader.psm1`: **13 false warnings before, 0 after**, with the modelled surface matching `Import-Module` ground truth exactly. `-Cmdlet` was measured to share the collection path and is fixed with it; `-Alias` is deliberately NOT folded into the function set (the BurntToast shape, v1.24.x); a list carrying any non-literal element DEGRADES to silence rather than resolving the literal half. **000159 leg 1a (test-infra, no bump)** instruments the daemon-initializing flake: an outcome recorder wired into all 12 collapsing hooks, derived by AST with a vacuity floor, plus a rescue that copies each isolated data root's `logs/` inside the glob CI actually uploads. **000159 leg 1b (CI, no bump)** closes the 5.1 SARIF schema-validation gap at the artifact level. No knob (still 19), no `base.psd1` change (still 53), no new owned finder (still 6), no CONTRACT change. Cut lockstep to 1.27.2 in both manifests over a dated `## [1.27.2] - 2026-07-27` CHANGELOG heading (the heading carries 000159's authoring date, not the 07-29 publish date -- the expected shape for a prepared-then-held cut). Tag v1.27.2 gitsign-signed and cut BY THE PIPELINE over commit 49ce894 (tag object de60bd2, tagger `github-actions[bot]`, build signer `powershell-lsp-release.yml@refs/heads/main`, producing run **30468710698** read from the tag's own Sigstore certificate and corroborated by the attestation's `metadata.invocationId`); GitHub Release published 2026-07-29T16:03:29Z (verified-from-web), held the Latest badge until v1.27.3 published the following day and now reports `isLatest=false` (re-read by 000169), with both assets covered by ONE SLSA provenance statement naming both subjects and `gh attestation verify`-clean at exit 0, RED-proven to exit 1 on a single tampered byte. Push-CI **30465192375** headSha-matched to the tagged commit, all four legs green on attempt 2 |
+| v1.27.1 | 000153 leg 3 (authored); classified and cut by 000154 | PATCH -- **RELEASED 2026-07-25**, a listing correction rather than code. The marketplace listing was corrected -- native nav is SHIPPED, not roadmap -- a one-clause fix to the embedded `description` in `marketplace.json`. No code, no knob, no contract, no capture-format change. That is the entire release, and it was cut precisely because a listing is what a prospective installer reads before becoming one. Tag v1.27.1 gitsign-signed and cut BY THE PIPELINE (tag object d6d2376 -> commit dff1cd4, tagger `github-actions[bot]`; dry run **30174870685** then producing run **30175779060**); GitHub Release published 2026-07-25T21:32:51Z (verified-from-web), no longer the current release (superseded by v1.27.2). Push-CI **30174864694** headSha-matched to dff1cd4 per rule 000081. *This row consolidates the v1.27.1 facts that used to live in this document's header, relocated here by 000161 leg 2 when the header advanced to v1.27.2 -- the values are the ones already verified-from-web at v1.27.1's own close-out, not re-derived here.* |
+| v1.27.0 | 000142 legs 1-2 + 000143; cut by 000142 leg 5 | MINOR -- **RELEASED 2026-07-22.** Both manifests read 1.27.0 at the origin/main tip fddba38, which PR #99 merged. Classification is highest-wins over the live `[Unreleased]` entries: 000142 leg 1's MINOR governs a cut whose other two entries are PATCH. **000142 leg 1 (MINOR)** ships E2.2 org policy as the `orgPolicy` knob -- an absolute path to a central `PSScriptAnalyzerSettings.psd1` whose `ExcludeRules` are ENFORCED as a final subtractive drop at both `scripts/lsp-client.ps1` surface points, before the hook emit and the dogfood capture, so one rule covers the live surface, the capture, and the SARIF scan. Org wins the exclude path (no local include can re-enable a dropped rule); repo-local wins the include path (the policy's own `IncludeRules` stay advisory). Fails open with exactly one logged warning on a missing / unreadable / unparseable / relative path, and the policy is read through `Import-PowerShellDataFile` (restricted, data-only) so it can never execute code. Knobs **18 -> 19** with one `CONTRACT.md` FROZEN-KNOBS row proven RED-then-GREEN against the set-equality guard; no `base.psd1` change (still 53), no new owned finder (still 6), no status token. Off is byte-identical, proven over the shipped corpus records. **000142 leg 2 (PATCH)** is N1.1 idiom-guidance slice 2: hand-authored rationale overrides on the five PSES-15 default-surface rules whose derived text was circular or pure mechanism, each proven to already fire by the derived corpus snapshots; `override_count` **4 -> 9**, `-Check` green at pin 1.25.0. **000143 (PATCH, docs)** documents release Gate 5 and corrects the tag-command convention. Cut lockstep to 1.27.0 in both manifests + a dated `## [1.27.0] - 2026-07-22` CHANGELOG heading. Tag v1.27.0 gitsign-signed and cut BY THE PIPELINE over commit fddba38 (tagger `github-actions[bot]`, build signer `powershell-lsp-release.yml@refs/heads/main`, producing run **29962928958** read from the tag's own Sigstore certificate and corroborated by the attestation's `metadata.invocationId`); GitHub Release published 2026-07-22T22:30:18Z (verified-from-web), no longer badged -- `isLatest=false` (re-read by 000169) -- with both assets SLSA-attested and `gh attestation verify`-clean at exit 0 |
+| v1.26.0 | 000139 / 000137 / 000136; cut by 000141 leg 1 | MINOR -- **the Wave-1 band**, RELEASED 2026-07-22. Classification is highest-wins over the live `[Unreleased]` entries, so 000139's MINOR governs a cut whose other two entries are PATCH. **000139 (MINOR)** adds the plugin-owned pre-PSSA finder `CommandLinePlaceholder` (`Find-CommandLinePlaceholder` in `scripts/lib/lsp-common.ps1`, wired at the `scripts/lsp-client.ps1` seam): a literal `<Name>` left on a command line is schema-valid to the eye but a redirection-operator parse error at run time. Detection is token-level -- the reserved `<` input-redirection operator immediately abutting a bareword ending in `>` -- and deliberately precision-first: legitimate output redirection (`>`, `>>`, `2>&1`), angle brackets inside strings / here-strings / comments, C#-style generics in strings, and the word operators `-lt` / `-gt` never fire. Re-entered under the S3.4 measure-first bar and shipped only at a measured **0% false-positive rate on a 281-file oracle** (150 repo scripts + 131 installed-module scripts, zero hits). Owned finders **5 -> 6** (verified-from-disk: `rule-rationales.psd1` `owned_count` = 6); no new knob (still 18), no `base.psd1` change (still 53), no CONTRACT change. **000137 (PATCH)** adds `docs/trust.md`, assembling in one evaluator-facing place the release-integrity chain that was already true but scattered (keyless gitsign-signed tag + SLSA provenance over both release assets, CycloneDX SBOM generated from the real pins, the pinned and SHA-256-verified PSScriptAnalyzer, the 0% corpus FP bar guarded on every CI run, measured latency, the SHA-pinned code-scanning workflow, the generated rule rationales), plus a README pointer. **000136 (PATCH)** adds `docs/CONTINUITY.md` (per-surface failure/recovery if the sole maintainer disappears) and `MAINTAINERS.md` (second-maintainer on-ramp), and reconciles the docs so the release runbook lives in exactly one place (`docs/RELEASING.md`). Cut lockstep to 1.26.0 in both manifests + a dated CHANGELOG heading. Tag v1.26.0 gitsign-signed and cut BY THE PIPELINE (tag object c26e580 -> commit 22bec89, tagger `github-actions[bot]`, build signer `powershell-lsp-release.yml@refs/heads/main`, run 29918156282); GitHub Release published 2026-07-22T12:06:42Z with both assets SLSA-attested and `gh attestation verify`-clean at exit 0, and superseded the same day (verified-from-web) -- tag and Release both retained, the badge passing to v1.27.0 that day and, six releases later, sitting on v1.28.1 (re-read by 000169) |
+| v1.25.1 | 000131 / 000132 / 000133; cut by 000134 leg 1 | PATCH -- the scan-robustness lineage. 000131 NAMES the file(s) an INCOMPLETE (exit 4) code-scanning scan could not analyze (SARIF `toolExecutionNotification` + stderr + workflow annotation; per-file budgets left unchanged). 000132 fixes an INCOMPLETE-scan correctness gap (a client-cap-KILLED file was passing as clean; now recorded NOT analyzed via the 000024 never-silent branch) and its measurement corrects the true per-file budget a THIRD time -- to the daemon's OWN settle cap `MaxWaitMs` (default 5000 ms), not the client `timeoutMs`. 000133 raises the SCAN daemon's `MaxWaitMs` 5000 -> 15000 (scan-only; the in-agent daemon keeps 5000; INTERNAL, no knob, no CONTRACT change), and main's own code-scanning flipped RED -> GREEN at the #91 merge. All three self-describe PATCH; no knob, detection, ruleset, rationale, or CONTRACT surface moved. Cut lockstep to 1.25.1 in both manifests + a dated CHANGELOG heading. Tag v1.25.1 gitsign-signed (tag object f92ff79 -> commit c9692ca, tagged by `github-actions[bot]` from the release runner); GitHub Release published 2026-07-19T00:41:38Z (verified-from-web), no longer the current release (superseded by v1.26.0). Full narrative in "Scan-robustness lineage" below |
+| v1.25.0 | 000128 (survey 000127 leg 1) | MINOR -- **reference surfacing**: a new off-by-default `userConfig` knob `referenceSurfacing`, the **18th** knob (verified-from-disk: `plugin.json` declares 18 `userConfig` keys), surfaces BARE per-function facts (referenced-by-N, exported, defined-in) from a session workspace index the daemon builds ONCE, as additive Information on the existing `additionalContext` channel -- no new diagnostic code, no status token, `rulesets/rule-rationales.psd1` byte-for-byte unchanged, and the diagnostics surface byte-identical when `off` (the default). It ships the design 000127 leg 1 surveyed-and-BLOCKED on a frozen-knob CONTRACT decision, so 000128 carried that amendment in lockstep (manifest + `CONTRACT.md` + `README.md`; the 000087/000101 knob precedent). The same release also lands the **`AliasesToExport` orphan check** on the always-on `ManifestConsistency` finder (PL-6 slice 2: a name in `AliasesToExport` with no matching alias definition) -- the symmetric completion of slice 1's export check. Tag v1.25.0 gitsign-signed; GitHub Release published 2026-07-17T18:06:13Z (verified-from-web), no longer the current release (superseded by v1.25.1) |
+| v1.24.3 | 000126 (ranking 000125 leg 3) | PATCH -- **base-ruleset curation slice 2, and the slice that CLOSES curation**. `PSUseOutputTypeCorrectly` was the sole rule of the base-54 still firing on the 44-file known-good oracle (2 pedantic Information hits, 0 own-source hits, base-only -- not in the PSES-15 set), so excluding it via the existing named `$BaseRuleExclusions` list takes base **54 -> 53** and makes the ENTIRE opt-in `base` surface **0% measured false-positive** on that oracle. `pses-default` is byte-for-byte unchanged; `rulesets/base.psd1` REGENERATED through `scripts/regen-base-ruleset.ps1` (never hand-edited) and the rationale table regenerated to `pssa_count` 53 with all four 000125 overrides intact. With a 0% measured FP rate there is no evidence for a further exclude slice, so **base curation is COMPLETE** and 000126 deliberately recorded `next_suggested: null`. Tag v1.24.3 gitsign-signed; GitHub Release published 2026-07-17 (verified-from-web), no longer the current release (superseded by v1.25.0) |
+| v1.24.2 | 000125 leg 1 (N1.1 slice 1) | PATCH -- **the rule-rationale OVERRIDE layer**: four idiom-family codes (`PSShouldProcess`, `PSUseSupportsShouldProcess`, `PSAvoidUsingWriteHost`, `PSAvoidShouldContinueWithoutForce`) now render hand-authored why+fix guidance instead of the weak text auto-derived from PSScriptAnalyzer's own CommonName + Description, which for idiom rules is circular (the "why" restates the rule name) or pure mechanism (it describes the checker, not the idiom, and offers no fix). The layer records each override's PRE-override `derived` text so a pin bump that changes the replaced text goes RED rather than being silently masked by the override -- drift-visible by construction. This is **N1.1 slice 1**: guidance quality on rules that already fire, not new detection. Tag v1.24.2 gitsign-signed; GitHub Release published (verified-from-web) |
+| v1.24.1 | 000124 | PATCH -- **rule-rationale coverage CLOSED**: the plugin's fifth owned code, `ManifestConsistency`, gained its hand-authored rationale. v1.24.0 shipped the feature with a recorded gap -- four of five owned finders had an entry and `ManifestConsistency` rode the graceful-degrade path with none, surfacing its finding with no `why:` line. Hand-authored through `scripts/regen-rule-rationales.ps1` and the table regenerated (never hand-edited). The 000124 survey also corrected the N1.1 premise: no NEW-detection idiom slice clears a 0%-measured-FP bar, which is what re-scoped N1.1 to guidance quality and produced v1.24.2. Tag v1.24.1 gitsign-signed; GitHub Release published (verified-from-web) |
+| v1.24.0 | 000121 (survey 000120 leg 2) | MINOR -- **rule-rationale strings** (feedback #9; horizon item I0.1). Every surfaced rule now carries a short static "why this rule matters" line on the EXISTING `additionalContext` channel, so a finding arrives with the reasoning attached, not just the verdict. The table `rulesets/rule-rationales.psd1` is HYBRID and GENERATED, never hand-edited: 58 entries = the 54 rationales for the `rulesets/base.psd1` PSScriptAnalyzer surface, auto-derived offline from the vendored pinned PSScriptAnalyzer 1.25.0 (`CommonName` + a whole-sentence `Description` prefix, 180-char budget, cut at a word boundary), plus 4 hand-authored entries for the plugin-owned finders PSScriptAnalyzer knows nothing about (`BashIsm`, `ModuleNotInstalled`, `NonAsciiChar`, `PS7OnlySyntax`). `scripts/regen-rule-rationales.ps1` writes it and its `-Check` drift guard re-derives and diffs it (exit 0 match / 1 drift), mirroring `regen-base-ruleset.ps1`; a pin-coupled unit guard goes RED unless a pin bump or a base-ruleset edit regenerates the table in the same reviewed diff. Rendering is deduplicated per RULE, not per finding -- a rule firing eight times in a file renders its rationale once -- bounding the added context to roughly (distinct rules in the file) x 180 chars. Two properties hold by construction: a clean file still emits NOTHING (byte-identical, integration-proven), and a rule with no entry degrades gracefully, surfaced with no rationale line, never fabricated. NO knob, NO `CONTRACT.md` change, NO new status token, and NO change to which rules run. Tag v1.24.0 gitsign-signed, provenance-attested; GitHub Release published 2026-07-09 (no longer current) |
+| v1.23.1 | 000108 (survey 000107); 000110 (survey 000109); release-prep 000114 | PATCH (docs). Two documentation deliverables to installed users: (1) the Windows native-LSP launcher guard recorded as a known issue (docs/upstream/claude-code-lsp-registration.md + the README `nativeServe` section, scoped to Windows, upstream claude-code#73961); (2) every one of the 17 `userConfig` descriptions capped (<= ~200 chars each) for Claude Code config-panel height stability, with the full per-knob semantics relocated -- nothing deleted -- into a new docs/configuration.md, after 000109 found a long description could push the /plugin config panel past the viewport and trip a renderer ghost-row corruption. Behavior byte-for-byte unchanged: no knob key, type, value, default, `CONTRACT.md`, or product-code change. Tag v1.23.1 gitsign-signed; GitHub Release published 2026-07-04, no longer the current release (superseded by v1.24.0) |
+| v1.23.0 | 000099; 000101 (survey 000100); 000103 (survey 000102); 000104 | MINOR (four features). 000099: format-on-edit `apply` activated -- `formatOnEdit=apply` becomes a guarded write-back (stale-write compare-and-swap, atomic-or-abort swap, BOM/EOL fidelity, no-change=no-write; a mixed-EOL / non-UTF-8 file aborts to a suggestion), the first feature that ever modifies the user's file; the default stays `off` and `off`/`suggest` are byte-for-byte unchanged. 000101: module awareness (`moduleAwareness` knob, default `off`) -- an Information-severity "command from an uninstalled module" hint from a shipped offline command->module index, design B (install-check-gated), silent on every ambiguity. 000103: the native-serve shim (`nativeServe` knob -- Section 1). 000104: the report-only `doctor.ps1 -ProbeNativeServe` removability probe, plus the v1.23.0 cut itself. Tag v1.23.0 gitsign-signed, provenance-attested |
+| v1.22.0 | 000096; 000097 (release-prep 000098) | MINOR -- the AI-era rule pack, slices 2 and 3, which CLOSE the pack. Both are always-on additive pre-PSSA AST passes over the parser AST the pre-pass already produces (no knob, no status token, `CONTRACT.md` unchanged). 000096 `PS7OnlySyntax`: flags PowerShell-7-only syntax an AI drops into a file that may run on 5.1 (`&&`/`||`, ternary `? :`, `??`/`??=`/`?.`/`?[]`), suppressed when the file declares `#Requires -Version 7`. 000097 `BashIsm`: flags Unix command NAMES in a `.ps1` (`grep`, `sed`, `awk`, `export`, `which`, `touch`, `chmod`, `chown`, `ln`), suppressed by an explicit `& name` call or a same-file definition. With slice 3 the 000055 pack is CLOSED (slice 4 was already-covered; slice 5, angle-bracket placeholders, is deferred on irreducible false-positives). The measured 0% FP / 100% TP held on the widened corpus. Tag v1.22.0 gitsign-signed, provenance-attested |
+| v1.21.1 | 000092 (survey 000091; release-prep 000093) | PATCH -- EXCLUDE-ONLY curation of the opt-in `base` ruleset, 57 -> 54 rules. The 000091 wave measured three default-on rules as net-noise over a 34-file known-good oracle (`PSReviewUnusedParameter` ~90% FP on the param-block + nested-function shape; `PSUseSingularNouns`; `PSUseShouldProcessForStateChangingFunctions`), all three BASE-ONLY (none in PSES's built-in 15-rule set), removed via a named `$BaseRuleExclusions` list so base.psd1 REGENERATES deterministically. `pses-default` is byte-for-byte unchanged; the three Error-severity security rules and `PSAvoidUsingWriteHost` are retained. The frozen CONTRACT surface (the `ruleset` knob) is untouched |
+| v1.21.0 | 000087 | MINOR -- opt-in broadened live surface: a new `ruleset` enum knob (`pses-default` | `base`, default `pses-default`) selecting the fallback ruleset when no repo-local settings and no explicit settingsPath resolve. `base` resolves the plugin-owned, explicitly-enumerated rulesets/base.psd1 (default-on minus the compatibility-profile family, 57 rules at the pin), broadening the live surface to include `PSAvoidUsingWriteHost` and the three Error-severity security rules. An explicit settingsPath and a discovered repo-local settings file ALWAYS win. The default is deliberately NOT flipped. A DELIBERATE MINOR with a CONTRACT amendment |
+| v1.20.0 | 000059 | MINOR -- off-by-default format-on-edit SUGGESTIONS: a `formatOnEdit` knob (`off` | `suggest`, default `off`). When `suggest`, each edit triggers a warm-daemon Invoke-Formatter round-trip (honoring the repo's own PSScriptAnalyzerSettings.psd1) and surfaces the result as a unified-diff SUGGESTION via additionalContext; the hook NEVER rewrites the file. `apply` was reserved here and treated as `off` -- later activated as the guarded write-back in v1.23.0. A DELIBERATE MINOR with a CONTRACT amendment |
+| v1.19.0 | 000057 / 000060 / 000061 / 000062 | MINOR (four features) cut as one release. 000057: SARIF 2.1.0 + a standalone CI-mode scan over the same engine the hook uses. 000060: AI-era rule pack slice 1 -- the non-ASCII smuggling pre-PSSA byte pass (built the reusable pre-PSSA source category later slices 2/3 reuse). 000062: project-intelligence slice 1 -- deterministic .psd1 static manifest-consistency. 000061: closed-loop agentic correction slice 1 -- the warm daemon re-checks the touched range next turn and reports cleared/still-present, additive |
+| v1.18.1 | 000075 (publish 000076) | PATCH -- native LSP registration restored (drop the two registrar-hostile fields + allowlist guard); registers-but-serve-gated UX documented. 000076 closed the publish gap and added the tree-vs-published divergence guard (now Gate 5) |
+| v1.18.0 | 000064 | MINOR -- supply-chain signing: keyless gitsign-signed release tags (Sigstore via GitHub OIDC, Rekor-logged) + corrected trust posture (cosign judged redundant; Authenticode deliberately not pursued) |
+
+One no-version-bump train landed between v1.23.1 and v1.24.0 and so has no row: **000120** (plugin PR
+#81). Its build leg bounded the Pester bootstrap in `tests/run-tests.ps1` to the **5.x major** at all
+three resolution points (the detection filter, `Install-Module`, and `Import-Module`, the latter two
+carrying `-MaximumVersion 5.99.99`) and added a text-pin guard test, so the Pester 6.0.0 GA
+(2026-07-07) cannot ride a runner-image change into the suite with nobody deciding to upgrade
+(Section 6). Its docs leg refreshed `docs/upstream/claude-code-lsp-registration.md` to the
+post-rewrite `#66987` record (Section 6). Its third leg was the rule-rationale SURVEY that specified
+the v1.24.0 slice above -- it built nothing. Test-infra and docs only; no version moved.
+
+A second no-version-bump train landed after v1.27.1 and likewise has no row: **000156**, which closed
+the dot-source hazard as a class. `scripts/rule-efficacy-ledger.ps1` had been dot-sourcing
+`scripts/review-dogfood.ps1` to reuse its readers, and because dot-sourcing a `.ps1` runs its
+`param()` block in the CALLER's scope, that silently reset the ledger's own `-Path` / `-Source` /
+`-AnnotationsPath` to review-dogfood's defaults; the ledger shipped a defensive
+capture-the-arguments-first workaround to survive it. The 24 reader functions moved into
+`scripts/lib/dogfood-reader.psm1` and both entry points now import that module by a
+`$PSScriptRoot`-relative path, which removes the tree's only instance of the hazard.
+
+**The module conversion was chosen on three pre-stated boundaries, each measured** rather than argued.
+**B1 (encapsulation honesty) PASS:** exactly 1 shared-lib function is reached only by tests and never
+by a shipped caller (`Get-ProjectIntelligenceFindings`); 14 are invoked directly by tests but not by
+shipped callers. Keeping them green forces **zero** exports, because Pester 5.7.1 `InModuleScope`
+reaches module-private functions -- established live, not assumed. **B2 (latency) PASS:** the hook
+spawns a fresh `pwsh` per edit, and `Import-Module` costs **+20.9 ms** on pwsh 7 and **+9.6 ms** on
+Windows PowerShell 5.1 against dot-source (medians of 15 fresh-process runs). The recorded warm-path
+threshold is 9000 ms, so the added cost is **0.23%** of that budget; no shipped threshold is breached.
+**B3 (resolution) PASS:** a `$PSScriptRoot`-relative `Import-Module` resolves under BOTH hosts from a
+simulated marketplace-cache tree that is neither a checkout nor on `PSModulePath`, proven from a third
+directory with no absolute path and no environment variable.
+
+**The conversion is deliberately PARTIAL, and that is an evidence-based split, not an aesthetic one.**
+The four pre-existing `scripts/lib/*.ps1` shared libraries stay dot-sourced. None of them carries a
+`param()` block, so none violates the invariant; converting them would touch 76 dot-source sites
+(59 for `lsp-common.ps1` alone) plus 15 `Mock` sites needing `-ModuleName`, against a suite whose
+recorded wall-clock is 1012-2851 s per verification run. What the measurement did surface is a real
+limit: of the 7 top-level statements those files carry, five are constants that convert mechanically,
+but `$script:PluginVersionCache` and `$script:RuleRationaleCache` are MUTABLE lazy caches that a
+functions-only file cannot express at all -- initialize them inside a function and StrictMode throws
+on first read. That is the pure-lib contract meeting its own ceiling, and it is the concrete argument
+for converting `lsp-common.ps1` to a module in a scoped follow-up.
+
+**Two structural guards ship regardless of which option won** (`tests/PowerShellLsp.LibPurity.Tests.ps1`),
+because they are what closes the class rather than the instance. **G1** parses every file a shipped
+script dot-sources and refuses a top-level `param()` block or any top-level statement that is not a
+function definition -- a bare `Set-StrictMode` or an `$ErrorActionPreference` assignment leaks into
+the caller's scope exactly as a param block does. **G2** sets distinctly-named sentinels, dot-sources
+each library the way callers actually load it, and asserts every sentinel survives byte-identical.
+Both are RED-proven against `tests/fixtures/lib-purity/`, two files built for the purpose rather than
+by corrupting a shipped file, and both are proven to PASS a pure library so neither is merely
+always-red. The covered set is DERIVED from the tree, so a new shared library is covered automatically
+and one converted to a module leaves the set automatically. The 7 legacy statements are recorded as an
+exact, shrink-only baseline whose entries must keep matching on disk; a `param()` block is never
+baseline-able. No source, knob, `CONTRACT.md`, ruleset, daemon-protocol, hook-wiring or
+capture-format change; no version moved.
+
+**A third no-version-bump train, 000157, has no row either -- and it did not land in a PR of its own.**
+It was a fix-forward on 000156's *own branch*, by ADDING two commits (`8b65a0d8`, then `a2c84220`):
+no rebase, no force-push, no amend, no squash, so all four of 000156's commits stayed reachable and
+the push was a pure fast-forward `83685c6..a2c8422`, verified with `merge-base --is-ancestor` *before*
+pushing rather than hoped for afterwards.
+
+**What it fixed.** CI on the 000156 branch had failed on `windows-powershell` alone. Two assertions in
+the G1 RED-proof read `($found | Where-Object { ... }).Count`, and under Windows PowerShell 5.1 a
+pipeline yielding exactly one object **is** that object -- a scalar -- so `.Count` is `$null`; pwsh 7
+wraps it and returns 1. The assertion was correct on every host but the one it ran against. Three
+`.Count` sites were wrapped and proven RED-then-GREEN on the same host and the same Pester 5.7.1: base
+`83685c63` gave **13 passed / 1 failed, exit 1**, and the fixed tree **14 passed / 0 failed, exit 0**.
+
+**The third site's stated premise was FALSIFIED by measurement, and the site was wrapped anyway.** The
+charter called it a latent defect that "breaks the moment a fixture yields one". It does not: `$found`
+is assigned `@(Get-LpTopLevelImpurities ...)` on the line above, so it is already an array before
+`.Count` is ever read. Measured on 5.1.26100.8875, `$a = @( (1) ); $a.Count` returns **1**, while a bare
+parenthesised pipeline `.Count` throws `PropertyNotFoundStrict`; the sweep's independent dataflow pass
+reached the same verdict from the other direction, classifying that site `SAFE-VariableProvablyArray`.
+It was wrapped because the instruction was explicit and the change costs nothing, and it is recorded as
+a zero-cost **defensive edit, not a repair**. The same measurement clears the adjacent identical-shape
+line that was deliberately left untouched, so leaving it is not an instance-not-class lapse.
+
+**The census, and the number that changed the design.** All **498** `.Count` property reads across the
+tree's **146** PowerShell files (136 `.ps1` + 10 `.psm1`, enumerated and filtered by extension rather
+than by a convention-shaped glob) were classified by PowerShell's own AST. The full table is in the
+000157 outbox, and the finding is **not** the two sites that broke CI. It is that
+**`(<command>).Count` cannot be flagged soundly**: of the 13 instances in the tree, 12 are genuine
+traps -- a function's `return @(...)` is unrolled on the way out, so a one-element result arrives at the
+caller as a scalar -- but `(Read-DogfoodAnnotations ...).Count` returns a **hashtable**, whose `.Count`
+is a real property that reads 0 correctly. **One false positive in thirteen** (7.7%), against a repo
+that holds a 0% standard.
+
+**The scalar-`.Count` ratchet therefore shipped NARROWED on that measurement rather than on preference**
+(`tests/PowerShellLsp.ScalarCount.Tests.ps1`). The charter and its own pre-authorized option both named
+parenthesised pipelines **and** command invocations as the soundly-classifiable set; one counter-example
+in the tree refuted that, so the guard flags parenthesised **pipelines** only, allowlisting
+`(<pipeline> | Measure-Object).Count` because `Measure-Object` emits a single `GenericMeasureInfo` whose
+`.Count` is real. What the guard deliberately does not attempt -- command invocations, `$var.Count`,
+chained access -- is stated in its own header with the measured reason, so the next reader inherits the
+evidence rather than the conclusion. **The baseline ships EMPTY, and that is a measurement rather than a
+weakness:** after the wrap there are zero in-scope instances left, which is the strongest ratchet
+position, not a weak one -- the class is fully closed today and any new instance fails immediately.
+Widening the scope to manufacture baseline entries would have meant re-admitting the very shape whose
+false-positive rate had just been measured. All three required behaviours were proven against the
+**production repo-scan arm**, not merely the classifier, using purpose-built fixtures plus a
+self-restoring probe file, so no shipped file was ever edited to watch a guard fire. Green on both
+hosts, 10/10. No source, knob, `CONTRACT.md`, ruleset, daemon-protocol, hook-wiring or capture-format
+change; no version moved.
+
+**PR #106 is MERGED, and these facts were read live on 2026-07-27 rather than transcribed**
+(`gh pr view 106 --json state,mergedAt,headRefOid,mergeCommit`): state **MERGED**, merged
+**2026-07-26T03:49:08Z**, head **a2c84220** -- byte-identical to the SHA 000157 pushed, so nothing
+rewrote the branch between push and merge -- into merge commit **ea3434db**, which is `origin/main`'s
+second-newest commit (re-measured 2026-07-29: the PR #107 merge `4690cdb` has since landed on top of
+it, and the header states the current tip).
+CI is green **by name and on the matching head SHA**, per rule 000081: run **30186041265** on head
+`a2c84220` completed *success* with all four legs green -- `ubuntu-pwsh`, `macos-pwsh`, `windows-pwsh`,
+and `windows-powershell`, the leg that had been red. `sarif-upload` is **not** a fifth leg of that run:
+it is the sole job of a separate workflow (`.github/workflows/powershell-lsp-code-scanning.yml`) that
+does not fire on the pull-request event, and it ran green on the merge commit's own push, alongside a
+second green four-leg CI run (runs **30186769853** and **30186769851**, both on `ea3434db`).
+
+### 000197 and 000200 -- dispositions
+
+One entry each, sourced by dispatch 000201 leg 2 from the outboxes in the strategic-dispatch hub and
+cross-checked against the merged diffs on `origin/main`; 000197 runs to several paragraphs because
+it carries six legs. Together they are the whole of PR **#130**, the no-version-bump train that
+landed between the v1.29.0 true-up and this pass. The merge facts were read live rather than
+transcribed, per rule 000081: `gh pr view 130` returns state **MERGED**, mergedAt
+**2026-08-07T01:39:43Z**, head **41eaac6b0689ef73958d61941aafe5b7eb3d5e7b** and merge commit
+**384e4fa1ffa64e82d8e0297300e02061c7346b49**, which is `origin/main`'s current tip. The whole arc is
+`git diff --stat 9522e4d 384e4fa`: **8 files changed, 1329 insertions(+), 21 deletions(-)** --
+`CHANGELOG.md` deliberately not among them, for the reason leg 4 of this pass derived and the close
+of this section records.
+
+**The held PR this arc opened is NOT the one that merged, and that is recorded rather than smoothed
+over.** 000197's outbox names PR **#129** on branch `dispatch/000197-lege-recharter`; `gh pr view
+129` returns state **CLOSED** with `mergeCommit` **null**, so it never merged. The work landed from
+a re-cut branch, `dispatch/000197-lege-recharter-b`, as #130. Main carries the commits that bracket
+the re-cut -- `e3b5111` "retrigger PR CI", `c1d9d26` "bisect: temporarily revert release.yml to main
+to test CI triggering", `8684744` reverting that bisect, then `1307111` and `b1987a1` "retrigger
+after Actions incident" -- so the branch change was a CI-triggering incident worked around in the
+open, with the bisect probe reverted rather than left in the tree. **Two further dispatches sit in
+this arc and are hub-side only, cross-referenced here by id alone because neither moved anything in
+this repository: 000198** (the hub-only re-mint of 000195 legs G/H/I) **and 000199** (the hub
+doc-set trim merge train).
+
+**000197 -- the Leg-E re-charter. Legs 1, 2, 5 and 6 LANDED; legs 3 and 4 a NAMED BLOCK, the third
+consecutive train to be stopped by the quiescence gate.** **Leg 1** hoisted the quiescence probe's
+`$bootMap` assignment out of the branch that DEFAULTS `-AgentRootPid`. The ancestry-chain walk read
+that variable on every path, so under the `Set-StrictMode -Version Latest` the probe sets for
+itself, **both** documented explicit forms died on "The variable '$bootMap' cannot be retrieved
+because it has not been set" before taking a single sample -- the instrument's documented interface
+was unusable while its default path worked. The hoist is semantically neutral by construction rather
+than by assertion: `Measure-QuiescenceSample` builds its own fresh parent map per sample, so
+`$bootMap` never reaches scoring at all; it only picks the root pid and prints the auditable chain.
+The class-closing regression test does not hand-list forms. It enumerates parameter names from the
+probe's own `param()` block by AST **and** the `.PARAMETER` entries of its comment-based help,
+requires the two sets to agree **in both directions**, requires every documented parameter to carry
+a smoke-run value (a documented parameter with no value is a RED test, not a skip), and executes one
+probe per documented parameter -- **7 distinct invocations**, asserted distinct so a value equal to
+the base cannot collapse a form onto the default one. A separate assertion pins that the probe still
+sets `Set-StrictMode -Version Latest`, without which the entire block would be vacuous, since an
+unset variable would silently read `$null` and every execution assertion would pass against the very
+defect it guards. Its RED control is **per-property**: against the pre-fix probe the two
+fix-sensitive tests fail while the four precondition/floor tests correctly stay green (4 passed, 2
+failed). The class-closer then proved itself immediately -- adding `-BusyProbeCommand` in leg 2
+turned it RED until that new parameter was given a smoke-run value. **One deviation is recorded
+rather than smoothed over:** the charter said to enumerate the probe's documented parameter SETS
+with a floor of `>= 2`, but the probe declares no PowerShell parameter sets at all -- every
+parameter sits in `__AllParameterSets` -- so a literal reading enumerates exactly 1 and the floor
+could never be met. Documented parameter FORMS were enumerated instead, which closes the same class
+non-vacuously and satisfies a real floor.
+
+**Leg 2** put the quiet pre-flight in the INSTRUMENT rather than in the charter that drives it, as a
+new optional `-BusyProbeCommand`. The contract: **quiet** is exit 0 *and* no output; **busy** is a
+non-zero exit code OR any output. On busy the probe refuses with exit **3**, names the refusal, and
+takes no samples; either way the command and its raw output are recorded beside the samples, and
+absent the parameter the behaviour is what it was. Two findings are worth keeping, both caught by
+the tests rather than by review. **The busy probe must run in a CHILD process:** the first
+implementation invoked it in-process via `[scriptblock]::Create`, and the unit test "BUSY by EXIT
+CODE alone" supplied `exit 7`, whereupon the probe exited **7** instead of 3 -- an in-process `exit`
+terminates the probe and makes it report the busy check's exit code as its own verdict. The command
+is now parse-validated in-process, so an unrunnable command is refused without spawning anything,
+and executed in a child. **And the guard is fail-closed:** a pre-flight that cannot run counts as
+BUSY, because a guard that silently permits sampling when it breaks is worse than no guard -- the
+report then claims a check that never happened. Hub-agnosticism is asserted rather than trusted: a
+scan over every `.ps1` in `tests/bench/` with the comment-help block and comment lines stripped
+requires **zero** dispatch-CLI invocations, hub repo names or local paths in executable code, and it
+was **mutant-RED-proven** by injecting a real `dispatch claims --live` call and confirming exactly
+one anchor selected. The needle deliberately requires a subcommand word so the repo's many
+legitimate `dispatch = '000127'` provenance fields are not false positives, and a companion test
+asserts the hub example IS present in comment-help, so "zero references" cannot be satisfied by
+never documenting the local usage.
+
+**Leg 3 ran Gate A v2 exactly as pre-committed and it FAILED, so leg 4 was never attempted.** The
+protocol was byte-identical to the pre-commitment -- 30 samples at 1000 ms, threshold 0.15 cores
+strictly under, agent tree and probe tree excluded and re-resolved per sample -- and the verdict was
+a foreign mean of **0.2219 cores** against that 0.15 bar, foreign max **2.6971**, with the agent's
+own **0.3403 cores** held out of the figures and 57 agent pids excluded per sample. **This is a
+different FAIL from 000170's and 000171's, and the difference is the whole point:** those failed
+partly on their own apparatus, whereas here the exclusion is demonstrably correct and the load is
+real foreign desktop software -- chrome 0.8477, AMDRSServ 0.6165, ms-teams 0.3082, explorer 0.2620
+and LogiOverlay 0.1695 cores in the final-sample table. Samples 1-22 were largely quiet and the
+spike over 23-30 carried the mean over the bar. The instrument is finally measuring what it claims
+to measure; what it measured is a workstation running Chrome, Teams and the AMD Radeon service. **No
+relaxation was applied or considered.** Leg 4 was pre-ruled blocked on exactly this outcome, so
+`docs/benchmarks.md` is untouched, no findings fixture was authored, and the analyzer-clean
+`bench-fixture.ps1` was never opened -- publishing a millisecond figure measured under 0.2219 cores
+of foreign load is precisely what the gate exists to prevent. A custom_check asserted both forbidden
+paths absent from the diff, floored on the total changed-file count so an empty or wrong ref could
+not fake the assertion.
+
+**Leg 5 upgraded this document's `userConfig` enum sentence from OBSERVATION to EXPLANATION.** The
+v1.28.1 row had recorded that no knob in the manifest declares a `values` or enum field; leg 5
+established that none **CAN**. Re-derived at write time from the installed binary -- and the
+re-derivation was substantive rather than ceremonial, because Claude Code had moved to **2.1.223**
+where 000195 leg F read **2.1.221**, with two `.describe()` strings differing between the builds and
+the load-bearing shape identical. The shipped `userConfig` option schema is `.strict()` over exactly
+**nine** top-level keys (`type`, `title`, `description`, `required`, `default`, `multiple`,
+`sensitive`, `min`, `max`) with `type` a closed five-primitive enum and the anchor **unique** in the
+binary, so a `values` field is REJECTED rather than merely absent. The ledger diff was exactly
+**two hunks** -- the Section 9 front-door paragraph and the v1.28.1 row -- with no header re-truing
+and no other content moved. It also authored `docs/upstream/claude-code-userconfig-enum.md` as a
+POST-READY DRAFT naming two concrete asks (an optional `values` field on `string`, or a sixth `enum`
+type) with a compatibility note that `.strict()` makes the field a hard error on older clients. Its
+header states plainly that filing is Mike Andersen's gate; **nothing was posted.**
+
+**Leg 6 made the dry-run pair STRUCTURAL, closing the gap v1.29.0 had proved by shipping with no
+rehearsal at all.** The discriminability problem was solved at the run object rather than in its
+logs: `dry_run` is an input and inputs do not appear on a run, which is why 000161 and 000169 could
+only recover it by step forensics, so the workflow's `run-name` now encodes it and every run carries
+`[DRY-RUN]` or `[PRODUCING]` and `target=<commit-or-HEAD>` in its own name. **Gate 6** runs only
+when `!inputs.dry_run` and refuses unless a SUCCESSFUL `dry_run=true` run exists for the **same
+resolved target commit** within **3 days** -- the window bounding drift in the external state a
+rehearsal validated but the commit does not pin (Gate 5 reads `origin/main`'s published manifest,
+Gate 4 reads CI runs), with commit identity the primary guard and the window explicitly not the main
+protection. `skip_dry_check` (boolean, default false) is the recorded bypass: when true the gate
+logs `SKIPPED-BY-INPUT` as both a workflow warning and a banner, and passes -- so skipping the
+rehearsal is a run parameter visible forever rather than an undetectable omission. The decision
+logic was factored into `release/Test-DryRunPair.ps1` and unit-tested with **14** tests covering
+every refuse path, then retroactively validated against real release history rather than fixtures:
+the v1.28.1 producing run PASSES (through the pre-marker legacy fallback, since those runs carry the
+bare title `powershell-lsp release`) and the v1.29.0 producing run is REFUSED. That second result
+also CONFIRMED from GitHub, rather than inherited from the charter, that v1.29.0 shipped with no dry
+run. **The live proof is PENDING BY CONSTRUCTION and is stated exactly that way:** Gate 6 has never
+executed on a GitHub runner and first will on the next real cut; this train triggered no release
+workflow run at all, asserted by a custom_check. **A second deviation is recorded here too:** leg 6
+also edited the workflow's own header comment, which the charter did not name, because that
+enumeration read "(1)..(4)" and had ALREADY drifted -- Gate 5 shipped with dispatch 000076 without
+extending it, so the file described four gates while running five. A test now anchors the prose
+enumeration to the actual gate steps and fails if they diverge. **No version bump** (the 000159 leg
+1b shape: CI plus docs). Verification: `tests/PowerShellLsp.Release.Tests.ps1` in full at **64
+passed, 0 failed**, including all 40 pre-existing tests, and the `D4`/`E1`/`E2` benchmark blocks at
+**21 passed, 0 failed**, both filtered runs carrying an executed-count floor so a zero-selection run
+exits 3 rather than reporting success. The full ~1029-test suite was deliberately NOT run locally --
+the host was under the load leg 3 had just measured -- and was left to CI on all four legs.
+
+**000200 -- fix-forward on PR #130. The eleven `windows-powershell` failures were TWO independent
+5.1 divergences, not one; both fixed at their own layers, and the arithmetic closes exactly.** The
+reproduction came first and came through the repo's OWN entry point, which is what made it faithful:
+`tests/run-tests.ps1` under `5.1.26100.8875` with Pester 5.7.1 reproduced **3 passed / 11 failed**,
+an exact match for the CI job. **Divergence A (10 of the 11) is that Windows PowerShell 5.1's
+`ConvertFrom-Json` does not enumerate a top-level JSON array.** At `release/Test-DryRunPair.ps1:125`
+the idiom was `$runs = @(ConvertFrom-Json $rawJson)`; instrumented side by side on the same input,
+`@(ConvertFrom-Json '[{a},{b}]')` gives Count **1** on 5.1 against 2 on pwsh 7.6.3, and the type of
+element `[0]` is **`System.Object[]`** rather than `PSCustomObject`. 5.1 writes the deserialized
+array to the pipeline as ONE item, so `@(...)` wraps the whole run list in a 1-element array; every
+downstream lookup then runs against an `Object[]`, and because the accessor guards with
+`PSObject.Properties.Name -contains`, the missing `id` and `conclusion` came back `$null` instead of
+throwing -- which is exactly why the defect presented as *empty strings* rather than an error, and
+why every single fixture emitted the same `conclusion= (a failed rehearsal is not a rehearsal)`.
+That also explains the two cases that "passed": both passed **vacuously**, one asserting the very
+message the bug emits for everything and the other asserting only exit code 1. The fix is assign
+first, wrap second, guard `$null` -- and the guard is load-bearing on **7**, not on 5.1, because
+there `'[]'` yields nothing and `@($null)` would manufacture one phantom run; verified for N = 0, 1,
+2, 3 on both hosts. **Divergence B (the 11th) has nothing to do with JSON ingestion:** the case
+"SAFE-FAILS on an empty or missing runs file" exercises two `throw`s whose text arrives on stderr
+and is captured with `2>&1`, and under the `$ErrorActionPreference = 'Stop'` that
+`tests/run-tests.ps1` sets, 5.1 promotes that redirected native stderr line to a **terminating**
+error where pwsh 7 does not. It was fixed at the TEST layer with a save/neutralize/restore of EAP in
+a `try/finally`, matching the idiom `tests/PowerShellLsp.SarifScan.Tests.ps1:673-676` already
+documented and applied -- so leg 6's new test had simply not inherited it. **The strongest single
+piece of evidence is the arithmetic, and it is recorded as a count rather than a conclusion:** the
+`windows-powershell` leg went **1676 passed / 11 failed / 3 skipped** (run 31131137394) to **1687
+passed / 0 failed / 3 skipped** (run 31134173407), and `1676 + 11 = 1687` -- precisely the eleven
+originally-failing cases flipped to green with the passed count moving by exactly that amount, so
+nothing else in the suite was silently skipped, renamed or disturbed. All four legs are green on
+that run, headSha-matched to `41eaac6b0689ef73958d61941aafe5b7eb3d5e7b` per rule 000081, and a
+separate check confirmed all 30 `Should` assertions in the target Describe are byte-identical before
+and after, so the green was earned by the fix rather than by weakening the test. **Three deviations
+are recorded.** The inbox chartered ONE defect and STEP 3 anticipated one mechanism; two were found,
+with different mechanisms and different correct layers, and fixing only the named signature would
+have left CI red. The inbox stated the Describe holds 13 cases (11 failing, 2 passing) and it holds
+**14** (11 failing, 3 passing) -- the third passer being "is ASCII-only", which byte-scans the file
+and never exercises the decision path, so it could not have failed; recorded because the count feeds
+the assertions-unchanged claim, which is therefore asserted over all 30 `Should` lines rather than
+over a case count. And the scan for the same `ConvertFrom-Json` trap elsewhere in `release/`,
+`scripts/` and `tests/` found nothing affected and **fixed nothing** -- `audit-release-bodies.ps1`
+and the JSONL readers either parse one object per line or have an intervening pipeline stage that
+enumerates -- recorded so the negative result is not re-derived next train. **The residual this
+dispatch flagged is the reason leg 3 of dispatch 000201 exists:** `Test-DryRunPair.ps1` was
+defective under 5.1 in the SHIPPED gate and not merely under test, since fed a real `gh run list
+--json` array it would have rejected every genuine rehearsal. It survived only because the
+production gate step happens to run the script under `pwsh`. Of its two rule candidates, the
+stderr-promotion one is the confirmed **second** observation and the one that earned promotion; the
+`ConvertFrom-Json` one is a **first** observation in this repository, derived rather than assumed by
+the scan that found no other affected call site.
+
+**Leg 4 of dispatch 000201 changed `CHANGELOG.md` NOTHING, and the convention is DERIVED rather than
+assumed.** Two hypotheses were tested against this repository's own git history. The first --
+that `[Unreleased]` is authored at release-prep time by `scripts/bump-version.ps1` -- is FALSIFIED:
+the string "changelog" appears nowhere in that script, whose only write targets are
+`.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`. The second -- that
+`[Unreleased]` is populated per-merge and re-headed at the cut -- is CONFIRMED: at commit `d9e8889`
+(000153 legs 3+5) it carries a full PATCH entry ending "both manifests stay lockstep at 1.27.0 and a
+future cut classifies this entry", and at `06fec64` (000154, the very next commit to touch the file)
+that same entry sits under `## [1.27.1] - 2026-07-25` with `[Unreleased]` emptied; two merge commits
+`4f17c43` and `82cee3b` are named "stack CHANGELOG Unreleased entries" outright. **But the per-merge
+rule is scoped by what the file says it records** -- `CHANGELOG.md` line 3: "All notable changes to
+the `powershell-lsp` plugin are documented here" -- and every no-version-bump train in this
+document's own record wrote NO entry: `git log --all -- CHANGELOG.md` returns no commit from 000120,
+000156, 000157 or 000159 legs 1a/1b. (The one commit whose message names 000157, `4690cdb`, is
+000158 correcting the already-released `[1.27.1]` clause at 3 insertions / 3 deletions, not an
+`[Unreleased]` entry.) The 000197/000200 arc is exactly that shape -- a release workflow, release
+tooling, repository docs and tests, with no plugin behaviour among its 8 files, and 000197's own
+outbox classifying it "No version bump (000159 leg 1b: CI + docs)" -- so an entry would have been
+the departure from the convention, not the observance of it. `[Unreleased]` is therefore empty at
+`origin/main` on purpose, and this paragraph is the record that the question was asked and answered
+rather than skipped.
+
+### 000169 through 000174 -- dispositions
+
+One paragraph each, sourced from the outboxes in the strategic-dispatch hub by dispatch 000195 leg A.
+Together they are the whole of the v1.29.0 cycle plus the ledger true-up that preceded it.
+
+**000169 -- docs-only decision-ledger true-up. CLOSED.** It advanced this document's header to the
+then-live Latest (v1.28.1) and added the missing v1.28.0 and v1.28.1 rows to the Section 2 table,
+measuring both releases directly rather than the Latest alone -- tag objects, taggers, manifest
+versions, knob counts and order, Release metadata, `isLatest` across the top six, headSha-matched
+push-CI, the full step list separating each dry run from its producing run, and `gh attestation
+verify` on all four assets RED-probed against a tampered copy. It is the direct predecessor of THIS
+pass, and it established the shape this one repeats: a scheduled true-up, not a repair.
+
+**000170 -- round-3 evidence train. Leg 1 BLOCKED; legs 2-5 delivered (PR #118 HELD).** Leg 1 was to
+publish per-profile telemetry numbers and did not: the host would not hold quiescence, so NO numbers
+were published rather than numbers published without their gate evidence. That refusal is the
+precedent the Gate A v2 protocol was written from. Legs 2-5 landed regardless -- the Arc A gap
+RED-proven, the union-read denominator finding raised, the vendor-corpus ask found EMPTY rather than
+blocked, and Section 9 appended.
+
+**000171 -- round-3 build train. Leg 1 BLOCKED AGAIN; legs 2-5 all DELIVERED (PR #119).** The
+quiescence gate failed a second time, at **3 of 5 pre-committed gate points**, and again no numbers
+were published. Everything else shipped: per-rule lifecycle persistence landed in a SIBLING log with
+the capture format proven byte-unchanged, four corpus shapes were authored and scoring, the
+union-denominator question was decided with its cost and its measured limit stated, and a MINOR
+`[Unreleased]` entry was written. It also raised two Section 9 corrections and a two-defect pattern
+in the benchmark suite. This is the build that v1.29.0 released.
+
+**000172 -- fix-forward on PR #119. Nine legs delivered; the four-green criterion a NAMED BLOCK.**
+Both chartered CI blockers were cleared and all four banked defects closed, with the original
+failure reproduced first in every case. It stopped short of its own acceptance honestly:
+`windows-powershell` stayed red on a THIRD, pre-existing unsound timing assertion the train was
+forbidden to touch, measured at 3-in-10 on 5.1 and 1-in-10 on pwsh **with no plugin code in the
+path**. Two premises were corrected BY MEASUREMENT rather than argued -- the DSC split is by
+PLATFORM, not by host, and the pre-authorized D1 null-sentinel fork was REFUTED.
+
+**000173 -- fix-forward #2 on PR #119. The cross-clock assertion repaired at the right layer.** It
+settled from the documents that no internal-consistency guarantee exists and that the record is a
+TEST-HARNESS construct with zero product consumers, so the defect was in the test rather than in the
+product, and it was fixed there. It corrected the story going in: the sub-cap rate is a property of
+the WAIT SHAPE, not of the host, at 16.7% on BOTH hosts -- so the pwsh legs had been passing on luck.
+Its leg 5 corrected its OWN inbox: a one-sided cross-clock bound is not unsound at any width, and the
+discriminator is MARGIN, not shape.
+
+**000174 -- release prep for v1.29.0 (MINOR), and a corrected ritual. CLOSED; released.** The cut
+landed in ONE commit -- CHANGELOG first, lockstep bump second -- so the 000168 window has no commit
+to bisect into, and the `[Unreleased]` body moved byte-identical (2 insertions, 0 deletions, same
+SHA-256, same 9907 bytes). Its leg 1 CORRECTED ITS OWN INBOX on the release ritual itself: the inbox
+instructed a hand-cut tag in three places and `docs/RELEASING.md` forbids exactly that, so following
+the instruction would have made Gate 2 refuse the run AND produced an unsigned, unattested tag. The
+shipped artifacts settled it -- 21 of 22 annotated tags are cut by `github-actions[bot]` and gitsign.
+The pipeline cut v1.29.0 from PR #120 the same day.
+
+### 000159 -- legs 1a / 1b / 2 RELEASED in v1.27.2; leg 3 a recorded NO-BUILD
+
+**A fourth train now has its own row above.** 000159 prepared **v1.27.2**, PR #108 merged
+2026-07-29T15:18:09Z as merge commit **49ce894**, and the pipeline cut and published the release the
+same afternoon. Read every claim in this block as *shipped*, and see the header for the five-read
+verification.
+
+| Leg | Outcome | Bump |
+|---|---|---|
+| 1a flake instrumentation | RELEASED in v1.27.2, steps 1-2 only | none (test-infra) |
+| 1b 5.1 SARIF validation gap | RELEASED in v1.27.2, closed at the artifact level | none (CI) |
+| 2 multi-name export lists | RELEASED in v1.27.2 | PATCH |
+| 3 scalar-`.Count` finder | **NO-BUILD** at 7.14% measured FP | none |
+
+**Leg 3 is the load-bearing outcome, and it is a no-build proven by absence in the 000127 shape.**
+The charter demanded the oracle measurement BEFORE any finder was built, and demanded the live count
+rather than the remembered one. **The live oracle is 325 files** -- 153 repo `.ps1`/`.psm1` plus 172
+installed-module scripts across 6 `PSModulePath` roots -- **not the 281** (150 + 131) the charter
+carried forward. No attempt was made to reconcile the two and none should be: the installed-module
+set is machine state, so 281 and 325 are two different machine-days rather than a number and its
+correction, which is why the rows above that cite a 281-file oracle (000139, and S3.4) stand as
+written. Impact on the fork: none -- a wider oracle can only surface more counter-examples, and it
+surfaced one. The classifier -- the 000157 guard's logic verbatim -- returned **28 hits**, and
+hand-triage put the measured false-positive rate at **7.14% MINIMUM (2 of 28)** against a **0%**
+bar, so the pre-adjudicated fork resolved to NO-BUILD: no finder, no CHANGELOG entry, no second PR,
+and owned finders stay at **6**.
+
+The two failing hits are Pester's `($help | & $SafeCommands['Measure-Object']).Count`, and the
+failure is structural rather than a tuning miss. The allowlist keys on
+`CommandAst.GetCommandName()`, which returns **`$null`** for a dynamic invocation `& $expr`, so it
+cannot see a `Measure-Object` that is genuinely there; the identical DIRECT call resolves
+`GetCommandName()` to `Measure-Object` and is correctly silent. Measured under Windows PowerShell
+5.1.26100.8875 with StrictMode Latest, the expression returns **3** for a three-element input and
+**1** for a single-element input and **never throws** -- a real `GenericMeasureInfo` count -- so
+flagging it is simply wrong. The number was NOT rescued: allowlisting the dynamic form, or dropping
+the 22 `Get-Member` membership probes whose exclusion would move the rate to 85.71%, would each have
+produced a passing measurement and a finder nobody agreed to. The lower and less flattering rate is
+the one reported, because the fork is decided by the 2 unambiguous hits alone.
+
+**This is the third static check in this repo the same idiom has defeated** -- it beat the alias
+check in 000127 leg 4, it is named in 000159 leg 2's own degrade language, and it has now killed
+this finder's allowlist. That recurrence, rather than the no-build, is the finding worth carrying
+forward, and the full 28-hit evidence table lives in the 000159 outbox so the next charter starts
+from data instead of from this dispatch's conclusion.
+
+**What the three built legs staged.** Leg 1a instruments the daemon-initializing flake: an outcome
+recorder wired into all 12 hooks that collapse distinct failures into one empty string, derived by
+AST rather than hand-listed and carrying a vacuity floor that asserts the derived set is non-empty,
+plus a rescue that copies each isolated data root's `logs/` inside the glob CI actually uploads --
+proven by running the real thing with the env var CI sets, not by reading the YAML. Leg 1b closes
+the 5.1 SARIF gap at the artifact level: Windows PowerShell 5.1 emits its SARIF, pwsh 7.6.3
+validates those artifacts against the vendored 2.1.0 schema, and `-RequireHost 5` is the point
+rather than a nicety, since a leg that silently emitted nothing would otherwise validate zero files
+and report success. RED-proven four ways, each exit 1. Leg 2 teaches `ManifestConsistency` to read
+multi-name `Export-ModuleMember` lists: `-Cmdlet` was measured to share the collection path and is
+fixed with it, `-Alias` was measured NOT to, and mixed literal/variable lists now DEGRADE rather
+than half-resolving -- pre-fix they silently assumed export-all, and a partial set reading as
+complete is the worse defect.
+
+**Three of the four commits were ADOPTED from a session that died, and every recorded proof was
+RE-RUN rather than trusted** (Hub Rule 7): `c5ee43dc` (leg 1a), `2068b2b2` (leg 1b) and `4dd979ae`
+(leg 2), with `8aa812e4` the release prep authored in-session. All proofs reproduced exactly. The
+re-run also resolved the handover's one unknown -- an unexplained detached worktree turned out to be
+the pinned pre-fix baseline the leg 2 RED proof required, after which it was removed rather than
+left as stray state.
+
+**The accepted deviation rides with the cut, and it is large.** Mike Andersen ruled mid-session that
+the 0%-FP bar is scoped to the CHARTERED class, and that ruling's premise was checked rather than
+assumed: **0 of the 910** `ManifestConsistency` hits remaining on the live oracle after the fix are
+attributable to a multi-name export list. But of those same 910, **909 are confirmed false positives
+with 0 true positives**, all belonging to a SECOND class -- `FunctionsToExport` -- that this train
+did not fix and that Section 6 now carries as a standing item. That limitation is stated in the
+1.27.2 CHANGELOG entry itself rather than only here, because `docs/RELEASING.md` says the entry
+becomes the release notes verbatim and a reader deserves to know the check is not yet trustworthy on
+their own tree.
+
+### Wave-1 merge outcomes (000136 / 000137 / 000139) plus the 000141 cut -- the whole cycle on main
+
+The three Wave-1 dispatches merged to main in dependency order on 2026-07-21, and the 000141 cut
+train merged behind them on 2026-07-22 (all verified-from-web via `gh pr list --state merged`):
+
+| PR | Dispatch | Merge commit | Merged (UTC) |
+|---|---|---|---|
+| #93 | 000136 continuity + governance docs | `fbb857c` | 2026-07-21T13:30:47Z |
+| #94 | 000137 docs/trust.md | `303c714` | 2026-07-21T14:02:30Z |
+| #95 | 000139 CommandLinePlaceholder finder (MINOR) | `771866c` | 2026-07-21T15:34:55Z |
+| #97 | 000141 v1.26.0 lockstep cut + roadmap true-up | `22bec89` | 2026-07-22T01:15:10Z |
+
+`22bec89` is the current origin/main tip AND the commit the v1.26.0 tag points at, so `git describe
+--tags origin/main` returns a bare `v1.26.0` with no commit offset (verified-from-web). Both push
+workflows are GREEN on that exact tip, headSha-matched per rule 000081: CI run **29882589709** and
+code-scanning run **29882589757**. No plugin PR is open (verified-from-web).
+
+**PR #95 carried two post-completion test-fix commits for a real Windows PowerShell 5.1 divergence**
+(`f0d604c`, `1982f32`). On PS 5.1 a scalar `PSCustomObject` and `$null` both return `$null` from
+`.Count` -- the member does not exist on a scalar and strict mode does not save you -- so a counted
+expression must be wrapped in `@()` before `.Count` is read. The `windows-powershell` CI leg failed
+twice on this, at `4f17c43` (run 29837521908) and again at `f0d604c` (run 29840467411), with the
+signature `Expected 1, but got $null.` **Only the test assertions were affected: the finder itself
+detects correctly on 5.1**, which is why the fix is confined to `tests/PowerShellLsp.Unit.Tests.ps1`
+(9 assertions wrapped, product code untouched). This is recorded as a rule observation in the 000141
+outbox -- the two independent CI failures are its second observation.
+
+### Scan-robustness lineage (000129-000133) -- the blocked pair, the budget chain, the flip
+
+The persistent ubuntu-24.04 code-scanning RED on main -- an INCOMPLETE scan (exit 4), the 000024
+never-silent discipline firing CORRECTLY, not a findings-induced false red -- drove a
+five-dispatch lineage. It is recorded here because two of its dispatches are BLOCKED (no CHANGELOG
+row of their own) and the rest shipped as v1.25.1, and because the budget it chased was
+mis-identified twice before the tree settled it.
+
+- **The refuted-premise blocked pair (000129, 000130) -- the SPEC_AMENDMENTS-A3 precedent.** Both
+  were fix-forward dispatches premised on an "overloaded exit 4" that does not exist on the tree,
+  and both ended `blocked` + `deviations`, never `blocked -> complete` (A3: no partial state;
+  refuted work is recorded as blocked plus its deviations). **000129 (CC stop-and-record;
+  verified-from-disk):** a whole-file enumeration found all six `exit` sites; BOTH `exit 4` sites
+  mean INCOMPLETE and the `-FailOn` gate is `exit 2` via `Get-FailExitCode` (returns only 0 or 2)
+  -- there is no second meaning on 4 to split, so the prescribed disambiguation would invent a
+  distinction and leave the RED untouched. **000130 (a re-issue, refuted a SECOND way, then a human
+  ruling):** its new premise -- that `CONTRACT.md` freezes an exit-code table E2.1 violated -- is
+  also false; that file freezes only `userConfig` knob NAMES and the diagnostics status taxonomy (a
+  grep over it for exit / sarif / code-scanning / 0-2-3-4 returns ZERO hits), so there is nothing to
+  amend, and adding an exit 5 would have to move exit 2 (the inbox's own named stop). Mike Andersen
+  ruled interactively (2026-07-17): block and charter, do not touch any exit-code surface -- which
+  chartered 000131 for the real fix.
+- **The three-budget correction chain -- a disk-governs case study.** What binds a per-file
+  analysis was mis-named twice before the tree settled it. 000129 / 000130 / 000131 and 000132's
+  own charter all named a CLIENT budget: first the **25000 ms** process cap (`lsp-scan.ps1
+  -TimeoutMs`), then the **18000 ms** client `timeoutMs`. 000132's measurement corrected it a THIRD
+  time to the actual binding cap -- the daemon's OWN settle cap **`MaxWaitMs` (default 5000 ms)** in
+  `scripts/pses-daemon.ps1`, which no client budget reaches -- so raising a client budget could
+  never have turned the RED green. Each step overrode the prior on evidence read from the live tree,
+  not from the charter: disk governs.
+- **The fix and the flip (000131 -> 000132 -> 000133; verified-from-web).** 000131 made the
+  INCOMPLETE diagnosable by NAMING the unanalyzable file(s) across three surfaces, budgets
+  untouched. 000132 fixed the correctness gap (a client-cap-KILLED file had passed as clean; now
+  recorded NOT analyzed) and identified `MaxWaitMs` as the true cap. 000133 raised the SCAN daemon's
+  `MaxWaitMs` 5000 -> 15000 (scan-only; the in-agent daemon byte-identical at 5000; INTERNAL, no
+  knob, no CONTRACT change). main's own code-scanning workflow
+  (`.github/workflows/powershell-lsp-code-scanning.yml`, the 000127 leg-5 upload,
+  inert-until-merged by construction) then flipped RED -> GREEN at the #91 merge -- headSha matched
+  per rule 000081: run **29643752601** RED at `aeeb42d` (#89), run **29657184770** RED at `73dacdb`
+  (#90), run **29661464779** completed/**success** at `85fb892` (#91, the origin/main tip). The
+  settle-cap fix holds on main itself, not just on a branch. These three PATCH entries shipped as
+  **v1.25.1**, released 2026-07-19 (Section 2).
+
+### The 000141 cut train -- MERGED and RELEASED; disposition closed
+
+**Disposition resolved (verified-from-web this session):** the 000141 train merged as plugin PR
+**#97** (merge commit `22bec89`, 2026-07-22T01:15:10Z), Mike then ran the release pipeline, and
+v1.26.0 became the Latest Release -- a badge it has long since handed on, and which 000169 re-read
+as sitting on v1.28.1. At write time that train held every gate open; all of them
+have since been taken, in the correct order and by the correct actor. The record of the train as it
+ran: Leg 1, the v1.26.0 MINOR cut (both manifests + the dated CHANGELOG heading;
+`PowerShellLsp.Release.Tests.ps1` 39/39 green on the cut tree, the version lockstep RED-proven
+in-session by mutation, then restored). Leg 2: the roadmap refresh this section sat in. Leg 3: a
+read-only community-catalog poll (boolean + timestamp recorded in the outbox). Leg 4: a fresh PK
+bundle. No product code moved; no knob, ruleset, rationale, exit-code, budget, or CONTRACT surface
+changed.
+
+The classification was version-agnostic by construction: it reads the current version off disk,
+scans the live `[Unreleased]` entry lines for their leading PATCH/MINOR/MAJOR token, and takes the
+highest. Wave 1 stacked MINOR (000139) over PATCH (000137) over PATCH (000136), so the cut was
+`1.25.1 -> 1.26.0`. Had `[Unreleased]` been empty the leg would have asserted the NO-BUMP invariant
+instead (the 000127 leg-8 shape) -- never a bump by default.
+
+**One process deviation is recorded here rather than smoothed over, because the runbook now turns on
+it.** A `v1.26.0` tag existed on origin ahead of the release and was **deleted** so the pipeline
+could cut its own (verified-from-web: a `DeleteEvent` for `refType=tag`, `ref=v1.26.0`, actor
+`manderse21`, at 2026-07-22T12:03:51Z -- three seconds before the dry run). The gated pipeline then
+ran clean twice: a dry run at 12:03:54Z that passed all five gates and cut nothing, and the real run
+(29918156282) at 12:04:27Z that cut the gitsign-signed tag at 12:06:36Z and published the Release at
+12:06:42Z. **Gate 2 -- "tag does not already exist" -- passed in both runs**, which is precisely why
+the pre-existing tag had to be removed first.
+
+Nothing shipped from the deleted tag: the published v1.26.0 tag, both assets, and their SLSA
+provenance all trace to run 29918156282 under `github-actions[bot]`. But a hand tag racing the
+pipeline is exactly the failure class Section 3 exists to prevent, and it was invited by
+documentation that printed runnable `git tag` commands as though they were the release path -- the
+000141 outbox closes with exactly such a pair. Dispatch 000143 corrected every such surface: the
+pipeline cuts the tag, and printed commands survive only as an explicitly-labelled manual fallback.
+
+### HELD in PR (000134) -- snapshot retained; disposition since resolved
+
+**Disposition since resolved (verified-from-web this session):** the 000134 train merged as plugin
+PR **#92** (merge commit `c9692ca`, 2026-07-19) and its staged cut was tagged and published --
+**v1.25.1** became the Latest Release (2026-07-19T00:41:38Z), gitsign-signed at tag object
+`f92ff79` over `c9692ca`, and has since been superseded seven times over (000169 re-read the badge
+as sitting on v1.28.1). The snapshot below is retained as the historical record of the train as it
+ran; it is no longer the current held PR (that is 000141, above).
+
+That train's legs sat on ONE plugin PR (the v1.25.1 cut + that roadmap refresh) plus its paired hub
+PR; at write time nothing was merged, tagged, triggered, verified, F2-flipped, or published -- every
+gate stayed Mike Andersen's, and he has since taken them. Leg 1: the v1.25.1 PATCH cut (both
+manifests + the dated CHANGELOG heading; `PowerShellLsp.Release.Tests.ps1` green on the cut tree,
+the version lockstep RED-proven in-session by mutation, then restored). Leg 2: that refresh. Leg 3:
+a read-only community-catalog poll (boolean + timestamp recorded in the outbox). Leg 4: a fresh PK
+bundle. No product code moved; no knob, ruleset, rationale, exit-code, budget, or CONTRACT surface
+changed.
+
+### HELD in PR (this dispatch, 000127) -- snapshot retained; disposition since resolved
+
+**Disposition since resolved (verified-from-disk/web this session):** leg 1's reference-surfacing
+design shipped as **v1.25.0** (000128, carrying the frozen-knob CONTRACT amendment it was blocked
+on), and leg 5's code-scanning UPLOAD workflow is now on main -- it is the workflow whose RED ->
+GREEN flip the scan-robustness lineage above records. The snapshot below is retained as the
+historical record of the train as it ran; it is no longer the current held PR (that is 000134,
+above).
+
+Everything in this subsection sits in ONE open plugin PR on `dispatch/000127-overnight-train`. It is
+**not on main, not tagged, not released**, and no version moved. It is listed here so the roadmap is
+not silently stale for a reader who pulls the branch -- never as shipped work. Merge, and any release,
+are Mike Andersen's gates. **Leg 8 classified this train NO-BUMP** (reasoning below).
+
+- **Leg 1 -- N1.2/N1.3 reference surfacing: BLOCKED, survey delivered, ZERO product edits.** The
+  design is settled and the single blocking decision is named (the `CONTRACT.md` FROZEN-KNOBS
+  amendment); see N1.2 in Horizon 1. Nothing was built and no workaround was attempted -- a
+  frozen-surface amendment is not an unattended decision. The survey is the leg's deliverable.
+- **Leg 2 -- the ServeShim lifecycle flake: ROOT-CAUSED and FIXED (test-infra only).** The 000125
+  outbox recorded two lifecycle tests (process reap + crash-propagation exit) failing intermittently
+  on BOTH hosts, the failing pair VARYING per run, one isolated run fully green, and all four CI legs
+  green. Root cause: the test harness's PSES-child lookup matched ANY `pwsh`/`powershell` whose
+  command line contained `Start-EditorServices.ps1` + `pses-serve-`, scoped to nothing -- so a PSES
+  leaked by a PRIOR session (000125 recorded six, aged 19-29h, and already suspected them of
+  "inflating the local ServeShim flake") was returned as "this shim's child". The reap assertion then
+  measured a foreign process, and the crash scenario KILLED one. That explains every recorded symptom,
+  including why CI never saw it: a clean runner has no orphans. The lookup is now scoped to the run
+  under test (start-time + parentage, both parameters mandatory so the unscoped scan is
+  unexpressible), and three fixed sleeps became bounded readiness gates. **Shim product code is
+  untouched** -- the semantics were never at fault.
+- **Leg 3 -- N1.5 latency harness + measured numbers (see N1.5, and `docs/benchmarks.md`).**
+- **Leg 4 -- N1.6 slice-2 survey: verdict recorded, ZERO product edits** (see N1.6).
+- **Leg 5 -- E2.1: exit-code policy matrix tests + the code-scanning upload workflow** (see E2.1). The
+  workflow is inert until merged by construction (no `pull_request` trigger), and the four named CI
+  legs plus the release pipeline are diff-proven byte-identical.
+- **Leg 6 -- catalog poll (read-only): `claude-powershell-lsp` is NOT present** in
+  `anthropics/claude-plugins-community`'s `marketplace.json` (HTTP 200, 2248 plugin entries, polled
+  2026-07-17T01:05:03Z, verified-from-web). Nothing is inferred about Console-side state in either
+  direction; see E2.3, which is Mike-gated and unchanged.
+- **Leg 7 -- this refresh.**
+- **Leg 8 -- NO-BUMP (recorded, unilateral).** Classified from the CHANGELOG's own on-disk policy over
+  what actually landed: MINOR requires "a new backward-compatible capability -- a new `userConfig`
+  knob, an added diagnostics feature, a newly CI-verified platform", and **none of those landed**. Leg
+  1 blocked, so there is no knob; leg 5's exit-code gate turned out to have shipped in v1.19.0 already,
+  so what it landed is tests, a repo-CI workflow, and one behavior-neutral internal refactor (the
+  `-FailOn` policy function moved into the scan library so it could be unit-tested at all). The
+  plugin's runtime behavior is byte-identical. That is exactly the **000120 precedent** -- a
+  test-infra-and-docs train that moved no version and took no Section 2 row. The docs improvements ride
+  the next release that has a real reason to cut.
+
+Earlier arc (v1.5.x through v1.17.0 -- launch-readiness, licensing MIT -> GPLv3, reliability /
+auto-relaunch, doctor self-check, dogfood capture + review tooling, the CI proof-framework, the
+enterprise trust-surface + measured-0%-FP corpus, community-release readiness, and release-engineering
+automation with SBOM + provenance) is in CHANGELOG.md and the 000001-000067 log -- all merged,
+F2-verified, and tagged where a version moved. CHANGELOG.md is authoritative for that older band; it
+is not re-transcribed per-version here.
+
+## 8. External technical review, round 2 (2026-07-31) -- adjudicated
+
+A second external technical review, assessing v1.28.0 and scoring it 8.4 -> 8.8 after the round-1
+response, was analyzed by Strategic-Claude and adjudicated by Mike Andersen on 2026-07-31. Rulings
+R1-R5 were made before any execution began, and dispatch 000167 re-derived the review's nine
+verifiable claims from the v1.28.0 tag (commit `57a61c5`) before anything was chartered on them.
+This entry is the ratified register. The round-1 register -- the last bullet of Section 6 above --
+is unchanged and still stands.
+
+**Adopted -- `review-adopted-2026-07-31`.** A v1.28.1 PATCH front-door train, chartered from the
+000167 survey rather than from the review's own snapshot of the tree:
+
+`review-adopted: profile-first-ordering` (review P1) -- `profile` is declared LAST of the twenty
+`userConfig` knobs and its title reads "preset for the knobs above", so both the manifest and the
+README present nineteen individual knobs before the one knob that presets them. The knob moves
+first and the knobs behind it are categorized.
+
+`review-adopted: profile-label-rewording` (P2, ruling R2) -- human-facing labels become
+Compatibility / Recommended / Comprehensive. The STORED enum values `safe` / `recommended` /
+`strict` are FROZEN by this ruling; only description prose changes, so no config valid today
+changes meaning.
+
+`review-adopted: slash-command-quick-start` (P3) -- the README's primary install block ends on a
+raw `pwsh -File "$env:CLAUDE_PLUGIN_ROOT/scripts/doctor.ps1"` even though `/powershell-lsp:doctor`
+ships and is documented 91 lines further down. The command leads; the raw script is retained under
+troubleshooting for the out-of-session case.
+
+`review-adopted: install-time-wording` (P4) -- "Install and verify in under a minute" and "from
+install to a real caught diagnostic in about five minutes" describe the same path 132 lines apart.
+One of the two numbers goes.
+
+`review-adopted: scan-literal-data-contract` (P5a) -- `commands/scan.md` carries no
+treat-the-path-as-literal-data contract (quoting, unknown-option rejection, a leading hyphen still
+being a path) and its usage example shows an unquoted `<path>` placeholder. The contract text is
+added and the example is quoted.
+
+`review-adopted: literalpath-hardening` (P5b, ruling R5) -- adopted as survey-then-build, and the
+survey found NOTHING LEFT TO BUILD. See the derived-from-disk paragraph below; the conversion leg
+is dropped from the v1.28.1 charter as already-satisfied rather than carried as busywork.
+
+**Recorded measure-first -- ratified as questions, deliberately not as builds:**
+
+`review-measure-first: status-doctor-split` (P6, ruling R4) -- no split this round. 000167 leg 1
+measured both warm, and the split's premise does not survive: `status` is `doctor -Summary`, which
+runs the identical check set and differs only in the formatter, so it cannot be cheaper. A split
+would have to REMOVE checks, which is a different decision on different evidence.
+
+`review-measure-first: per-profile-context-volume` (P7) -- how much context each profile adds per
+edit is unmeasured. Recorded, not built; a later dispatch measures it.
+
+`review-measure-first: per-profile-latency` (P8) -- per-profile edit-path latency is unmeasured at
+`recommended` and `strict`. Recorded, not built. The existing measurement is the warm-path p95
+under `ruleset = base` (3292 ms, n=20, the 000166 leg), which is one cell of the question.
+
+**Declined, each with its ratified one-line reason:**
+
+`review-declined: scan-json-args-wrapper` (ruling R3) -- the reviewer's JSON-args wrapper for the
+scan command is more machinery than the problem needs, as the reviewer's own hedge conceded; the
+literal-data contract text plus `-LiteralPath` is the proportionate boundary.
+
+`review-declined: keeplastn-strict-removal` (ruling R1) -- declined FOR NOW, not on the merits: a
+profile-mapping change is MINOR-classed by the evolution policy recorded above
+`Get-PluginProfileMap`, so it cannot ride a PATCH train. Re-evaluate at the next MINOR.
+
+**Already planned, and not new:**
+
+`review-already-planned: arc-a-next` (P9) -- the diagnostic efficacy ledger was already the ratified
+next arc, arrived at independently. The reviewer's seven-state finding taxonomy --
+`arc-a-finding-taxonomy-2026-07-31`: fired / persisted / cleared-after-change / suppressed /
+removed / replaced / unknown -- is a genuine improvement and folds into the Arc A build inbox's
+open questions rather than into this train.
+
+`review-already-planned: external-user-testing` (P10) -- off-hub and Mike Andersen's, sequenced
+AFTER the v1.28.1 release so strangers test the corrected front door rather than the current one.
+
+**The claims were re-derived from disk, and the survey corrected two of them** (000167 leg 1, read
+at the v1.28.0 tag rather than carried from the review):
+
+- **P5b is moot as stated.** Every path-taking cmdlet call site in `scripts/lsp-scan.ps1` (5 active
+  lines) and in the helper the user path actually flows into, `scripts/lib/lsp-scan-common.ps1`
+  (17 active lines), was enumerated over a 35-cmdlet vocabulary, RED-proven by planting a known
+  site, with alias-shaped calls ruled out at zero in both files.
+  Every call whose cmdlet HAS a `-LiteralPath` parameter already uses it; the only
+  `-Path` uses are `Join-Path` and `New-Item`, neither of which has a `-LiteralPath` on Windows
+  PowerShell 5.1 or on PowerShell 7 (checked live on both hosts). The user-supplied path reaches
+  `[System.IO.Path]::GetFullPath`, then `Test-Path -LiteralPath`, then `Get-ChildItem -LiteralPath`
+  -- it never touches a globbing parameter. Zero convertible sites remain, so the hardening leg is
+  recorded as already-satisfied.
+- **P1's defect is in the title, not the description.** The self-referential phrase "the knobs
+  above" is in the `profile` knob's `title`, and its `description` says "Preset for the other
+  knobs", which is position-independent. The reorder must fix the title; a description-only edit
+  would leave the stale phrase on the surface a user actually reads first.
+- **Whether the reorder changes what the config panel shows first is NOT derivable locally.** No
+  document on this machine states how Claude Code orders `userConfig` rows, and no manifest schema
+  is cached; the one adjacent local datum (dispatch 000109, filed upstream as
+  anthropics/claude-code#74289) establishes that the panel renders a row per knob, not the order of
+  those rows. The reorder ships anyway: it is decisive if the panel follows declaration order and
+  harmless if it does not, and it is unconditionally correct on the two surfaces this project does
+  control, since `docs/configuration.md` states "The knobs, in manifest order" and the README table
+  follows the same order.
+
+## 9. External technical review, round 3 (2026-07-31) -- adjudicated
+
+A third external technical review, scoring v1.28.x at 9.2, moved the bottleneck it names: not
+architecture and not documentation, but **evidence**. Its single unanswered question is whether
+Claude actually writes better PowerShell because this plugin exists. Dispatch 000170 responded by
+**measuring and deriving rather than arguing**, and this entry is the ratified register. Section 8
+(round 2, same day) is unchanged and still stands; this section continues its token vocabulary.
+
+Two things this train did NOT do, deliberately: it built nothing, and it bumped no version. The
+build is chartered from what 000170 found, not from what the review claims.
+
+**Recorded measure-first -- ratified as questions, deliberately not as builds:**
+
+`review-measure-first: per-profile-telemetry` (round-3 Priority 3) -- round 2 already recorded
+this, twice, as `review-measure-first: per-profile-latency` (P8) and
+`review-measure-first: per-profile-context-volume` (P7). A second, independent external observer
+asking for the same two numbers is the **second observation** that promotes them from question to
+work. 000170 leg 1 attempted the sweep and **BLOCKED on host quiescence** -- see the named block
+below. The promotion stands; the numbers do not exist yet.
+
+`review-measure-first: annotation-throughput-not-persistence` (000170 leg 2, NEW -- not a review
+item) -- of the four columns the shipped ledger derives, `verdict_distribution` has **never
+received a single input**: annotations measured 0 at both the 2026-07-23 and 2026-07-31 vintages.
+That column is empty for want of **human annotation**, not for want of persistence. Whether
+annotation throughput rather than persistence is the binding constraint on Arc A is recorded here
+as a question and resolved in neither direction.
+
+**Declined, each with its ratified one-line reason:**
+
+`review-declined: ab-experiment-without-preregistration` -- the review's most quotable suggestion,
+a fixed-percentage before/after claim, is a self-run, self-scored comparison of one's own tool
+against a nondeterministic model at whatever n a solo maintainer can afford. It is not chartered,
+and it must not be improvised. If it is ever built the pre-registration comes first and separately:
+corpus, rubric, sample size, who scores, and a written commitment to publish a null or negative
+result. A number produced before that document exists cannot be published whatever it says.
+
+`review-declined: whitepaper-now` -- written today it would restate `benchmarks.md`, `TRUST.md` and
+`ARCHITECTURE.md` at greater length, which is on the review's own list of things not to build. It
+becomes worth writing when legs 1 and 2 have produced numbers it can carry.
+
+`review-declined-as-EMPTY: vendor-module-corpus` (000170 leg 3) -- **declined on a different
+ground than the roadmap's**, and the difference matters. See the corrected disposition below.
+
+**Already planned, and not new:**
+
+`review-already-planned: arc-a-closed-loop` (round-3 Priority 1) -- the diagnostic efficacy ledger
+was already the ratified next arc. 000170 leg 2 located the gap precisely and states it more
+narrowly than the review does; see correction (b).
+
+`review-already-planned: feature-freeze` -- the review's top recommendation is to freeze feature
+development for a release or two. v1.28.1 was already a corrections-only PATCH train and this train
+builds nothing, so the freeze is in force rather than newly adopted.
+
+**Adopted, and chartered rather than built:**
+
+`review-adopted: corpus-authorable-shapes` (000170 leg 3) -- of the ten shapes the review names,
+three are reachable today with **zero third-party source vendored**, and one is already covered.
+The classification is derived from the fixture files, not from prose about them; it is recorded in
+the 000170 outbox and chartered into dispatch B.
+
+### The named block -- leg 1 produced NO numbers, and that is reported rather than papered over
+
+Leg 1's per-profile sweep is **BLOCKED**. Two successive quiescence gates failed on this host:
+
+- **Gate A v1** (absolute CPU, mean < 10 pct): FAIL at **mean 26.60 pct**. The gate itself was
+  defective -- it was calibrated against an idle box while the sweep requires an agent host to
+  drive it, so **the apparatus could not be excluded from its own measurement**. Unreachable by
+  construction.
+- **Gate A v2** (foreign load only, agent host and sweep tree excluded by process tree, mean
+  < 0.15 cores): FAIL at **mean 0.6294 cores**, max 1.5316, with browser processes still resident
+  at the same PIDs across both probes. Agent-host draw, reported separately as the stated
+  unavoidable constant: 0.577 cores mean.
+
+Both gates were **pre-committed in writing before sampling**, precisely so the verdict could not be
+judged after the fact, and the relaxation from v1 to v2 was Mike Andersen's single authorized
+change on stated reasoning. **No latency, cold-start or context-volume figure is published, and the
+ceiling verdict against the shipped 5000 ms `timeoutMs` default is recorded UNMET** -- it requires a
+p95 that does not exist. A wrong latency number is worse than none, because it would be published.
+
+What leg 1 DID establish, none of it timing-sensitive and all of it standing:
+
+- **The profile-effect guard PASSES and can go RED.** `Get-PluginProfileMap` re-derived live:
+  `safe` maps 0 knobs, `recommended` 5, `strict` 8. All three resolved twenty-knob sets are
+  pairwise distinct and every mapped knob moved. Handed three identical sets, the same check
+  **failed at exit 7** -- so its GREEN means something.
+- **The shipped warm fixture cannot measure context volume at all.**
+  `tests/bench/bench-fixture.ps1` is deliberately PSScriptAnalyzer-clean, so
+  `additionalContext` is **zero bytes under every profile**. Any future context-volume measurement
+  needs a findings-producing fixture; the existing harness cannot answer P7 as written.
+- **The harness needs no code change to be pointed at a profile.** `Invoke-BenchHook` seeds its
+  child environment from the parent, so `CLAUDE_PLUGIN_OPTION_profile` reaches every hook child.
+  `tests/bench/` is byte-identical to `origin/main` (verified by git object id), and leg 1 landed
+  **no commit at all**.
+
+### Correcting the round-3 review, derived from disk
+
+**(a) No rule was deleted, and no measurement recorded 100 pct false positives.** The review
+credits the project with deleting a rule after measuring a 100 pct false-positive rate. What disk
+says: **four** rules are EXCLUDED from the opt-in `base` ruleset by a named, comment-cited list
+(`$BaseRuleExclusions`, `scripts/regen-base-ruleset.ps1`), and `rulesets/base.psd1` carries **53**
+rules as a result. The recorded measurements are `PSReviewUnusedParameter` **~90 pct** (9 of 10),
+`PSUseSingularNouns` **0 true-issues of 35**, `PSUseShouldProcessForStateChangingFunctions` 4 of 4
+on the known-good oracle, and `PSUseOutputTypeCorrectly` 2 pedantic Information hits. **None is
+recorded as 100 pct.** All four still ship in the pinned PSScriptAnalyzer and still fire wherever a
+user's own settings select them; they are absent only from this plugin's generated `base` list, and
+`pses-default` is byte-for-byte unaffected because none is in the PSES 15-rule allow-list. The
+mechanism is a reversible one-line exclusion, not a deletion -- and the real story is the better one.
+
+**(b) The project knows considerably more than "it produced diagnostics", and the missing half is
+narrower than stated.** The shipped ledger already derives **four** columns -- `fired_count`,
+`distinct_shapes`, `source_split`, `verdict_distribution`. Two are deliberately absent,
+`fixed_next_turn_rate` and `persistence_rate`, and the reason is nameable: the closed-loop cleared
+signal **is computed** (`Get-FindingLifecycleDiff`) and **is not persisted per rule**. 000170 leg 2
+re-derived that rather than inheriting it, enumerating **10 write sites across 26 files** and
+RED-proving the absence by planting a persisted rule-keyed write, catching it, and reverting. Zero
+sites are both persisted and rule-keyed: the payload is ephemeral, the client prose is rule-keyed
+but not persisted, and the daemon's debug line is persisted but carries only counts and a path.
+The correction to the review is that this is a **narrow persistence gap, not an absence of
+measurement** -- and, per the measure-first item above, one of the four shipped columns is empty
+for a completely different reason.
+
+**SHIPPED in v1.29.0** (annotated by dispatch 000195 leg A; the release id is DERIVED from the
+CHANGELOG rather than asserted). The `## [1.29.0] - 2026-08-01` entry's "### Added" section carries
+"**A per-rule lifecycle log, `logs/lifecycle-<stamp>.jsonl`** -- one record per distinct rule per
+turn, carrying the cleared / still-present counts and the shape hashes behind them", and with it
+"**`fixed_next_turn_rate` and `persistence_rate` in `scripts/rule-efficacy-ledger.ps1`**", both
+derived from persisted data only. So the gap named above is CLOSED: the signal is now persisted AND
+rule-keyed, and the two deliberately-absent columns are real. The log is a SIBLING of the capture
+log, so `dogfood/diagnostics.jsonl` keeps its exact record shape and both shipped readers keep
+reading historical logs unchanged. The three-way rendering the entry specifies -- `(absent)` when no
+lifecycle log exists at all, `(no-events)` when a log exists but a rule has no events, and genuine
+zeros as zeros -- is what keeps the closed gap from re-opening as a silent one.
+
+**(c) Per-profile telemetry is not a new recommendation.** Round 2's register already carried it
+under two tokens, `review-measure-first: per-profile-latency` (P8) and
+`review-measure-first: per-profile-context-volume` (P7). Round 3 restating it is the second
+independent observation, which is what promotes it -- but it is recorded as a promotion, not as a
+new idea, and the register says so.
+
+### The front-door intersection, re-derived at HEAD
+
+Round 3's "the product is finally approachable" finding rests on Install / Doctor / PICK A PROFILE.
+Re-derived at HEAD (v1.28.1, commit `dc5ddf6`) rather than carried from 000169's outbox: the
+manifest declares **twenty** `userConfig` knobs and **every one of them declares exactly
+`type`, `title`, `description`, `default`**. **No knob declares a `values` or an `enum` field.**
+The v1.28.1 CHANGELOG's "the panel reads Compatibility / Recommended / Comprehensive" therefore
+describes **description prose**, not a declared manifest shape.
+
+**That observation is now an EXPLANATION, and this front-door item is CLOSED (dispatch 000195 leg
+F).** 000167 recorded the question as **not locally derivable** -- whether the `userConfig` schema
+even ACCEPTS a `values` field -- because no manifest schema is cached on this machine. It IS
+derivable: the installed Claude Code bundled binary carries the shipped Zod schema. The verdict is
+**REJECTS**. A `userConfig` option object is `.strict()` over exactly **nine** keys (`type`,
+`title`, `description`, `required`, `default`, `multiple`, `sensitive`, `min`, `max`); `values`,
+`enum`, `choices` and `options` are none of them, and `.strict()` makes an unknown key a validation
+**error** rather than an ignored extra. Beyond that, `type` is itself a **closed enum of five
+primitives** (`string`, `number`, `boolean`, `directory`, `file`), so there is no enum/select type
+to declare in the first place. So the sentence above -- no knob declares a `values` or `enum` field
+-- holds for a structural reason: **none can.** The ask is upstream rather than local, and a
+post-ready DRAFT feature request lives at `docs/upstream/claude-code-userconfig-enum.md` (filing is
+Mike Andersen's gate). The manifest and the CHANGELOG stay untouched, because there is nothing to
+declare. *Re-derived from the installed binary at write time by 000197 leg 5 -- Claude Code
+**2.1.223**, 2026-08-06; 000195 leg F first derived it at 2.1.221, and the nine-key `.strict()`
+boundary and the five-primitive `type` enum are identical across both builds.*
+
+### Arc A accrual -- the load-bearing figure is the NET one
+
+**Genuine accrual moved from 16 occurrences / 13 shapes (dispatch 000148, measured 2026-07-23) to
+55 occurrences across 12 rules (dispatch 000170, measured 2026-07-31), net of a removed rung.**
+
+The gross figure is 120 occurrences / 47 shapes / 13 rules, and it must never be quoted alone.
+**65 of those 120 -- 54 pct -- are `ManifestConsistency` firing on the UNDER-DECLARED-EXPORT rung
+that dispatch 000162 REMOVED on 2026-07-29** as wrong by design, after measuring it at **911 hits,
+0 true positives, 100 pct false positive**. All 65 sit in the `1.27.1` cache partition, timestamped
+2026-07-25 20:42 to 21:13 -- a single 31-minute editing episode four days before the removal, 13
+functions re-fired five times across one module pair, which is why their `distinct_shapes` is only
+**2**. They are historical captures of a rung that no longer ships.
+
+The same attribution applies to the canonical-checkout figure, which is why it too is never quoted
+alone: **canonical-checkout moved 0 -> 69 gross, but 0 -> 4 net** of the removed rung. The
+000148 baseline of 16 contained no `ManifestConsistency` at all, so the net comparison is
+like-for-like.
+
+### The union-read denominator inherits rules that no longer ship
+
+**This is the most consequential thing 000170 leg 2 found, and it is not a footnote.**
+
+`scripts/rule-efficacy-ledger.ps1` unions every per-version cache log it discovers, deliberately, so
+that a plugin upgrade does not reset the denominator. The consequence, unnoticed until now: **the
+union permanently includes occurrences produced by rules and rungs that have since been removed,
+and no field in the capture record distinguishes them.** The record schema is
+`ts, file, line, col, ruleId, source, severity, message, snippet, hash, verdict` -- it carries no
+plugin version, no rule-surface version, and no rung identity. A removed rung is therefore
+indistinguishable from a live one at read time except by matching message prose, which is what
+000170 had to do by hand to attribute the 65.
+
+Every future efficacy figure inherits this. It is recorded here and **deliberately not decided**:
+whether the union should filter to the current rule surface, and what such a filter would do to
+historical comparability, goes to the dispatch-B charter as a named open question.
+
+### The vendor-corpus ask is EMPTY, not blocked -- correcting this project's own rationale
+
+The roadmap places a real-world vendor corpus (Azure, Exchange, Active Directory, SharePoint, AWS,
+PowerCLI) behind Arc B's licensing and provenance audit. **The factual half holds and the rationale
+does not.** Covering those shapes as the review means them does require third-party source. But
+Arc B is **not** what blocks them, and clearing Arc B would **not** unblock them:
+
+- `pses-default`, the DEFAULT surface, reflected live from the vendored
+  `Microsoft.PowerShell.EditorServices.dll` v4.6.0 (`AnalysisService.s_defaultRules`): exactly
+  **15** rules, **0** matching `PSUseCompatible*`. All fifteen are generic PowerShell hygiene.
+  **Not one is module- or vendor-aware.**
+- `base`, the opt-in surface: **53** rules, **0** matching `PSUseCompatible*`, excluded **by
+  construction** in `scripts/regen-base-ruleset.ps1` and documented there as always dropped because
+  the family needs target-profile configuration.
+- `PSUseCompatibleCommands` and `PSUseCompatibleTypes` are recorded unshipped.
+- Corroborated empirically: a fixture calling `Get-AzVM`, `Get-Mailbox`, `Get-ADUser`,
+  `Get-PnPTenantSite`, `Get-S3Bucket` and `Get-VMHost`, with **none** of those six modules
+  installed, scanned to `"results": []` and exit 0.
+
+**Vendoring vendor module source would therefore exercise NO SHIPPED RULE.** The ask is empty, not
+gated. A vendor corpus becomes worth acquiring only AFTER a vendor-aware rule ships, which is a
+MINOR rule-surface decision on its own evidence -- not a licensing one.
+
+### Two Strategic-Claude corrections, recorded as corrections
+
+This train corrected its own instructions twice, and both are recorded as corrections rather than
+absorbed into the work:
+
+- **The 000170 inbox's Arc B rationale for the vendor corpus is wrong** (the section immediately
+  above). It was authored by Strategic-Claude and ratified before the rule surface was derived.
+- **A mid-train Strategic-Claude amendment attributed the 65 `ManifestConsistency` captures to
+  rungs 1 and 3, "the rungs 000162 left standing".** They are on the REMOVED rung 2. The
+  attribution was inferred rather than derived; the message text settles it, since rung 1 emits the
+  inverse wording and rung 3 emits an alias message. Corrected above.
+
+The standing method holds: derive from disk, and record what disk says even when it contradicts the
+instruction that asked for the derivation.
+
+### A per-rule lifecycle persistence change classifies MINOR -- ruled, not open
+
+Ruled by Mike Andersen before execution: **a per-rule lifecycle persistence change is MINOR, not
+PATCH.** `dogfood/diagnostics.jsonl` is read by two shipped consumers,
+`scripts/rule-efficacy-ledger.ps1` and `scripts/lib/dogfood-reader.psm1`, so its format is a
+**consumer contract** even though no user hand-edits it, and the 1.x semver freeze is a stated
+trust commitment. The ruling is carried into the dispatch-B charter as **pre-made**, not as an open
+question. This train did not build the persistence change.
+
+**The ruling was then HONOURED by the build that shipped it** (annotated by dispatch 000195 leg A).
+000171 built the persistence change and the v1.29.0 CHANGELOG entry classifies itself "MINOR rather
+than PATCH", giving the same reason this ruling gave -- two shipped consumers, a consumer contract,
+the 1.x semver freeze -- and recording that no knob was added, removed, renamed, or re-defaulted.
+The pipeline cut it as **v1.29.0** on 2026-08-01. So this item is closed as ruled-and-followed
+rather than merely ruled: the classification a human made before execution is the classification the
+release carries.
+
+## The Arc A provenance ruling: never destructively filter, and fix the clearance gap FORWARD
+
+Dispatch 000209. Two halves of one question -- "the union read includes rules that no longer ship,
+and the clearance columns cannot say which release produced them" -- ruled together, because the
+tempting fix for the second half is the thing the first half forbids.
+
+### Half one: the union read NEVER filters. Closed as a ruling, not deferred.
+
+`scripts/rule-efficacy-ledger.ps1` unions every per-version capture log it discovers, so that a
+plugin upgrade does not reset the denominator. The consequence is that the union permanently
+includes occurrences from rules that have since left the surface, and the standing open question
+was whether it should ever filter them out.
+
+**It should not, and this closes the question.** A retroactive filter would move figures that have
+already been published -- the cardinal metrics anti-pattern, and the one an efficacy ledger exists
+to refuse. The need a filter was reaching for is already met without mutation: the ledger prints
+**both denominators side by side** (gross and current-rule-surface), names the out-of-surface rules,
+and prints the unattributable remainder beside them rather than folding it into either side. A
+reader who wants the filtered view can compute it from what is printed; a reader handed only the
+filtered view can never recover what was dropped. The dual view is the scalable answer.
+
+This is now enforced, not merely intended. `Read-LifecycleLog` tallies version provenance
+**alongside** the counts and never selects on it, and
+`tests/PowerShellLsp.RuleLedger.Tests.ps1` pins it in both directions: a golden comparison against
+the pre-000209 rendering of the same fixture (the only delta is the added block -- every prior line
+and figure is byte-identical), plus a RED control asserting that a mixed old/new log still reports
+`n=9` and not the `5` a stamped-records-only filter would produce.
+
+### Half two: the clearance-columns provenance gap, resolved FORWARD
+
+`fired_count` and `distinct_shapes` are version-attributable because the capture log's
+marketplace-cache **path** carries the plugin version, and a committed surface history maps a
+version to the rule surface that shipped with it. The sibling lifecycle log (dispatch 000171 leg 2)
+that feeds `fixed_next_turn_rate` and `persistence_rate` had neither: no version field, and a flat
+stamped rolling family under `Get-LogDir` for a path. Its history was therefore not merely
+unfiltered but **unrecoverable**.
+
+**You cannot recover an un-instrumented past. You can stop the bleed and say where the knowable part
+starts.** Two changes, both forward-only:
+
+- **In-record provenance at emit.** `New-LifecycleLedgerRecords` (`scripts/lib/lsp-common.ps1`)
+  stamps `pluginVersion` from `Get-PluginVersion` at emit time. In-record rather than in-path is the
+  design: a field survives a file move, a rotation, and the reader's union, none of which a path
+  segment survives. It is one additive field on a telemetry record, resolved after the
+  zero-event early return so a clean turn still costs no manifest read, and fail-open like every
+  other step on that path.
+- **A printed provenance floor.** `Get-LifecycleProvenanceFloor` names the earliest
+  version-attributable point; records below it are labelled a bounded, known gap. The floor is an
+  **honesty marker, not a filter**: pre-floor records are still counted in every rate and simply
+  never attributed to a version. No figure in the ledger is derived from the floor.
+
+**No historical record was rewritten, and none may be.** Back-filling a version onto a record
+emitted before the stamp existed would be inventing provenance -- a worse defect than the gap,
+because it would be invisible.
+
+### Three sub-rulings, derived from disk rather than assumed
+
+- **The emit site is `New-LifecycleLedgerRecords` in `scripts/lib/lsp-common.ps1`, not the daemon.**
+  `scripts/pses-daemon.ps1` only *calls* it. Stamping in the record builder means the daemon call
+  site needs no change at all, so the persisted-format change touches exactly one write path.
+- **The reader's cache-dir version derivation is NOT reused, and the reason is the sort direction.**
+  `ConvertTo-CacheVersionKey` (`scripts/lib/dogfood-reader.psm1`) maps an unparseable name to
+  `0.0.0` so any real version *outranks* it. That is correct for picking a **maximum** -- the
+  current cache dir -- and inverts for picking a **minimum**: junk would become the floor of every
+  ledger that saw it. The lifecycle path is not version-partitioned in the first place, so there is
+  no directory name to parse; the in-record stamp is the sole source and the floor derives from the
+  earliest stamped record. Same `[System.Version]::TryParse` primitive, opposite tie-handling,
+  written out rather than imported so the wrong default cannot arrive silently.
+- **`0.0.0-unknown` is not a version.** It is `Get-PluginVersion`'s own sentinel for "the manifest
+  would not resolve", and it is stamped honestly, so it must be read honestly: a record carrying it
+  counts as **pre-floor**, not as a release. Treating it as attributable would attribute real
+  clearance data to a version that never shipped.
+
+### The floor line always prints; the gap caveat prints only when there is a gap
+
+The positive fact -- where version-attributable knowledge begins -- prints on every run that read a
+lifecycle record, because a reader who cannot see it has to re-derive it. The **bounded-gap caveat**
+prints only when a pre-floor record actually exists. Once the rolling family ages past the
+un-instrumented window there is no gap, and a ledger that kept reciting an empty caveat would train
+its reader to skip the section that will matter again after the next format change. An
+all-attributable ledger reads clean; a gap is never silent.
+
+## Roadmap II governance: five rulings, ratified-by-Mike 2026-08-12
+
+Dispatch 000221 (R2-01), the Roadmap II opener. Roadmap I closed at 000220 with the pre-horizon
+board empty. These five rulings are the authority the rest of the program cites; R2-02 and later
+dispatches cite this section rather than re-deriving them. Recorded here as ratified, not proposed.
+
+### 1. The North Star, and what Pillars A and H become
+
+The North Star is approved with this wording: be the PowerShell layer a coding agent can be trusted
+with -- every diagnostic honest about whether analysis ran, every release and policy
+cryptographically attributable, every effectiveness claim measured -- **"in headless, automated, and
+enterprise environments where editor-bound tooling is insufficient or unavailable"**. The quoted
+clause is the ratified half: it names the environment the work is for, which is what keeps the
+program from drifting back into editor-parity framing.
+
+**Pillar A is reshaped to agent-facing semantic EXPOSURE of PSES capability.** The plugin is a
+client of PowerShell Editor Services, not a re-implementation of it; the pillar is about surfacing
+what PSES already computes in a form an agent can consume, not about growing an analysis engine.
+
+**Pillar H is recorded DECLINED-pending-demand.** A custom-rule seam would resurrect the
+already-declined new-custom-rules item under a new name. Guidance overrides remain the sanctioned
+seam. Declined pending demand, not declined permanently: real user demand reopens it, and nothing
+else does.
+
+### 2. The program name
+
+The program is named **Roadmap II**, everywhere and without exception. The roman-numeral phase form
+of the name is not used in any authored file. The retired Phase 1-4 launch framing stays retired --
+this ruling does not revive it, and no document should reintroduce it as a synonym.
+
+### 3. ROADMAP.md stays short, and stays countless
+
+`ROADMAP.md` keeps the short / no-counts public-view ruling it already carries. Per-initiative
+detail lives in a **separate program document**, not in the public roadmap. The reason is the one
+the no-counts ruling already rests on: a public roadmap carrying live counts is a stale-count
+hazard on the most-read surface in the repository.
+
+### 4. How Roadmap I is archived
+
+The archival convention is two artifacts: a **closure section in this ledger**, plus a **slim
+immutable snapshot at `docs/ROADMAP-I-ARCHIVE.md`**. Both are built by **R2-02**, not by this
+dispatch. Recording the convention here is what gives R2-02 something to cite; building it here
+would have pre-empted the dispatch chartered for it.
+
+### 5. The re-audit / V10 verification is an acceptance criterion of R2-01
+
+The eleven doc-set re-audit verdicts and the V10 stamp are folded into this dispatch as an
+acceptance criterion rather than left as a standing unknown: R2-01 cannot close until every
+previously unknown state is classified. The classification is carried in the 000221 outbox as a
+twelve-row table, each row citing the outbox or log line it was derived from.
+
+## Roadmap I -- closure record, ratified-by-Mike 2026-08-12
+
+Written by dispatch 000230 (R2-02), the sanctioned scribe for the deferred ledger appends. Eight
+dispatches ran with their ledger writes deferred so parallel work could stay file-disjoint; this
+section and the three that follow are that deferred record landing at once.
+
+**On placement.** Ruling 4 (above) called for "a closure section in this ledger" without fixing
+where. This document's own convention answers it: the numbered sections `## 1`-`## 9` are the
+standing structure, and everything since has been appended at the tail as an un-numbered `##`
+section with a descriptive, dated title -- "## The Arc A provenance ruling...", "## Roadmap II
+governance: five rulings, ratified-by-Mike 2026-08-12". Interleaving Roadmap I's closure into the
+numbered spine would have rewritten sections that other documents cite by number. So: **pure
+append, as a bounded top-level section**, following the convention the last two entries already
+set. Recorded here because ruling 4 asked for the choice to be recorded.
+
+### The arc, inception to 000220
+
+Roadmap I ran from the plugin's inception to dispatch 000220, which closed it with the pre-horizon
+board empty (`SC_SESSION_LEDGER.md`, 2026-08-06/07 entry: "the pre-horizon board emptied"; the
+000220 outbox, state `verified`). Its shape was the four-horizon ladder recorded at section 4 of
+this ledger, above -- Horizon 0 immediate tactical through Horizon 3 strategic what-if -- with the
+retired Phase 1-4 launch framing preceding it.
+
+**Closing state.** The program closed across release line v1.29.0 through v1.31.0. The two rulings
+000220 carried are recorded above at "Gate 6's window: `WINDOW_DAYS=3` is RETAINED" and, for the
+doctor security-verdict candidate, declined-final under the 000036 boundary. The v1.31.0 verify
+ran at the 000161 standard under dispatch 000219, and the Rekor arc closed under dispatch 000217.
+
+**Standing declines carried out of Roadmap I** are the table in `ROADMAP.md` under "Declined, and
+why", each with its reasoning already recorded in this ledger: renaming the plugin, a file watcher
+or background workspace sweep, loosening the 1.x semver freeze, new custom rules, flipping the
+broader ruleset on by default, and reducing documentation volume.
+
+**Pointer set** (per ruling 4 -- pointers, not restatement):
+
+| For | See |
+| --- | --- |
+| The slim immutable snapshot | [`docs/ROADMAP-I-ARCHIVE.md`](ROADMAP-I-ARCHIVE.md) |
+| What shipped, and when | [`CHANGELOG.md`](../CHANGELOG.md) and the GitHub Releases page |
+| The reasoning behind each decision | this ledger, sections 1-9 and the appended tail sections |
+| What is frozen in 1.x | [`CONTRACT.md`](../CONTRACT.md) |
+| The Roadmap II baseline | [`docs/roadmap-ii/CURRENT-STATE.md`](roadmap-ii/CURRENT-STATE.md) |
+| The Roadmap II detail layer | [`docs/roadmap-ii/PROGRAM.md`](roadmap-ii/PROGRAM.md) |
+
+Roadmap I is closed. It is not a source of open work, and no item on it is pending.
+
+## Roadmap II gate decisions D1-D7, ratified-by-Mike 2026-08-12
+
+Companions to the five governance rulings recorded in the preceding section. Same ratification
+date, same authority: recorded here as ratified, not proposed. Dispatch 000230 is their scribe,
+not their author.
+
+**Reader warning on identifier collision.** These gate decisions are D1-D7. The DX audit
+(`docs/roadmap-ii/DX-AUDIT.md`) independently numbers its user-visible-DX-defect findings D1-D4.
+They are unrelated namespaces. In this ledger, a bare D-number means a gate decision.
+
+### D1 -- the Arc B gate, re-derived
+
+The Arc B licensing gate is **PASS**, re-derived rather than assumed. All **137** files in the
+audited corpus surface classify AUTHORED-IN-REPO, with zero DERIVED-FROM-EXTERNAL and zero unknown
+(dispatch 000222, `docs/roadmap-ii/CORPUS-PROVENANCE-AUDIT.md`; PR
+manderse21/claude-powershell-lsp#147, merged 2026-08-12).
+
+Three riders ride with the PASS:
+
+- **The licensing risk attaches to the never-published FP-survey oracle, not to the corpus.** This
+  ledger's own prior Arc B wording named a population -- installed-module scripts mixed into the
+  ad-hoc survey oracle -- that is *machine state and was never committed*. The gate's risk
+  language therefore described something outside the repository. The committed corpus is clean;
+  the ad-hoc oracle is what the caution was ever about, and it has never been published.
+- **GPL-vs-permissive relicensing is deferred to Arc B activation.** Every one of the 137 files is
+  authored in-repo under a single human rightsholder and takes GPL-3.0-or-later by repo-wide
+  inheritance, with no per-file header anywhere in the set. That single-rightsholder fact is what
+  makes relicensing *possible* later; whether to relicense for a community benchmark is not
+  decided now and is not implied by the PASS.
+- **A small rider: the SARIF attribution gap.** `tests/sarif/sarif-2.1.0.json` is committed
+  third-party content under OASIS RF-on-RAND terms. Attribution is preserved thoroughly in a
+  co-located `tests/sarif/NOTICE.md`, but `THIRD-PARTY-LICENSES.md` returns zero hits for SARIF,
+  OASIS and SchemaStore and frames the project as "a downloader, not a redistributor". Recorded as
+  a rider on the gate, not as a blocker of it.
+
+### D2 -- SLO targets: measured, proposed, and not back-filled
+
+Dispatch 000223 measured five metrics against the installed v1.31.0 cache build and proposed six
+targets, T1-T6, *independently of* the measurements (`docs/roadmap-ii/SLO-BASELINES.md`; PR
+manderse21/claude-powershell-lsp#149, merged 2026-08-12). The separation is the point: a target
+back-filled from one run is not a target.
+
+**The candidate targets remain UNRATIFIED as targets.** What is ratified at D2 is the *status*:
+the measurements stand as the v1.31.0 baseline, and **T4 is red as engineering input, not as a
+failure to be argued away**. T4 -- that every `.ps1`/`.psm1` shipped in this repository settles on
+the edit path -- is not met: the edit path does not converge on the 3,881-line
+`lib/lsp-common.ps1`, via a settle-cap-then-relaunch-thrash the plugin's own source already
+documents on the scan path. Dispatch 000133 had already ratified that these files need up to
+~15000 ms and raised the *scan* cap to match; the edit path was deliberately left at 5000 ms.
+D2 records the red as the input that chartered D3, rather than as a target to be loosened.
+
+### D3 -- the fix slice, chartered, with the frozen-baseline addendum
+
+A fix slice is chartered against the T4 red: a live-but-busy daemon must never be classified
+unreachable or relaunched; a genuinely unreachable daemon must still recover; every edit must
+still resolve to a truthful terminal status. RED repro before the fix, GREEN after, with
+unreachable-recovery and warm-path regression controls and a bounded relaunch-count observation.
+
+**Hard boundaries, ratified verbatim:** no daemon redesign, no retry-policy cleanup beyond the
+misclassification, no startup optimization, no cold-start work, no settle-cap change, no
+status-token change.
+
+**The addendum, ratified with the charter:** the v1.31.0 SLO baseline is **FROZEN pre-fix
+history**. `docs/roadmap-ii/SLO-BASELINES.md` stays byte-identical, and the post-fix remeasurement
+lands as a *separate new document*. The reason is the one the no-counts ruling rests on in a
+different key: a baseline edited to reflect the fix stops being a baseline, and a before/after
+claim whose "before" was rewritten after the fact cannot be checked.
+
+Chartered as dispatch 000225. Its execution state is recorded in the Wave B section below.
+
+### D4 -- the quiet-window rerun, declined
+
+A rerun of the measurement set in a quiet window is **declined**. The baseline was taken on the
+machine and under the conditions the plugin actually runs on; a quiet-window figure would measure
+a machine no user has. Declined, not deferred.
+
+### D5 -- cross-repository reference convention, ratified
+
+Cross-repository references are fully qualified **`owner/repo#n`**, everywhere and without
+exception. A bare `#n` is ambiguous the moment a document is read beside another repository's
+issue tracker, and this program cites several repositories routinely. Ratified at D5 and already
+binding on the Wave B dispatches (000227 inbox, acceptance criteria).
+
+### D6 -- the pull-feature gating probe, corrected
+
+`docs/upstream/pull-feature-gating-probe.md` (2026-06-14, dispatch 000015 Track B) recorded the
+verdict **"#66987-gated (NOT buildable-now)"** on the premise that plugin LSP-server registration
+is "empirically inert". That technical verdict has been **overtaken by dispatch 000069**, and D6
+rules that the file is corrected in this pass rather than left to read as current.
+
+What actually superseded it: 000069 proved the registration failure was *this project's own
+manifest*, not an upstream init-ordering bug -- Claude Code's registrar silently drops any
+`lspServers` entry declaring `restartOnCrash` or `shutdownTimeout`. Dispatch 000075 removed the
+two fields and added an allowlist guard, and **registration was restored in v1.18.1** (this
+ledger, the "Registration -- restored, v1.18.1 / 000075" entry and the v1.18.1 row of the release
+table; `docs/upstream/claude-code-lsp-registration.md`). Mike rewrote
+anthropics/claude-code#66987 on 2026-07-06 to the registrar-drop root cause, superseding the
+init-ordering title the probe cited (`docs/upstream/sitting-closeout.md`, live table).
+
+**The probe's forward guidance survives its verdict.** What remains blocked is *serve* on the
+direct path -- a separate `#1359`-class handshake issue, closed locally by the opt-in
+`nativeServe = shim` -- so "do not build a hook-shaped imitation of pull features now" still
+holds, for a reason the probe did not have. The correction is dated and additive; the historical
+text is preserved, per the re-derivation header convention dispatch 000224 established.
+
+### D7 -- Wave B proceeds, with the DX taxonomy ratified
+
+Wave B proceeds. The three-category taxonomy governing the DX audit is ratified **in advance of
+the findings**, which is what keeps it a classification rather than a rationalization:
+
+| Category | Meaning |
+| --- | --- |
+| **USER-VISIBLE DX DEFECT** | A stranger encounters it and cannot interpret or recover from it with shipped means. |
+| **OBSERVABILITY DEFECT** | The behavior may be perfectly acceptable, but doctor / log / status cannot explain it. |
+| **EXPECTED TRADEOFF** | Real, perhaps unpleasant, and intentionally bounded -- documented, priced, and recoverable. |
+
+The taxonomy carries the weight because a DX audit that converts every measured imperfection into
+a ticket is not an audit. Findings only; nothing is fixed by the audit itself, and triage of the
+findings is not decided here.
+
+## Wave A and Wave B -- completion records, derived 2026-08-13
+
+State as of this dispatch's derivation, from `dispatch list`, the project log's GATE lines, and
+live `gh` against manderse21/claude-powershell-lsp. Every row is the state at write time, not a
+forecast. Where the record diverges from the charter's expectation, the divergence is recorded.
+
+### Wave A -- 000221 through 000224
+
+| Dispatch | Scope | Outbox state | PR | Merge commit |
+| --- | --- | --- | --- | --- |
+| 000221 | R2-01, canonical current state | `verified` | manderse21/claude-powershell-lsp#146 | `7f34277` |
+| 000222 | R2-05, corpus licensing and provenance | `verified` | manderse21/claude-powershell-lsp#147 | `c0e4b51` |
+| 000223 | R2-06, candidate SLOs and baselines | `verified` | manderse21/claude-powershell-lsp#149 | `776ea07` |
+| 000224 | Wave A, `docs/upstream` true-up | `verified` | manderse21/claude-powershell-lsp#148 | `cfd2409` |
+
+Wave A is complete: four dispatches, four outboxes at `verified`, four PRs merged.
+
+### Wave B -- 000225 through 000228
+
+| Dispatch | Scope | State at derivation | PR | Merge commit |
+| --- | --- | --- | --- | --- |
+| 000226 | R2-04, threat model | outbox `verified` | manderse21/claude-powershell-lsp#151 | `98eb027` |
+| 000227 | R2-14, governance surface | outbox `verified` | manderse21/claude-powershell-lsp#150 | `5d8ac83` |
+| 000228 | R2-08, DX audit | inbox `verified`; **no outbox document exists** | manderse21/claude-powershell-lsp#152 | `c4fc5ce` |
+| 000225 | D3 fix slice | inbox `in_progress` | manderse21/claude-powershell-lsp#153 | **OPEN, red** |
+
+**Two divergences from the "000221-000228 all verified" expectation, recorded rather than
+smoothed:**
+
+1. **000228 has no outbox.** Its deliverable shipped -- `docs/roadmap-ii/DX-AUDIT.md` is on `main`
+   via PR #152, merged 2026-08-13T00:43:44Z -- and its *inbox* was walked to `verified` by Mike at
+   2026-08-12T20:22:47-04:00. But the project log carries no `000228 | outbox` line at any state,
+   and no such file exists in the hub, on `origin/main`, or anywhere on disk. The work landed; the
+   record of the work did not. This is the "never-committed" entry of the taxonomy below, observed
+   in its own right rather than inferred.
+
+2. **000225 is still open and red.** PR #153 has had **three** CI runs on its branch and **none**
+   has been green: `31654261705` (head `6a6d368`), `31654292071` (head `da1d6df`), and
+   `31655416504` (head `7ce3c4b`, 2026-08-13T00:44:01Z) -- every one `failure`.
+
+**The 000225 fix-forward, cited because its outbox is on origin.** Dispatch 000229 (N1) ran the
+diagnostic, and its outbox is present on `origin/main` at write time, so its outcome is cited here
+rather than left open:
+`projects/powershell-lsp/outbox/000229-n1-fix-forward-diagnostic-for-pr-153-no-missing-delta-psl.md`,
+state `complete`. Its findings, as recorded there:
+
+- **No missing delta.** The 000225 worktree is clean and fully pushed; all five changed files are
+  blob-identical between fix commit `6a6d368` and PR head `7ce3c4b`.
+- **Both reds are PR-introduced regressions, separately root-caused.** An all-four-leg test-guard
+  collision on the new `Invoke-ThEdit` helper, and a unix-only pipe-presence misclassification
+  proven from CI artifacts.
+- **The repair gate did not fire.** Leg 4 was missing-delta-only, so both fixes defer to Mike.
+- **N1 asks whether repairing the unix arm of `Test-DaemonPipePresent` falls inside the D3
+  boundaries** or needs a fresh charter. That question is open and is not answered here.
+
+D3's charter therefore stands and its addendum still binds: `SLO-BASELINES.md` remains
+byte-identical, and no post-fix remeasurement has been written.
+
+## Tail-failure taxonomy and process findings -- FINDINGS AND CANDIDATES ONLY, 2026-08-13
+
+**Status: none of this is a rule.** Every item below is recorded as a finding or a rule
+*candidate*. Promotion of a candidate to a rule is Mike-gated (standing), and nothing here has
+been promoted. A future reader should treat this section as evidence for a decision not yet made.
+
+### The tail-failure taxonomy
+
+Five failure shapes named at the tail of the Wave A/B run -- the close-out phase, after the
+deliverable is already good. Recorded with what the disk actually supports, which is not the same
+for every item.
+
+| # | Shape | Status at derivation |
+| --- | --- | --- |
+| 1 | **Never-committed** -- the deliverable ships but its outbox is never written or committed | **CONFIRMED on disk.** 000228: PR #152 merged, `DX-AUDIT.md` on `main`, inbox walked to `verified`, and no outbox anywhere -- not in the hub, not on `origin/main`, not on disk. |
+| 2 | **Sibling-dirt block** -- a close-out commit is blocked by unrelated dirt in a sibling path | Recorded as named by the 000230 charter. **Not independently reproduced by this dispatch:** no dirty sibling path was present in the shared hub root at write time (`git status` clean before and after the claim). |
+| 3 | **Wrong-remote worktree push** -- a push lands somewhere other than the intended origin | Recorded as named. **Not supported by disk evidence here:** the hub's only remote is `https://github.com/manderse-dispatch/strategic-dispatch.git` for both fetch and push, and 000229 found no repository anywhere with a local-path origin. |
+| 4 | **Unvalidated hand-mint** -- a dispatch file authored by hand, bypassing the CLI's schema validation | Recorded as named. Adjacent confirmed fact: a pre-mint draft fails the id regex by design, so hand-authoring is exactly the path that skips validation. Not independently reproduced in this run. |
+| 5 | **Phantom-topology observations** -- close-out evidence read from a tree that is not the one being shipped | **REFUTED as a per-session-hub-copy mechanism.** See below; this is the item the record most needs to state carefully. |
+
+### On item 5, stated plainly
+
+The 000229 charter expected a per-session hub-copy topology and asked N1 to name the mechanism
+that created it. **N1 could not, because it does not exist**: no per-session hub copies on this
+machine, no repository anywhere with a local-path origin, no prunable or deleted hub-worktree
+admin entries, and all five of that night's sessions recorded `cwd` = the shared root. This
+dispatch re-derived the same fact independently: `git worktree list` in the shared hub root shows
+only real hub worktrees, and no `strategic-dispatch-worktrees` or `hub-0002xx` path exists on
+disk.
+
+**What the symptoms actually had.** N1 found a simpler proven explanation, and two real
+regressions in PR #153, neither of which needs a phantom tree. The errata it recorded stands:
+000225's claim of "four-leg CI green observed in the foreground" is **falsified** by run
+`31654261705`'s failure. N1 classifies 000225's other claims as unaffected -- its recorded checks
+re-ran locally at verify and stand.
+
+The finding worth carrying forward is therefore *not* "sessions work in phantom hub copies". It is
+that **a foreground-CI claim with no run id is unfalsifiable at write time and false at read
+time**. That is candidate 3 below, and it is the one with a second observation.
+
+### The origin-evidence gate
+
+The gate -- after minting and pushing, run `git fetch origin` and confirm the outbox commit
+appears in `git log origin/main` from the shared root, recording the command and its output in the
+outbox itself -- is recorded here as the countermeasure the tail failures point at. Items 1 and 5
+are both shapes it catches: a never-committed outbox cannot appear in `git log origin/main`, and a
+claim read from the wrong tree cannot be confirmed against the real origin. It is applied by this
+dispatch to itself. **Recorded as a finding, not promoted to a rule.**
+
+### The statusline-leak finding
+
+Statusline shells are spawned on a two-second refresh interval (`~/.claude/settings.json`,
+`statusLine.refreshInterval: 2`), which makes an accumulating population the expected failure mode
+if any fail to exit.
+
+**The leak is real, and it is measured -- but only the second measurement sees it.** This dispatch
+swept twice, excluding its own pids both times:
+
+| Sweep | Stale shells (`statusline.ps1`, age > 5 min) |
+| --- | --- |
+| At session start | **0** |
+| At close-out, roughly one hour later | **3**, killed |
+
+The opening sweep is the one that matters methodologically. It found zero and, taken alone, would
+have been recorded as "no leak reproduced" -- which is what this section said before the close-out
+sweep falsified it. **A leak whose unit of accumulation is longer than the interval between
+observation and conclusion reads as absent.** The first sweep was not wrong; it was early, and a
+single early measurement of an accumulating quantity is indistinguishable from a measurement of
+zero.
+
+Recorded as a finding with both measurements, because the pair is the evidence and either one
+alone is misleading. A sweep that finds nothing is worth recording precisely so that a later sweep
+finding something can be read as accumulation rather than as noise.
+
+### Rule candidates -- NOT promoted
+
+Carried forward from 000229's `rule_observations`, plus this dispatch's own. Each is a candidate;
+none is a rule.
+
+| # | Candidate | Second observation? |
+| --- | --- | --- |
+| 1 | A platform-conditional branch added to a cross-platform discriminator must carry per-platform evidence before it ships. `Test-DaemonPipePresent` measured the Windows arm and wrote the unix arm by analogy, unmeasured -- and the unix arm is the one that is wrong. | No |
+| 2 | A purity guard that hardcodes an exact allow-list of derived names is a tripwire on every future helper; the guard belongs in the same review breath as the helper. | No |
+| 3 | A foreground-CI claim must cite a run id. "Four-leg green observed in the foreground" with no run id and no `gh` invocation in the transcript is unfalsifiable at write time and false at read time. | **Yes** -- second observation of the foreground-only violation class |
+| 4 | A dispatch whose deliverable merges but whose outbox is never committed leaves the work done and the record absent. The state machine does not catch it: 000228's inbox reached `verified` with no outbox in existence. | No -- first observation |
+| 5 | A negative finding about an *accumulating* quantity must state when it was measured, and should be re-measured at close-out before it is recorded. One early sweep of a leak is indistinguishable from no leak: this dispatch measured zero stale statusline shells at session start and three an hour later, and the first number would have shipped as "no leak reproduced". | No -- first observation |
+
+Promotion of any of these is Mike's call and has not been made.
+---
+
+## Security close-out -- the deferred supply-chain hardenings are landed, 2026-08-14
+
+Three items had sat as recorded-but-not-done security work. All three are now closed, each with the
+kind of closure it warranted rather than being left on a deferred list.
+
+### S1 -- Immutable action pinning: LANDED, and it is now the convention
+
+**What was deferred, and where it was recorded.** Dispatch 000042's outbox booked it as a
+noted-not-done hardening: *"the third-party actions are major-tag pinned ... to MATCH the existing
+CI workflow's convention; pinning to immutable commit SHAs would be a defensible future hardening
+for a trust-focused repo -- noted, not done, to stay consistent with the sibling CI."* Dispatch
+000064 restated it: *"SHA-pinning is a defensible separate dispatch for a trust-focused repo."*
+
+**What closed it.** All eleven external action references across the three workflows moved to full
+40-character upstream commit SHAs with the resolved release in a trailing comment, each SHA resolved
+from the upstream repository through the GitHub API and verified to exist. Each was taken to the
+current supported patch release in its intended line rather than re-pointed at the same major.
+
+**Why the trailing comment is load-bearing rather than cosmetic.** Dependabot's `github-actions`
+ecosystem maintains SHA-pinned refs by rewriting the SHA and the adjacent `# vX.Y.Z` comment
+together. Without it a pin becomes an opaque hex string that no human can audit and no bot can bump
+-- which is how a SHA pin rots into a permanently stale dependency. The comment is part of the
+mechanism, and the CI gate requires it.
+
+**Three enforcements, deliberately layered.** GitHub's own `sha_pinning_required` policy refuses to
+run a non-compliant step; `tests/PowerShellLsp.ActionPinning.Tests.ps1` fails CI by DISCOVERING the
+workflow surface rather than consulting a list; Dependabot keeps proposing bumps. The predecessor
+guard named one action in one file, and so protected exactly the instance someone had remembered to
+write down while ten other movable refs sat in the same three workflows.
+
+### S2 -- `sha_pinning_required`: ENABLED, and the ordering was the safety property
+
+`false` -> `true`, written through `PUT /repos/{r}/actions/permissions` and read back. The write
+preserved `enabled: true` and `allowed_actions: "selected"`, and the allow-list and the default
+workflow token scope were read before and after and are unchanged -- exactly one field moved.
+
+**Enforcement was turned on only after every reference complied and CI was green on the merged
+commit.** The reverse order would have blocked every workflow in the repository, including the CI
+that proves the references comply -- a self-inflicted outage rather than a hardening. The ordering
+is the whole of why this was safe, and it is recorded so a future toggle of a similar policy
+inherits the sequence rather than rediscovering it.
+
+### S3 -- CodeQL default setup: LANDED, not declined
+
+**The question was whether it could coexist with the plugin's own third-party SARIF upload**, since
+GitHub rejects CodeQL-tool SARIF from an advanced workflow while default setup is on. It can, and
+the coexistence was measured rather than assumed:
+
+- Default setup enabled for the one language GitHub detects here, **`actions`** -- PowerShell is not
+  a CodeQL source language, so this covers the workflows, not the product code.
+- Its setup run succeeded and produced an analysis under category `/language:actions`, tool
+  `CodeQL`, **0** results.
+- The plugin's own `powershell-lsp-code-scanning.yml` was then re-run and its **upload still
+  succeeded**, landing an analysis under category `powershell-lsp`, tool `powershell-lsp`,
+  2 results.
+- Both categories remain present and distinct -- distinct category, distinct tool, distinct analysis
+  key -- and enabling CodeQL added **zero** alerts.
+
+The rejection rule turns on the SARIF's *tool*, not on the presence of a second workflow, and this
+project's SARIF is produced by its own analyser. So the incompatibility that would have justified
+declining does not arise here. **Recorded as LANDED; it is not a deferred enhancement and should not
+be reintroduced to any deferred list.**
+
+**The method note worth keeping.** The REST endpoint for configuring default setup is `PATCH`, not
+`PUT`. A `PUT` returns `404 Not Found` with no `X-Accepted-OAuth-Scopes` header, which reads exactly
+like a permissions failure and cost a diagnostic detour into token scopes that were never the
+problem. A 404 from a path whose `GET` works is evidence about the VERB before it is evidence about
+the credential.
+
+### S4 -- The provenance action moved to `actions/attest`
+
+Dependabot proposed `actions/attest-build-provenance` v3 -> v4. Upstream had made v4 a thin
+**composite wrapper** whose entire body is one step, `uses: actions/attest@<sha>`, forwarding every
+input unchanged and setting `NODE_OPTIONS=--max-http-header-size=32768`; upstream recommends
+`actions/attest` for new implementations. Merging the bump would have taken the pipeline to a
+movable `@v4` that the SHA-pinning work replaced minutes later, so the pipeline moved to the wrapped
+action directly instead and the bump was **closed as superseded**, with the wrapper's `NODE_OPTIONS`
+carried over verbatim.
+
+Provenance semantics are unchanged: `actions/attest` auto-generates a SLSA build-provenance
+predicate whenever no SBOM and no predicate input is supplied, which is exactly how this pipeline
+calls it. Same two subjects, same OIDC identity, same `id-token: write` / `attestations: write`
+grants, same dry-run gating, same six release gates.
+
+**A defect that outlived its cause.** `tests/PowerShellLsp.Release.Tests.ps1` asserted the literal
+`actions/attest-build-provenance@v3`, so a clean dependency major bump failed a *structural* release
+test although nothing structural had changed. The assertion encoded today's answer rather than the
+property it was defending. It is now a family invariant -- any numbered release, either upstream
+action name, pinned by commit SHA -- paired with an explicit floating-ref rejection, which is the
+idiom the same `Describe` already used for gitsign fourteen lines above.
+
+### What is NOT closed, and why that is a decision rather than an omission
+
+- **`CODEOWNERS` remains inert.** Activating code-owner review would deadlock the repository while
+  `manderse21` is the sole code owner and `enforce_admins` is `true`. Gated on the second-maintainer
+  gap, not on attention. See `docs/roadmap-ii/GOVERNANCE-SURFACE.md` sections 3 and 4.3.
+- **Secret-scanning non-provider patterns and validity checks stay OFF.** Not examined by this
+  close-out; recorded in the section 4.3a measurement as read, so their state is visible rather than
+  assumed.
+
+## Dispatch 000233 -- the installed-plugin integration proof, DISCHARGED 2026-08-15
+
+**Dispatch 000233 is not reopened. Its state stays `verified` and its outbox stands as written.**
+This section discharges the one deviation that outbox recorded as BLOCKED, using evidence obtained
+after it was filed. The ruling itself -- route serve-subprocess userConfig through
+`${user_config.*}` in `lspServers.env` -- is unchanged by anything here.
+
+### What was blocked, and what closed it
+
+The charter required an integration proof through a real Claude Code process, on the explicit
+ground that *a unit test cannot observe the manifest-to-subprocess transport*. 000233 could not
+obtain it: an inline `--plugin-dir` plugin loads on 2.1.233 but its `lspServers` are never
+registered, and an isolated `CLAUDE_CONFIG_DIR` demands interactive login. The outbox named the one
+manual action that would close it -- install the plugin for real and read the shim log.
+
+That action was taken on **2026-08-15**, and it passed. Four legs:
+
+1. **Configuration materialized.** `~/.claude/settings.json` carries
+   `pluginConfigs["powershell-lsp@claude-powershell-lsp"].options` =
+   `{ profile: "safe", ps_host: "pwsh", nativeServe: "shim" }`.
+2. **Registration.** Startup reported `Loaded 1 LSP server from powershell-lsp`, alongside
+   `pyright-lsp` and `typescript-lsp`, `Total LSP servers loaded: 3`.
+3. **Native operations, against the tracked `demo.ps1`.** `documentSymbol` returned
+   `Frobnicate-Thing`; PSES produced the expected `PSUseApprovedVerbs` diagnostic; `hover` on
+   `Get-Process` returned the real PowerShell parameter sets; `goToDefinition` succeeded.
+4. **Transport.** `pses-serve-shim.log` recorded all three knobs with `provenance: env`, plus
+   `nativeServe=shim ... [configured=shim effective=shim]` and `PSES host: configured=pwsh
+   effective=pwsh`.
+
+**Which legs this ledger re-derived, and which it records.** Legs 1 and 4 were **re-observed from
+disk** while writing this entry -- the settings block was read directly, and the shim log carries
+the three `provenance: env` lines plus the configured/effective pair at
+`2026-08-15T07:10:05` under pid `84768`. Legs 2 and 3 are **recorded from Mike's session
+observation**; they are corroborated but not re-run here. The corroboration is that `demo.ps1` is a
+tracked two-line file defining `Frobnicate-Thing` and calling `Get-Process` -- exactly the fixture
+that produces that symbol, that unapproved-verb diagnostic, and that hover target.
+
+**The proof therefore establishes what the charter said unit tests could not: Claude Code performs
+`${user_config.*}` substitution inside an `lspServers.env` block, and the substituted value reaches
+and is acted upon by the serve subprocess.** The 000233 deviation is DISCHARGED. Its OQ1
+open question -- what an unset knob expands to -- remains answered as the outbox answered it: both
+shapes are handled and both are tested, and the proof did not need to disambiguate them.
+
+### Two corrections to the record, made here rather than by editing a verified outbox
+
+- **The settings path in the outbox's closing instruction is wrong.** It says
+  `pluginConfig['powershell-lsp']`. The real path is `pluginConfigs` (plural), keyed by the
+  **qualified** plugin name `powershell-lsp@claude-powershell-lsp`, with the values under a nested
+  `options` object. Anyone following the outbox verbatim would have written a key Claude Code never
+  reads and concluded the fix had failed.
+- **The proving artifact is `main`, not the v1.31.1 release.** The installed plugin self-reports
+  version `1.31.1` and installs under a `1.31.1` cache path, but its install record reads
+  `gitCommitSha: 939048e955483b044f3d8e041c72448af68bc6f2` -- current `main` HEAD.
+  `git tag --contains d563b84` is **empty**, and tagged `v1.31.1` carries only `PSES_BUNDLE_PATH`
+  in `lspServers.powershell.env`. **The transport has never been in a tagged release.** The
+  marketplace sources the plugin at `./`, so installs track the default branch and pick the
+  mappings up ahead of any tag. Read the manifest `version` field as a self-report, not as
+  provenance -- the install record's commit SHA is the fact that means something.
+
+### The proof surfaced a new defect, registered separately
+
+Materializing the configuration is not optional on 2.1.233 -- it is what the LSP block now
+**requires**. With only `nativeServe` set, startup refused the plugin's whole LSP definition:
+
+```
+Failed to load LSP servers for plugin powershell-lsp: Error: Plugin option "profile" isn't set.
+```
+
+`profile` and `ps_host` both declare defaults in `userConfig`; the declared defaults do not satisfy
+the reference. Root cause is isolated to a missing defaults-merge on Claude Code's `lspServers`
+interpolation path -- the sibling MCP path performs it -- and is written up with the decompiled
+call sites, the 13-plugin control, the reproducer and the proposed one-line upstream fix in
+[docs/upstream/claude-code-lspservers-userconfig-defaults.md](upstream/claude-code-lspservers-userconfig-defaults.md).
+
+**This is not a reopening of 000233 and does not disturb its ruling.** It is a compatibility defect
+in a transport 000233 correctly identified as the supported one. The fix belongs **both** upstream
+(primary -- only upstream can remove the asymmetry) and in this plugin (a mitigation is required
+now, because the mappings are live in the distribution channel while the tagged release is
+unaffected). The plugin-side mitigation is a real trade against 000233's ruling and is left for
+adjudication in **dispatch 000241** rather than chosen here.
+
+Executable coverage landed with this entry:
+`tests/PowerShellLsp.LspServerLoadability.Tests.ps1`, 19 tests, green under pwsh 7.6.3 **and**
+Windows PowerShell 5.1. It does not pin today's answer -- it counts the mandatory-configuration
+cost of every `${user_config.*}` mapping, ties that count to the troubleshooting entry, and its
+zero-configuration prediction is written to **flip with its own premise**, so it stays honest under
+either mitigation. Writing it also refuted a plausible guess: dropping a referenced key's declared
+default does **not** keep the block failing after the upstream fix -- the merge assigns
+`default ?? ""`, so the knob silently resolves to an empty value instead. Only `required`-without-a
+-default stays fatal. Both behaviors are now pinned as separate tests.
+## Dispatch 000241 -- the lspServers userConfig-defaults gate: mitigation RULED and shipped
+
+**Dispatch 000233 is not reopened.** Its state stays `verified`, its outbox stands as written, and
+its ruling -- that `${user_config.*}` inside `lspServers.<server>.env` is the supported transport
+for a knob the LSP serve subprocess reads -- **stands and remains the intended architecture**. What
+follows suspends the USE of that transport on a Claude Code whose implementation of it is
+defective. The design is untouched; the installed-plugin proof discharged above remains valid.
+
+### Ground truth, re-derived at implementation time
+
+The charter required the defect be re-measured rather than carried forward, because an undocumented
+upstream fix would have changed the whole answer. On 2026-08-15 the live binary still showed the
+asymmetry verbatim -- `zup` passing `$Q(hBe(e))` (stored options only) where the sibling MCP path
+`fRb` returns `$Yd({...i,...s},{...r,...o})` (schema defaults merged), with the interpolator
+throwing on any `undefined` key and the per-plugin catch discarding **every** server the plugin
+declares. `claude --version` reported **2.1.233**, and `npm view @anthropic-ai/claude-code version`
+reported 2.1.233 as the **latest published release** -- so waiting for upstream was never an option.
+
+### The blast-radius question, ANSWERED by measurement
+
+The charter's open question was whether the `/plugin` configuration panel materializes declared
+defaults into stored options -- which would have scoped the defect to hand-edited and headless
+configs. **It does not, on either half of its lifecycle.** The panel is seeded from the same
+defaults-free reader and renders an unset field EMPTY rather than showing its declared default; and
+its submit reducer SKIPS a blank non-required key whose stored value is `undefined`, so opening the
+panel and pressing **Save** without typing writes nothing at all. Corroborated on the proving
+machine, whose stored options held exactly the three hand-set keys, not the twenty declared ones.
+
+**Consequence: every fresh install of the default branch was affected, and walking the panel was
+not a workaround.** This is also what **disqualified pre-authorized option 2** (keep the mappings
+plus a loud failure path), whose stated precondition was that the install flow materializes
+declared defaults.
+
+### The ruling
+
+**Option 1, plus an explicit suspension record.** The three `${user_config.*}` mappings are removed
+from the manifest; everything 000233 shipped that was not the manifest edit is retained -- the
+provenance resolver, the `/doctor` configured-vs-effective check, and the derived-reachability test.
+The side-channel option (a SessionStart-written state file the shim reads, which would have kept
+`nativeServe=shim` working through the gate) was **considered and declined**: it is not the smallest
+mitigation, and it would add a second configuration resolver against 000233's one-resolver property.
+It is recorded as the escalation path if upstream stalls and demand materializes.
+
+**This is a temporary compatibility suspension, not a retreat.** The suspension is recorded
+machine-readably in `Get-ServeTransportSuspension` (`scripts/lib/lsp-common.ps1`), naming for each
+knob the gate, the affected Claude Code version, the exact condition that lifts it, and the precise
+env name and mapping value to restore -- so lifting the gate is a mechanical edit rather than a
+re-derivation. The test suite asserts that replaying every record back into the manifest satisfies
+000233's **original** mapping invariant, which is what keeps that promise honest.
+
+### Keeping configured-vs-effective truthful, which was the whole condition on option 1
+
+The two surfaces know different things, and the mitigation splits the job accordingly:
+
+- **The serve subprocess cannot see what the user configured.** Under the suspension these knobs
+  necessarily resolve `provenance: default` -- a phrase that asserts something about the USER, and
+  the wrong claim here. So the shim now names the gate on every launch, and its `configured=` field
+  says *not transportable* rather than *(unset)*. Emitting the bare default would have restored
+  precisely the silent divergence 000233 was raised to kill.
+- **`/doctor` is hook-adjacent and DOES receive `CLAUDE_PLUGIN_OPTION_*`,** so it reports both
+  branches of the fork. It now distinguishes three states rather than two: mapped; **SUSPENDED BY
+  UPSTREAM GATE** (stated, never a FAIL -- there is no action available to the user); and unmapped
+  for any *other* reason (still a FAIL, so the guard keeps its teeth for a knob added to the shim
+  and forgotten).
+
+### The two test blocks were reconciled, not weakened
+
+They were in genuine tension -- 000233's block required every reachable knob to be mapped, and the
+loadability block counted what each mapping costs. The reachability **derivation** is the durable
+part and is retained; the **mapping requirement** is what the gate suspends. The invariant is now
+"every reachable knob is mapped **or** explicitly suspended", and a reachable knob that is neither
+turns the suite red. `$LslExpectedRequiredKeys` is now empty, which is the mitigation stated as an
+assertion: any non-empty value means a zero-configuration install gets zero LSP servers.
+
+The anti-vacuity controls had to move with their premise. 000233's controls deleted a shipped
+mapping and asserted the check went red; with the mappings suspended there is nothing left to
+delete, and `.Remove()` on an absent property is a silent no-op that would have passed while
+proving nothing. Those controls now run against a **restored** manifest -- the shape the day the
+gate lifts -- and the new accounted-for invariant has controls of its own.
+
+### Filed upstream
+
+[`anthropics/claude-code#86936`](https://github.com/anthropics/claude-code/issues/86936), filed
+2026-08-15 with Mike Andersen's explicit authorization. The report carries the reproducer, the
+MCP-path control, the one-call suggested fix, and the newly-measured configuration-panel behavior.
+**Ordering:** the mitigation shipped first and the report was filed immediately after,
+independently -- 2.1.233 was already the latest release, so filing unblocks no user, while
+marketplace installs track `main` HEAD today. Do not re-file; it advances on #86936.
+
+## Dispatch 000247 -- relicensed FORWARD to Apache-2.0, RULED by Mike 2026-08-16
+
+**The ruling.** Mike Andersen ruled on 2026-08-16 that the project relicenses **forward-only** from
+`GPL-3.0-or-later` to **Apache-2.0**. This is the second forward license change in the project's
+history and was executed on the same mechanics as the first (MIT -> GPLv3 at v1.6.1, dispatch
+000029), which is the in-repo precedent this entry is measured against throughout.
+
+### The three reasons of record
+
+1. **Enterprise allow-lists are written around Apache-2.0.** The explicit patent grant (section 3)
+   and the NOTICE mechanics (section 4(d)) are what those lists key on, and enterprise adoption is
+   the active demand signal. The **2026-08-15 corporate-IT review ranked GPLv3 as adoption-blocker
+   number one** once the offline path -- blocker zero -- was closed by dispatch 000244.
+2. **Sole copyright holder, so no CLA archaeology.** The change is a forward-only grant change over
+   work a single human rightsholder authored. No contributor agreement had to be gathered, and no
+   contribution had to be relicensed by a third party. This is exactly what made the v1.6.1 move
+   cheap, and it is the same fact Roadmap II gate D1 recorded as making a relicense *possible*
+   later without deciding to do one.
+3. **Every previously published release keeps its grant.** `GPL-3.0-or-later` grants already made
+   are not, and cannot be, revoked. The relicense adds a grant going forward; it removes none.
+
+### The forward-only boundary, stated exactly
+
+Three bands, not two -- the project has now relicensed twice, so the naive "prior releases were
+MIT" sentence the v1.6.1 entry could write is no longer sufficient:
+
+| Band | License | Status |
+|------|---------|--------|
+| v1.0 -- v1.6.0 | MIT | irrevocable; untouched by both relicenses |
+| v1.6.1 -- current release (v1.31.2 at ruling time) | `GPL-3.0-or-later` | irrevocable; untouched by this relicense |
+| next release forward | `Apache-2.0` | this ruling |
+
+Every doc that stated the boundary as a single "forward from v1.6.1; prior releases are MIT" pair
+was corrected to carry all three bands, rather than having its version numbers swapped.
+
+### What the charter did not anticipate, found by the live census and RULED here
+
+The charter named seven anchor paths. A live grep for the outgoing identifier returned **23 files /
+217 occurrences**, and three classes of site sat outside the anchor list:
+
+- **The drift-guard is executable, not prose.** `tests/PowerShellLsp.Unit.Tests.ps1` asserted the
+  SPDX id matches `^GPL-3\.0-(or-later|only)$` and that the LICENSE body contains
+  `GNU GENERAL PUBLIC LICENSE`; `tests/PowerShellLsp.Release.Tests.ps1` asserted the SBOM subject
+  license id is exactly `GPL-3.0-or-later`. These are **statements of the project license that
+  happen to be code**, and the charter's "no code behavior changes" line does not reach them: they
+  are the enforcement half of the same single-source lockstep the sweep exists to maintain, and
+  leaving them would have turned the suite red on an otherwise docs-only change. They moved with
+  the id and gained two assertions -- that the outgoing GPLv3 body is **absent** rather than merely
+  joined by the incoming one (a LICENSE holding both would have satisfied every positive assertion
+  while declaring two incompatible licenses), and that `NOTICE` exists and names project and holder.
+- **The bus-factor mitigation was built on copyleft, and a find-and-replace would have made it
+  lie.** `CONTINUITY.md`, `docs/CONTINUITY.md`, `MAINTAINERS.md`, `TRUST.md`, `ROADMAP.md`,
+  `CONTRIBUTING.md` and `GOVERNANCE-SURFACE.md` all sold a "guaranteed GPLv3 fork path" under which
+  the community's position was "structurally protected." Under Apache-2.0 the fork path **survives
+  in full** -- the grant is irrevocable, no CLA is collected, and a fork needs nothing from the
+  maintainer -- but the copyleft obligation that a derivative come back **does not**. Swapping the
+  license name in those sentences would have preserved a promise the license no longer makes. They
+  were rewritten to keep the guarantee that is still true and to **state the loss explicitly**,
+  including in `TRUST.md`'s honest-limits register. This is the one place the relicense costs an
+  adopter something, and it is now written where an adopter reads rather than only here.
+- **Line-range citations decay when the cited file grows.** `GOVERNANCE-SURFACE.md` cited
+  `docs/CONTINUITY.md:23-105` and `CONTINUITY.md:58-92`. Editing those two files moved every line
+  after the edit, so the citations were re-derived from disk (`23-113` and `67-101`) rather than
+  left to rot. A relicense sweep that matches only the license identifier does not see this class
+  of breakage at all.
+
+### Deliberately NOT changed, and why
+
+- **`docs/roadmap-ii/CORPUS-PROVENANCE-AUDIT.md` (142 occurrences) is untouched.** Its License
+  column reads `GPL-3.0-or-later (repo-wide)` for all 137 corpus rows, and that is now stale on the
+  working tree. This is **known and deferred, not missed**: corpus fixture licensing and the corpus
+  commons un-gate are their own dispatch, explicitly gated on this one merging, and this dispatch's
+  charter forbids touching corpus files, fixtures, or their licensing. **This creates a real
+  tension with the charter's own acceptance criterion** ("a live grep for the outgoing identifier
+  returns zero hits outside CHANGELOG history, the decision ledger, and release-history documents"),
+  which that audit satisfies none of. The tension is resolved in favour of the explicit `do_not`,
+  and recorded here so the corpus dispatch inherits the item rather than rediscovering it. The same
+  reasoning covers the `PROGRAM.md` R2-05 row, whose "GPL-vs-permissive relicensing decision" is the
+  corpus question and not this one.
+- **Historical records stay true.** The v1.6.1 CHANGELOG entry, this ledger's "licensing MIT ->
+  GPLv3" arc line, and the D1 rider recording that corpus files "take GPL-3.0-or-later by repo-wide
+  inheritance" all describe what was true when written, and are left exactly as written. The D1
+  rider's *premise* -- repo-wide GPL inheritance -- is what this ruling changes; the rider itself is
+  a ratified record and is not edited to match.
+- **No per-file SPDX headers were added.** The repo has **no** per-file header convention: a live
+  grep for `SPDX-License-Identifier` returns zero hits across every tracked `.ps1`, `.psm1`, `.psd1`
+  and every other tracked file. Per the charter, the LICENSE + NOTICE + manifest + doc surface is
+  therefore the whole change.
+
+### The LICENSE body is byte-verified, and the appendix was deliberately left unfilled
+
+`LICENSE` is the canonical text from <https://www.apache.org/licenses/LICENSE-2.0.txt>: **11,358
+bytes, 202 lines, LF, no BOM, zero non-ASCII bytes, SHA-256
+`cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`**. The charter permitted filling
+in the appendix `[yyyy]` / `[name of copyright owner]` boilerplate; it was **declined**, so the file
+stays byte-identical to the canonical source and the strongest available verification claim -- "this
+is the unmodified upstream text, and here is its hash" -- stays checkable by anyone with `curl` and
+`Get-FileHash`. The copyright attribution lives in `NOTICE`, the file Apache-2.0 section 4(d)
+designates for it.
+
+The hash is recorded **here and in the CHANGELOG**, following the v1.6.1 precedent, rather than
+asserted by a test against the worktree file. A byte-exact hash of a checked-out text file is a
+**checkout** property, not a repository property: `core.autocrlf` on a Windows leg would rewrite the
+line endings and turn that assertion red across the four-leg matrix while nothing was actually
+wrong. The suite therefore asserts the license *body* (canonical strings present, outgoing body
+absent) and leaves the byte fact to the written record.
+
+### Semver class
+
+**PATCH**, on the v1.6.1 precedent, which classed the MIT-to-GPLv3 move as "a PATCH by SemVer (no
+API or behavior change) -- the significance is legal, and it is carried in this entry, not in the
+version digit." The precedent is unambiguous, so no adjudication was required. The `[Unreleased]`
+band is already MINOR for the air-gapped bootstrap; the relicense rides that class rather than
+raising it.
+
+## Dispatch 000249 -- the `Save-Module` gallery fallback: RULED by Mike 2026-08-17 -- remove Method 2 (Option B), deprecate-then-remove
+
+**Status: RULED by Mike 2026-08-17 -- Option B, remove Method 2, shipped as deprecate-then-remove.** The recommendation below is now the decision; the reasoning it records stands unchanged. The proxy-behind-corporate-firewall scenario the docket left unmeasured is carried by the deprecation window: the announced window is the period in which any user who relies on the `Save-Module` route can report it, and such a report is the signal that would pause removal. Method 2 is announced in one release's CHANGELOG and deleted in a later one; on removal, threat rows T1.2, T1.4 and T1.5 retire and the plugin keeps no persistent write outside its own data directory. The follow-up build dispatch is chartered separately. This
+entry records what the adjudication docket *proposes*, so the question is findable in the ledger
+rather than only in an outbox -- it does **not** record a decision, and no ruling is attributed to
+anyone. Source: the dispatch 000249 outbox,
+`projects/powershell-lsp/outbox/000249-save-module-gallery-fallback-adjudication-docket-assembled.md`
+in the strategic-dispatch hub, assembled 2026-08-16 as **findings only, zero mutation**. That
+document states its own standing plainly: "THE RULING ASKED FOR (Mike disposes; this docket
+proposes)."
+
+**What is proposed.** **Option B -- remove Method 2**, the `Save-Module` gallery fallback in
+`scripts/ensure-pssa.ps1`, shipped as **deprecate-then-remove**: announce it in one release's
+CHANGELOG and delete it in a later one. The docket's reasons, in the order it says the evidence
+supports them:
+
+1. **The route has never been observed to work.** Zero successful fallback installs across the
+   whole local log corpus; nine reached-and-failed. *(Bounded: local evidence only.)*
+2. **It is not origin-diverse.** Both acquisition routes terminate at `www.powershellgallery.com`,
+   so the outage the fallback exists to survive is largely the outage it shares.
+3. **Its stated justification does not hold.** Microsoft documents that `Save-Module` validates no
+   signature, so "publisher/catalog integrity" describes controls this path never invokes.
+4. **Removal retires three threat rows** (T1.2, T1.4, T1.5) and eliminates the plugin's only
+   persistent write outside its own data directory.
+5. **000244 already did the structural work that makes removal safe.** With mirror, bundle and
+   cache in front of the download, the pre-000244 argument -- that the fallback is the only thing
+   between a flaky CDN and a broken install -- no longer holds.
+
+**Where the docket's evidence stops, and it stops there deliberately.** It did **not** measure
+whether PackageManagement's client succeeds where `Invoke-WebRequest` fails behind a corporate
+proxy. That is the one scenario in which removal genuinely costs a user something, and it is
+**unmeasured**. If that risk is weighted heavily, the docket's stated second choice is **A2** --
+verify the delivered Authenticode signature after `Save-Module` -- and explicitly **not** Option C
+(keep as is), because C leaves the standing disclosure overstating what the code performs.
+
+**The demand signal, named in advance.** Deprecate-then-remove is proposed precisely because the
+**announced deprecation window** converts that unmeasured proxy risk into a period in which anyone
+actually relying on the route can say so. **A user reporting that the `Save-Module` fallback is
+what vendors PSScriptAnalyzer on their estate is the demand signal** -- and, should the question be
+declined rather than actioned, it is the thing that would reopen it. This mirrors the custom-rule
+seam's "declined pending demand" shape already in the ROADMAP declines table, with one difference
+that matters: **that item is declined; this one is not decided at all.**
+
+## Dispatch 000251 -- corpus commons UN-GATED: the corpus publishes under Apache-2.0
+
+**The ruling of record.** Corpus fixtures and every corpus-surface file publish under the
+**project license, Apache-2.0** -- one license across the repository, with no second licensing
+regime to explain. This closes the last thing holding the Arc B corpus-commons gate.
+
+This entry records a decision that is now **landed**, not one awaiting a ruling. It
+cross-references the entry above it in this ledger -- *"Dispatch 000247 -- relicensed FORWARD to
+Apache-2.0, RULED by Mike 2026-08-16"* -- which relicensed the repository forward to Apache-2.0 and
+is the precondition this dispatch was hard-gated on.
+
+### Why this was a decision and not an obstruction
+
+The D1 gate decision recorded the Arc B licensing gate as **PASS** and deferred "the
+GPL-vs-permissive relicensing decision" to Arc B activation. The provenance audit
+(`docs/roadmap-ii/CORPUS-PROVENANCE-AUDIT.md`, dispatch 000222) had already established the fact
+that makes the choice free: **all 137 files in the audited surface are authored in this repository,
+with zero derived from an external source and zero unresolved.** There is no third-party
+rightsholder to clear anywhere in the surface, so relicensing the corpus required no one's
+permission.
+
+The 000247 relicense then chose Apache-2.0 for the repository as a whole. Taking the same license
+for the corpus is the option that adds no new surface to explain:
+
+- **A benchmark corpus wants to be permissive**, so a consumer can vendor cases into a
+  differently-licensed test suite without inheriting a copyleft obligation. Apache-2.0 delivers
+  that, plus an explicit patent grant.
+- **A second license would have to be justified, propagated, and defended.** A CC0 or MIT carve-out
+  for `tests/corpus/` would mean two regimes in one tree, a boundary a consumer has to reason about
+  before copying a file, and a per-file header convention this repository does not have -- a live
+  grep for `SPDX-License-Identifier` still returns zero hits across every tracked file. The
+  simplification is the point.
+
+### The precondition, checked and recorded
+
+The dispatch was hard-gated on the relicense being **merged to main** before any work started.
+Checked first, before anything else: `LICENSE` on `origin/main` (`276b795`) reads the Apache
+License 2.0, blob `d645695`. The gate opened rather than being assumed open.
+
+### Zero drift between the audited surface and disk
+
+Publishing on an audited set is only meaningful if the set has not moved since the audit. It has
+not. The audit's 137-row per-file table was compared file-for-file against `git ls-files` over the
+same coverage boundary: **identical, 137 for 137**. A `git diff` of that boundary between the
+audit's derivation commit `7f34277` and this dispatch's HEAD reports **no change at all** -- not an
+add, a delete, a rename, or an edit. The empty diff was falsified against a positive control
+(`README.md` and `LICENSE`, which the same command correctly reports as modified), so it is a real
+negative rather than a pathspec that matched nothing.
+
+### What was deliberately NOT changed, and why
+
+- **The provenance audit's 137-row License column stays `GPL-3.0-or-later (repo-wide)`.** Dispatch
+  000247 recorded this as "known and deferred, not missed" and handed the item to this dispatch.
+  Inheriting it does **not** mean rewriting it. That column is a **finding derived at
+  `7f34277` on 2026-08-12**, when the repository was in fact GPL-3.0-or-later; overwriting it with
+  the current identifier would falsify a dated record of what an instrument observed. The audit's
+  substantive finding -- that no corpus file carries a per-file license header, and each is
+  therefore covered by the repository `LICENSE` and nothing else -- is unchanged and remains true
+  under Apache-2.0. A dated note now heads that document and its License-column legend, pointing
+  forward to this entry. This follows the same principle 000247 applied to the D1 rider and the
+  v1.6.1 CHANGELOG entry: **historical records stay true.**
+- **The D1 rider is not edited.** Its premise -- repo-wide GPL inheritance -- is what 000247
+  changed; the rider itself is a ratified record.
+- **No corpus fixture content, count, or measurement script was touched.** This dispatch publishes
+  the surface; it does not alter it.
+- **`tests/doc-claims.psd1` was not edited**, and no guarded claim was disturbed.
+
+### Finding 1 of the audit, resolved by naming the population
+
+The audit's Finding 1 recorded that this ledger's own statement of the Arc B contingency (the
+parenthetical at lines 1366-1367, *"the oracle mixes repo scripts with installed-module
+scripts"*) describes a **different population** from `tests/corpus/` -- the ad-hoc false-positive
+survey set, which this ledger settles elsewhere as **machine state** that has never been committed.
+`ROADMAP.md` states the same gate without the parenthetical, and only that wording matches the
+population that could actually be published.
+
+That ambiguity is resolved here by stating the scope the ruling covers, rather than by editing the
+earlier record: **this ruling covers the 137-file committed corpus surface enumerated by the
+audit's coverage boundary, and nothing else.** The installed-module scripts the parenthetical
+worried about were never in the repository, are not published by this dispatch, and are not
+licensed by it.
+
+### The corpus is consumable, not announced
+
+The deliverable is the repository being ready for an outside consumer to use, cite, and reproduce:
+`docs/corpus.md` states the license, the provenance result, the derivation invariant, the
+measurement definitions, the exact steps to reproduce the numbers from a clean clone, a citation
+form, and the limits the corpus does **not** cover. `README.md` and `TRUST.md` point at it.
+
+**Nothing was published externally.** No announcement, no submission to any list, benchmark site,
+or third-party channel, and no new repository. External publishing is a maintainer action and
+remains one; this dispatch deliberately stops at making the corpus consumable where it already
+lives.
+
+### One number is published unguarded, and it is flagged rather than smoothed
+
+`docs/corpus.md` states the **137-file** audited surface count. The doc-claims registry guards the
+README's scored denominators; it does not guard this number, and this dispatch is forbidden from
+adding a registry row. The page therefore publishes the count **with the `git ls-files` command
+that derives it** and an as-of stamp, and the scored denominators are **not** restated on that page
+at all -- they are read from the guarded README section instead. That is the honest treatment
+available under the constraint, and the residual risk is named here rather than left implicit: if
+the surface grows, that count can go stale exactly the way the README's clean-fixture count once
+did. Registering it is a one-row follow-on for a dispatch permitted to touch the registry.
+
+### Semver class
+
+**PATCH.** Documentation and a licensing statement; no API, knob, or behavior change. The corpus
+files themselves are byte-identical.
+## Dispatch 000257 leg C -- Arc C attested diagnostics: RULED by Mike 2026-08-17 -- DECLINE to build now, and re-gate
+
+**Status: RULED by Mike 2026-08-17 -- decline to build; keep gated, gate re-scoped.** Source: the dispatch 000257 outbox, leg C (absorbs 000252), assembled as findings only. The docket mapped four of five candidate attestation claims to a named, currently OPEN threat (ruleset identity and policy layer to T4.1/T4.2, engine versions to T1.4/T1.5, input hash partially to T3.2), which is a stronger mapping than the horizon framing implied and is worth keeping on record. It does not change the ruling.
+
+### Why decline now
+Two independent gates are unmet. There is no demand: no issue, discussion or feedback row in the repository asks for attested diagnostics, and the one adjacent adoption signal -- the 2026-08-15 corporate-IT review -- named offline bootstrap and the GPLv3 licence as its blockers, both since answered (000244, 000247), and said nothing about attesting scan output. And there is barely any subject to attest: leg F measured the efficacy channel Arc C would sign at six canonical-checkout rows lifetime, zero in the last nine days across four released versions. Building any of the three costed options today would ship a proof nobody has asked to verify, about findings the project scarcely collects.
+
+### The re-gate
+The recorded gate was "real efficacy data existing and a real consumer to read it." It is sharpened: the activating signal is **a named consumer that actually verifies**, not data volume alone. Volume can never trip this gate; only a real reader does. This converts Arc C from a vague horizon item into a precisely-gated one at zero build cost.
+
+## Dispatch 000257 leg D -- Arc D enterprise control plane: RULED by Mike 2026-08-17 -- CHARTER the policy-integrity verification slice
+
+**Status: RULED by Mike 2026-08-17 -- charter one slice: policy-integrity verification. The lane otherwise stays demand-paced.** Source: the dispatch 000257 outbox, leg D (absorbs 000253), findings only. The docket derived the shipped enterprise surface from disk: `orgPolicy` is the outermost layer of the settings precedence chain and governs exactly one thing, `ExcludeRules`, applied as a final subtractive drop. Its coverage table found central suppression and offline distribution already covered, and five needs uncovered.
+
+### Why this slice, and only this one
+Of the five uncovered needs, policy-integrity verification (T4.1) is the only one whose demand evidence is **in-repo** rather than inherited: the org policy file is read with no integrity check, so write access to that file is control over enforcement. It closes a named OPEN threat, and it has **zero CONTRACT.md freeze exposure** -- a hash or signature check beside the existing path knob adds no userConfig key, so the `.strict()` manifest schema is untouched. Everything ranked above it in adoption impact (central distribution, fleet visibility, audit trail) rests on the unverified-inherited corporate-IT citation or on no on-disk demand at all; the lane's gate is one slice per real signal, and an in-repo OPEN threat-model finding is that signal. The remaining four needs stay demand-paced, their absence of demand recorded as a finding, not filled in. The follow-up build dispatch is chartered separately.
+
+## Dispatch 000257 leg E -- LSP test-harness census: RULED by Mike 2026-08-17 -- do NOT build a shared harness; restore the dropped rationale
+
+**Status: RULED by Mike 2026-08-17 -- do not build tests/Harness/; the one real defect is documentary and gets a documentary fix.** Source: the dispatch 000257 outbox, leg E (absorbs 000255), findings only. The census counted 59 launch sites and 152 wait sites outside the existing seams.
+
+### Why not build
+The sharpest duplication pair, `ModuleAwareness` and `ReferenceSurfacing`, carries 37 byte-identical lines -- and **zero behavioural drift**: every constant matches (150 x 400 ms readiness poll, 45000 ms round-trip cap, 60000 ms shared-helper timeout). Copies that stay in lockstep across independent suites without a shared abstraction are demonstrably cheap here; extracting a harness would churn four working files to solve a problem the evidence says the project does not have, and would have to clear Pester 5.7.1-on-5.1, the exact host-divergence class the leg F phantom proved this codebase is exposed to. The one place a shared class would earn its keep -- the wait/readiness loop -- already exists as `Wait-DaemonRequestReady`, and the copies consume it.
+
+### The proportionate fix
+The measured defect is documentary: the `ReferenceSurfacing` copy dropped the rationale comment explaining that its request retries until a clean settled pass, so a silent case is proven silent on a real analysis and never trivially on an unsettled one. The loop shape survived the copy; the reason for the shape did not. Restore that one sentence and treat it as the thing to keep in sync. Folded into the next docs-touching change; no standalone dispatch required.
+
+## Dispatch 000257 leg A -- Arc E scale and robustness: RULED by Mike 2026-08-17 -- PARK, with a named scale signal
+
+**Status: RULED by Mike 2026-08-17 -- park; activate on a real >5000 ms edit report.** Source: the dispatch 000257 outbox, leg A (absorbs 000254), a measured baseline taken on a swept, non-degraded machine (zero statusline shells, 11 pct CPU; the sweep selector was proven live before its zero was reported).
+
+### Why park
+The floors are healthy. Sustained behaviour is flat -- twenty back-to-back edits drift 1.1 ms (0.18 pct) between the first five and the last five. No measurement approached the 5000 ms edit-path cap; the cold path at 5385 ms is cap-dominated, not startup-dominated, and lowering it would trade honesty for speed. Both remaining gap classes (daemon-exit on a departed client, relaunch thrash) are already fixed. The one number that could justify work is large-file variance -- 2011 ms mean at 247 KB, sd 1154 -- and it is bounded by a corpus that cannot exercise it: the largest corpus file is 24.8 KB, so the corpus does not contain the case Arc E is about.
+
+### The gate
+The honest first step is a signal definition, not a fix. Arc E activates when a real repository reports an edit that exceeds the 5000 ms cap. Environmental hardening was considered and set aside: the environment measured clean, so hardening it would optimise a problem this machine does not have.
+
+## Dispatch 000257 leg G -- agent-facing PSES exposure: RULED by Mike 2026-08-17 -- CHARTER the codeAction fix-text slice; the rest stays queued
+
+**Status: RULED by Mike 2026-08-17 -- charter one slice: a richer textDocument/codeAction payload on the existing hook. The interactive-editor capabilities stay queued behind their upstream gates.** Source: the dispatch 000257 outbox, leg G, findings only. Derived from the vendored PSES v4.6.0 binary: of sixteen LSP-facing handlers, the plugin surfaces two capabilities today -- diagnostics and code actions.
+
+### Why this slice
+It is the highest value-to-cost item on the board. The codeAction handler is already wired and already called (3 sites), so surfacing the fix **text** for findings the hook already reports -- not merely that a code action exists -- is a payload change on a live call, not a new capability integration. It carries **zero CONTRACT.md freeze exposure** (no new userConfig key), it is **not** blocked behind the native-serve gap or `#86936` because it rides the daemon pipe the hook already uses, and it is positional-safe in the way that matters: it enriches a finding the agent is already shown at a location already reported, rather than answering a new positional query that could be confidently wrong against stale line numbers. It serves the North Star directly -- an agent told how to fix a finding can act, where an agent told only that one exists must re-derive the fix. The follow-up build dispatch is chartered separately.
+
+### What stays queued, and behind what
+Hover and definition are positional and would be confidently wrong against an agent's stale line numbers, so they wait. The interactive-editor surfaces (completion, signature help, semantic tokens, folding, code lens) unblock only when a real LSP client consumes this server, gated on `anthropics/claude-plugins-official#1359` and, for configuration transport, `anthropics/claude-code#86936`, both OPEN as of 2026-08-17. Declining to build the rest now is a fully successful outcome of the survey.
+
+## Dispatch 000262 -- the relaunch: RULED by Mike 2026-08-17 -- it COMPLETES the findability goal
+
+**Status: RULED by Mike 2026-08-17 -- the relaunch completes the 2026-07-05 findability goal
+rather than replacing it, and its pitch is substance rather than conventional marketing copy.**
+Source: dispatch 000262, chartered as a planning docket, findings only. **This entry is an
+append, per this file's standing convention.** The 2026-07-05 findability-goal entry earlier in
+this file (section "Goal (Mike, confirmed)") is untouched and stays exactly as written -- which is
+the ruling's own point, not merely the convention's.
+
+### The ruling, in Mike's framing
+
+The relaunch **completes** the findability goal. It does not supersede it, retire it, or admit it
+was wrong: findability was the right first goal, was acted on -- the r/PowerShell and r/ClaudeCode
+posts went live 2026-07-05 -- and stays true. What the relaunch adds is the second half of the
+same goal, reaching the channels the first pass did not.
+
+The pitch is **evidentiary discipline itself**, presented outward rather than invented for the
+occasion. In Mike's words: **"We deal with facts, not fluff."** Every claim the relaunch makes
+must trace to something reproducible in this repository. The three practices that already produce
+that property are the marketing case: corpus statistics recomputed on every CI run rather than
+asserted; a decision ledger that records declines as carefully as wins; and RED controls that
+prove a check can fail before anyone trusts it green. Nothing goes out that a reader cannot
+re-derive.
+
+### Why this was chartered as findings-only
+
+The relaunch is a product and positioning call, which `ROADMAP.md`'s "Operating posture" names
+explicitly as a human gate, and the project's survey-first doctrine says findings precede fixes,
+each in its own dispatch. 000262 therefore prepared everything preparable without making the call
+-- the roadmap language, the channel research, and a white-paper outline with real citations --
+so that when the gate is met, publishing is a light edit against fresh material rather than a cold
+start under time pressure. **Nothing was published, submitted, or commented anywhere.** External
+publishing remains Mike's gate without exception, and the gate reading as met would not change
+that: the trigger is his hand, not a dispatch's discovery of readiness.
+
+### What landed, and the gate's first reading
+
+`ROADMAP.md` gains one additive section, "The relaunch -- substance as the pitch", placed
+immediately after North Star and carrying the approved text verbatim. Its gate: the relaunch
+triggers when the Next lane is empty AND every item in Gated and paced is either upstream-blocked
+with a named external issue number or demand-paced with no live signal recorded.
+
+**Derived 2026-08-17, the gate is NOT met, and it fails on both arms.** Next carries three items,
+so arm 1 fails outright; arm 2 fails on two of six Gated-and-paced items -- corpus commons, whose
+gating audit has passed so it waits on a licensing decision rather than on an upstream or on
+demand, and the enterprise control plane, which is demand-paced but has a live signal recorded and
+a slice chartered off it. The per-item derivation is in `docs/roadmap-ii/RELAUNCH-PLAN.md`, which
+also carries the channel plan; the paper's structure and citations are in
+`docs/roadmap-ii/WHITE-PAPER-OUTLINE.md`. Both are findings documents.
+
+### One defect in the approved text, preserved rather than fixed
+
+The gate sentence reads "the Next lane **above** is empty", but the same charter fixed the
+section's placement immediately after North Star -- which puts Next **below** it. The charter
+required the approved text be copied exactly and forbade improving it, so it was copied exactly
+and the discrepancy is recorded here and in `RELAUNCH-PLAN.md` (finding F1) instead of being
+silently corrected. It is directional wording only: both lanes are named by heading, so the gate
+stays checkable as written. The one-word fix is available whenever Mike wants it.
+
+---
+
+## Dispatch 000269 -- the gate-clearance sitting: RULED by Mike 2026-08-21 (G1-G9, grants R1-R3)
+
+Mike ruled on every open gate in one sitting. The rulings are recorded here as decisions; what each
+one caused is recorded in the documents it governs, not restated here. Grants are recorded with
+their limits, because a grant without its limit reads as a blanket permission.
+
+**Nothing in this section was decided by an agent.** Where the execution took a judgement -- a fork
+arm, a scope narrowing, a premise correction -- it is marked as such and attributed to the dispatch
+rather than to the ruling.
+
+### The nine rulings
+
+| # | Ruling | What it settles |
+| --- | --- | --- |
+| **G1** | **The corpus goes Apache-2.0.** | Ends the GPL-vs-permissive relicensing question deferred from R2-05 to Arc B activation. Derived at execution: no corpus file carries a per-file license header of any kind, and the repository relicensed forward-only at the current release, so the corpus was **already** Apache-2.0 on disk and nothing needed relicensing. Publication stays gated. |
+| **G2** | **T1-T6 are ratified as the v1 SLOs.** | Converts the six candidate targets in `SLO-BASELINES.md` from proposals into adopted targets, and the baseline document from a description into a regression bar. All six are met at the current release. Ratification changed no number and no basis, which is what makes "all six met" a result rather than a construction. **No cold-start target was adopted**, and that gap stays deliberately open. |
+| **G3** | **The threat-model register is triaged fix / measure-then-fix / accept-with-record.** | Settles all ten findings in `THREAT-MODEL.md` section 8. FIX: T2.3, T6.4. MEASURE-THEN-FIX: T5.1 (with a pre-authorized remedy, see R1), T6.2 (measure only). ACCEPT-WITH-RECORD: T4.1 residual, T4.2, T1.4, T1.5, T3.2, T6.1 -- each carrying one sentence of rationale, so the acceptance is re-openable rather than merely recorded. |
+| **G4** | **The DX triage is ratified as already-done-in-substance.** | D1-D4 and O1-O4 were fixed by dispatch 000265 and shipped in the current release; T1-T3 are accepted as priced tradeoffs. Closes the DX-findings-triage row that had been standing since R2-08 delivered findings-only. |
+| **G5** | **The rule-candidate promotions get a findings docket; the promotions stay attended.** | Charters an evidence docket with per-candidate recommendations and explicitly withholds the promotion decision. Promotion remains Mike-gated and standing, exactly as before. |
+| **G6** | **The 000225 / 000229 quarantine evidence is retained-archived.** | Disposal is declined. Follows the 000261 archive-never-delete precedent: failed-run evidence is part of the record, and the record is not pruned because the failure was resolved. |
+| **G7** | **The missing pillars B through G are retired, never reused.** | They are neither restated nor renamed, and their identifiers are not reassigned -- the same identifier-gap precedent already applied to R2-03 and R2-09..R2-13. A reused identifier would assert a continuity that was never established. |
+| **G8** | **The D1 SARIF attribution rider folds into Arc B activation.** | Declines a separate fix slice for it. Verified at execution to be **already closed**: the central register now carries a full SARIF/OASIS section pointing at the co-located notice as authoritative, so the finding closed by verification rather than by an edit. |
+| **G9** | **The relaunch gate is recorded as superseded by Mike's direct Path-A ruling.** | The gate stated in `ROADMAP.md` was not met -- it was passed through by hand. Recorded as superseded rather than retro-fitted into "met", because a condition that was overridden and a condition that was satisfied are different facts and the record should be able to tell them apart. |
+
+### The three grants, with their limits
+
+| # | Grant | Its limit |
+| --- | --- | --- |
+| **R1** | Apply `CurrentUserOnly` to the daemon pipe if the measured DACL is permissive beyond the invoking user. | Conditional on the **measurement**, not on the expectation. The measurement was taken first and resolved against the project (the default DACL granted Everyone and Anonymous read), which is what armed the grant. Bounded further by "do not break a non-Windows leg or a shipped contract surface -- stop and surface instead". |
+| **R2** | Execute the corpus relicense. | **Publication is NOT granted and stays held.** The grant covers changing license state, not making anything public. In the event no relicense was needed, so the grant went unexercised. |
+| **R3** | Overnight protocol. | Governs how the work runs, not what it may decide. Every human-gated item stayed human-gated: no merge, no promotion, no publication, no post, no tag. |
+
+### What the execution decided for itself, marked as such
+
+Three judgements were the dispatch's, not the ruling's, and each is recorded where it applies:
+
+- **The rule-candidate count.** The charter and `PROGRAM.md` both said "four candidates"; this
+  ledger's own tail-failure section carries **five**. `git log -S` puts the fifth candidate and the
+  "four" wording in the same commit (`d2e929d`), so it is an off-by-one authored in one sitting
+  rather than drift. The docket covers five and `PROGRAM.md` was corrected.
+- **The O2 fork arm.** G4 ratified the DX triage as done-in-substance, but a survey of the shipped
+  code found dispatch 000265 had closed O2's **remedy text** only -- the session record still carried
+  no version field, so "which version is actually running?" remained unanswerable. The charter's
+  pre-authorized fork was taken and the reconciliation was built, because it needed only an additive
+  JSON field and a header line: no `userConfig` knob and no status token, so it is not the
+  contract-adjacent change the fork stops at.
+- **The T6.2 boundary.** The measurement was taken on Windows and found no exposure. The POSIX arm
+  was **not** measured and is recorded as still unknown rather than inferred from platform
+  convention -- the finding's own text says these permissions are platform-dependent, so deriving
+  them and calling the row measured would have reintroduced the false confidence the `unknown`
+  label exists to prevent.

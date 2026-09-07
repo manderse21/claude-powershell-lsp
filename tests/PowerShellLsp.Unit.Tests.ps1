@@ -2262,22 +2262,50 @@ Describe 'Test-PinnedFileHash -- downloaded-dependency integrity (dispatch 00004
 Describe 'Pinned hash verification is WIRED into the bootstrap (dispatch 000046, Gap B L2)' {
     # The helper is only load-bearing if the ensure scripts actually CALL it against their pin
     # before using the download. These guards read the LIVE source so the wiring cannot silently
-    # regress (a refactor that drops the verify, or a pin declared but never checked). Adversarial
-    # control: delete the Test-PinnedFileHash call from ensure-pses and the ordering assertion
-    # (verify-before-extract) goes RED.
+    # regress (a refactor that drops the verify, or a pin declared but never checked).
+    #
+    # ANCHOR ON THE CALL, NEVER ON THE BARE NAME (dispatch 000283, fixing the defect dispatch
+    # 000282's leg I census found here). This block's control used to read: 'delete the
+    # Test-PinnedFileHash call from ensure-pses and the ordering assertion goes RED'. That was
+    # FALSE, and had been since it was written. `IndexOf('Test-PinnedFileHash')` found the
+    # helper's name in ensure-pses.ps1's own HEADER COMMENT on line 5 -- so the ordering
+    # assertion compared a comment at offset 107 to an Expand-Archive at offset 6580 and passed
+    # with every call deleted. A security assertion that cannot fail is not a weak assertion;
+    # it is no assertion, and it reads as evidence at every verify.
+    # The corrected form anchors on the CALL WITH ITS PIN ARGUMENT, which prose cannot spell by
+    # accident, and pins the anchor COUNT at one so the ordering claim cannot be satisfied by a
+    # second, weaker call added later. tests/PowerShellLsp.AirgapBootstrap.Tests.ps1 carries the
+    # same shape for the same file, and the sibling Describe below already anchored on the full
+    # ensure-pssa call -- the correct form was two Describes away the whole time.
     It 'ensure-pses.ps1 declares a 64-hex SHA-256 pin and verifies BEFORE extracting' {
         $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'ensure-pses.ps1') -Raw
         $src | Should -Match '\$PsesSha256\s*=\s*''[0-9A-Fa-f]{64}'''
-        $src | Should -Match 'Test-PinnedFileHash[^\r\n]*\$PsesSha256'
-        $verifyIdx = $src.IndexOf('Test-PinnedFileHash')
+        $psesCall = 'Test-PinnedFileHash -Path $tmpZip -ExpectedSha256 $PsesSha256'
+        @([regex]::Matches($src, [regex]::Escape($psesCall))).Count | Should -Be 1
+        $verifyIdx = $src.IndexOf($psesCall)
         $extractIdx = $src.IndexOf('Expand-Archive')
         $verifyIdx | Should -BeGreaterThan 0
         $extractIdx | Should -BeGreaterThan $verifyIdx
     }
+    It 'the pin-gate anchor is the CALL, not a name any comment could carry' {
+        # The RED control for the assertion above, kept as its own test so the property is
+        # asserted rather than remembered: the bare name occurs MORE often than the call,
+        # because the header comment carries it, and its first occurrence is EARLIER than the
+        # call's. Both halves are what made the old anchor vacuous, so both are stated. If a
+        # future edit removed the comment this test goes red and says the control is stale --
+        # which is the honest outcome, not a reason to weaken the anchor.
+        $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'ensure-pses.ps1') -Raw
+        $bare = @([regex]::Matches($src, 'Test-PinnedFileHash')).Count
+        $calls = @([regex]::Matches($src, [regex]::Escape('Test-PinnedFileHash -Path'))).Count
+        $bare | Should -BeGreaterThan $calls
+        $src.IndexOf('Test-PinnedFileHash') | Should -BeLessThan $src.IndexOf('Test-PinnedFileHash -Path')
+    }
     It 'ensure-pssa.ps1 declares a 64-hex SHA-256 pin and verifies the downloaded .nupkg' {
         $src = Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'ensure-pssa.ps1') -Raw
         $src | Should -Match '\$PssaSha256\s*=\s*''[0-9A-Fa-f]{64}'''
-        $src | Should -Match 'Test-PinnedFileHash[^\r\n]*\$PssaSha256'
+        # Same rule as ensure-pses above: the CALL with its pin argument, count pinned at one.
+        $pssaCall = 'Test-PinnedFileHash -Path $nupkg -ExpectedSha256 $PssaSha256'
+        @([regex]::Matches($src, [regex]::Escape($pssaCall))).Count | Should -Be 1
     }
 }
 
@@ -2296,12 +2324,36 @@ Describe 'PSSA .nupkg cache is verify-gated and pin-bound (dispatch 000049)' {
         # cache-restore copy  <  Test-PinnedFileHash  <  Expand-Archive : the restored bytes flow
         # through the SAME gate a download does, and nothing is expanded/installed before the verify.
         # Adversarial control: move the cache copy after the verify (or the expand before it) -> RED.
-        $restoreIdx = $script:EnsurePssaSrc.IndexOf('cache HIT')
+        #
+        # THE RESTORE ANCHOR IS THE COPY, NOT THE LOG LINE (dispatch 000283). This read
+        # `IndexOf('cache HIT')`, whose FIRST occurrence in ensure-pssa.ps1 is the file's own
+        # header prose, not the restore. So $restoreIdx was a comment offset near the top of
+        # the file and `verifyIdx > restoreIdx` was true no matter where the copy actually sat
+        # -- the control this comment promises was FALSE, exactly like the pin-gate ordering
+        # assertion dispatch 000282's leg I census caught in the Describe above. Found by
+        # re-running that census at the tip. The anchor is now the Copy-Item CALL with both of
+        # its operands, which prose cannot spell by accident, and its count is pinned at one so
+        # a second restore path cannot satisfy the ordering while bypassing the gate.
+        $restoreCall = 'Copy-Item -LiteralPath $cachedNupkg -Destination $nupkg'
+        @([regex]::Matches($script:EnsurePssaSrc, [regex]::Escape($restoreCall))).Count |
+            Should -Be 1
+        $restoreIdx = $script:EnsurePssaSrc.IndexOf($restoreCall)
         $verifyIdx = $script:EnsurePssaSrc.IndexOf('Test-PinnedFileHash -Path $nupkg -ExpectedSha256 $PssaSha256')
         $expandIdx = $script:EnsurePssaSrc.IndexOf('Expand-Archive')
         $restoreIdx | Should -BeGreaterThan 0
         $verifyIdx | Should -BeGreaterThan $restoreIdx
         $expandIdx | Should -BeGreaterThan $verifyIdx
+    }
+    It 'INVARIANT 1 RED CONTROL: the old cache anchor was prose, and prose comes first' {
+        # Keeps the reason the anchor changed asserted rather than remembered. The bare needle
+        # occurs earlier than the copy it was standing in for, which is precisely why the
+        # ordering assertion above could not fail. If a future edit deletes that header
+        # sentence this goes red and says the control is stale -- the honest outcome.
+        $proseIdx = $script:EnsurePssaSrc.IndexOf('cache HIT')
+        $copyIdx = $script:EnsurePssaSrc.IndexOf('Copy-Item -LiteralPath $cachedNupkg -Destination $nupkg')
+        $proseIdx | Should -BeGreaterThan 0
+        $copyIdx | Should -BeGreaterThan 0
+        $proseIdx | Should -BeLessThan $copyIdx
     }
     It 'INVARIANT 1: exactly ONE pin-verify gate guards the install, and a mismatch fails closed' {
         # One Test-PinnedFileHash call over $nupkg guards both the cache-hit and download paths; the

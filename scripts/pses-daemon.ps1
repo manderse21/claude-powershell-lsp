@@ -1287,6 +1287,39 @@ function Initialize-FormatterModule {
     }
 }
 
+function Get-DaemonCapabilities {
+    # What this daemon ACTUALLY SERVES, derived from the request loop below and from nothing else.
+    # Not a wish list: `actions` is the switch's own clause set, and the per-action flags name
+    # request fields the loop really reads (Get-Prop 'touchedRanges', Get-Prop 'apply'). The unit
+    # suite asserts `actions` against the switch labels read from this file's AST, so a new action
+    # added to the loop without being advertised here fails CI rather than shipping a lie.
+    return [ordered]@{
+        actions                  = @('diagnostics', 'format', 'ping', 'shutdown')
+        diagnosticsTouchedRanges = $true
+        formatApply              = $true
+    }
+}
+
+function Write-DaemonResponse {
+    # THE ONE EXIT for every response, which is what makes the handshake a handshake: a version
+    # advertised on the diagnostics path and absent on ping tells a client nothing it can rely on,
+    # and the next action added would silently be a third case. Routing every write through here
+    # is the only shape that cannot drift.
+    #
+    # The two fields are APPENDED to the payload, so an existing response is its old self plus a
+    # suffix -- every key that was there is still there, in the same order, with the same value.
+    # $Depth is passed through from each call site UNCHANGED for exactly that reason.
+    #
+    # Fail-safe about the handshake only: if building the capabilities were ever to throw, the
+    # response still goes out without them rather than the request failing over an advertisement.
+    param($Writer, $Payload, [int]$Depth = 6)
+    try {
+        $Payload['protocolVersion'] = Get-LspProtocolVersion
+        $Payload['capabilities'] = Get-DaemonCapabilities
+    } catch { }
+    $Writer.WriteLine(($Payload | ConvertTo-Json -Depth $Depth -Compress))
+}
+
 function Get-FormatSuggestion {
     # Run Invoke-Formatter over the edited file on the WARM daemon (no cold-start), honoring the
     # repo's PSScriptAnalyzerSettings.psd1 formatter rules (the SAME resolver diagnostics uses --
@@ -1568,7 +1601,13 @@ try {
                 $req = $null
                 try { $req = $line | ConvertFrom-Json } catch { }
                 $action = [string](Get-Prop $req 'action')
-                Write-DLog ('request action=' + $action)
+                # Protocol handshake (dispatch 000282, P1-4). ABSENT means 1 -- that is the
+                # protocol as it stood before anyone announced one, which is what every
+                # pre-000282 client speaks -- and an UNKNOWN version is ANSWERED, not refused:
+                # the response carries this daemon's own version and capabilities and the request
+                # is processed as version 1. Refusing would make the first bump a flag day.
+                $reqProtocol = Resolve-RequestProtocolVersion $req
+                Write-DLog ('request action=' + $action + ' protocolVersion=' + $reqProtocol)
                 switch ($action) {
                     'diagnostics' {
                         $file = [string](Get-Prop $req 'file')
@@ -1665,7 +1704,7 @@ try {
                         } else {
                             $payload = [ordered]@{ ok = $false; action = 'diagnostics'; error = $res.error }
                         }
-                        $writer.WriteLine(($payload | ConvertTo-Json -Depth 8 -Compress))
+                        Write-DaemonResponse -Writer $writer -Payload $payload -Depth 8
                     }
                     'format' {
                         # Format-on-edit (dispatch 000059 suggest; 000099 apply). A SEPARATE action
@@ -1680,18 +1719,18 @@ try {
                         $reqCwd = [string](Get-Prop $req 'cwd')
                         $doApply = [bool](Get-Prop $req 'apply')
                         $payload = if ($doApply) { Invoke-FormatApply $file $reqCwd } else { Get-FormatSuggestion $file $reqCwd }
-                        $writer.WriteLine(($payload | ConvertTo-Json -Depth 6 -Compress))
+                        Write-DaemonResponse -Writer $writer -Payload $payload -Depth 6
                     }
                     'ping' {
                         $psesPidVal = if (Test-PsesAlive) { $script:proc.Id } else { $null }
-                        $writer.WriteLine(([ordered]@{ ok = $true; action = 'ping'; pid = $PID; psesPid = $psesPidVal } | ConvertTo-Json -Compress))
+                        Write-DaemonResponse -Writer $writer -Payload ([ordered]@{ ok = $true; action = 'ping'; pid = $PID; psesPid = $psesPidVal })
                     }
                     'shutdown' {
-                        $writer.WriteLine(([ordered]@{ ok = $true; action = 'shutdown' } | ConvertTo-Json -Compress))
+                        Write-DaemonResponse -Writer $writer -Payload ([ordered]@{ ok = $true; action = 'shutdown' })
                         $running = $false
                     }
                     default {
-                        $writer.WriteLine(([ordered]@{ ok = $false; error = ('unknown action: ' + $action) } | ConvertTo-Json -Compress))
+                        Write-DaemonResponse -Writer $writer -Payload ([ordered]@{ ok = $false; error = ('unknown action: ' + $action) })
                     }
                 }
             }
