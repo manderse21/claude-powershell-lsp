@@ -48,6 +48,25 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **A fifth CI leg runs the whole suite inside the official PowerShell container**
+(enterprise docket P2-3, the open half). `container-pwsh` is its OWN job with its OWN name, not a
+fifth entry in the existing matrix: that job is named `${{ matrix.label }}`, so adding a dimension
+would have re-keyed the four existing legs and renamed their check contexts, which silently removes
+a required check. The four identities -- `windows-pwsh`, `windows-powershell`, `ubuntu-pwsh`,
+`macos-pwsh` -- are untouched. The leg runs non-root, with no TTY and no profile, with Pester
+installed in-job, and pins the image **by digest**: `powershell:latest` is 7.4.2, and the
+PSScriptAnalyzer 1.25.0 pin this repository carries refuses to import below 7.4.6, so on `latest`
+the analyzer never loads and the corpus tier silently returns EMPTY findings (measured: 41 corpus
+and 13 integration failures, every one an artefact of the image). On `7.5-ubuntu-24.04` the same
+tree runs those tiers 266/0 and 66/0. The leg also asserts the doctor's **census** rather than
+gating on `-RequireProven`, which cannot pass in a container and no change here can make pass: six
+of its eight unknowns are unknowable outside a live plugin subprocess, one reports the shipped
+offline default, and one is unknown by design while `ps_host` is default. Instead the leg pins the
+KNOWN posture -- zero failures, check 1 naming the REAL in-process version, the exact unknown set,
+and `-RequireProven` exiting 2 rather than 0 or 1. Restoring the pre-fix probe turns it red on
+seven counts, including check 1 reporting `found pwsh 0.0.0.0` on a 7.5.0 host, which is the
+defect that blocked this slice. No runtime script changed and no existing gate moved.
+
 PATCH: **`audit-release-bodies.ps1` now PINS the repository it sweeps instead of letting `gh`
 resolve it.** The repo-identity assertion added previously fired only on an explicit `-Repo`; with
 `-Repo` omitted the script passed no `--repo` at all, on the recorded premise that "`gh` resolves

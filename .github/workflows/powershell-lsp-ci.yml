@@ -163,3 +163,105 @@ jobs:
           name: benchmark-results-${{ matrix.label }}
           path: psls-test-data/logs/benchmark-results.json
           if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------------------------
+  # THE CONTAINER LEG (dispatch 000286, enterprise docket P2-3, item 16).
+  #
+  # ITS OWN JOB, WITH ITS OWN NAME, DELIBERATELY. The obvious implementation is a fifth entry in
+  # the matrix above, and it is the wrong one: the pester job's name is `${{ matrix.label }}`, so
+  # adding a container dimension would re-key the existing legs and RENAME their check contexts.
+  # A required check that never reports again is a required check silently removed. The four leg
+  # identities -- windows-pwsh, windows-powershell, ubuntu-pwsh, macos-pwsh -- are untouched here
+  # by construction, because nothing above this line changed.
+  #
+  # WHY CHECKOUT ON THE HOST AND MOUNT, RATHER THAN A JOB-LEVEL `container:`. The official
+  # PowerShell image ships no git (nor curl, dotnet, or unzip -- measured). Under `container:`,
+  # actions/checkout runs INSIDE the image, finds no git, and falls back to a REST tarball, which
+  # yields a working tree with no .git at all. Checking out on the host and mounting the workspace
+  # keeps a real repository -- which the ControlMapClaims provenance assertion reads -- while the
+  # plugin itself still runs entirely inside the container.
+  #
+  # WHY 7.5-ubuntu-24.04 AND NOT :latest. Measured, not assumed: PSScriptAnalyzer 1.25.0 -- this
+  # repository's pin -- refuses to import below PowerShell 7.4.6, and `powershell:latest` is
+  # 7.4.2. Under :latest the analyzer never loads, so the corpus tier returns EMPTY findings and
+  # the daemon tier never returns an analysis: 41 corpus failures and 13 integration failures,
+  # every one of them an artefact of the image rather than of this repository. On
+  # 7.5-ubuntu-24.04 (7.5.0) the same tree runs 266/0 and 66/0. Pinned by digest, in this
+  # repository's immutable-pinning idiom.
+  #
+  # NON-ROOT is the posture being proven, and `--user $(id -u):$(id -g)` is what makes it both
+  # non-root AND able to write the workspace it was handed: the runner user owns the checkout, so
+  # borrowing a hard-coded uid would fail on permissions rather than on anything meaningful.
+  container-pwsh:
+    name: container-pwsh
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Record the container identity (pinned by digest)
+        run: |
+          docker pull "$IMAGE"
+          echo "resolved:"
+          docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}'
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp "$IMAGE" \
+            pwsh -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
+        env:
+          IMAGE: mcr.microsoft.com/powershell@sha256:042240d57ec9e47e511033b92625a8d95875ee5860af3015992c248b58a8be81
+
+      # The suite, inside the container: non-root, no TTY (docker run without -t), no profile
+      # (-NoProfile), Pester installed in-job by tests/run-tests.ps1 itself.
+      - name: Run the Pester suite in the official PowerShell container
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/.container-home" "${GITHUB_WORKSPACE}/psls-test-data"
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/work/.container-home \
+            -e PSLS_TEST_DATA_DIR=/work/psls-test-data \
+            -e POWERSHELL_LSP_PSSA_CACHE=/work/.pssa-nupkg-cache \
+            -v "${GITHUB_WORKSPACE}:/work" \
+            -w /work \
+            "$IMAGE" \
+            pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./tests/run-tests.ps1 -CI
+        env:
+          IMAGE: mcr.microsoft.com/powershell@sha256:042240d57ec9e47e511033b92625a8d95875ee5860af3015992c248b58a8be81
+
+      # The doctor's CENSUS, asserted explicitly rather than gated on -RequireProven.
+      #
+      # -RequireProven CANNOT pass in a container and no change here can make it: six of its eight
+      # unknowns are unknowable outside a live Claude Code plugin subprocess, one reports the
+      # shipped offline default, and one is unknown BY DESIGN while ps_host is default. Gating on
+      # it would gate on a value the leg cannot reach. So the leg pins the KNOWN posture instead --
+      # zero failures, check 1 naming the REAL in-process version, the exact unknown set, and
+      # -RequireProven exiting 2 rather than 0 or 1. Restoring the pre-000285 probe turns this red
+      # on seven counts, including check 1 reporting "found pwsh 0.0.0.0" on a 7.5.0 host, which
+      # is the defect that blocked this whole slice.
+      - name: Assert the doctor census in the container
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/work/.container-home \
+            -v "${GITHUB_WORKSPACE}:/work" \
+            -w /work \
+            "$IMAGE" \
+            pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./tests/assert-container-doctor.ps1
+        env:
+          IMAGE: mcr.microsoft.com/powershell@sha256:042240d57ec9e47e511033b92625a8d95875ee5860af3015992c248b58a8be81
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pester-results-container-pwsh
+          path: tests/testResults.xml
+          if-no-files-found: ignore
+
+      - name: Upload daemon logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: daemon-logs-container-pwsh
+          path: |
+            psls-test-data/logs/**
+            psls-test-data/session/**
+          if-no-files-found: ignore
