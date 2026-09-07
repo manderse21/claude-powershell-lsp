@@ -1007,6 +1007,38 @@ function Get-DoctorPwshVersion {
     return $v
 }
 
+function Get-DoctorRealPath {
+    # A path with SYMLINKS FOLLOWED, or the plain full path when they cannot be.
+    #
+    # WHY THIS EXISTS, measured rather than anticipated. The first version of the IsSelf test
+    # below compared [System.IO.Path]::GetFullPath on both sides. GetFullPath normalises
+    # separators and resolves . and .. -- it does NOT follow symbolic links. On Linux and macOS
+    # `Get-Command pwsh` resolves to /usr/bin/pwsh or /usr/local/bin/pwsh, which is a SYMLINK
+    # into /opt/microsoft/powershell/7/ (or the Homebrew Cellar), while the running process
+    # reports the real file. The two never compared equal, IsSelf was always false, and the fix
+    # fell straight back to the 0.0.0.0 file version it exists to replace -- INERT on exactly
+    # the platform it was written for. CI caught it: ubuntu-pwsh and macos-pwsh both failed the
+    # live payload-floor test with "Expected a value, but got $null or empty" while all four
+    # Windows-side assertions passed.
+    param([string] $Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        # ResolveLinkTarget(-Recurse) follows the WHOLE chain and is PS 7.1+. This helper is
+        # only consulted from the Core-only branch, but it degrades rather than throws so it
+        # stays safe if that ever changes.
+        try {
+            $target = $item.ResolveLinkTarget($true)
+            if ($null -ne $target -and -not [string]::IsNullOrWhiteSpace($target.FullName)) {
+                return [System.IO.Path]::GetFullPath($target.FullName)
+            }
+        } catch { }
+        return [System.IO.Path]::GetFullPath($item.FullName)
+    } catch {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+}
+
 function Get-DoctorPwsh {
     # Resolve pwsh on PATH and its version WITHOUT launching a child process. The version
     # DECISION lives in Get-DoctorPwshVersion above; this function only gathers its inputs.
@@ -1020,13 +1052,34 @@ function Get-DoctorPwsh {
         $isCore = ($PSVersionTable.PSEdition -eq 'Core')
         $isSelf = $false
         if ($isCore) {
-            try {
-                $self = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-                $resolved = [string]$cmd.Source
-                if (-not [string]::IsNullOrWhiteSpace($self) -and -not [string]::IsNullOrWhiteSpace($resolved)) {
-                    $isSelf = ([System.IO.Path]::GetFullPath($self) -eq [System.IO.Path]::GetFullPath($resolved))
+            # THREE independent ways to establish "the pwsh on PATH is the one running this
+            # process", tried in order. Any one of them is sufficient; needing all three would
+            # make the guard fail closed on ordinary installs, and needing none would let a
+            # different pwsh borrow this host's version.
+            $resolved = Get-DoctorRealPath -Path ([string]$cmd.Source)
+            if (-not [string]::IsNullOrWhiteSpace($resolved)) {
+
+                # (1) The running executable, symlinks followed on both sides.
+                try {
+                    $self = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+                    if (-not [string]::IsNullOrWhiteSpace($self)) {
+                        if ((Get-DoctorRealPath -Path $self) -eq $resolved) { $isSelf = $true }
+                    }
+                } catch { }
+
+                # (2) $PSHOME is the running installation's own directory, and it needs no
+                # MainModule -- which is the part most likely to be unavailable in a container
+                # or under a restricted process ACL. If the resolved pwsh lives inside this
+                # install, it IS this host.
+                if (-not $isSelf -and -not [string]::IsNullOrWhiteSpace($PSHOME)) {
+                    try {
+                        $home7 = Get-DoctorRealPath -Path $PSHOME
+                        $sep = [System.IO.Path]::DirectorySeparatorChar
+                        if (-not $home7.EndsWith([string]$sep)) { $home7 = $home7 + [string]$sep }
+                        if ($resolved.StartsWith($home7, [System.StringComparison]::OrdinalIgnoreCase)) { $isSelf = $true }
+                    } catch { }
                 }
-            } catch { $isSelf = $false }
+            }
         }
         $hostVersion = $null
         if ($PSVersionTable.PSVersion -is [version]) { $hostVersion = $PSVersionTable.PSVersion }

@@ -3352,14 +3352,38 @@ Describe 'Preflight doctor -- per-check status decisions (dispatch 000036)' {
             (Test-DoctorPwsh -Found $true -Version $v).Status | Should -Be 'fail'
         }
 
+        It 'Get-DoctorRealPath follows what it can and never throws' {
+            # The helper the IsSelf test depends on. It cannot be given a symlink here without
+            # elevation on Windows, so what is asserted is the contract that matters: a real
+            # file resolves to its full path, and NOTHING makes it throw -- a throw inside the
+            # probe would surface as Found=$false and read as "pwsh is missing".
+            $me = Get-DoctorRealPath -Path $PSCommandPath
+            $me | Should -Not -BeNullOrEmpty
+            (Test-Path -LiteralPath $me) | Should -BeTrue
+            { Get-DoctorRealPath -Path '' } | Should -Not -Throw
+            { Get-DoctorRealPath -Path 'Z:\no\such\path\at\all.txt' } | Should -Not -Throw
+            (Get-DoctorRealPath -Path '') | Should -Be ''
+        }
+
         It 'the LIVE probe reports a determinable 7+ version on this host (the probe is wired, not just the pure function)' {
-            # Payload floor: the pure function above could be perfect while Get-DoctorPwsh never
-            # calls it. This runs the real probe. pwsh is a hard requirement of this repo's own
-            # test suite, so Found must be true here.
+            # PAYLOAD FLOOR, and it has already earned its place: the pure function above could
+            # be perfect while Get-DoctorPwsh never calls it, or calls it with inputs that never
+            # satisfy the in-process arm. That is exactly what happened -- the first version of
+            # this fix compared paths with GetFullPath, which does not follow symlinks, so on
+            # Linux and macOS (where /usr/bin/pwsh is a link) IsSelf was always false and the
+            # fix was INERT on the platform it was written for. ubuntu-pwsh and macos-pwsh
+            # failed here while every Windows assertion passed.
+            #
+            # pwsh is a hard requirement of this repo's own test suite, so Found must be true on
+            # every leg, and a 7+ version must be determinable on every leg.
             $p = Get-DoctorPwsh
             $p.Found | Should -BeTrue
-            $p.Version | Should -Not -BeNullOrEmpty
-            $p.Version.Major | Should -BeGreaterOrEqual 7
+            $cmd = Get-Command 'pwsh' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+            $diag = ("source={0} real={1} PSHOME={2} fileVersion={3} edition={4}" -f
+                $cmd.Source, (Get-DoctorRealPath -Path ([string]$cmd.Source)), $PSHOME,
+                $cmd.Version, $PSVersionTable.PSEdition)
+            $p.Version | Should -Not -BeNullOrEmpty -Because $diag
+            $p.Version.Major | Should -BeGreaterOrEqual 7 -Because $diag
         }
     }
 
