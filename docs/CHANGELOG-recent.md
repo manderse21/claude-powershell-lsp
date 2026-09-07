@@ -48,6 +48,22 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **`audit-release-bodies.ps1` now PINS the repository it sweeps instead of letting `gh`
+resolve it.** The repo-identity assertion added previously fired only on an explicit `-Repo`; with
+`-Repo` omitted the script passed no `--repo` at all, on the recorded premise that "`gh` resolves
+the same remote". Measured at `gh` 2.95.0, it does not: `GH_REPO` overrides the git remote for both
+commands the sweep issues, so exporting `GH_REPO` made the sweep read a foreign repository's
+published bodies and compare them against THIS repository's `CHANGELOG.md` -- reported in the
+vocabulary of a currency finding, with nothing naming which repository was read. The obvious fix
+would not have closed it: `gh repo view --json nameWithOwner` reports the git remote and *ignores*
+`GH_REPO`, so a guard built on "ask `gh` what it resolved" would have agreed with itself and passed
+while the sweep read someone else's releases. The fix is structural rather than another guard --
+`scripts/lib/audit-repo-target.ps1` decides the target once and it is passed as `--repo` on every
+call, which beats `GH_REPO` (measured) and closes the `gh repo set-default` door with it, at
+**zero** added subprocesses. An unpinnable target is now refused rather than guessed, and a
+`GH_REPO` that disagrees with the checkout is refused by name unless `-AllowForeignRepo` is given.
+No user-visible contract changed.
+
 PATCH: **`docs/control-map.html` now has a real currency guard, and the map is corrected to rev 4.**
 The map ships as a release ASSET and had no automated guard of any kind -- nothing under `tests/`,
 `scripts/` or `release/` referenced it, and the release workflow's only mention was a
