@@ -230,12 +230,21 @@ Describe 'doctor.ps1 -Json end to end on this host (dispatch 000279, leg A accep
     BeforeAll {
         $script:HostExe = (Get-Process -Id $PID).Path
         $script:DoctorPath = Join-Path $script:ScriptsDir 'doctor.ps1'
+        # EVERY EXIT CODE JUDGED BELOW COMES BACK WITH THE VERDICTS THAT EXPLAIN IT
+        # (dispatch 000283). These are live-host probes: each one re-derives all fourteen
+        # checks against a machine that is free to move between them -- a daemon finishing its
+        # warm-up, a pinned artifact arriving, a path appearing. The -RequireProven assertion
+        # used to branch on the counts from the -Json run and then judge the exit code of a
+        # SEPARATE -Summary -RequireProven run, so a single check flipping between the two
+        # probes made it fail for a reason that is not a defect -- and the failure message
+        # would have named the assertion, not the drift. doctor.ps1 accepts -Json and
+        # -RequireProven together, so the proven exit code now arrives with its own summary.
         $script:LiveJson = (& $script:HostExe -NoLogo -NoProfile -File $script:DoctorPath -Json) -join [Environment]::NewLine
         $script:LiveJsonExit = $LASTEXITCODE
+        $script:ProvenJson = (& $script:HostExe -NoLogo -NoProfile -File $script:DoctorPath -Json -RequireProven) -join [Environment]::NewLine
+        $script:LiveProvenExit = $LASTEXITCODE
         (& $script:HostExe -NoLogo -NoProfile -File $script:DoctorPath -Summary) | Out-Null
         $script:LiveDefaultExit = $LASTEXITCODE
-        (& $script:HostExe -NoLogo -NoProfile -File $script:DoctorPath -Summary -RequireProven) | Out-Null
-        $script:LiveProvenExit = $LASTEXITCODE
     }
 
     It 'a real run emits JSON that ConvertFrom-Json parses' {
@@ -251,14 +260,41 @@ Describe 'doctor.ps1 -Json end to end on this host (dispatch 000279, leg A accep
         $script:LiveJsonExit | Should -Be $script:LiveDefaultExit
     }
     It '-RequireProven only ever RAISES the code, and only over an UNKNOWN' {
-        $o = $script:LiveJson | ConvertFrom-Json
-        if ($o.summary.fail -gt 0) {
+        # Branches on the summary from the SAME process whose exit code it judges.
+        $p = $script:ProvenJson | ConvertFrom-Json
+        $d = $script:LiveJson | ConvertFrom-Json
+        # If the host moved between the two probes, nothing below is a statement about
+        # doctor. Say that and skip: a skipped test is honest, a red one would be a lie
+        # about the code under test. This is the ONLY branch that tolerates drift, and it
+        # names it -- it does not widen any assertion to absorb it.
+        if ($p.summary.fail -ne $d.summary.fail -or $p.summary.unknown -ne $d.summary.unknown) {
+            Set-ItResult -Skipped -Because ('the host moved between probes: default run saw ' +
+                $d.summary.fail + ' fail / ' + $d.summary.unknown + ' unknown, the -RequireProven run saw ' +
+                $p.summary.fail + ' fail / ' + $p.summary.unknown + ' unknown')
+        }
+        # RAISES, never lowers -- the half the old branch table never stated.
+        $script:LiveProvenExit | Should -BeGreaterOrEqual $script:LiveJsonExit
+        if ($p.summary.fail -gt 0) {
             $script:LiveProvenExit | Should -Be 1
-        } elseif ($o.summary.unknown -gt 0) {
+        } elseif ($p.summary.unknown -gt 0) {
             $script:LiveProvenExit | Should -Be 2
-            $script:LiveDefaultExit | Should -Be 0
+            $script:LiveJsonExit | Should -Be 0
         } else {
             $script:LiveProvenExit | Should -Be 0
+        }
+    }
+    It 'the -RequireProven probe really carries proven semantics, not a second default run' {
+        # The control for the coupling above: if -Json -RequireProven silently dropped the
+        # switch, ProvenJson would be a second default run and every branch above would still
+        # pass while proving nothing. On a host with an UNKNOWN the two exits MUST differ; on
+        # a fully proven host they must both be 0, and that is stated rather than skipped.
+        $p = $script:ProvenJson | ConvertFrom-Json
+        $p.schemaVersion | Should -Be 1
+        @($p.checks).Count | Should -Be $p.summary.total
+        if ($p.summary.fail -eq 0 -and $p.summary.unknown -gt 0) {
+            $script:LiveProvenExit | Should -Not -Be $script:LiveJsonExit
+        } else {
+            $script:LiveProvenExit | Should -Be $script:LiveJsonExit
         }
     }
 }
