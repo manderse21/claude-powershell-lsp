@@ -1,5 +1,25 @@
 # powershell-lsp: A Status-Honest PowerShell Diagnostics Client for Coding Agents
 
+> **Revision r3 (2026-09-07).** A single corrective revision, and it retracts a claim r2 made
+> correctly and that the code then outgrew. r2 stated that one acquisition route -- the
+> PSScriptAnalyzer Gallery fallback -- was **not** governed by the project SHA-256 pin, resting
+> instead on the Gallery's own publisher/catalog integrity, and it said so in three body places
+> (sections 4, 6, 10). That was true when r2 was written. It stopped being true at **PR 204**
+> (dispatch 000279), which rebuilt the fallback as a **pinned layer**: it now stages a `.nupkg` via
+> `Save-Package` and hands it to the *same* `Test-PinnedFileHash` gate every other route passes
+> through, so the pin governs **every** acquisition path with no exception **[V]**
+> (`scripts/ensure-pssa.ps1`, "GALLERY FALLBACK, now a PINNED LAYER", and the single VERIFY gate
+> below it: *"the pin gate runs on the .nupkg REGARDLESS of source"*). `gallery-fallback` survives
+> as a **provenance** label -- which transport delivered the bytes -- not as a trust distinction,
+> and `/doctor` now says exactly that, additionally flagging a marker left by an install that
+> predates the gate **[V]** (`scripts/doctor.ps1`). Sections 4, 6 and 10 are corrected here.
+>
+> **Scope, stated so it is not mistaken for more.** r3 corrects that one claim and does **not**
+> re-finalize the paper against a newer release. Its quantitative exhibits, its measurement chain
+> and every other **[V]** citation remain those verified for **v1.32.0**; re-finalizing would
+> require re-deriving all of them, and a paper that advanced its version header without that work
+> would acquire exactly the class of false claim this revision exists to remove.
+>
 > **Revision r2 (2026-08-21).** Corrective revision of the v1.32.0 paper. Each substantive change
 > below was verified against the shipped release, `TRUST.md`, the `ensure-*.ps1` sources, and the raw
 > dispatch 000267 measurement artifacts (M1-M4b result JSONs and the equality-proof chain):
@@ -167,9 +187,10 @@ The model is one paragraph. Diagnostics ride a PostToolUse hook backed by a warm
 daemon: one PSES process stays hot for the whole session behind a session-keyed named pipe, so each
 edit pays a local pipe round-trip instead of a cold PSES start **[V]** (`ARCHITECTURE.md`, "The
 one-paragraph model"). Everything runs on the local machine; the only outbound network is a one-time
-dependency download, pinned and hash-verified on every default path (with one narrow,
-separately-reported PSScriptAnalyzer fallback detailed in section 6) -- and even that is removable,
-since v1.32.0 ships an offline bundle path (section 10) **[V]**.
+dependency download, pinned and hash-verified on **every** acquisition path -- including the
+PSScriptAnalyzer Gallery fallback, which is a separately-*reported* route but no longer a
+separately-*trusted* one (section 6) -- and even that is removable, since v1.32.0 ships an offline
+bundle path (section 10) **[V]**.
 
 **Exhibit E1 -- the edit-to-banner lifecycle** (source: `ARCHITECTURE.md`, "The lifecycle").
 
@@ -289,13 +310,23 @@ against SHA-256 hashes computed from the real artifacts before use, failing clos
 **[V]** (`TRUST.md`, "What it downloads"; `THREAT-MODEL.md`, B1). That pin governs every default
 acquisition path -- the internal HTTPS mirror, a pre-staged local bundle, the `.nupkg` cache, and the
 direct download -- each verified against the same pin by `Test-PinnedFileHash` before use; a mismatch
-on any layer fails closed and never falls through to another **[V]**. One acquisition route is **not**
-governed by the project pin: when the verified PSScriptAnalyzer `.nupkg` download cannot complete
-(offline or proxied), the bootstrap falls back to `Save-Module`, which rests on the PowerShell
-Gallery's publisher/catalog integrity rather than the project SHA-256 pin, and is reported distinctly
-by `/doctor` as `gallery-fallback` rather than as a pinned source **[V]** (`TRUST.md`, "What it
-downloads"; `scripts/ensure-pssa.ps1`). A hash **mismatch** never triggers this fallback -- it fails
-closed. For disconnected estates, v1.32.0 ships an offline bundle that satisfies the same pinned,
+on any layer fails closed and never falls through to another **[V]**. **No acquisition route is
+outside that pin.** When the verified PSScriptAnalyzer `.nupkg` download cannot complete (offline or
+proxied), the bootstrap reaches the same artifact over PackageManagement's transport with
+`Save-Package`, stages the `.nupkg` it saves, and hands it to the *same* `Test-PinnedFileHash` gate
+-- which runs on the `.nupkg` regardless of which layer produced it **[V]**
+(`scripts/ensure-pssa.ps1`, "GALLERY FALLBACK, now a PINNED LAYER"). `/doctor` still reports the
+route distinctly as `gallery-fallback`, but that label now records **provenance -- which transport
+delivered the bytes -- rather than a weaker trust basis**, and the doctor says so, additionally
+flagging a `gallery-fallback` marker left by an install predating the gate as recording bytes the
+pin did not verify **[V]** (`scripts/doctor.ps1`). A hash **mismatch** never triggers this fallback
+-- it fails closed.
+>
+> *Correction (r3, 2026-09-07).* Through r2 this paragraph said the Gallery fallback rested on the
+> Gallery's publisher/catalog integrity **rather than** the project pin. That was accurate when
+> written and was superseded by PR 204 (dispatch 000279), which made the fallback a pinned layer.
+> The superseded text is recorded here rather than silently replaced, because a published claim that
+> changes should leave a trace a reader can follow. For disconnected estates, v1.32.0 ships an offline bundle that satisfies the same pinned,
 hash-verified bootstrap with no network path (section 10) **[V]**. The shipped capability inventory --
 what exists today, as distinct from roadmap intent -- is recorded in `CURRENT-STATE.md`, section 4
 **[V]**.
@@ -466,9 +497,9 @@ Degradation when analysis cannot run is by design visible, not silent **[V]**.
 
 Install and verify is a documented multi-step path, not a one-liner, and the docs say so: prerequisite
 `pwsh` on PATH plus, for a connected install, internet on the first enabled session for the pinned,
-hash-verified self-download (with the narrow PSScriptAnalyzer `gallery-fallback` noted in section 6)
--- or, for a disconnected estate, the offline bundle **[V]** (`README.md`, "Quick start";
-"Prerequisites").
+hash-verified self-download (including the PSScriptAnalyzer `gallery-fallback` transport, which is
+pin-gated on the same terms -- section 6) -- or, for a disconnected estate, the offline bundle
+**[V]** (`README.md`, "Quick start"; "Prerequisites").
 
 **Enterprise posture, shipped in v1.32.0.** Two named blockers from a 2026-08-15 corporate-IT review
 are closed in the release a reader can download and attest: the plugin is **Apache-2.0** (v1.32.0 is
