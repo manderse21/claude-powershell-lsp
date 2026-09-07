@@ -60,7 +60,9 @@ param(
     # Restrict the sweep to these tags (e.g. v1.29.0). Default: every published release.
     [string[]] $Tag,
 
-    # GitHub repository, OWNER/NAME. Default: whatever `gh` resolves for this checkout.
+    # GitHub repository, OWNER/NAME. Default: the slug DERIVED from this checkout's own origin
+    # remote -- never gh's ambient resolution, which GH_REPO can redirect (see the
+    # REPO-IDENTITY block below and scripts/lib/audit-repo-target.ps1).
     [string] $Repo,
 
     # Read bodies from <dir>/<tag>.md instead of calling `gh`. Lets the sweep run offline
@@ -171,57 +173,56 @@ function Get-FirstDivergence {
     }
 }
 
-$ghArgsRepo = @()
-if (-not [string]::IsNullOrWhiteSpace($Repo)) { $ghArgsRepo = @('--repo', $Repo) }
-
-function Get-AuditRepoSlug {
-    # OWNER/NAME from a git remote URL, in either transport form. Returns '' if unrecognised.
-    param([string] $Url)
-    if ([string]::IsNullOrWhiteSpace($Url)) { return '' }
-    $u = $Url.Trim()
-    if ($u.EndsWith('.git')) { $u = $u.Substring(0, $u.Length - 4) }
-    $m = [regex]::Match($u, '(?:[:/])([^/:]+)/([^/]+)$')
-    if (-not $m.Success) { return '' }
-    return ('{0}/{1}' -f $m.Groups[1].Value, $m.Groups[2].Value)
-}
-
-# REPO-IDENTITY ASSERTION (dispatch 000285, phase 4(a)).
+# REPO-IDENTITY: the target is PINNED here and passed explicitly to every gh call
+# (dispatch 000285 phase 4(a) for -Repo; dispatch 000286 phase 3(a) for the arm it left open).
 #
-# THE DEFECT THIS CLOSES. -Repo was passed straight through to `gh` with nothing checking it
+# THE DEFECT 000285 CLOSED. -Repo was passed straight through to gh with nothing checking it
 # against the checkout the CHANGELOG comes from. Point it at any other repository and the sweep
 # runs to completion, comparing THAT repository's published bodies against THIS repository's
 # CHANGELOG, and reports every tag as a MISMATCH -- or, worse, as a MATCH by coincidence on a
 # fork. It is a comparison between two unrelated things, reported in the vocabulary of a
 # currency check, and nothing in the output says which repository was read.
 #
-# The expected slug is DERIVED from the checkout's own `origin` remote, never hard-coded: this
+# THE ARM IT LEFT OPEN, and which is closed here. That assertion fired only on an EXPLICIT
+# -Repo. With -Repo omitted this script passed NO --repo at all and let gh resolve the target,
+# on the recorded premise that "gh resolves the same remote". Measured at gh 2.95.0, it does
+# not: GH_REPO overrides the remote for BOTH commands this sweep issues (gh release list and
+# gh release view), so exporting GH_REPO reopened the very door -Repo was guarded against.
+# The fix is structural rather than another guard -- the resolution is DECIDED in
+# lib/audit-repo-target.ps1 and passed as --repo on every call, which beats GH_REPO and closes
+# the gh-resolved git-config door with it, at zero extra subprocesses. The full measurement,
+# including why "ask gh what it resolved" would have been VACUOUS, is in that file's header.
+#
+# The expected slug is DERIVED from the checkout's own origin remote, never hard-coded: this
 # script must keep working in a fork or after a rename, and a literal would turn either of those
-# into a false refusal. When -Repo is omitted, `gh` resolves the same remote, so the assertion is
-# trivially satisfied and costs nothing.
+# into a false refusal.
 #
 # -AllowForeignRepo is the deliberate override, and it is LOUD: a cross-repo audit is a real use
 # (auditing a fork's releases against upstream's CHANGELOG) but it must be asked for, and the
 # banner appears in the output so a reader of the transcript can never mistake which repository
 # was swept. A silent capability becomes a silent defect.
+. (Join-Path $PSScriptRoot 'lib/audit-repo-target.ps1')
+
 $auditRepoExpected = ''
 try {
     $originUrl = (& git -C $repoRoot remote get-url origin 2>$null | Out-String).Trim()
     $auditRepoExpected = Get-AuditRepoSlug -Url $originUrl
 } catch { $auditRepoExpected = '' }
 
-if (-not [string]::IsNullOrWhiteSpace($Repo)) {
-    if ([string]::IsNullOrWhiteSpace($auditRepoExpected)) {
-        Write-Error ("-Repo '{0}' was given but this checkout's origin remote could not be resolved, so the repository identity cannot be checked. Re-run without -Repo, or pass -AllowForeignRepo if you mean to audit a different repository." -f $Repo)
-        exit 1
-    }
-    if ($Repo -ne $auditRepoExpected) {
-        if (-not $AllowForeignRepo) {
-            Write-Error ("REPO IDENTITY: -Repo '{0}' is not this checkout's repository ('{1}'). This sweep compares PUBLISHED RELEASE BODIES against THIS checkout's CHANGELOG.md, so auditing a different repository compares two unrelated things and reports the result as if it were a currency finding. Pass -AllowForeignRepo if that is genuinely what you want." -f $Repo, $auditRepoExpected)
-            exit 1
-        }
-        Write-Host ("FOREIGN REPO: sweeping '{0}' against the CHANGELOG of '{1}' -- results are NOT a currency finding for either repository." -f $Repo, $auditRepoExpected) -ForegroundColor Yellow
-    }
+$auditTarget = Resolve-AuditRepoTarget -RepoParam $Repo -OriginSlug $auditRepoExpected `
+    -GhRepoEnv $env:GH_REPO -AllowForeignRepo ([bool]$AllowForeignRepo)
+if (-not [string]::IsNullOrWhiteSpace($auditTarget.Error)) {
+    Write-Error $auditTarget.Error
+    exit 1
 }
+if (-not [string]::IsNullOrWhiteSpace($auditTarget.Banner)) {
+    Write-Host $auditTarget.Banner -ForegroundColor Yellow
+}
+
+# ALWAYS explicit. This is the line that closes the gap: gh is never left to resolve the
+# repository itself, so no ambient value can redirect the sweep.
+$ghArgsRepo = @('--repo', $auditTarget.Slug)
+Write-Host ("Auditing repository: {0} (resolved from {1})" -f $auditTarget.Slug, $auditTarget.Source)
 
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     Write-Error "The GitHub CLI (gh) is required to read published release bodies."
