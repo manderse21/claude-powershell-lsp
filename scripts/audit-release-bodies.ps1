@@ -72,7 +72,11 @@ param(
     [string] $AcknowledgedPath,
 
     # Emit the per-tag result as JSON on stdout instead of the human table.
-    [switch] $Json
+    [switch] $Json,
+
+    # Deliberately audit a repository OTHER than this checkout's own. Without it, a -Repo that
+    # is not this checkout's origin is REFUSED -- see the repo-identity assertion below.
+    [switch] $AllowForeignRepo
 )
 
 Set-StrictMode -Version Latest
@@ -169,6 +173,55 @@ function Get-FirstDivergence {
 
 $ghArgsRepo = @()
 if (-not [string]::IsNullOrWhiteSpace($Repo)) { $ghArgsRepo = @('--repo', $Repo) }
+
+function Get-AuditRepoSlug {
+    # OWNER/NAME from a git remote URL, in either transport form. Returns '' if unrecognised.
+    param([string] $Url)
+    if ([string]::IsNullOrWhiteSpace($Url)) { return '' }
+    $u = $Url.Trim()
+    if ($u.EndsWith('.git')) { $u = $u.Substring(0, $u.Length - 4) }
+    $m = [regex]::Match($u, '(?:[:/])([^/:]+)/([^/]+)$')
+    if (-not $m.Success) { return '' }
+    return ('{0}/{1}' -f $m.Groups[1].Value, $m.Groups[2].Value)
+}
+
+# REPO-IDENTITY ASSERTION (dispatch 000285, phase 4(a)).
+#
+# THE DEFECT THIS CLOSES. -Repo was passed straight through to `gh` with nothing checking it
+# against the checkout the CHANGELOG comes from. Point it at any other repository and the sweep
+# runs to completion, comparing THAT repository's published bodies against THIS repository's
+# CHANGELOG, and reports every tag as a MISMATCH -- or, worse, as a MATCH by coincidence on a
+# fork. It is a comparison between two unrelated things, reported in the vocabulary of a
+# currency check, and nothing in the output says which repository was read.
+#
+# The expected slug is DERIVED from the checkout's own `origin` remote, never hard-coded: this
+# script must keep working in a fork or after a rename, and a literal would turn either of those
+# into a false refusal. When -Repo is omitted, `gh` resolves the same remote, so the assertion is
+# trivially satisfied and costs nothing.
+#
+# -AllowForeignRepo is the deliberate override, and it is LOUD: a cross-repo audit is a real use
+# (auditing a fork's releases against upstream's CHANGELOG) but it must be asked for, and the
+# banner appears in the output so a reader of the transcript can never mistake which repository
+# was swept. A silent capability becomes a silent defect.
+$auditRepoExpected = ''
+try {
+    $originUrl = (& git -C $repoRoot remote get-url origin 2>$null | Out-String).Trim()
+    $auditRepoExpected = Get-AuditRepoSlug -Url $originUrl
+} catch { $auditRepoExpected = '' }
+
+if (-not [string]::IsNullOrWhiteSpace($Repo)) {
+    if ([string]::IsNullOrWhiteSpace($auditRepoExpected)) {
+        Write-Error ("-Repo '{0}' was given but this checkout's origin remote could not be resolved, so the repository identity cannot be checked. Re-run without -Repo, or pass -AllowForeignRepo if you mean to audit a different repository." -f $Repo)
+        exit 1
+    }
+    if ($Repo -ne $auditRepoExpected) {
+        if (-not $AllowForeignRepo) {
+            Write-Error ("REPO IDENTITY: -Repo '{0}' is not this checkout's repository ('{1}'). This sweep compares PUBLISHED RELEASE BODIES against THIS checkout's CHANGELOG.md, so auditing a different repository compares two unrelated things and reports the result as if it were a currency finding. Pass -AllowForeignRepo if that is genuinely what you want." -f $Repo, $auditRepoExpected)
+            exit 1
+        }
+        Write-Host ("FOREIGN REPO: sweeping '{0}' against the CHANGELOG of '{1}' -- results are NOT a currency finding for either repository." -f $Repo, $auditRepoExpected) -ForegroundColor Yellow
+    }
+}
 
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     Write-Error "The GitHub CLI (gh) is required to read published release bodies."

@@ -48,6 +48,24 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **`docs/control-map.html` now has a real currency guard, and the map is corrected to rev 4.**
+The map ships as a release ASSET and had no automated guard of any kind -- nothing under `tests/`,
+`scripts/` or `release/` referenced it, and the release workflow's only mention was a
+`[[ -f ... ]]` PRESENCE test. `tests/control-map-claims.psd1` plus
+`tests/PowerShellLsp.ControlMapClaims.Tests.ps1` assert the map's CLAIMS against sources derived
+from this repository's own disk: whether T5.1 is still called unreleased, whether the SLO tally
+claims "all six met" while `PROGRAM.md` records an open miss, whether any version is called
+"in prep" that `CHANGELOG.md` already carries a release for, and whether the stamp names the newest
+released version. **This is deliberately not a date comparison:** `RELEASING.md` step 5 compares
+the map's own stamp against the release date, so stamping the map satisfies it whether or not a
+single claim was re-derived -- the refresh disarms the only detector. The RED control is **rev 2
+restored from git history**, which must fail on both claims that were false at the v1.34.0 release.
+Claims that can only be derived from outside this repository are listed in the registry as
+**unguardable-by-design** rather than guarded weakly. The new guard immediately found two live
+false claims in **rev 3** -- the revision produced by the last currency refresh -- which are fixed
+here as rev 4: v1.34.0 was described as "in release prep" after it had published, and the header
+stamp still read "released v1.33.0".
+
 PATCH: **the doctor no longer reports `pwsh 0.0.0.0` on Linux and macOS.** Check 1 read the
 executable's file-version *resource*, which is a Windows-only artifact -- on Linux and macOS
 `pwsh` has none, .NET reports `0.0.0.0`, and the doctor answered *"found pwsh 0.0.0.0 but
