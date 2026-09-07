@@ -211,12 +211,33 @@ jobs:
 
       # The suite, inside the container: non-root, no TTY (docker run without -t), no profile
       # (-NoProfile), Pester installed in-job by tests/run-tests.ps1 itself.
+      #
+      # TWO FLAGS HERE ARE LOAD-BEARING, and CI taught both of them -- the first run of this leg
+      # went red on exactly two tests that pass on all four other legs and passed in a local
+      # container too, because the local invocation happened to differ from this one in both ways.
+      #
+      # --init: without it, pwsh is PID 1. Get-ProcessTreePids walks DOWNWARD from the test host,
+      # and in a container everything is parented to PID 1 -- so the D4 control asserting that "an
+      # UNRELATED process is NOT excluded" found its synthetic foreign pid legitimately inside the
+      # subtree and failed with `collection @(1, 914, 999003, 999004)`. That is the leg violating a
+      # reasonable assumption of the test, not a defect in the test, so the leg is what changes:
+      # --init puts a real init at PID 1 and makes pwsh its child. (It is also correct on its own
+      # terms -- signal handling and zombie reaping.)
+      #
+      # HOME ON A TMPFS, OUTSIDE THE WORKSPACE: run-tests.ps1 installs Pester to the CurrentUser
+      # scope, i.e. under $HOME. Pointing HOME inside the mounted workspace put Pester's own SOURCE
+      # inside the repository tree, and the repo-wide scans then walked it -- the G3 scalar-.Count
+      # ratchet failed naming `.container-home/.local/share/powershell/Modules/Pester/5.9.1/
+      # Pester.psm1:10410`. A tree that a test scans must not contain the harness that scans it.
+      # PSLS_TEST_DATA_DIR deliberately stays under the workspace, matching the four existing legs,
+      # so the daemon logs remain uploadable below.
       - name: Run the Pester suite in the official PowerShell container
         run: |
-          mkdir -p "${GITHUB_WORKSPACE}/.container-home" "${GITHUB_WORKSPACE}/psls-test-data"
-          docker run --rm \
+          mkdir -p "${GITHUB_WORKSPACE}/psls-test-data"
+          docker run --rm --init \
             --user "$(id -u):$(id -g)" \
-            -e HOME=/work/.container-home \
+            --tmpfs /ctr:exec,mode=1777 \
+            -e HOME=/ctr/home \
             -e PSLS_TEST_DATA_DIR=/work/psls-test-data \
             -e POWERSHELL_LSP_PSSA_CACHE=/work/.pssa-nupkg-cache \
             -v "${GITHUB_WORKSPACE}:/work" \
@@ -237,10 +258,12 @@ jobs:
       # on seven counts, including check 1 reporting "found pwsh 0.0.0.0" on a 7.5.0 host, which
       # is the defect that blocked this whole slice.
       - name: Assert the doctor census in the container
+        if: always()
         run: |
-          docker run --rm \
+          docker run --rm --init \
             --user "$(id -u):$(id -g)" \
-            -e HOME=/work/.container-home \
+            --tmpfs /ctr:exec,mode=1777 \
+            -e HOME=/ctr/home \
             -v "${GITHUB_WORKSPACE}:/work" \
             -w /work \
             "$IMAGE" \

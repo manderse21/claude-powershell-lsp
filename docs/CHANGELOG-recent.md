@@ -71,7 +71,13 @@ which the image does not have, and an unguarded call took the whole `Describe` d
 now guarded, and the assertion that consumes the snapshot **skips** rather than comparing an absent
 porcelain to an absent porcelain -- which would have passed vacuously and reported a mutation check
 that never ran. Every host that has `git`, which is all four original legs and every dev clone,
-still runs it. No runtime script changed and no existing gate moved.
+still runs it. Two further constraints came from CI rather than from any local run, and both are
+properties of the LEG rather than of the suite: the container runs with `--init`, because otherwise
+`pwsh` is PID 1 and a control asserting that an unrelated process is *not* excluded finds its
+synthetic foreign pid legitimately inside a subtree rooted at PID 1; and `HOME` sits on a tmpfs
+**outside** the mounted workspace, because the CurrentUser Pester install otherwise lands its own
+source inside the repository and the repo-wide scans then walk the harness that is scanning them.
+No runtime script changed and no existing gate moved.
 
 PATCH: **`audit-release-bodies.ps1` now PINS the repository it sweeps instead of letting `gh`
 resolve it.** The repo-identity assertion added previously fired only on an explicit `-Repo`; with
