@@ -187,3 +187,100 @@ Describe 'Doc claims -- every published number matches what it describes' {
         $v.Reason | Should -Match 'matched NOTHING'
     }
 }
+
+Describe 'The generated CHANGELOG companion is CURRENT, and the ledger archive stays closed (dispatch 000283)' {
+    # docs/CHANGELOG-recent.md is a GENERATED strict prefix of CHANGELOG.md (ruling R6), carried in
+    # the project-knowledge bundle so the release artifact itself never has to be truncated to fit a
+    # byte budget. A generated file that nothing verifies is a file that goes stale silently, and a
+    # stale one is worse than none: it reads as the changelog while describing an older program.
+    BeforeAll {
+        $script:CgRoot = Split-Path -Parent $PSScriptRoot
+        $script:CgGen = Join-Path $script:CgRoot 'scripts/gen-changelog-recent.ps1'
+        $script:CgOut = Join-Path $script:CgRoot 'docs/CHANGELOG-recent.md'
+        $script:CgSrc = Join-Path $script:CgRoot 'CHANGELOG.md'
+        $script:CgArchive = Join-Path $script:CgRoot 'docs/decision-ledger-archive.md'
+        $script:CgLedger = Join-Path $script:CgRoot 'docs/decision-ledger.md'
+    }
+
+    It 'the committed companion is current -- the generator -Check agrees with the file on disk' {
+        # Runs the generator's own comparison rather than re-implementing it here: two
+        # implementations of "what should this file contain" would drift apart, and the one in the
+        # test would be the one nobody notices is wrong.
+        $host_ = (Get-Process -Id $PID).Path
+        & $host_ -NoLogo -NoProfile -File $script:CgGen -Check | Out-Null
+        $LASTEXITCODE | Should -Be 0 -Because 'docs/CHANGELOG-recent.md is stale; run scripts/gen-changelog-recent.ps1'
+    }
+
+    It 'RED CONTROL: -Check FAILS on a companion that has drifted from its source' {
+        # The control for the test above. Without it, a -Check that always exited 0 would make that
+        # test read as evidence while proving nothing -- the exact failure this dispatch is fixing
+        # elsewhere in this suite.
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('cgctl' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.md')
+        $orig = [System.IO.File]::ReadAllText($script:CgOut)
+        try {
+            [System.IO.File]::Copy($script:CgOut, $tmp)
+            [System.IO.File]::WriteAllText($script:CgOut, $orig.Substring(0, $orig.Length - 200))
+            $host_ = (Get-Process -Id $PID).Path
+            & $host_ -NoLogo -NoProfile -File $script:CgGen -Check | Out-Null
+            $LASTEXITCODE | Should -Be 1 -Because 'a drifted companion MUST be caught, not tolerated'
+        } finally {
+            [System.IO.File]::WriteAllText($script:CgOut, $orig)
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+        }
+        # And the restore really restored, or every later test in this run is measuring a mutant.
+        & (Get-Process -Id $PID).Path -NoLogo -NoProfile -File $script:CgGen -Check | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+
+    It 'the companion is a strict PREFIX of CHANGELOG.md, so every sentence in it is the source''s own' {
+        # The property that makes truncation safe. If the companion ever became a SUMMARY, a reader
+        # could be told something CHANGELOG.md does not say -- and the release pipeline extracts its
+        # notes from CHANGELOG.md, so the two would disagree about what shipped.
+        $comp = [System.IO.File]::ReadAllText($script:CgOut)
+        $src = [System.IO.File]::ReadAllText($script:CgSrc)
+        $marker = '<!-- GENERATED FILE -- DO NOT EDIT.'
+        $comp.StartsWith($marker) | Should -BeTrue -Because 'the companion must announce that it is generated'
+        $bodyStart = $comp.IndexOf('-->')
+        $bodyStart | Should -BeGreaterThan 0
+        $body = $comp.Substring($comp.IndexOf("`n", $bodyStart) + 1).TrimStart("`r", "`n")
+        $body.Length | Should -BeGreaterThan 1000 -Because 'a companion with no body would pass a prefix test vacuously'
+        $src.StartsWith($body.TrimEnd("`r", "`n")) | Should -BeTrue -Because 'the companion body must be a byte-exact prefix of CHANGELOG.md'
+    }
+
+    It 'CHANGELOG.md is NEVER truncated -- it still carries every released version heading' {
+        # The half the companion exists to protect. The bundle got smaller; the release artifact
+        # did not change at all.
+        $src = [System.IO.File]::ReadAllText($script:CgSrc)
+        $all = @([regex]::Matches($src, '(?m)^## \[\d+\.\d+\.\d+\]'))
+        $all.Count | Should -BeGreaterThan 25 -Because 'the full history must still be in the release artifact'
+        $src | Should -Match '(?m)^## \[1\.0\.0\]' -Because 'the first release must still be present'
+    }
+
+    It 'the decision-ledger archive is present, non-trivial, and the live ledger points at it' {
+        (Test-Path -LiteralPath $script:CgArchive -PathType Leaf) | Should -BeTrue
+        $arch = [System.IO.File]::ReadAllText($script:CgArchive)
+        $arch.Length | Should -BeGreaterThan 100000 -Because 'an empty archive would make the pointer a lie'
+        $arch | Should -Match 'APPEND-ONLY, AND NEVER EDITED AGAIN'
+        $live = [System.IO.File]::ReadAllText($script:CgLedger)
+        $live | Should -Match 'decision-ledger-archive\.md' -Because 'the live ledger must name where the rest went'
+    }
+
+    It 'the split moved text, it did not lose or duplicate it' {
+        # Both directions. A split that dropped a section would shrink the live file exactly as a
+        # correct one does, and a split that copied instead of moving would leave the same heading
+        # in both files -- neither is visible from a size check alone.
+        $live = [System.IO.File]::ReadAllText($script:CgLedger)
+        $arch = [System.IO.File]::ReadAllText($script:CgArchive)
+        foreach ($h in @('## 2. Shipped and verified -- recent arc',
+                         '## 8. External technical review, round 2',
+                         '## Dispatch 000269 -- the gate-clearance sitting')) {
+            $arch.Contains($h) | Should -BeTrue -Because "the archive must carry '$h'"
+            $live.Contains($h) | Should -BeFalse -Because "'$h' must have MOVED, not been copied"
+        }
+        foreach ($h in @('## 4. Forward plan', '## 6. Standing items (Mike-gated)',
+                         '## 7. Operating posture', '## Dispatch 000282')) {
+            $live.Contains($h) | Should -BeTrue -Because "'$h' is live planning record and must NOT be archived"
+            $arch.Contains($h) | Should -BeFalse -Because "'$h' must not have been copied into the archive"
+        }
+    }
+}
