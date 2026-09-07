@@ -3352,35 +3352,65 @@ Describe 'Preflight doctor -- per-check status decisions (dispatch 000036)' {
             (Test-DoctorPwsh -Found $true -Version $v).Status | Should -Be 'fail'
         }
 
-        It 'ConvertTo-DoctorVersion accepts a SemanticVersion, which is what PowerShell 7 actually reports' {
-            # THE SECOND DEFECT CI FOUND, pinned so it cannot come back. Windows PowerShell 5.1
-            # reports $PSVersionTable.PSVersion as [System.Version]; PowerShell 7 reports a
-            # SemanticVersion, which is NOT a [version] and does not derive from one. The first
-            # guard here was `-is [version]`, so it silently discarded the host version on every
-            # PS 7 host -- and the Windows legs could not catch it, because there the
-            # file-version fallback answers correctly for the wrong reason.
-            $semver = [System.Management.Automation.SemanticVersion]::new(7, 4, 2)
-            $semver -is [version] | Should -BeFalse -Because 'this is the whole trap: a SemanticVersion is not a Version'
-            (ConvertTo-DoctorVersion -Value $semver) | Should -Be ([version]'7.4.2')
+        It 'ConvertTo-DoctorVersion coerces a Major/Minor/Patch host version, on EITHER edition' {
+            # THE SECOND DEFECT CI FOUND, pinned so it cannot come back -- and pinned in a way
+            # that RUNS ON BOTH EDITIONS, which the first attempt did not.
+            #
+            # Windows PowerShell 5.1 reports $PSVersionTable.PSVersion as [System.Version];
+            # PowerShell 7 reports [System.Management.Automation.SemanticVersion], which is NOT a
+            # [version] and does not derive from one. The guard here was `-is [version]`, so it
+            # silently discarded the host version on every PS 7 host -- and the Windows legs could
+            # not catch it, because there the file-version fallback answers correctly for the
+            # wrong reason.
+            #
+            # The first version of THIS test then failed on windows-powershell with "Unable to
+            # find type [System.Management.Automation.SemanticVersion]" -- the type does not exist
+            # before PowerShell 6. A test that names a type only one edition has cannot run on the
+            # edition the fallback exists to serve. So the contract is exercised through a
+            # DUCK-TYPED stand-in, which is all the coercion actually reads, and the real
+            # SemanticVersion is used only where it exists.
+            $duck = [pscustomobject]@{ Major = 7; Minor = 4; Patch = 2 }
+            $duck -is [version] | Should -BeFalse -Because 'this is the trap: the host version need not be a [version]'
+            (ConvertTo-DoctorVersion -Value $duck) | Should -Be ([version]'7.4.2')
 
             # A plain [version] passes through untouched (the 5.1 path).
             (ConvertTo-DoctorVersion -Value ([version]'5.1.19041')) | Should -Be ([version]'5.1.19041')
 
-            # A PRERELEASE stringifies as "7.5.0-preview.3", which [version] cannot parse -- so
-            # the coercion is built from PARTS, not from the string.
-            $pre = [System.Management.Automation.SemanticVersion]::new(7, 5, 0, 'preview.3')
+            # Built from PARTS, never by parsing: a prerelease stringifies as "7.5.0-preview.3",
+            # which [version] cannot parse at all.
+            $pre = [pscustomobject]@{ Major = 7; Minor = 5; Patch = 0 }
             (ConvertTo-DoctorVersion -Value $pre) | Should -Be ([version]'7.5.0')
 
             (ConvertTo-DoctorVersion -Value $null) | Should -BeNullOrEmpty
             { ConvertTo-DoctorVersion -Value 'not a version at all' } | Should -Not -Throw
+
+            # THE REAL TYPE, where the edition has it. Skipped rather than faked on 5.1, and the
+            # duck-typed assertions above still ran there.
+            if ($null -ne ('System.Management.Automation.SemanticVersion' -as [type])) {
+                $semver = [System.Management.Automation.SemanticVersion]::new(7, 4, 2)
+                $semver -is [version] | Should -BeFalse
+                (ConvertTo-DoctorVersion -Value $semver) | Should -Be ([version]'7.4.2')
+                $prerelease = [System.Management.Automation.SemanticVersion]::new(7, 5, 0, 'preview.3')
+                (ConvertTo-DoctorVersion -Value $prerelease) | Should -Be ([version]'7.5.0')
+            }
         }
 
-        It 'the in-process arm fires end-to-end when the host reports a SemanticVersion' {
+        It 'THIS HOST version coerces, whatever type this edition reports it as' {
+            # The live half, and it is edition-agnostic BY CONSTRUCTION: whatever
+            # $PSVersionTable.PSVersion is here, the coercion must produce a usable [version].
+            # On 5.1 that exercises the passthrough; on 7 it exercises the SemanticVersion path.
+            $v = ConvertTo-DoctorVersion -Value $PSVersionTable.PSVersion
+            $v | Should -Not -BeNullOrEmpty -Because ("PSVersion is a " + $PSVersionTable.PSVersion.GetType().FullName)
+            $v | Should -BeOfType ([version])
+            $v.Major | Should -Be ([int]$PSVersionTable.PSVersion.Major)
+        }
+
+        It 'the in-process arm fires end-to-end when the host version is not a [version]' {
             # The integration this dispatch got wrong twice: every input can be correct while the
-            # arm still never fires. Feeds the pure decision the SHAPE a PS 7 host produces --
-            # a coerced SemanticVersion, a 0.0.0.0 file version, Core, IsSelf -- and requires the
-            # host version to win.
-            $hv = ConvertTo-DoctorVersion -Value ([System.Management.Automation.SemanticVersion]::new(7, 4, 2))
+            # arm still never fires. Feeds the pure decision the SHAPE a PS 7 host produces -- a
+            # coerced non-[version] host version, a 0.0.0.0 file version, Core, IsSelf -- and
+            # requires the host version to win.
+            $hv = ConvertTo-DoctorVersion -Value ([pscustomobject]@{ Major = 7; Minor = 4; Patch = 2 })
             $v = Get-DoctorPwshVersion -HostVersion $hv -FileVersion ([version]'0.0.0.0') `
                 -IsCoreHost $true -IsSelf $true
             $v | Should -Be ([version]'7.4.2')
