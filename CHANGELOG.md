@@ -31,6 +31,29 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+## [1.34.0] - 2026-09-07
+MINOR: **the doctor now answers machine-readably, and will tell you when it cannot prove an
+answer.** `doctor -Json` is a third rendering beside the fix-list and `-Summary`, carrying a
+four-value `status` vocabulary over the same checks, and the new opt-in **`-RequireProven`** exits
+**2** when nothing failed but something is merely UNKNOWN -- so "everything was actually verified"
+stops being indistinguishable from "nothing complained". Read the **Security** entries too: the
+diagnostics capture can now be told to record a finding **without the source line or the path**
+(`POWERSHELL_LSP_CAPTURE_MODE=metadata`, an environment variable rather than a knob, so a fleet can
+set it by GPO), and the **last dependency-acquisition route the SHA-256 pin did not gate is now
+gated and fails closed**. The daemon IPC also gained a **protocol version and capabilities
+handshake**, so a client and a warm daemon from different installs can discover a mismatch instead
+of misbehaving; absent means 1, which keeps it additive. **No `userConfig` key is added, removed,
+renamed or re-defaulted, no diagnostics status token changed, and no line of `CONTRACT.md` moved** --
+the 1.x freeze holds. This is a MINOR because it adds capability, not because it changes any
+promise.
+
+**This release also carries the POSIX containment fix written up below under `[1.33.1]`.**
+That version was cut on `main` and superseded before it was ever tagged, so it has no release
+of its own -- but its change is in this artifact: on Linux and macOS the data root, its temp
+fallback, the daemon's unix-socket endpoint and the shared JSONL writers are now created
+`0700` / `0600` instead of inheriting `755` from the ambient umask. Windows is byte-identical.
+Read that section as part of these notes; it is not a separate release.
+
 ### Added
 
 **A `captureMode` field in the `doctor -Json` envelope** (dispatch 000282, ruling R19 of
@@ -193,6 +216,7 @@ this gate still describes bytes the pin did not verify, and the check says so.
 No `userConfig` key, no diagnostics status token, no line of `CONTRACT.md`.
 
 ## [1.33.1] - 2026-09-05
+> Cut on `main` and superseded before tagging -- a skipped, never-published number.
 PATCH: **every filesystem object the plugin creates on Linux and macOS is now created
 owner-only.** The data root, its temp fallback, the daemon's unix-socket endpoint and the
 files the shared JSONL writers create all landed at `755` under the ambient umask -- readable
