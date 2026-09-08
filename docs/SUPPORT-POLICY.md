@@ -17,6 +17,11 @@ Support means **CI-verified on every release**: the four legs below are required
 (`.github/workflows/powershell-lsp-ci.yml`; Gate 4 in
 [docs/RELEASING.md](./RELEASING.md#what-the-pipeline-validates-the-gates)).
 
+Two further CI legs exist and are **not** in this table on purpose, because neither carries a
+support promise: `container-pwsh` runs the suite in the official PowerShell container, and
+`claude-code-compat` is **advisory** and is described under
+[Claude Code versions](#claude-code-versions) below. A supported host is one this table names.
+
 | CI leg | Runner image | Interpreter |
 |---|---|---|
 | `windows-pwsh` | `windows-2025` | `pwsh` (PowerShell 7) |
@@ -77,6 +82,43 @@ What the project *does* track is **specific known-bad versions**, recorded when 
 
 Full analysis: [docs/upstream/claude-code-lsp-registration.md](./upstream/claude-code-lsp-registration.md)
 and [docs/configuration.md](./configuration.md).
+
+### What the compatibility leg verifies -- and what it deliberately does not
+
+An advisory CI job, `claude-code-compat`, installs two **pinned** Claude Code clients --
+**2.1.263 (Current)** and **2.1.261 (Current-1)** -- registers this repository as a local
+marketplace, installs the plugin from it, and asserts against the client's **own component
+inventory** that all three hooks, the LSP server and every shipped command are registered. The
+expected command set is derived from `commands/*.md` rather than listed in the assertion.
+
+**It is ADVISORY (`continue-on-error: true`), not a required check.** A required leg that cannot
+obtain an older client would block every release, trading one risk for a worse one.
+
+**What that proves:** that a real Claude Code client of those two versions **accepts and registers
+this plugin** -- the manifest parses, the marketplace source is valid, and every component the
+plugin declares appears in the client's own inventory. Reading our own manifest back to ourselves
+would prove only that the file we wrote is the file we wrote; this reads the client's answer.
+
+**What it does NOT prove, stated plainly because the gap is the point:** that a diagnostic actually
+**surfaces** to a user under those clients. That is an end-to-end assertion and it requires a live
+agent turn, which requires a model credential in CI. **This repository does not hold one, and that
+is a decision rather than an omission** (ruled 2026-09-08; recorded in
+[docs/decision-ledger.md](./decision-ledger.md)):
+
+- A repository secret is reachable by **every** workflow in a repository that publishes attested
+  artifacts, which is a materially larger exposure than the one assertion would buy.
+- A live agent turn is **nondeterministic**, and an advisory leg that flakes teaches readers to
+  ignore advisory legs -- which costs more than the leg is worth.
+- It **bills per pull request, forever**.
+
+If that end-to-end proof is ever wanted, it belongs in an **attended or scheduled check outside the
+publishing repository**, never as a pull-request gate.
+
+**Accordingly, no `claudeCodeCompatibility` declaration is written anywhere in this repository, and
+none will be written from this leg.** The declaration is the *output* of certification, written
+from what the matrix proved and never ahead of it -- and what the matrix proves is registration.
+The statement above, that no minimum or maximum Claude Code version is declared, stands unchanged
+and is not weakened by the existence of this leg.
 
 ## Deprecation: how a removal would be announced
 

@@ -48,12 +48,16 @@ BeforeAll {
         return [string]$fn.Extent.Text
     }
 
-    # Define the SHIPPED functions verbatim in this session. Get-QueryOps FIRST: Get-DaemonCapabilities
-    # calls it (000287 -- one source for the op vocabulary, Hub Rule 18), so defining the capabilities
-    # function without it would leave every caller below throwing on an unresolved command.
+    # Define the SHIPPED functions verbatim in this session. The vocabulary chain FIRST:
+    # Get-DaemonCapabilities calls Get-QueryOps (000287 -- one source for the op vocabulary,
+    # Hub Rule 18) and Get-QueryOps now derives its list from Get-QueryOpSpec (000288), so
+    # defining the capabilities function without BOTH would leave every caller below throwing
+    # on an unresolved command.
     $script:WriteRespText = Get-DaemonFunctionText -Name 'Write-DaemonResponse'
     $script:CapsText = Get-DaemonFunctionText -Name 'Get-DaemonCapabilities'
+    $script:QueryOpSpecText = Get-DaemonFunctionText -Name 'Get-QueryOpSpec'
     $script:QueryOpsText = Get-DaemonFunctionText -Name 'Get-QueryOps'
+    . ([scriptblock]::Create($script:QueryOpSpecText))
     . ([scriptblock]::Create($script:QueryOpsText))
     . ([scriptblock]::Create($script:CapsText))
     . ([scriptblock]::Create($script:WriteRespText))

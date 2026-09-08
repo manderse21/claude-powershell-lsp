@@ -502,15 +502,54 @@ not a runtime surface. **Effort: ~1 day** for the gate and the exception schema,
 > and the survey marks it viable. It is folded in above rather than dropped, because dropping the
 > null option would bias the slice toward building a gate.
 
-**P1-2 -- first-party semantic query surface (review items 9 and 10). BUILT by dispatch 000287
-(the first three operations); `documentSymbol` and `workspaceSymbol` remain UNREACHED.**
+**P1-2 -- first-party semantic query surface (review items 9 and 10). BUILT: the first three
+operations by dispatch 000287, `documentSymbol` and `workspaceSymbol` by dispatch 000288. NO
+REMAINDER.**
 
-> **What landed, and what did not.** `scripts/lsp-query.ps1` plus a `query` action on the daemon
-> serve `definition`, `references` and `hover` -- "the first three operations" the effort line
-> prices. `documentSymbol` and `workspaceSymbol` are deliberately not built: neither takes a
-> position, so both are a different request shape with their own result rendering, and folding them
-> into the position slice would have shipped two surfaces on one slice's testing. They are named
-> here for the successor rather than quietly absorbed. The daemon advertises its op set through
+> **The remainder, closed (000288).** `documentSymbol` and `workspaceSymbol` now ship, and they
+> ship as their own request shapes rather than as variations on a position query. The planner
+> reads one spec table carrying each op's method AND its `kind` -- `position`, `document`,
+> `query` -- and `Get-QueryOps` derives the advertised vocabulary from that table instead of
+> restating it (Hub Rule 18), so the capability advertisement and the client's `-Op` set followed
+> with no edit of their own. Position validation applies to the position ops only: refusing a
+> `documentSymbol` for leaving `-Line` at its default would be enforcing a rule that does not
+> govern it. A consequence the three original ops had hidden: they were all lowercase, so
+> `ToLowerInvariant` normalisation was free; it is not free for a camelCase op, and
+> `Resolve-QueryOp` canonicalises against the spec instead.
+>
+> **A SECOND RED control, because the first cannot reach these arms.** The pass-through mutant
+> controls the 1-based-to-0-based conversion, which an op carrying no position never performs, so
+> running it over the new ops would have been a loop that asserted nothing. The new control pins
+> every op's `kind` to `position` -- **the shape this planner had before the symbol ops existed**,
+> which is the prior implementation in the only sense that matters -- and is proved to have landed,
+> shown to send a position where the shipped planner sends none, shown to REFUSE a
+> `workspaceSymbol` the shipped planner serves, and shown to leave the three position ops
+> untouched so it controls what it claims to. The kinds are asserted to **partition** the
+> vocabulary, no arm empty, and both mutants' op loops are derived from that partition rather than
+> listed -- the lesson the handshake census taught one slice earlier, applied rather than recalled.
+>
+> **AND THE SURFACE DID NOT WORK AT ALL UNTIL THIS DISPATCH.** Building the round-trip test that
+> had never existed found that `scripts/lsp-query.ps1` assigned the daemon's response to `$line` --
+> the same variable, PowerShell being case-insensitive, as its own `[int] $Line` parameter. A typed
+> variable coerces on assignment, so every response threw a type-conversion error before it was
+> parsed and **every query exited 4**. The slice 000287 called "the highest capability-per-freeze
+> slice in the docket" had never returned a single result. It never reached a release -- the whole
+> surface is still `[Unreleased]` -- and it is fixed here.
+>
+> **The lesson is about where the tests were pointed, not about the bug.** Every assertion in the
+> file was about `Get-QueryRequestPlan`, which is pure and was correct; the round trip, which is
+> where the defect was, had none. A test suite concentrated on the part that is easy to test can be
+> thorough and still prove nothing about whether the feature works. The round-trip suite added here
+> drives the real client against a canned pipe server for one op of each kind, and a derived
+> collision assertion guards every typed parameter against the same shape.
+
+> **What landed in 000287, and what did not.** `scripts/lsp-query.ps1` plus a `query` action on the
+> daemon serve `definition`, `references` and `hover` -- "the first three operations" the effort
+> line prices. `documentSymbol` and `workspaceSymbol` were deliberately not built there: neither
+> takes a position, so both are a different request shape with their own result rendering, and
+> folding them into the position slice would have shipped two surfaces on one slice's testing. They
+> were named for the successor rather than quietly absorbed, and 000288 built them. The daemon
+> advertises its op set through
 > `Get-DaemonCapabilities.queryOps`, which reads the same `Get-QueryOps` the planner validates
 > against, so the advertisement cannot drift from the behaviour (Hub Rule 18).
 >
@@ -538,14 +577,25 @@ not a runtime surface. **Effort: ~1 day** for the gate and the exception schema,
 - **Freeze exposure.** **ZERO on both frozen surfaces** -- a new command entry point is neither a
   `userConfig` knob nor a diagnostics status token. This is the highest capability-per-freeze slice
   in the docket and its outbox should say so.
-- **Effort.** ~2-3 days for the first three operations.
+- **Effort.** ~2-3 days for the first three operations. The two symbol ops cost materially less
+  than that line would imply per-operation: the request/response plumbing, the client, the
+  capability advertisement and the handshake were already built, so 000288 spent its effort on the
+  spec table, the kind-keyed planner arms, the per-kind rendering and the second RED control.
 - **Test shape.** Corpus fixtures with known symbol positions; assert each operation's JSON against a
   snapshot. **RED control:** a mutant that returns the request unchanged must fail every assertion.
 - **Legs.** Six: the protocol extension (P1-4, which must land first); daemon-side dispatch;
   client-side command; the three operations; tests plus RED controls; docs.
 
 **P1-3 -- Claude Code compatibility certification (review item 4). REGISTRATION HALF BUILT by
-dispatch 000287; the diagnostic-surfacing half is BLOCKED on a credential and named below.**
+dispatch 000287. The diagnostic-surfacing half is NO LONGER BLOCKED -- it is CLOSED, ruled out of
+scope by Mike Andersen on 2026-09-08 (R-H / R14 below). P1-3 is COMPLETE at registration-only.**
+
+> **THE BLOCKER IS STRUCK.** The half that needed a live agent turn is not waiting on a credential;
+> it is ruled **not to be bought**. `docs/SUPPORT-POLICY.md` now says so explicitly, naming what
+> the registration half proves and what it does not, so a reader meets the boundary in the support
+> document rather than inferring it from a CI file. The end-to-end diagnostic proof, if ever
+> wanted, is an attended or scheduled check **outside the publishing repository**, never a PR gate.
+> Recorded verbatim in [docs/decision-ledger.md](../decision-ledger.md) and as R-H in section 7.
 
 > **What landed.** `claude-code-compat`, its own job with its own name, `continue-on-error: true`
 > per ruling R-G. It installs two PINNED clients -- **2.1.263 (Current)** and **2.1.261
@@ -562,8 +612,10 @@ dispatch 000287; the diagnostic-surfacing half is BLOCKED on a credential and na
 > constraint is **credentialed execution**: the two assertions the slice wants route through
 > `claude plugin details <name>`, which is credential-free but needs the plugin registered, and a
 > live agent turn, which is not. So the registration half is built and the diagnostic-surfacing
-> half is **BLOCKED**, naming its obstacle: proving "one diagnostic surfaces" requires a model
-> turn, hence a secret, which dispatch 000287 may not provision.
+> half was **BLOCKED** by 000287, naming its obstacle: proving "one diagnostic surfaces" requires a
+> model turn, hence a secret, which dispatch 000287 could not provision. **That block was resolved
+> by ruling rather than by provisioning** -- see R-H / R14 -- and the obstacle is recorded here
+> unchanged so the reasoning that led to the ruling stays legible.
 >
 > **No `claudeCodeCompatibility` block was written**, and that is the ordering this slice exists to
 > protect: the declaration is the output, written from what the matrix PROVED, never ahead of it.
@@ -583,7 +635,10 @@ dispatch 000287; the diagnostic-surfacing half is BLOCKED on a credential and na
   asserts the hook registers and one diagnostic surfaces. The **declaration is the output**: a
   `claudeCodeCompatibility` block written from what the matrix proved, never ahead of it. That
   ordering is what keeps it consistent with `SUPPORT-POLICY.md:62`'s refusal to declare an untested
-  floor.
+  floor. **Amended by R-H:** the "one diagnostic surfaces" clause is struck from the mechanism. The
+  job asserts registration; no `claudeCodeCompatibility` block is written from it, because a
+  declaration written from a registration-only matrix would claim more than the matrix proved --
+  which is the very ordering this slice exists to protect.
 - **Freeze exposure.** ZERO on the frozen surfaces. A manifest block is not a `userConfig` key -- but
   the dispatch must confirm that against `CONTRACT.md`'s manifest-drift guard rather than assume it.
 - **Effort.** ~1-2 days, dominated by obtaining and pinning two client versions in CI.
@@ -701,6 +756,7 @@ recommendation.
 | **R-E** | Was the enterprise review audited? | **ANSWERED BY EXECUTION -- this dispatch.** The file exists (section 1), was read end to end, and every numbered item, the five things and every phase-table row are scored in section 3. The row moves out of PENDING-MIKE into the rows-that-left table | -- | ANSWERED |
 | **R-F** | Survey **P3**: re-ratify T3's spread basis at N=45 rather than N=15? This is a **change to a ratified target**, and no survey or runner may take it | (a) re-ratify at N=45 after the quiet-host re-runs; (b) keep N=15 and treat the miss as a documented single-sample event (survey P4); (c) decide after the re-runs | **(c)** -- the survey's own order is "P1, then re-read", and both (a) and (b) are answers to a question the re-runs are what settle | **(c)**, ruled by Mike 2026-09-05 as **R12**, ratified by acceptance of the 000279 inbox. Verbatim: *"R12 (R-F) = (c). Decide T3's spread basis after the quiet-host re-runs. Not tonight; the re-runs are a human leg on a quiet host."* |
 | **R-G** | For **P1-3**, is Claude Code Current-1 a **Required** or **Advisory** CI leg? | (a) Advisory; (b) Required | **(a)** -- a Required leg that cannot obtain an older client blocks every release, which trades one enterprise risk for a worse one | **(a)**, ruled by Mike 2026-09-05 as **R13**, ratified by acceptance of the 000279 inbox. Verbatim: *"R13 (R-G) = (a). Claude Code Current-1 is Advisory, not Required. Recorded; P1-3 builds later."* |
+| **R-H** | **MAY THE PLUGIN REPOSITORY HOLD A CI MODEL CREDENTIAL?** P1-3's registration half is built and green on two pinned clients, but its second half -- "one diagnostic surfaces" -- requires a live Claude Code agent turn, hence a model credential in CI. Dispatch 000287 did not provision one and would not have | (a) add a repository secret scoped to that advisory leg and build the second half; (b) leave P1-3 permanently at registration-only and say so in `SUPPORT-POLICY.md`; (c) something else | **(b)** -- an agent does not create the secret that would unblock its own leg, and the exposure is repository-wide while the gain is one advisory assertion | **(b) -- NO CI MODEL CREDENTIAL**, ruled by Mike Andersen 2026-09-08 as **R14**. Verbatim: *"NO CI MODEL CREDENTIAL. Take option (b) -- P1-3 stays at registration-only and docs/SUPPORT-POLICY.md says so explicitly, naming what the registration half does and does not prove. The reasoning, on the record: this is dispatch 000283's R17 shape -- a live dependency bought for one end-to-end assertion -- and it is worse on three axes. A repository secret is reachable by every workflow in a repo that publishes attested artifacts; a live agent turn is nondeterministic and an advisory leg that flakes teaches people to ignore advisory legs; and it bills per PR forever. If the end-to-end diagnostic proof is ever wanted it is an attended or scheduled check outside the publishing repository, not a PR gate. Record the option-(b) choice in the docket where the blocked half is named, and strike the blocker."* **RECORDED by dispatch 000288**; the blocker is struck and `SUPPORT-POLICY.md` carries the boundary |
 
 ---
 

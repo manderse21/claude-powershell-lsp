@@ -30,6 +30,21 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **`docs/SUPPORT-POLICY.md` states the boundary of the compatibility leg**, and P1-3 is
+closed at registration-only. Ruled 2026-09-08 (**R14**, recorded verbatim in
+`docs/decision-ledger.md`): **no CI model credential.** The advisory `claude-code-compat` leg
+proves that two pinned real clients accept and register this plugin, asserted against the client's
+own component inventory; it does **not** prove that a diagnostic surfaces to a user, because that
+needs a live agent turn and therefore a model credential in CI. The support policy now says both
+halves of that plainly, with the reasoning: a repository secret is reachable by every workflow in a
+repository that publishes attested artifacts, a live agent turn is nondeterministic and an advisory
+leg that flakes teaches readers to ignore advisory legs, and it bills per pull request forever. If
+that end-to-end proof is ever wanted it is an attended or scheduled check **outside** the
+publishing repository, never a PR gate. **No `claudeCodeCompatibility` declaration is written** --
+the declaration is the output of certification, and what the matrix proves is registration. The
+same section also records that two CI legs (`container-pwsh`, `claude-code-compat`) are
+deliberately absent from the supported-hosts table, because neither carries a support promise.
+
 PATCH: **An advisory CI leg proves a real Claude Code client registers this plugin** (enterprise
 docket P1-3, review item 4, the registration half). `claude-code-compat` installs two PINNED
 client versions -- 2.1.263 (Current) and 2.1.261 (Current-1) -- registers this repository as a
@@ -87,6 +102,61 @@ partition: every site either announces both keys or is a bare literal carrying n
 `action`, with the exemption keyed on the literal's own text rather than on a file name. Measured
 rather than argued: with the new fourth site's handshake deleted, the prior guard **passes** and
 the derived one fails, naming the site.
+
+MINOR: **The query surface answers `documentSymbol` and `workspaceSymbol` too**, completing docket
+P1-2's named remainder. Neither op takes a position, so neither is a variation on the three that
+shipped: `documentSymbol` names a file and no position, `workspaceSymbol` names a query string and
+no file. They are **not** forced into the position shape. Inventing a position for an op that has
+none would send PSES a well-formed request about a place the caller never named and get back a
+confident answer to a question nobody asked.
+
+The planner now reads **one spec table** that carries each op's method *and* its `kind` --
+`position`, `document` or `query` -- and `Get-QueryOps` derives the advertised vocabulary from it
+rather than restating it beside it (Hub Rule 18). The daemon's `queryOps` capability and the
+client's `-Op` set follow for free, and position validation applies to the position ops only. One
+consequence worth naming: the three original ops were all lowercase, so normalising an op with
+`ToLowerInvariant` was free; it is not free any more, and `Resolve-QueryOp` canonicalises against
+the spec instead -- lowercasing `documentSymbol` would lose the op entirely. `-File`, `-Line` and
+`-Col` are no longer `Mandatory` on the client, because they do not apply to every op; `-Op` still
+is, and existing positional calls are unchanged.
+
+**A second RED control**, because the first one cannot reach these arms. The pass-through mutant
+controls the 1-based-to-0-based conversion, which an op carrying no position never performs -- so
+this slice adds a **uniform-position** mutant that pins every op's kind to `position`, which is
+exactly the shape this planner had before the symbol ops existed. It is proved to have landed, it
+is asserted to send a position where the shipped planner sends none and to *refuse* a
+`workspaceSymbol` the shipped planner serves, and it is asserted to leave the three position ops
+alone so it controls what it claims to. The kinds are asserted to **partition** the vocabulary --
+every op in exactly one arm, no arm empty -- and both mutants' op loops are derived from that
+partition rather than from a hard-coded list, which is the lesson the handshake census taught one
+slice earlier.
+
+**And a fatal defect in the client, found by building the round-trip test that was missing.**
+`scripts/lsp-query.ps1` assigned the daemon's response to `$line` -- which, because PowerShell
+variable names are **case-insensitive**, is the same variable as its own `[int] $Line` parameter.
+A typed variable coerces on every assignment, so the response JSON threw *"Cannot convert value
+... to type System.Int32"* before a single byte was parsed. **Every query exited 4 and no query
+ever returned a result.** It shipped green because every test in the file was about the pure
+planner and **nothing exercised the round trip**. It is fixed here (`$respLine`), and it **never
+reached a release** -- the whole query surface is still under `[Unreleased]`, so no user has been
+affected.
+
+The fix carries the tests whose absence allowed it. A **round-trip suite** stands up a minimal
+named-pipe server answering one canned response and drives the real client against it for one op
+of **each kind**, plus the `-Text` rendering and a daemon refusal; and a **collision assertion**
+derives the typed-parameter set and the assigned-variable set from the AST and asserts they do not
+intersect, so a future typed parameter is guarded for free. The RED control is the **prior
+implementation read from git by SHA** -- 000287's own file -- and it is asserted to carry the
+collision on the exact variable. Reintroducing the defect turns all six of those tests red and
+nothing else, measured.
+
+Three harness traps were hit and are recorded in the test's own comments, because each one produced
+a *passing-looking* failure: probing readiness with `Test-Path` on `\\.\pipe\<name>` **opens** the
+pipe and consumes the server's single instance, so the client that follows finds nothing to connect
+to; a redirected child's stdout stays buffered while it blocks, so a `READY` line never arrives and
+the signal must be a marker **file**; and PowerShell **strips double quotes** from native-process
+arguments, so JSON handed over a command line reaches the child unparseable and must go through a
+file.
 
 PATCH: **`docs/whitepaper.md` is r3, retracting a claim the code outgrew.** In three body places
 (sections 4, 6, 10) r2 said one acquisition route was **not** governed by the project SHA-256 pin

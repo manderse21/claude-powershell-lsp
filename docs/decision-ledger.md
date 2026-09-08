@@ -2362,3 +2362,47 @@ including a dry run, no publish, post or submission, no force-push, no branch de
 bump, and nothing touched that belongs to another session. `v1.33.1` remains cut on `main` and
 untagged with PR 204's MINOR-class work above it, exactly as found. One container image was pulled
 from a public registry for the leg K feasibility census, which is a read.
+
+## Dispatch 000288 -- R14 (R-H): NO CI MODEL CREDENTIAL. P1-3 is COMPLETE at registration-only
+
+### The ruling, verbatim
+
+Carried verbatim per **R18**, so it is attributable from disk without the chat that produced it.
+
+**R14 (R-H), ruled by Mike Andersen 2026-09-08.** *"NO CI MODEL CREDENTIAL. Take option (b) --
+P1-3 stays at registration-only and docs/SUPPORT-POLICY.md says so explicitly, naming what the
+registration half does and does not prove. The reasoning, on the record: this is dispatch 000283's
+R17 shape -- a live dependency bought for one end-to-end assertion -- and it is worse on three
+axes. A repository secret is reachable by every workflow in a repo that publishes attested
+artifacts; a live agent turn is nondeterministic and an advisory leg that flakes teaches people to
+ignore advisory legs; and it bills per PR forever. If the end-to-end diagnostic proof is ever
+wanted it is an attended or scheduled check outside the publishing repository, not a PR gate.
+Record the option-(b) choice in the docket where the blocked half is named, and strike the
+blocker."*
+
+### What the ruling closes
+
+P1-3's second half -- "one diagnostic surfaces" -- was carried as **BLOCKED on a credential** by
+dispatch 000287, which named the obstacle correctly and did not route around it. That block is now
+resolved **by ruling rather than by provisioning**, which is a different and better outcome than
+the one 000287 was hoping for: the slice is not waiting on anything.
+
+- `docs/SUPPORT-POLICY.md` gains a subsection under **Claude Code versions** that names what the
+  registration half proves -- a real client of two pinned versions accepts and registers this
+  plugin, asserted against the client's OWN inventory -- and what it does not: that a diagnostic
+  surfaces to a user. The three axes above are recorded there as the reason, so a reader meets the
+  boundary in the support document rather than inferring it from a CI file.
+- `ENTERPRISE-PROGRAM-DOCKET.md` P1-3 is re-headed **COMPLETE at registration-only**, the blocker
+  is struck, and the "one diagnostic surfaces" clause is struck from the mechanism. The original
+  obstacle text is left in place unchanged so the reasoning that led to the ruling stays legible.
+- **No `claudeCodeCompatibility` block is written, and none will be written from this leg.** The
+  declaration is the output of certification; a declaration written from a registration-only matrix
+  would claim more than the matrix proved, which is the ordering this slice exists to protect.
+
+### The shape this is an instance of
+
+The ruling names it: **000283's R17 shape -- a live dependency bought for one end-to-end
+assertion.** R17 declined a live gallery dependency on the ground that the structural proof was the
+stopping point. This is the same trade and it loses on three further axes that R17 did not face,
+because the dependency here is a *credential* in a repository that publishes attested artifacts,
+not merely a network call. Recorded as a second sighting of that shape.
