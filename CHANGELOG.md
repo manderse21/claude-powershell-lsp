@@ -88,6 +88,34 @@ partition: every site either announces both keys or is a bare literal carrying n
 rather than argued: with the new fourth site's handshake deleted, the prior guard **passes** and
 the derived one fails, naming the site.
 
+MINOR: **The query surface answers `documentSymbol` and `workspaceSymbol` too**, completing docket
+P1-2's named remainder. Neither op takes a position, so neither is a variation on the three that
+shipped: `documentSymbol` names a file and no position, `workspaceSymbol` names a query string and
+no file. They are **not** forced into the position shape. Inventing a position for an op that has
+none would send PSES a well-formed request about a place the caller never named and get back a
+confident answer to a question nobody asked.
+
+The planner now reads **one spec table** that carries each op's method *and* its `kind` --
+`position`, `document` or `query` -- and `Get-QueryOps` derives the advertised vocabulary from it
+rather than restating it beside it (Hub Rule 18). The daemon's `queryOps` capability and the
+client's `-Op` set follow for free, and position validation applies to the position ops only. One
+consequence worth naming: the three original ops were all lowercase, so normalising an op with
+`ToLowerInvariant` was free; it is not free any more, and `Resolve-QueryOp` canonicalises against
+the spec instead -- lowercasing `documentSymbol` would lose the op entirely. `-File`, `-Line` and
+`-Col` are no longer `Mandatory` on the client, because they do not apply to every op; `-Op` still
+is, and existing positional calls are unchanged.
+
+**A second RED control**, because the first one cannot reach these arms. The pass-through mutant
+controls the 1-based-to-0-based conversion, which an op carrying no position never performs -- so
+this slice adds a **uniform-position** mutant that pins every op's kind to `position`, which is
+exactly the shape this planner had before the symbol ops existed. It is proved to have landed, it
+is asserted to send a position where the shipped planner sends none and to *refuse* a
+`workspaceSymbol` the shipped planner serves, and it is asserted to leave the three position ops
+alone so it controls what it claims to. The kinds are asserted to **partition** the vocabulary --
+every op in exactly one arm, no arm empty -- and both mutants' op loops are derived from that
+partition rather than from a hard-coded list, which is the lesson the handshake census taught one
+slice earlier.
+
 PATCH: **`docs/whitepaper.md` is r3, retracting a claim the code outgrew.** In three body places
 (sections 4, 6, 10) r2 said one acquisition route was **not** governed by the project SHA-256 pin
 -- the PSScriptAnalyzer Gallery fallback, described as resting on the Gallery's publisher/catalog

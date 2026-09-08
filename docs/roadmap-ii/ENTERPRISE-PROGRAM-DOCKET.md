@@ -502,15 +502,39 @@ not a runtime surface. **Effort: ~1 day** for the gate and the exception schema,
 > and the survey marks it viable. It is folded in above rather than dropped, because dropping the
 > null option would bias the slice toward building a gate.
 
-**P1-2 -- first-party semantic query surface (review items 9 and 10). BUILT by dispatch 000287
-(the first three operations); `documentSymbol` and `workspaceSymbol` remain UNREACHED.**
+**P1-2 -- first-party semantic query surface (review items 9 and 10). BUILT: the first three
+operations by dispatch 000287, `documentSymbol` and `workspaceSymbol` by dispatch 000288. NO
+REMAINDER.**
 
-> **What landed, and what did not.** `scripts/lsp-query.ps1` plus a `query` action on the daemon
-> serve `definition`, `references` and `hover` -- "the first three operations" the effort line
-> prices. `documentSymbol` and `workspaceSymbol` are deliberately not built: neither takes a
-> position, so both are a different request shape with their own result rendering, and folding them
-> into the position slice would have shipped two surfaces on one slice's testing. They are named
-> here for the successor rather than quietly absorbed. The daemon advertises its op set through
+> **The remainder, closed (000288).** `documentSymbol` and `workspaceSymbol` now ship, and they
+> ship as their own request shapes rather than as variations on a position query. The planner
+> reads one spec table carrying each op's method AND its `kind` -- `position`, `document`,
+> `query` -- and `Get-QueryOps` derives the advertised vocabulary from that table instead of
+> restating it (Hub Rule 18), so the capability advertisement and the client's `-Op` set followed
+> with no edit of their own. Position validation applies to the position ops only: refusing a
+> `documentSymbol` for leaving `-Line` at its default would be enforcing a rule that does not
+> govern it. A consequence the three original ops had hidden: they were all lowercase, so
+> `ToLowerInvariant` normalisation was free; it is not free for a camelCase op, and
+> `Resolve-QueryOp` canonicalises against the spec instead.
+>
+> **A SECOND RED control, because the first cannot reach these arms.** The pass-through mutant
+> controls the 1-based-to-0-based conversion, which an op carrying no position never performs, so
+> running it over the new ops would have been a loop that asserted nothing. The new control pins
+> every op's `kind` to `position` -- **the shape this planner had before the symbol ops existed**,
+> which is the prior implementation in the only sense that matters -- and is proved to have landed,
+> shown to send a position where the shipped planner sends none, shown to REFUSE a
+> `workspaceSymbol` the shipped planner serves, and shown to leave the three position ops
+> untouched so it controls what it claims to. The kinds are asserted to **partition** the
+> vocabulary, no arm empty, and both mutants' op loops are derived from that partition rather than
+> listed -- the lesson the handshake census taught one slice earlier, applied rather than recalled.
+
+> **What landed in 000287, and what did not.** `scripts/lsp-query.ps1` plus a `query` action on the
+> daemon serve `definition`, `references` and `hover` -- "the first three operations" the effort
+> line prices. `documentSymbol` and `workspaceSymbol` were deliberately not built there: neither
+> takes a position, so both are a different request shape with their own result rendering, and
+> folding them into the position slice would have shipped two surfaces on one slice's testing. They
+> were named for the successor rather than quietly absorbed, and 000288 built them. The daemon
+> advertises its op set through
 > `Get-DaemonCapabilities.queryOps`, which reads the same `Get-QueryOps` the planner validates
 > against, so the advertisement cannot drift from the behaviour (Hub Rule 18).
 >
@@ -538,7 +562,10 @@ not a runtime surface. **Effort: ~1 day** for the gate and the exception schema,
 - **Freeze exposure.** **ZERO on both frozen surfaces** -- a new command entry point is neither a
   `userConfig` knob nor a diagnostics status token. This is the highest capability-per-freeze slice
   in the docket and its outbox should say so.
-- **Effort.** ~2-3 days for the first three operations.
+- **Effort.** ~2-3 days for the first three operations. The two symbol ops cost materially less
+  than that line would imply per-operation: the request/response plumbing, the client, the
+  capability advertisement and the handshake were already built, so 000288 spent its effort on the
+  spec table, the kind-keyed planner arms, the per-kind rendering and the second RED control.
 - **Test shape.** Corpus fixtures with known symbol positions; assert each operation's JSON against a
   snapshot. **RED control:** a mutant that returns the request unchanged must fail every assertion.
 - **Legs.** Six: the protocol extension (P1-4, which must land first); daemon-side dispatch;

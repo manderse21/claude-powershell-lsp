@@ -692,18 +692,58 @@ function Add-CodeActionCorrections {
     }
 }
 
-# --- first-party semantic query (P1-2, dispatch 000287) --------------------
+# --- first-party semantic query (P1-2, dispatch 000287; the two symbol ops, 000288) -------
+function Get-QueryOpSpec {
+    # THE op vocabulary AND each op's request shape, in ONE table. An op list kept apart from
+    # a per-op shape is how an advertisement and a behaviour drift (Hub Rule 18), so Get-QueryOps
+    # derives its list from here and the planner reads its arms from here.
+    #
+    # `kind` is what the op needs FROM THE CALLER, and it is the only thing that decides which
+    # arguments are validated:
+    #   position -- a document and a 1-based line/col  (definition, references, hover)
+    #   document -- a document and NO position         (documentSymbol)
+    #   query    -- a query string and NO document     (workspaceSymbol)
+    #
+    # The two symbol ops do NOT take a position and are not forced into one. Inventing a position
+    # for an op that has none would send PSES a well-formed request about a place the caller never
+    # named, and get a confident answer to a question nobody asked.
+    return [ordered]@{
+        'definition'      = @{ method = 'textDocument/definition'; kind = 'position' }
+        'references'      = @{ method = 'textDocument/references'; kind = 'position' }
+        'hover'           = @{ method = 'textDocument/hover'; kind = 'position' }
+        'documentSymbol'  = @{ method = 'textDocument/documentSymbol'; kind = 'document' }
+        'workspaceSymbol' = @{ method = 'workspace/symbol'; kind = 'query' }
+    }
+}
+
 function Get-QueryOps {
-    # THE op vocabulary, in one place, because two places is how an advertisement and a
-    # behaviour drift (Hub Rule 18). Get-QueryRequestPlan validates against this and
-    # Get-DaemonCapabilities advertises it; neither carries its own copy.
-    return @('definition', 'references', 'hover')
+    # The advertised vocabulary, DERIVED from the one spec table rather than restated beside it.
+    return @((Get-QueryOpSpec).Keys)
+}
+
+function Resolve-QueryOp {
+    # Canonical op name for a caller-typed string, or '' when it is not one of ours. ONE
+    # normalizer, shared by the planner and the round trip, so "what did the caller mean" is
+    # answered in a single place. Case- and padding-insensitive because a CLI argument arrives as
+    # typed -- and it returns the CANONICAL spelling, which is what the camelCase ops require:
+    # lowercasing 'documentSymbol' the way the three original ops could afford to would lose it.
+    param([string] $Op)
+    $t = ([string]$Op).Trim()
+    foreach ($k in (Get-QueryOpSpec).Keys) { if ($k -ieq $t) { return [string]$k } }
+    return ''
+}
+
+function Get-UnknownQueryOpError {
+    # One wording for one refusal. The message must NAME what is available, or a caller has to
+    # read the source to recover from a typo.
+    param([string] $Op)
+    return ('unknown query op: ' + $Op + ' (known: ' + (@(Get-QueryOps) -join ', ') + ')')
 }
 
 function Get-QueryRequestPlan {
     # PURE. Maps one semantic query onto the LSP request PSES already serves.
     #
-    # THE POSITION BASE IS THE WHOLE OF THIS FUNCTION'S RISK. The wire protocol carries
+    # THE POSITION BASE IS THE WHOLE OF THE POSITION ARM'S RISK. The wire protocol carries
     # 1-BASED line and column, because that is what every editor, every stack trace and
     # every diagnostics record this plugin already emits reports. LSP is 0-BASED. The
     # conversion happens exactly HERE, once, and a caller that forwards the request
@@ -712,36 +752,60 @@ function Get-QueryRequestPlan {
     #
     # A position below 1 is an ERROR, never clamped. Clamping would answer confidently
     # about position 1 when the caller asked about something it could not name.
+    #
+    # THE OTHER TWO ARMS ARE NOT POSITION QUERIES and are validated on their own terms: the
+    # document arm requires a uri and rejects nothing else, the query arm requires a query
+    # string and no uri at all. The second RED control is a mutant that forces every op down
+    # the position arm, which is the shape this function had before the symbol ops existed.
     param(
         [string] $Op,
         [string] $Uri,
         [int] $Line,
-        [int] $Col
+        [int] $Col,
+        [string] $Query = ''
     )
-    $known = @(Get-QueryOps)
-    $opNorm = ([string]$Op).Trim().ToLowerInvariant()
-    if ($known -notcontains $opNorm) {
-        return @{ ok = $false; error = ('unknown query op: ' + $Op + ' (known: ' + ($known -join ', ') + ')') }
+    $spec = Get-QueryOpSpec
+    $opNorm = Resolve-QueryOp -Op $Op
+    if ([string]::IsNullOrWhiteSpace($opNorm)) {
+        return @{ ok = $false; error = (Get-UnknownQueryOpError -Op $Op) }
     }
+    $method = [string]$spec[$opNorm].method
+    $kind = [string]$spec[$opNorm].kind
+
+    if ($kind -eq 'query') {
+        # workspace/symbol asks the WORKSPACE, not a file. Requiring a uri here would refuse a
+        # legitimate query; accepting one and ignoring it would be worse.
+        if ([string]::IsNullOrWhiteSpace($Query)) {
+            return @{ ok = $false; error = ($opNorm + ' requires a query string') }
+        }
+        return @{ ok = $true; op = $opNorm; method = $method; kind = $kind
+            params = @{ query = $Query }
+        }
+    }
+
     if ([string]::IsNullOrWhiteSpace($Uri)) {
         return @{ ok = $false; error = 'query requires a document uri' }
     }
+
+    if ($kind -eq 'document') {
+        # textDocument/documentSymbol names the whole file's symbols. No position is sent
+        # because the caller named none.
+        return @{ ok = $true; op = $opNorm; method = $method; kind = $kind
+            params = @{ textDocument = @{ uri = $Uri } }
+        }
+    }
+
     if ($Line -lt 1) { return @{ ok = $false; error = ('line must be 1-based (got ' + $Line + ')') } }
     if ($Col -lt 1) { return @{ ok = $false; error = ('col must be 1-based (got ' + $Col + ')') } }
 
     $position = @{ line = ($Line - 1); character = ($Col - 1) }
     $params = @{ textDocument = @{ uri = $Uri }; position = $position }
-    $method = switch ($opNorm) {
-        'definition' { 'textDocument/definition' }
-        'references' { 'textDocument/references' }
-        'hover' { 'textDocument/hover' }
-    }
     if ($opNorm -eq 'references') {
         # includeDeclaration mirrors what a reader asking "where is this used" means: the
         # declaration is one of the places it appears.
         $params['context'] = @{ includeDeclaration = $true }
     }
-    return @{ ok = $true; op = $opNorm; method = $method; params = $params }
+    return @{ ok = $true; op = $opNorm; method = $method; kind = $kind; params = $params }
 }
 
 function Invoke-SemanticQuery {
@@ -749,33 +813,50 @@ function Invoke-SemanticQuery {
     # planned request with an id, and pumps until the response for THAT id arrives.
     # Reuses the warm PSES and the same request/response plumbing the codeAction
     # enrichment pass uses -- no second analyzer pass, no second server.
-    param([string] $FilePath, [string] $Op, [int] $Line, [int] $Col, [int] $WaitMs = 4000)
+    param([string] $FilePath, [string] $Op, [int] $Line, [int] $Col, [string] $Query = '', [int] $WaitMs = 4000)
+
+    # WHAT THIS OP NEEDS FROM THE CALLER decides what is resolved, and the spec is the only
+    # thing that says. An unknown op is refused HERE, before any file work: "file not found"
+    # is the wrong complaint about a request whose OP was the problem.
+    $opNorm = Resolve-QueryOp -Op $Op
+    if ([string]::IsNullOrWhiteSpace($opNorm)) {
+        return @{ ok = $false; error = (Get-UnknownQueryOpError -Op $Op) }
+    }
+    $kind = [string](Get-QueryOpSpec)[$opNorm].kind
 
     $full = ''
-    try { $full = [System.IO.Path]::GetFullPath($FilePath) } catch { return @{ ok = $false; error = 'unreadable file path' } }
-    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return @{ ok = $false; error = 'file not found' } }
-    $uri = ConvertTo-FileUri $full
-    $key = ConvertTo-UriKey $uri
+    $uri = ''
+    $key = ''
+    if ($kind -ne 'query') {
+        try { $full = [System.IO.Path]::GetFullPath($FilePath) } catch { return @{ ok = $false; error = 'unreadable file path' } }
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return @{ ok = $false; error = 'file not found' } }
+        $uri = ConvertTo-FileUri $full
+        $key = ConvertTo-UriKey $uri
+    }
 
-    $plan = Get-QueryRequestPlan -Op $Op -Uri $uri -Line $Line -Col $Col
+    $plan = Get-QueryRequestPlan -Op $Op -Uri $uri -Line $Line -Col $Col -Query $Query
     if (-not $plan.ok) { return @{ ok = $false; error = [string]$plan.error } }
 
     if (-not (Test-PsesAlive)) { return @{ ok = $false; error = 'PSES is not running' } }
 
-    $text = ''
-    try { $text = [System.IO.File]::ReadAllText($full) } catch { return @{ ok = $false; error = 'could not read file' } }
+    # workspace/symbol asks the SERVER, not a document, so there is nothing to open. The two
+    # document-scoped kinds still must tell PSES about the file first: it answers about a
+    # document it has been told about and about no other.
+    if ($kind -ne 'query') {
+        $text = ''
+        try { $text = [System.IO.File]::ReadAllText($full) } catch { return @{ ok = $false; error = 'could not read file' } }
 
-    # PSES answers a position request only about a document it has been told about.
-    if ($script:openDocs.ContainsKey($key)) {
-        $ver = [int]$script:openDocs[$key] + 1
-        $script:openDocs[$key] = $ver
-        Send-Lsp @{ jsonrpc = '2.0'; method = 'textDocument/didChange'
-            params = @{ textDocument = @{ uri = $uri; version = $ver }
-                contentChanges = @(@{ text = $text }) } }
-    } else {
-        $script:openDocs[$key] = 0
-        Send-Lsp @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'
-            params = @{ textDocument = @{ uri = $uri; languageId = 'powershell'; version = 0; text = $text } } }
+        if ($script:openDocs.ContainsKey($key)) {
+            $ver = [int]$script:openDocs[$key] + 1
+            $script:openDocs[$key] = $ver
+            Send-Lsp @{ jsonrpc = '2.0'; method = 'textDocument/didChange'
+                params = @{ textDocument = @{ uri = $uri; version = $ver }
+                    contentChanges = @(@{ text = $text }) } }
+        } else {
+            $script:openDocs[$key] = 0
+            Send-Lsp @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'
+                params = @{ textDocument = @{ uri = $uri; languageId = 'powershell'; version = 0; text = $text } } }
+        }
     }
 
     $script:reqId++
@@ -797,7 +878,8 @@ function Invoke-SemanticQuery {
     # location ops answer with an array. @() around $null yields an empty array and
     # around a single object a one-element array, in both 5.1 and 7.
     $results = if ($null -eq $result) { @() } else { @($result) }
-    return @{ ok = $true; op = [string]$plan.op; uri = $uri; results = $results; count = @($results).Count }
+    return @{ ok = $true; op = [string]$plan.op; kind = [string]$plan.kind; uri = $uri
+        query = $Query; results = $results; count = @($results).Count }
 }
 
 # --- diagnostics request (didOpen/didChange + settle) ----------------------
@@ -1838,16 +1920,21 @@ try {
                         # verbatim -- it does not interpret, rank or summarise the LSP result.
                         $file = [string](Get-Prop $req 'file')
                         $qOp = [string](Get-Prop $req 'op')
+                        $qQuery = [string](Get-Prop $req 'query')
                         $qLine = 0; $qCol = 0
                         try { $qLine = [int](Get-Prop $req 'line') } catch { $qLine = 0 }
                         try { $qCol = [int](Get-Prop $req 'col') } catch { $qCol = 0 }
-                        $qres = Invoke-SemanticQuery -FilePath $file -Op $qOp -Line $qLine -Col $qCol
+                        $qres = Invoke-SemanticQuery -FilePath $file -Op $qOp -Line $qLine -Col $qCol -Query $qQuery
+                        # The response echoes the op's KIND so the caller renders on the one
+                        # authority for the request shape rather than a second copy of the table.
                         $payload = if ($qres.ok) {
-                            [ordered]@{ ok = $true; action = 'query'; op = [string]$qres.op; file = $file
-                                line = $qLine; col = $qCol; uri = [string]$qres.uri
+                            [ordered]@{ ok = $true; action = 'query'; op = [string]$qres.op
+                                kind = [string]$qres.kind; file = $file
+                                line = $qLine; col = $qCol; query = $qQuery; uri = [string]$qres.uri
                                 count = [int]$qres.count; results = @($qres.results) }
                         } else {
-                            [ordered]@{ ok = $false; action = 'query'; op = $qOp; file = $file; error = [string]$qres.error }
+                            [ordered]@{ ok = $false; action = 'query'; op = $qOp; file = $file
+                                query = $qQuery; error = [string]$qres.error }
                         }
                         Write-DaemonResponse -Writer $writer -Payload $payload -Depth 12
                     }

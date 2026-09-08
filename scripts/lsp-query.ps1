@@ -1,12 +1,20 @@
 #Requires -Version 5.1
 
 # lsp-query.ps1 -- the first-party semantic query entry point (dispatch 000287,
-# ENTERPRISE-PROGRAM-DOCKET P1-2; review items 9 and 10).
+# ENTERPRISE-PROGRAM-DOCKET P1-2; review items 9 and 10. The two symbol ops: dispatch 000288).
 #
-# WHAT THIS IS. Ask the warm per-session daemon a POSITION question about a PowerShell file --
-# where is this defined, where is it used, what is it -- and get PSES's own answer back as JSON.
-# The daemon already runs PowerShell Editor Services and already speaks LSP to it; every one of
-# these operations is a request PSES serves today and nothing in this repository was asking.
+# WHAT THIS IS. Ask the warm per-session daemon a semantic question about PowerShell source and
+# get PSES's own answer back as JSON. The daemon already runs PowerShell Editor Services and
+# already speaks LSP to it; every one of these operations is a request PSES serves today and
+# nothing in this repository was asking.
+#
+# THREE REQUEST SHAPES, because the operations genuinely have three. The daemon's spec table is
+# the one authority for which op is which:
+#   position  definition, references, hover  -- a file and a 1-based line/col
+#   document  documentSymbol                 -- a file, and NO position
+#   query     workspaceSymbol                -- a query string, and NO file
+# The two symbol ops are NOT given a fabricated position. A well-formed request about a place the
+# caller never named gets a confident answer to a question nobody asked.
 #
 # WHY IT IS NOT ROUTED THROUGH THE CLIENT. The standing GATED arc in ROADMAP-powershell-lsp.md is
 # on *serving through the Claude Code client*. This path has no client in it: it is a script the
@@ -23,7 +31,7 @@
 #
 # Exit codes:
 #   0  the daemon answered. A query with no results is an ANSWER (results: []), not a failure.
-#   3  usage error: no live daemon in scope, or a position/op this script can reject up front.
+#   3  usage error: no live daemon in scope, or a position this script can reject up front.
 #   4  the daemon was reached but could not answer (PSES down, file not found, op refused).
 #
 # Fail-loud, deliberately unlike lsp-client.ps1: that one is an edit-path hook that must never
@@ -39,19 +47,25 @@ param(
     # The operation. The daemon owns the vocabulary (Get-QueryOps); this set is validated there
     # too, so a value that gets past the ValidateSet is still refused by name rather than guessed.
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('definition', 'references', 'hover')]
+    [ValidateSet('definition', 'references', 'hover', 'documentSymbol', 'workspaceSymbol')]
     [string] $Op,
 
-    # The file to ask about: a .ps1 / .psm1 / .psd1 path.
-    [Parameter(Mandatory = $true, Position = 1)]
+    # The file to ask about: a .ps1 / .psm1 / .psd1 path. NOT required by workspaceSymbol, which
+    # asks the workspace and names no file; the daemon refuses an op whose inputs are missing.
+    [Parameter(Position = 1)]
     [string] $File,
 
-    # 1-BASED line and column. See the header: no conversion happens in this script.
-    [Parameter(Mandatory = $true, Position = 2)]
+    # 1-BASED line and column, for the ops that TAKE a position (definition, references, hover).
+    # documentSymbol and workspaceSymbol take none and are not given a fabricated one. See the
+    # header: no conversion happens in this script.
+    [Parameter(Position = 2)]
     [int] $Line,
 
-    [Parameter(Mandatory = $true, Position = 3)]
+    [Parameter(Position = 3)]
     [int] $Col,
+
+    # The symbol query for workspaceSymbol -- the string PSES matches symbol names against.
+    [string] $Query = '',
 
     # Emit the daemon's response as JSON (the machine-readable default) rather than a short
     # human-readable rendering.
@@ -121,8 +135,15 @@ function Resolve-QueryPipeName([string]$Sid) {
 # Reject up front only what this script can know without the daemon. Everything else -- whether
 # the file exists, whether the position is inside it, whether PSES is up -- is the daemon's to
 # answer, and answering it twice is how two answers come to disagree.
-if ($Line -lt 1) { Write-QueryError ('line must be 1-based (got ' + $Line + ')'); exit 3 }
-if ($Col -lt 1) { Write-QueryError ('col must be 1-based (got ' + $Col + ')'); exit 3 }
+# Only what the CALLER SUPPLIED is checked here. An op that takes no position leaves -Line and
+# -Col unbound at their 0 default, and rejecting that would refuse documentSymbol for failing a
+# rule that does not apply to it. Which ops take a position is the daemon's spec to know.
+if ($PSBoundParameters.ContainsKey('Line') -and $Line -lt 1) {
+    Write-QueryError ('line must be 1-based (got ' + $Line + ')'); exit 3
+}
+if ($PSBoundParameters.ContainsKey('Col') -and $Col -lt 1) {
+    Write-QueryError ('col must be 1-based (got ' + $Col + ')'); exit 3
+}
 
 $sid = $SessionId
 if ([string]::IsNullOrWhiteSpace($sid)) { $sid = [string]$env:CLAUDE_SESSION_ID }
@@ -133,7 +154,13 @@ if ([string]::IsNullOrWhiteSpace($pipeName)) { exit 3 }
 # so a relative path would resolve against the wrong root and report "file not found" about a file
 # that is plainly there.
 $fileArg = $File
-try { $fileArg = [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $File)) } catch { $fileArg = $File }
+if (-not [string]::IsNullOrWhiteSpace($File)) {
+    try { $fileArg = [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $File)) } catch { $fileArg = $File }
+} else {
+    # No file named. Resolving '' against the cwd would send the daemon the DIRECTORY, and
+    # "file not found" about a path the caller never typed is a confusing way to be refused.
+    $fileArg = ''
+}
 
 $client = $null
 try {
@@ -145,7 +172,8 @@ try {
     $writer.NewLine = "`n"; $writer.AutoFlush = $true
     $reader = New-Object System.IO.StreamReader($client, [System.Text.Encoding]::UTF8, $false, 4096, $true)
 
-    $reqObj = [ordered]@{ action = 'query'; op = $Op; file = $fileArg; line = $Line; col = $Col }
+    $reqObj = [ordered]@{ action = 'query'; op = $Op; file = $fileArg; line = $Line; col = $Col
+        query = $Query }
     # Protocol handshake (dispatch 000282, P1-4). This is the FOURTH request-building site in the
     # tree and it announces itself exactly like the other three -- a handshake present on the hook
     # path and absent on this one would tell a daemon nothing it could rely on. The census test in
@@ -170,7 +198,19 @@ try {
 
     if ($Text) {
         $count = [int](Get-Prop $resp 'count')
-        Write-Output ($Op + ' at ' + $File + ':' + $Line + ':' + $Col + ' -- ' + $count + ' result(s)')
+        # The subject line is rendered from the KIND the daemon reports, not from a second copy
+        # of the op table kept here. Each kind names what the caller actually asked about: a
+        # position query names the position, a document query names the file, and a workspace
+        # query names the string it searched for. An unrecognised kind renders the op alone
+        # rather than inventing a position it was never given.
+        $kind = [string](Get-Prop $resp 'kind')
+        $subject = switch ($kind) {
+            'position' { $Op + ' at ' + $File + ':' + $Line + ':' + $Col }
+            'document' { $Op + ' ' + $File }
+            'query' { $Op + " '" + $Query + "'" }
+            default { $Op }
+        }
+        Write-Output ($subject + ' -- ' + $count + ' result(s)')
         foreach ($r in @(Get-Prop $resp 'results')) {
             Write-Output ('  ' + ($r | ConvertTo-Json -Depth 12 -Compress))
         }
