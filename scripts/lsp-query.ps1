@@ -187,10 +187,16 @@ try {
     $remaining = [Math]::Max(1, $TimeoutMs - [int]$sw.ElapsedMilliseconds)
     $readTask = $reader.ReadLineAsync()
     if (-not $readTask.Wait($remaining)) { Write-QueryError ('no response within ' + $TimeoutMs + 'ms'); exit 4 }
-    $line = $readTask.Result
-    if ([string]::IsNullOrWhiteSpace($line)) { Write-QueryError 'empty response from the daemon'; exit 4 }
+    # NOT $line. PowerShell variable names are CASE-INSENSITIVE, so `$line` is the same
+    # variable as the `[int] $Line` PARAMETER above -- and a typed variable coerces on every
+    # assignment, so handing it the response JSON throws "Cannot convert value ... to type
+    # System.Int32" before a single byte is parsed. That defect shipped in this script and made
+    # EVERY query exit 4; it survived because the round trip had no test. See the round-trip and
+    # parameter-collision tests in tests/PowerShellLsp.SemanticQuery.Tests.ps1.
+    $respLine = $readTask.Result
+    if ([string]::IsNullOrWhiteSpace($respLine)) { Write-QueryError 'empty response from the daemon'; exit 4 }
 
-    $resp = $line | ConvertFrom-Json
+    $resp = $respLine | ConvertFrom-Json
     if (-not [bool](Get-Prop $resp 'ok')) {
         Write-QueryError ([string](Get-Prop $resp 'error'))
         exit 4

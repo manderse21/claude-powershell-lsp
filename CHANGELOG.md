@@ -131,6 +131,33 @@ every op in exactly one arm, no arm empty -- and both mutants' op loops are deri
 partition rather than from a hard-coded list, which is the lesson the handshake census taught one
 slice earlier.
 
+**And a fatal defect in the client, found by building the round-trip test that was missing.**
+`scripts/lsp-query.ps1` assigned the daemon's response to `$line` -- which, because PowerShell
+variable names are **case-insensitive**, is the same variable as its own `[int] $Line` parameter.
+A typed variable coerces on every assignment, so the response JSON threw *"Cannot convert value
+... to type System.Int32"* before a single byte was parsed. **Every query exited 4 and no query
+ever returned a result.** It shipped green because every test in the file was about the pure
+planner and **nothing exercised the round trip**. It is fixed here (`$respLine`), and it **never
+reached a release** -- the whole query surface is still under `[Unreleased]`, so no user has been
+affected.
+
+The fix carries the tests whose absence allowed it. A **round-trip suite** stands up a minimal
+named-pipe server answering one canned response and drives the real client against it for one op
+of **each kind**, plus the `-Text` rendering and a daemon refusal; and a **collision assertion**
+derives the typed-parameter set and the assigned-variable set from the AST and asserts they do not
+intersect, so a future typed parameter is guarded for free. The RED control is the **prior
+implementation read from git by SHA** -- 000287's own file -- and it is asserted to carry the
+collision on the exact variable. Reintroducing the defect turns all six of those tests red and
+nothing else, measured.
+
+Three harness traps were hit and are recorded in the test's own comments, because each one produced
+a *passing-looking* failure: probing readiness with `Test-Path` on `\\.\pipe\<name>` **opens** the
+pipe and consumes the server's single instance, so the client that follows finds nothing to connect
+to; a redirected child's stdout stays buffered while it blocks, so a `READY` line never arrives and
+the signal must be a marker **file**; and PowerShell **strips double quotes** from native-process
+arguments, so JSON handed over a command line reaches the child unparseable and must go through a
+file.
+
 PATCH: **`docs/whitepaper.md` is r3, retracting a claim the code outgrew.** In three body places
 (sections 4, 6, 10) r2 said one acquisition route was **not** governed by the project SHA-256 pin
 -- the PSScriptAnalyzer Gallery fallback, described as resting on the Gallery's publisher/catalog

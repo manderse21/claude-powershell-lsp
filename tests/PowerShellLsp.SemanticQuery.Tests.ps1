@@ -515,6 +515,76 @@ Describe 'the client entry point is a parameter surface, not a frozen-surface ch
         $src.Contains("PSBoundParameters.ContainsKey('Col')") | Should -BeTrue
     }
 
+    It 'assigns no body variable whose name collides with a TYPED parameter' {
+        # THE BUG THIS FILE EXISTS TO KEEP FIXED. PowerShell variable names are CASE-INSENSITIVE,
+        # so `$line = $readTask.Result` in the body is the SAME variable as the `[int] $Line`
+        # parameter -- and a typed variable coerces on assignment, so the response JSON threw
+        # "Cannot convert value ... to type System.Int32" before anything was parsed. Every query
+        # exited 4. It shipped because the round trip had no test.
+        #
+        # Derived, not listed: the typed parameter set and the assigned-variable set both come
+        # from the AST, and the assertion is that they do not intersect. A future typed parameter
+        # gets this guard for free.
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            $script:QueryPath, [ref]$null, [ref]$null)
+        $typedParams = @()
+        foreach ($prm in $ast.ParamBlock.Parameters) {
+            if ($null -ne $prm.StaticType -and $prm.StaticType -ne [object]) {
+                $typedParams += $prm.Name.VariablePath.UserPath
+            }
+        }
+        @($typedParams).Count | Should -BeGreaterThan 0 -Because 'the instrument must not be empty'
+
+        $assigned = @()
+        foreach ($a in $ast.FindAll({ param($n)
+                    $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+            $lhs = $a.Left
+            if ($lhs -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                $assigned += $lhs.VariablePath.UserPath
+            }
+        }
+        @($assigned).Count | Should -BeGreaterThan 0 -Because 'the instrument must not be empty'
+
+        $collisions = @()
+        foreach ($v in @($assigned | Sort-Object -Unique)) {
+            foreach ($t in $typedParams) { if ($v -ieq $t) { $collisions += $v } }
+        }
+        (@($collisions) -join ',') | Should -BeExactly '' -Because 'a typed parameter coerces every assignment made to its name'
+    }
+
+    It 'RED CONTROL: the PRIOR IMPLEMENTATION fails that collision assertion' {
+        # 000287's shipped lsp-query.ps1 is the prior implementation and it carries the defect,
+        # so the control is the real thing rather than a mutant invented to fail. Read from git
+        # by SHA, which cannot drift. If the object is unreachable the test FAILS rather than
+        # skipping -- a control that quietly did not run is the vacuity this suite keeps banking.
+        $prior = & git -C $script:PluginRoot show '8befce0:scripts/lsp-query.ps1' 2>$null
+        $LASTEXITCODE | Should -Be 0 -Because 'the prior implementation must be readable from git'
+        $priorText = ($prior -join "`n")
+        $priorText | Should -Not -BeNullOrEmpty
+
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($priorText, [ref]$null, [ref]$null)
+        $typedParams = @()
+        foreach ($prm in $ast.ParamBlock.Parameters) {
+            if ($null -ne $prm.StaticType -and $prm.StaticType -ne [object]) {
+                $typedParams += $prm.Name.VariablePath.UserPath
+            }
+        }
+        $assigned = @()
+        foreach ($a in $ast.FindAll({ param($n)
+                    $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+            if ($a.Left -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                $assigned += $a.Left.VariablePath.UserPath
+            }
+        }
+        $collisions = @()
+        foreach ($v in @($assigned | Sort-Object -Unique)) {
+            foreach ($t in $typedParams) { if ($v -ieq $t) { $collisions += $v } }
+        }
+        # The control must bite, and it must bite on the EXACT variable the defect was about.
+        @($collisions).Count | Should -BeGreaterThan 0 -Because 'the prior implementation carries the collision'
+        ($collisions -join ',').ToLowerInvariant().Contains('line') | Should -BeTrue
+    }
+
     It 'renders a subject line for every kind the daemon can report' {
         # The -Text rendering switches on the daemon's echoed kind. A kind with no arm would
         # fall to the default and render the op alone -- correct, but silently less useful --
@@ -526,5 +596,155 @@ Describe 'the client entry point is a parameter surface, not a frozen-surface ch
         foreach ($kind in @($kinds | Sort-Object -Unique)) {
             $src.Contains("'" + $kind + "' {") | Should -BeTrue -Because ('kind ' + $kind + ' needs a rendering')
         }
+    }
+}
+Describe 'ROUND TRIP -- the client can actually process a daemon response' {
+    # THE GAP THAT LET A FATAL BUG SHIP. Every assertion above this point is about the PLANNER,
+    # which is pure. Nothing exercised the client end to end, so `$line = $readTask.Result`
+    # colliding with the `[int] $Line` parameter -- which throws on EVERY response -- shipped
+    # green and made every query exit 4. These tests stand up a minimal named-pipe server that
+    # answers one canned response and drive the REAL scripts/lsp-query.ps1 against it.
+    #
+    # No PSES and no daemon: the server answers the wire protocol directly, which is exactly the
+    # surface the client talks to, and it keeps the test fast and hermetic. Child streams are
+    # redirected to FILES, never captured with 2>&1 -- Windows PowerShell 5.1 turns child stderr
+    # into ErrorRecords and Pester runs an It with ErrorActionPreference Stop, so 2>&1 would
+    # THROW before any exit-code assertion could run.
+
+    BeforeAll {
+        $script:RtSample = 'sample.ps1'
+        $script:RtServerPath = Join-Path ([System.IO.Path]::GetTempPath()) (
+            'psls-rt-server-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.ps1')
+        # Built as lines rather than a here-string: a nested here-string inside this file's own
+        # quoting is a parse hazard for whatever next edits it.
+        $serverLines = @(
+            'param([string] $PipeName, [string] $ResponseFile, [string] $ReadyFile)',
+            '# The response is read from a FILE, never taken as a command-line argument:',
+            '# PowerShell strips double quotes when it hands an argument to a native process,',
+            '# which silently mangles JSON into something the client cannot parse.',
+            '$ResponseJson = [System.IO.File]::ReadAllText($ResponseFile)',
+            '$srv = New-Object System.IO.Pipes.NamedPipeServerStream($PipeName, [System.IO.Pipes.PipeDirection]::InOut, 1)',
+            '# Signal readiness by CREATING A FILE, not by writing to stdout: the server blocks in',
+            '# WaitForConnection immediately after this, and a redirected stdout stays buffered in',
+            '# the child until it exits, so a READY line would not be visible until far too late.',
+            '[System.IO.File]::WriteAllText($ReadyFile, ''READY'')',
+            '$srv.WaitForConnection()',
+            '$r = New-Object System.IO.StreamReader($srv, [System.Text.Encoding]::UTF8, $false, 4096, $true)',
+            '$w = New-Object System.IO.StreamWriter($srv, (New-Object System.Text.UTF8Encoding($false)), 4096, $true)',
+            '$w.NewLine = [char]10',
+            '$w.AutoFlush = $true',
+            '$null = $r.ReadLine()',
+            '$w.WriteLine($ResponseJson)',
+            '$w.Flush()',
+            'Start-Sleep -Milliseconds 400',
+            '$srv.Dispose()'
+        )
+        [System.IO.File]::WriteAllText($script:RtServerPath, ($serverLines -join [System.Environment]::NewLine),
+            (New-Object System.Text.UTF8Encoding($false)))
+
+        function Invoke-RoundTrip {
+            # Returns @{ Exit; Out; Err } for one real lsp-query.ps1 run against a canned response.
+            param([string[]] $ClientArgs, [string] $ResponseJson)
+            $sid = 'rt' + [guid]::NewGuid().ToString('N').Substring(0, 10)
+            $pipe = 'powershell-lsp-' + $sid
+            $srvOut = [System.IO.Path]::GetTempFileName()
+            $srvErr = [System.IO.Path]::GetTempFileName()
+            $readyFile = [System.IO.Path]::GetTempFileName()
+            Remove-Item -LiteralPath $readyFile -Force -ErrorAction SilentlyContinue
+            $respFile = [System.IO.Path]::GetTempFileName()
+            [System.IO.File]::WriteAllText($respFile, $ResponseJson,
+                (New-Object System.Text.UTF8Encoding($false)))
+            $srv = Start-Process -FilePath 'pwsh' -PassThru -WindowStyle Hidden `
+                -RedirectStandardOutput $srvOut -RedirectStandardError $srvErr `
+                -ArgumentList @('-NoProfile', '-File', $script:RtServerPath,
+                '-PipeName', $pipe, '-ResponseFile', $respFile, '-ReadyFile', $readyFile)
+            # Wait for the server's own READY line -- a real readiness signal, never a fixed sleep.
+            #
+            # NOT Test-Path on '\\.\pipe\<name>'. Probing a named pipe that way OPENS it, which
+            # CONSUMES the server's single available instance: WaitForConnection returns for the
+            # probe, the probe closes, and the client that follows finds nothing to connect to and
+            # times out. Measured -- it failed all five of these tests that way before the signal
+            # was changed.
+            $ready = $false
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($sw.ElapsedMilliseconds -lt 20000) {
+                if (Test-Path -LiteralPath $readyFile) { $ready = $true; break }
+                if ($srv.HasExited) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            if (-not $ready) {
+                try { Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue } catch { }
+                throw 'round-trip server never created its pipe'
+            }
+            $cOut = [System.IO.Path]::GetTempFileName()
+            $cErr = [System.IO.Path]::GetTempFileName()
+            $argv = @('-NoProfile', '-File', $script:QueryPath) + $ClientArgs + @('-SessionId', $sid)
+            $c = Start-Process -FilePath 'pwsh' -PassThru -Wait -WindowStyle Hidden `
+                -RedirectStandardOutput $cOut -RedirectStandardError $cErr -ArgumentList $argv
+            $o = ''
+            $e = ''
+            try { $o = [System.IO.File]::ReadAllText($cOut) } catch { $o = '' }
+            try { $e = [System.IO.File]::ReadAllText($cErr) } catch { $e = '' }
+            try { if (-not $srv.HasExited) { Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue } } catch { }
+            foreach ($f in @($srvOut, $srvErr, $cOut, $cErr, $readyFile, $respFile)) {
+                try { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue } catch { }
+            }
+            return @{ Exit = $c.ExitCode; Out = $o; Err = $e }
+        }
+    }
+
+    AfterAll {
+        try { Remove-Item -LiteralPath $script:RtServerPath -Force -ErrorAction SilentlyContinue } catch { }
+    }
+
+    It 'returns the daemon answer and exits 0 for a POSITION op' {
+        $resp = '{"ok":true,"action":"query","op":"definition","kind":"position","file":"s.ps1",' +
+        '"line":4,"col":9,"query":"","uri":"file:///s.ps1","count":1,"results":[{"uri":"file:///s.ps1"}]}'
+        $r = Invoke-RoundTrip -ClientArgs @('definition', $script:RtSample, '4', '9') -ResponseJson $resp
+        $r.Exit | Should -Be 0 -Because ('client stderr: ' + $r.Err)
+        $r.Out | Should -Not -BeNullOrEmpty
+        ($r.Out | ConvertFrom-Json).op | Should -BeExactly 'definition'
+    }
+
+    It 'returns the daemon answer and exits 0 for the DOCUMENT op' {
+        $resp = '{"ok":true,"action":"query","op":"documentSymbol","kind":"document","file":"s.ps1",' +
+        '"line":0,"col":0,"query":"","uri":"file:///s.ps1","count":0,"results":[]}'
+        $r = Invoke-RoundTrip -ClientArgs @('documentSymbol', $script:RtSample) -ResponseJson $resp
+        $r.Exit | Should -Be 0 -Because ('client stderr: ' + $r.Err)
+        ($r.Out | ConvertFrom-Json).op | Should -BeExactly 'documentSymbol'
+    }
+
+    It 'returns the daemon answer and exits 0 for the QUERY op, with no file named' {
+        $resp = '{"ok":true,"action":"query","op":"workspaceSymbol","kind":"query","file":"",' +
+        '"line":0,"col":0,"query":"Get-Thing","uri":"","count":2,"results":[{"name":"a"},{"name":"b"}]}'
+        $r = Invoke-RoundTrip -ClientArgs @('workspaceSymbol', '-Query', 'Get-Thing') -ResponseJson $resp
+        $r.Exit | Should -Be 0 -Because ('client stderr: ' + $r.Err)
+        $decoded = $r.Out | ConvertFrom-Json
+        $decoded.count | Should -Be 2
+    }
+
+    It 'renders each kind in -Text mode without inventing a position it was not given' {
+        $resp = '{"ok":true,"action":"query","op":"workspaceSymbol","kind":"query","file":"",' +
+        '"line":0,"col":0,"query":"Get-Thing","uri":"","count":0,"results":[]}'
+        $r = Invoke-RoundTrip -ClientArgs @('workspaceSymbol', '-Query', 'Get-Thing', '-Text') -ResponseJson $resp
+        $r.Exit | Should -Be 0 -Because ('client stderr: ' + $r.Err)
+        $r.Out.Contains("workspaceSymbol 'Get-Thing'") | Should -BeTrue
+        # The position ops render "at file:line:col"; a workspace query names no position at all.
+        $r.Out.Contains(' at ') | Should -BeFalse
+    }
+
+    It 'relays a daemon REFUSAL as exit 4 with the reason on stderr, not as a crash' {
+        $resp = '{"ok":false,"action":"query","op":"definition","file":"s.ps1","query":"",' +
+        '"error":"PSES is not running"}'
+        $r = Invoke-RoundTrip -ClientArgs @('definition', $script:RtSample, '4', '9') -ResponseJson $resp
+        $r.Exit | Should -Be 4
+        # THE REGRESSION, stated as an assertion: before the fix this path threw a type-conversion
+        # error while coercing the response into the [int] $Line parameter, so the daemon's reason
+        # never reached the caller and the exit code meant something else than it said.
+        $r.Err.Contains('PSES is not running') | Should -BeTrue
+        Write-Host "`n========== REFUSAL STDERR BEGIN =========="
+        Write-Host $r.Err
+        Write-Host "========== REFUSAL STDERR END ============"
+        $r.Err.Contains('Cannot convert value') | Should -BeFalse
     }
 }
