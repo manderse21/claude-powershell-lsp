@@ -48,9 +48,13 @@ BeforeAll {
         return [string]$fn.Extent.Text
     }
 
-    # Define the SHIPPED functions verbatim in this session.
+    # Define the SHIPPED functions verbatim in this session. Get-QueryOps FIRST: Get-DaemonCapabilities
+    # calls it (000287 -- one source for the op vocabulary, Hub Rule 18), so defining the capabilities
+    # function without it would leave every caller below throwing on an unresolved command.
     $script:WriteRespText = Get-DaemonFunctionText -Name 'Write-DaemonResponse'
     $script:CapsText = Get-DaemonFunctionText -Name 'Get-DaemonCapabilities'
+    $script:QueryOpsText = Get-DaemonFunctionText -Name 'Get-QueryOps'
+    . ([scriptblock]::Create($script:QueryOpsText))
     . ([scriptblock]::Create($script:CapsText))
     . ([scriptblock]::Create($script:WriteRespText))
 
@@ -138,6 +142,13 @@ Describe 'Get-DaemonCapabilities advertises what the daemon actually serves' {
         $src | Should -Match "Get-Prop \`$req 'touchedRanges'"
         $caps.formatApply | Should -Be $true
         $src | Should -Match "Get-Prop \`$req 'apply'"
+        # queryOps (000287): the advertised op set must BE the vocabulary the planner validates
+        # against, not a copy of it. Both read Get-QueryOps, and this asserts they agree by
+        # calling the shipped function rather than by comparing two literals.
+        $script:QueryOpsText | Should -Not -BeNullOrEmpty
+        @($caps.queryOps) -join ',' | Should -BeExactly (@(Get-QueryOps) -join ',')
+        @($caps.queryOps).Count | Should -BeGreaterThan 0
+        $src | Should -Match "Get-Prop \`$req 'op'"
     }
 }
 
@@ -223,22 +234,102 @@ Describe 'RED CONTROL -- a daemon that echoes the client version fails' {
 }
 
 Describe 'every request-building site announces the handshake (census, not a sample)' {
-    It 'all three sites send protocolVersion and capabilities' {
-        # A handshake present on one path and absent on another is not a handshake. The docket
-        # named ONE build site (lsp-client.ps1:126-130); the census found THREE, and all three are
-        # asserted here by locating each request literal and requiring the two keys after it.
-        $sites = @(
-            @{ Path = $script:ClientPath; Action = 'diagnostics'; Var = 'reqObj' }
-            @{ Path = $script:ClientPath; Action = 'format'; Var = 'reqObj' }
-            @{ Path = $script:DoctorPath; Action = 'diagnostics'; Var = 'req' }
-        )
-        foreach ($s in $sites) {
-            $src = [System.IO.File]::ReadAllText($s.Path)
-            $anchor = "action = '" + $s.Action + "'"
-            $src | Should -Match ([regex]::Escape($anchor))
-            $src | Should -Match ([regex]::Escape("`$" + $s.Var + "['protocolVersion'] = Get-LspProtocolVersion"))
-            $src | Should -Match ([regex]::Escape("`$" + $s.Var + "['capabilities'] = Get-LspClientCapabilities"))
+    # WHAT CHANGED HERE, AND WHY (dispatch 000287, while building P1-2).
+    #
+    # This block used to carry a HARD-CODED list of three sites and call itself a census. It was a
+    # sample: a fourth site added tomorrow would not be in the list, so the list would keep passing
+    # while the claim in its own title went false. That is the guard shape this program has now
+    # found four times -- the guard measures a list the guarded party writes (Hub Rule 35).
+    #
+    # Re-deriving at the tip found SIX request-writing sites, not three, and the two extra ones had
+    # never been named anywhere: doctor.ps1's ping probe and session-end.ps1's shutdown both write a
+    # BARE JSON literal. Neither is broken -- ABSENT MEANS 1 is the handshake's own rule, so they are
+    # legal version-1 clients -- but the old test did not know they existed, which means it could not
+    # have noticed if one had started carrying a field that needed a version to interpret.
+    #
+    # So the ground truth below is derived from source, and the assertion is a PARTITION: every
+    # request-writing site is either an ANNOUNCING site (builds a request hashtable, and must carry
+    # both keys) or a BARE VERSION-1 site (writes one of exactly two literals that carry nothing but
+    # an action). The exemption is keyed on the LITERAL TEXT, never on a file name, so a site cannot
+    # buy its way out by being on a list -- it can only be exempt by sending a request with no field
+    # a version could change the meaning of.
+
+    BeforeAll {
+        $script:ScriptFiles = @(Get-ChildItem -LiteralPath $script:ScriptsDir -Filter '*.ps1' -File |
+                Where-Object { $_.Name -ne 'pses-daemon.ps1' })   # the daemon builds RESPONSES, not requests
+
+        # ANNOUNCING sites: a hashtable literal whose 'action' key is a string, in a non-daemon
+        # script. Found through the AST, so a site added in any file is found without being listed.
+        $script:AnnouncingSites = @()
+        $script:BareSites = @()
+        foreach ($f in $script:ScriptFiles) {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$null)
+            $tables = @($ast.FindAll({
+                        param($n) $n -is [System.Management.Automation.Language.HashtableAst] }, $true))
+            foreach ($t in $tables) {
+                foreach ($pair in $t.KeyValuePairs) {
+                    if ([string]$pair.Item1.Extent.Text -ne 'action') { continue }
+                    $val = [string]$pair.Item2.Extent.Text
+                    if ($val -notmatch "^'[a-z]+'$") { continue }   # a variable action is not a build site
+                    $script:AnnouncingSites += [pscustomobject]@{
+                        File = $f.Name; Action = $val.Trim("'"); Text = [string]$t.Extent.Text
+                        Start = [int]$t.Extent.StartOffset; Source = [string]$ast.Extent.Text }
+                }
+            }
+            # BARE version-1 sites: a single-quoted string literal that IS a whole daemon request.
+            $strings = @($ast.FindAll({
+                        param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true))
+            foreach ($s in $strings) {
+                if ([string]$s.Value -notmatch '^\{"action":"[a-z]+"\}$') { continue }
+                $script:BareSites += [pscustomobject]@{ File = $f.Name; Literal = [string]$s.Value }
+            }
         }
+    }
+
+    It 'the derivation found real sites (this block cannot pass vacuously)' {
+        # Without this, an AST walk that silently matched nothing would report a clean partition
+        # over the empty set -- the exact vacuity this program has banked five times.
+        @($script:ScriptFiles).Count | Should -BeGreaterThan 3
+        @($script:AnnouncingSites).Count | Should -BeGreaterThan 0
+        @($script:BareSites).Count | Should -BeGreaterThan 0
+    }
+
+    It 'every announcing site carries both handshake keys, whatever the file' {
+        foreach ($s in $script:AnnouncingSites) {
+            # Anchor on the VARIABLE this very site assigned to, so the keys must belong to THIS
+            # request rather than to some other request in the same file.
+            $var = ''
+            $before = $s.Source.Substring(0, $s.Start)
+            if ($before -match '(?s).*\$([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\[ordered\])?\s*$') { $var = $Matches[1] }
+            $var | Should -Not -BeNullOrEmpty -Because ($s.File + ' site ' + $s.Action + ' must assign its request to a variable')
+            $after = $s.Source.Substring($s.Start)
+            $after.Contains('$' + $var + "['protocolVersion'] = Get-LspProtocolVersion") |
+                Should -BeTrue -Because ($s.File + ':' + $s.Action + ' must announce protocolVersion')
+            $after.Contains('$' + $var + "['capabilities'] = Get-LspClientCapabilities") |
+                Should -BeTrue -Because ($s.File + ':' + $s.Action + ' must announce capabilities')
+        }
+    }
+
+    It 'the only sites that do NOT announce are bare action-only version-1 literals' {
+        # The exemption is the literal's own CONTENT: an object with exactly one key, 'action'. A
+        # request that carries anything else cannot match this pattern and therefore cannot be
+        # exempt, which is what keeps this from becoming a list of forgiven file names.
+        foreach ($b in $script:BareSites) {
+            $b.Literal | Should -Match '^\{"action":"[a-z]+"\}$'
+            ($b.Literal -split ':').Count | Should -Be 2 -Because ($b.File + ' may carry no field but action')
+        }
+        @($script:BareSites | ForEach-Object { $_.File + ' ' + $_.Literal }) | Sort-Object |
+            Should -Be @('doctor.ps1 {"action":"ping"}', 'session-end.ps1 {"action":"shutdown"}')
+    }
+
+    It 'every action the daemon serves is reachable from some request-writing site' {
+        # Closes the partition in the other direction: an advertised action nothing can ask for is
+        # as much a lie as an unadvertised one.
+        $asked = @(@($script:AnnouncingSites | ForEach-Object { $_.Action }) +
+            @($script:BareSites | ForEach-Object { ($_.Literal -replace '^\{"action":"', '') -replace '"\}$', '' })) |
+            Sort-Object -Unique
+        $served = @((Get-DaemonCapabilities).actions) | Sort-Object -Unique
+        ($asked -join ',') | Should -BeExactly ($served -join ',')
     }
 
     It 'the daemon has no response path that bypasses the one write seam' {
@@ -255,7 +346,7 @@ Describe 'every request-building site announces the handshake (census, not a sam
         ([regex]::Matches($loop, '\$writer\.WriteLine\(')).Count |
             Should -Be 0 -Because 'every response must leave through Write-DaemonResponse'
         ([regex]::Matches($loop, 'Write-DaemonResponse -Writer ')).Count |
-            Should -Be 5 -Because 'the request loop has five response paths'
+            Should -Be 6 -Because 'the request loop has six response paths (query added by 000287)'
     }
 
     It 'CONTRACT.md is not touched by any of this -- the IPC is not a Tier 1 surface' {
