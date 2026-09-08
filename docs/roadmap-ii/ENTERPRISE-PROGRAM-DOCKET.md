@@ -572,7 +572,15 @@ REMAINDER.**
   client-side command; the three operations; tests plus RED controls; docs.
 
 **P1-3 -- Claude Code compatibility certification (review item 4). REGISTRATION HALF BUILT by
-dispatch 000287; the diagnostic-surfacing half is BLOCKED on a credential and named below.**
+dispatch 000287. The diagnostic-surfacing half is NO LONGER BLOCKED -- it is CLOSED, ruled out of
+scope by Mike Andersen on 2026-09-08 (R-H / R14 below). P1-3 is COMPLETE at registration-only.**
+
+> **THE BLOCKER IS STRUCK.** The half that needed a live agent turn is not waiting on a credential;
+> it is ruled **not to be bought**. `docs/SUPPORT-POLICY.md` now says so explicitly, naming what
+> the registration half proves and what it does not, so a reader meets the boundary in the support
+> document rather than inferring it from a CI file. The end-to-end diagnostic proof, if ever
+> wanted, is an attended or scheduled check **outside the publishing repository**, never a PR gate.
+> Recorded verbatim in [docs/decision-ledger.md](../decision-ledger.md) and as R-H in section 7.
 
 > **What landed.** `claude-code-compat`, its own job with its own name, `continue-on-error: true`
 > per ruling R-G. It installs two PINNED clients -- **2.1.263 (Current)** and **2.1.261
@@ -589,8 +597,10 @@ dispatch 000287; the diagnostic-surfacing half is BLOCKED on a credential and na
 > constraint is **credentialed execution**: the two assertions the slice wants route through
 > `claude plugin details <name>`, which is credential-free but needs the plugin registered, and a
 > live agent turn, which is not. So the registration half is built and the diagnostic-surfacing
-> half is **BLOCKED**, naming its obstacle: proving "one diagnostic surfaces" requires a model
-> turn, hence a secret, which dispatch 000287 may not provision.
+> half was **BLOCKED** by 000287, naming its obstacle: proving "one diagnostic surfaces" requires a
+> model turn, hence a secret, which dispatch 000287 could not provision. **That block was resolved
+> by ruling rather than by provisioning** -- see R-H / R14 -- and the obstacle is recorded here
+> unchanged so the reasoning that led to the ruling stays legible.
 >
 > **No `claudeCodeCompatibility` block was written**, and that is the ordering this slice exists to
 > protect: the declaration is the output, written from what the matrix PROVED, never ahead of it.
@@ -610,7 +620,10 @@ dispatch 000287; the diagnostic-surfacing half is BLOCKED on a credential and na
   asserts the hook registers and one diagnostic surfaces. The **declaration is the output**: a
   `claudeCodeCompatibility` block written from what the matrix proved, never ahead of it. That
   ordering is what keeps it consistent with `SUPPORT-POLICY.md:62`'s refusal to declare an untested
-  floor.
+  floor. **Amended by R-H:** the "one diagnostic surfaces" clause is struck from the mechanism. The
+  job asserts registration; no `claudeCodeCompatibility` block is written from it, because a
+  declaration written from a registration-only matrix would claim more than the matrix proved --
+  which is the very ordering this slice exists to protect.
 - **Freeze exposure.** ZERO on the frozen surfaces. A manifest block is not a `userConfig` key -- but
   the dispatch must confirm that against `CONTRACT.md`'s manifest-drift guard rather than assume it.
 - **Effort.** ~1-2 days, dominated by obtaining and pinning two client versions in CI.
@@ -728,6 +741,7 @@ recommendation.
 | **R-E** | Was the enterprise review audited? | **ANSWERED BY EXECUTION -- this dispatch.** The file exists (section 1), was read end to end, and every numbered item, the five things and every phase-table row are scored in section 3. The row moves out of PENDING-MIKE into the rows-that-left table | -- | ANSWERED |
 | **R-F** | Survey **P3**: re-ratify T3's spread basis at N=45 rather than N=15? This is a **change to a ratified target**, and no survey or runner may take it | (a) re-ratify at N=45 after the quiet-host re-runs; (b) keep N=15 and treat the miss as a documented single-sample event (survey P4); (c) decide after the re-runs | **(c)** -- the survey's own order is "P1, then re-read", and both (a) and (b) are answers to a question the re-runs are what settle | **(c)**, ruled by Mike 2026-09-05 as **R12**, ratified by acceptance of the 000279 inbox. Verbatim: *"R12 (R-F) = (c). Decide T3's spread basis after the quiet-host re-runs. Not tonight; the re-runs are a human leg on a quiet host."* |
 | **R-G** | For **P1-3**, is Claude Code Current-1 a **Required** or **Advisory** CI leg? | (a) Advisory; (b) Required | **(a)** -- a Required leg that cannot obtain an older client blocks every release, which trades one enterprise risk for a worse one | **(a)**, ruled by Mike 2026-09-05 as **R13**, ratified by acceptance of the 000279 inbox. Verbatim: *"R13 (R-G) = (a). Claude Code Current-1 is Advisory, not Required. Recorded; P1-3 builds later."* |
+| **R-H** | **MAY THE PLUGIN REPOSITORY HOLD A CI MODEL CREDENTIAL?** P1-3's registration half is built and green on two pinned clients, but its second half -- "one diagnostic surfaces" -- requires a live Claude Code agent turn, hence a model credential in CI. Dispatch 000287 did not provision one and would not have | (a) add a repository secret scoped to that advisory leg and build the second half; (b) leave P1-3 permanently at registration-only and say so in `SUPPORT-POLICY.md`; (c) something else | **(b)** -- an agent does not create the secret that would unblock its own leg, and the exposure is repository-wide while the gain is one advisory assertion | **(b) -- NO CI MODEL CREDENTIAL**, ruled by Mike Andersen 2026-09-08 as **R14**. Verbatim: *"NO CI MODEL CREDENTIAL. Take option (b) -- P1-3 stays at registration-only and docs/SUPPORT-POLICY.md says so explicitly, naming what the registration half does and does not prove. The reasoning, on the record: this is dispatch 000283's R17 shape -- a live dependency bought for one end-to-end assertion -- and it is worse on three axes. A repository secret is reachable by every workflow in a repo that publishes attested artifacts; a live agent turn is nondeterministic and an advisory leg that flakes teaches people to ignore advisory legs; and it bills per PR forever. If the end-to-end diagnostic proof is ever wanted it is an attended or scheduled check outside the publishing repository, not a PR gate. Record the option-(b) choice in the docket where the blocked half is named, and strike the blocker."* **RECORDED by dispatch 000288**; the blocker is struck and `SUPPORT-POLICY.md` carries the boundary |
 
 ---
 

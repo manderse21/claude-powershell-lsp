@@ -48,6 +48,21 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **`docs/SUPPORT-POLICY.md` states the boundary of the compatibility leg**, and P1-3 is
+closed at registration-only. Ruled 2026-09-08 (**R14**, recorded verbatim in
+`docs/decision-ledger.md`): **no CI model credential.** The advisory `claude-code-compat` leg
+proves that two pinned real clients accept and register this plugin, asserted against the client's
+own component inventory; it does **not** prove that a diagnostic surfaces to a user, because that
+needs a live agent turn and therefore a model credential in CI. The support policy now says both
+halves of that plainly, with the reasoning: a repository secret is reachable by every workflow in a
+repository that publishes attested artifacts, a live agent turn is nondeterministic and an advisory
+leg that flakes teaches readers to ignore advisory legs, and it bills per pull request forever. If
+that end-to-end proof is ever wanted it is an attended or scheduled check **outside** the
+publishing repository, never a PR gate. **No `claudeCodeCompatibility` declaration is written** --
+the declaration is the output of certification, and what the matrix proves is registration. The
+same section also records that two CI legs (`container-pwsh`, `claude-code-compat`) are
+deliberately absent from the supported-hosts table, because neither carries a support promise.
+
 PATCH: **An advisory CI leg proves a real Claude Code client registers this plugin** (enterprise
 docket P1-3, review item 4, the registration half). `claude-code-compat` installs two PINNED
 client versions -- 2.1.263 (Current) and 2.1.261 (Current-1) -- registers this repository as a
