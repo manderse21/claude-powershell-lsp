@@ -527,6 +527,21 @@ REMAINDER.**
 > untouched so it controls what it claims to. The kinds are asserted to **partition** the
 > vocabulary, no arm empty, and both mutants' op loops are derived from that partition rather than
 > listed -- the lesson the handshake census taught one slice earlier, applied rather than recalled.
+>
+> **AND THE SURFACE DID NOT WORK AT ALL UNTIL THIS DISPATCH.** Building the round-trip test that
+> had never existed found that `scripts/lsp-query.ps1` assigned the daemon's response to `$line` --
+> the same variable, PowerShell being case-insensitive, as its own `[int] $Line` parameter. A typed
+> variable coerces on assignment, so every response threw a type-conversion error before it was
+> parsed and **every query exited 4**. The slice 000287 called "the highest capability-per-freeze
+> slice in the docket" had never returned a single result. It never reached a release -- the whole
+> surface is still `[Unreleased]` -- and it is fixed here.
+>
+> **The lesson is about where the tests were pointed, not about the bug.** Every assertion in the
+> file was about `Get-QueryRequestPlan`, which is pure and was correct; the round trip, which is
+> where the defect was, had none. A test suite concentrated on the part that is easy to test can be
+> thorough and still prove nothing about whether the feature works. The round-trip suite added here
+> drives the real client against a canned pipe server for one op of each kind, and a derived
+> collision assertion guards every typed parameter against the same shape.
 
 > **What landed in 000287, and what did not.** `scripts/lsp-query.ps1` plus a `query` action on the
 > daemon serve `definition`, `references` and `hover` -- "the first three operations" the effort

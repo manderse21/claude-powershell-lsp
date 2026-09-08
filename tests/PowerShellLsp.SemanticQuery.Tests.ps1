@@ -742,9 +742,6 @@ Describe 'ROUND TRIP -- the client can actually process a daemon response' {
         # error while coercing the response into the [int] $Line parameter, so the daemon's reason
         # never reached the caller and the exit code meant something else than it said.
         $r.Err.Contains('PSES is not running') | Should -BeTrue
-        Write-Host "`n========== REFUSAL STDERR BEGIN =========="
-        Write-Host $r.Err
-        Write-Host "========== REFUSAL STDERR END ============"
         $r.Err.Contains('Cannot convert value') | Should -BeFalse
     }
 }
