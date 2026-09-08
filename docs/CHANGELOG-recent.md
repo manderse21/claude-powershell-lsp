@@ -48,6 +48,33 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **A first-party semantic query surface** (enterprise docket P1-2, review items 9 and 10).
+`scripts/lsp-query.ps1 <op> <file> <line> <col>` asks the warm per-session daemon a POSITION
+question -- `definition`, `references`, `hover` -- and returns PowerShell Editor Services' own
+answer as JSON. The daemon has spoken LSP to PSES since the beginning and nothing in this
+repository was asking it anything but "what is wrong with this file"; these three operations are
+requests PSES already serves. The path has **no Claude Code client in it**, which is the point:
+the standing GATED arc is on *serving through the client*, and this is a script the agent runs
+against the plugin's own daemon. **Freeze exposure: ZERO on both frozen surfaces** -- a command
+entry point is neither one of `CONTRACT.md`'s twenty `userConfig` knob names nor one of its
+diagnostics status tokens, and `-Op` is a CLI parameter exactly as `-Format` is on `lsp-scan.ps1`.
+Positions are **1-based on the wire** -- what every editor, stack trace and diagnostics record this
+plugin emits reports -- and are converted to LSP's 0-based positions in exactly one place. That
+conversion is the whole of the slice's risk and it carries the RED control the docket named: a
+planner that forwards the request unchanged returns a well-formed, confident answer about the
+previous character, and is asserted to fail on every op.
+
+While building it, re-deriving the request-writing sites at the tip found **six, not three**, and
+the handshake census that called itself "a census, not a sample" was a hard-coded list of three.
+The two it had never named -- `doctor.ps1`'s ping probe and `session-end.ps1`'s shutdown -- write a
+bare JSON literal and announce nothing; neither is broken, because ABSENT MEANS 1 is the
+handshake's own rule, but the guard could not have noticed if one had started carrying a field that
+needed a version to interpret. The census now **derives** its site set from the AST and asserts a
+partition: every site either announces both keys or is a bare literal carrying nothing but an
+`action`, with the exemption keyed on the literal's own text rather than on a file name. Measured
+rather than argued: with the new fourth site's handshake deleted, the prior guard **passes** and
+the derived one fails, naming the site.
+
 PATCH: **`docs/whitepaper.md` is r3, retracting a claim the code outgrew.** In three body places
 (sections 4, 6, 10) r2 said one acquisition route was **not** governed by the project SHA-256 pin
 -- the PSScriptAnalyzer Gallery fallback, described as resting on the Gallery's publisher/catalog

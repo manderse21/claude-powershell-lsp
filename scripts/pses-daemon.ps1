@@ -692,6 +692,114 @@ function Add-CodeActionCorrections {
     }
 }
 
+# --- first-party semantic query (P1-2, dispatch 000287) --------------------
+function Get-QueryOps {
+    # THE op vocabulary, in one place, because two places is how an advertisement and a
+    # behaviour drift (Hub Rule 18). Get-QueryRequestPlan validates against this and
+    # Get-DaemonCapabilities advertises it; neither carries its own copy.
+    return @('definition', 'references', 'hover')
+}
+
+function Get-QueryRequestPlan {
+    # PURE. Maps one semantic query onto the LSP request PSES already serves.
+    #
+    # THE POSITION BASE IS THE WHOLE OF THIS FUNCTION'S RISK. The wire protocol carries
+    # 1-BASED line and column, because that is what every editor, every stack trace and
+    # every diagnostics record this plugin already emits reports. LSP is 0-BASED. The
+    # conversion happens exactly HERE, once, and a caller that forwards the request
+    # unchanged is answering about the previous line and the previous column -- a wrong
+    # answer that looks entirely plausible, which is why it is the RED control.
+    #
+    # A position below 1 is an ERROR, never clamped. Clamping would answer confidently
+    # about position 1 when the caller asked about something it could not name.
+    param(
+        [string] $Op,
+        [string] $Uri,
+        [int] $Line,
+        [int] $Col
+    )
+    $known = @(Get-QueryOps)
+    $opNorm = ([string]$Op).Trim().ToLowerInvariant()
+    if ($known -notcontains $opNorm) {
+        return @{ ok = $false; error = ('unknown query op: ' + $Op + ' (known: ' + ($known -join ', ') + ')') }
+    }
+    if ([string]::IsNullOrWhiteSpace($Uri)) {
+        return @{ ok = $false; error = 'query requires a document uri' }
+    }
+    if ($Line -lt 1) { return @{ ok = $false; error = ('line must be 1-based (got ' + $Line + ')') } }
+    if ($Col -lt 1) { return @{ ok = $false; error = ('col must be 1-based (got ' + $Col + ')') } }
+
+    $position = @{ line = ($Line - 1); character = ($Col - 1) }
+    $params = @{ textDocument = @{ uri = $Uri }; position = $position }
+    $method = switch ($opNorm) {
+        'definition' { 'textDocument/definition' }
+        'references' { 'textDocument/references' }
+        'hover' { 'textDocument/hover' }
+    }
+    if ($opNorm -eq 'references') {
+        # includeDeclaration mirrors what a reader asking "where is this used" means: the
+        # declaration is one of the places it appears.
+        $params['context'] = @{ includeDeclaration = $true }
+    }
+    return @{ ok = $true; op = $opNorm; method = $method; params = $params }
+}
+
+function Invoke-SemanticQuery {
+    # The round trip. Opens (or refreshes) the document PSES must know about, sends the
+    # planned request with an id, and pumps until the response for THAT id arrives.
+    # Reuses the warm PSES and the same request/response plumbing the codeAction
+    # enrichment pass uses -- no second analyzer pass, no second server.
+    param([string] $FilePath, [string] $Op, [int] $Line, [int] $Col, [int] $WaitMs = 4000)
+
+    $full = ''
+    try { $full = [System.IO.Path]::GetFullPath($FilePath) } catch { return @{ ok = $false; error = 'unreadable file path' } }
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return @{ ok = $false; error = 'file not found' } }
+    $uri = ConvertTo-FileUri $full
+    $key = ConvertTo-UriKey $uri
+
+    $plan = Get-QueryRequestPlan -Op $Op -Uri $uri -Line $Line -Col $Col
+    if (-not $plan.ok) { return @{ ok = $false; error = [string]$plan.error } }
+
+    if (-not (Test-PsesAlive)) { return @{ ok = $false; error = 'PSES is not running' } }
+
+    $text = ''
+    try { $text = [System.IO.File]::ReadAllText($full) } catch { return @{ ok = $false; error = 'could not read file' } }
+
+    # PSES answers a position request only about a document it has been told about.
+    if ($script:openDocs.ContainsKey($key)) {
+        $ver = [int]$script:openDocs[$key] + 1
+        $script:openDocs[$key] = $ver
+        Send-Lsp @{ jsonrpc = '2.0'; method = 'textDocument/didChange'
+            params = @{ textDocument = @{ uri = $uri; version = $ver }
+                contentChanges = @(@{ text = $text }) } }
+    } else {
+        $script:openDocs[$key] = 0
+        Send-Lsp @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'
+            params = @{ textDocument = @{ uri = $uri; languageId = 'powershell'; version = 0; text = $text } } }
+    }
+
+    $script:reqId++
+    $id = $script:reqId
+    $idKey = [string]$id
+    if ($script:respResult.ContainsKey($idKey)) { $script:respResult.Remove($idKey) | Out-Null }
+    Send-Lsp @{ jsonrpc = '2.0'; id = $id; method = $plan.method; params = $plan.params }
+
+    Invoke-LspPump -Until { $script:respResult.ContainsKey($idKey) } -MaxMs $WaitMs | Out-Null
+    if (-not $script:respResult.ContainsKey($idKey)) {
+        Write-DLog ('query ' + $plan.op + ': no response (id=' + $idKey + ')')
+        return @{ ok = $false; error = ('no response from PSES within ' + $WaitMs + 'ms') }
+    }
+    $result = $script:respResult[$idKey]
+    $script:respResult.Remove($idKey) | Out-Null
+
+    # A null result is a legitimate ANSWER -- "nothing here" -- and is reported as an
+    # empty result set, never as an error. hover answers with one object; the two
+    # location ops answer with an array. @() around $null yields an empty array and
+    # around a single object a one-element array, in both 5.1 and 7.
+    $results = if ($null -eq $result) { @() } else { @($result) }
+    return @{ ok = $true; op = [string]$plan.op; uri = $uri; results = $results; count = @($results).Count }
+}
+
 # --- diagnostics request (didOpen/didChange + settle) ----------------------
 function Measure-CorrectionCount([object[]]$Records) {
     # Telemetry (Track A): how many records carry a suggested fix. Counts only --
@@ -1294,9 +1402,10 @@ function Get-DaemonCapabilities {
     # suite asserts `actions` against the switch labels read from this file's AST, so a new action
     # added to the loop without being advertised here fails CI rather than shipping a lie.
     return [ordered]@{
-        actions                  = @('diagnostics', 'format', 'ping', 'shutdown')
+        actions                  = @('diagnostics', 'format', 'query', 'ping', 'shutdown')
         diagnosticsTouchedRanges = $true
         formatApply              = $true
+        queryOps                 = @(Get-QueryOps)
     }
 }
 
@@ -1720,6 +1829,27 @@ try {
                         $doApply = [bool](Get-Prop $req 'apply')
                         $payload = if ($doApply) { Invoke-FormatApply $file $reqCwd } else { Get-FormatSuggestion $file $reqCwd }
                         Write-DaemonResponse -Writer $writer -Payload $payload -Depth 6
+                    }
+                    'query' {
+                        # First-party semantic query (P1-2, dispatch 000287). A SEPARATE action from
+                        # 'diagnostics': nothing on the edit path reaches it, so the diagnostics
+                        # surface is byte-for-byte unchanged whether this branch exists or not. It
+                        # forwards a position request PSES already serves and returns the answer
+                        # verbatim -- it does not interpret, rank or summarise the LSP result.
+                        $file = [string](Get-Prop $req 'file')
+                        $qOp = [string](Get-Prop $req 'op')
+                        $qLine = 0; $qCol = 0
+                        try { $qLine = [int](Get-Prop $req 'line') } catch { $qLine = 0 }
+                        try { $qCol = [int](Get-Prop $req 'col') } catch { $qCol = 0 }
+                        $qres = Invoke-SemanticQuery -FilePath $file -Op $qOp -Line $qLine -Col $qCol
+                        $payload = if ($qres.ok) {
+                            [ordered]@{ ok = $true; action = 'query'; op = [string]$qres.op; file = $file
+                                line = $qLine; col = $qCol; uri = [string]$qres.uri
+                                count = [int]$qres.count; results = @($qres.results) }
+                        } else {
+                            [ordered]@{ ok = $false; action = 'query'; op = $qOp; file = $file; error = [string]$qres.error }
+                        }
+                        Write-DaemonResponse -Writer $writer -Payload $payload -Depth 12
                     }
                     'ping' {
                         $psesPidVal = if (Test-PsesAlive) { $script:proc.Id } else { $null }

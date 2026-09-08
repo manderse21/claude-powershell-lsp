@@ -502,7 +502,33 @@ not a runtime surface. **Effort: ~1 day** for the gate and the exception schema,
 > and the survey marks it viable. It is folded in above rather than dropped, because dropping the
 > null option would bias the slice toward building a gate.
 
-**P1-2 -- first-party semantic query surface (review items 9 and 10).**
+**P1-2 -- first-party semantic query surface (review items 9 and 10). BUILT by dispatch 000287
+(the first three operations); `documentSymbol` and `workspaceSymbol` remain UNREACHED.**
+
+> **What landed, and what did not.** `scripts/lsp-query.ps1` plus a `query` action on the daemon
+> serve `definition`, `references` and `hover` -- "the first three operations" the effort line
+> prices. `documentSymbol` and `workspaceSymbol` are deliberately not built: neither takes a
+> position, so both are a different request shape with their own result rendering, and folding them
+> into the position slice would have shipped two surfaces on one slice's testing. They are named
+> here for the successor rather than quietly absorbed. The daemon advertises its op set through
+> `Get-DaemonCapabilities.queryOps`, which reads the same `Get-QueryOps` the planner validates
+> against, so the advertisement cannot drift from the behaviour (Hub Rule 18).
+>
+> **The docket's own test shape was followed and its RED control was the one named:** "a mutant
+> that returns the request unchanged must fail every assertion." The wire carries 1-BASED
+> positions and LSP is 0-based; the conversion happens in exactly one place, and the pass-through
+> mutant -- built by substitution on the shipped source, with its single anchor asserted -- is
+> proved to have landed before any conclusion is drawn from it, then shown wrong on every op.
+>
+> **A finding the slice made on the way in, recorded because it is a control and not a memory.**
+> The charter said to derive the request-building sites AGAIN. At the tip there are **six**, not
+> the three the P1-4 census named: `doctor.ps1`'s ping probe and `session-end.ps1`'s shutdown each
+> write a bare `{"action":"..."}` literal and announce no handshake. Neither is a defect -- ABSENT
+> MEANS 1 is the handshake's own rule -- but the census that called itself "a census, not a sample"
+> was a hard-coded list of three and did not know they existed. It now derives its site set from
+> the AST and asserts a partition, with the bare-literal exemption keyed on the literal's own text
+> rather than on a file name. **Measured, not argued:** with the new fourth site's handshake
+> deleted, the prior guard PASSES and the derived one fails naming the site.
 
 - **Mechanism.** `powershell-lsp query <op> <file> <line> <col> --json` over the existing warm daemon,
   forwarding LSP requests PSES already serves (`definition`, `references`, `hover`,
