@@ -48,6 +48,37 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **An advisory CI leg proves a real Claude Code client registers this plugin** (enterprise
+docket P1-3, review item 4, the registration half). `claude-code-compat` installs two PINNED
+client versions -- 2.1.263 (Current) and 2.1.261 (Current-1) -- registers this repository as a
+local marketplace, installs the plugin from it, and asserts against the client's OWN component
+inventory that all three hooks, the LSP server and every shipped command are registered. Reading
+our own manifest back to ourselves would prove only that the file we wrote is the file we wrote.
+The expected command set is **derived from `commands/*.md`**, so adding a command extends the
+assertion with no edit to it. **ADVISORY, not required**, and that is ruling R-G rather than a
+preference -- a required leg that cannot obtain an older client blocks every release -- so the job
+carries `continue-on-error: true`. It is its **own job with its own name**: the `pester` job is
+named `${{ matrix.label }}`, so a new dimension there would rename four existing check contexts
+and silently remove required checks. The five existing identities are untouched.
+
+**Two things it deliberately does not do.** It writes no `claudeCodeCompatibility` manifest block:
+the docket requires that declaration be written from what the matrix *proved*, and this leg proves
+registration only -- asserting that a diagnostic *surfaces* needs a live agent turn and therefore a
+credential this repository does not hold. And it does not resolve `latest` at run time, because a
+leg pinned to a moving target is not a pin; the runner script refuses a dist-tag by name and
+verifies that the client which actually installed reports the version it was asked for, so a
+compatibility claim is never attributed to a version that was not the one exercised.
+
+Recorded because it corrects a docket premise: the effort line said P1-3 was "dominated by
+obtaining and pinning two client versions in CI". Measured on 2026-09-08, that is not the cost --
+npm carries exact versions and installing one is a single line. The real constraint is credentialed
+execution, which is why only half of P1-3 is built here and the other half is named.
+
+Also transcribed 000286's per-family `Unguardable` decision into `tests/control-map-claims.psd1`'s
+own comment block, where the list lives, so a future dispatch meets the reasoning rather than
+having to find the outbox. All four verdicts are NO and none is softened; the held-PR family keeps
+its actionable shape (an `audit-release-bodies.ps1`-style maintainer-run sweep, never a CI gate).
+
 MINOR: **A first-party semantic query surface** (enterprise docket P1-2, review items 9 and 10).
 `scripts/lsp-query.ps1 <op> <file> <line> <col>` asks the warm per-session daemon a POSITION
 question -- `definition`, `references`, `hover` -- and returns PowerShell Editor Services' own

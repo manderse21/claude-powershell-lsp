@@ -106,6 +106,36 @@
     #     facts. Judgement belongs to the maintainer; a guard that adjudicated it would eventually
     #     be wrong in a way it could not settle, someone would silence it, and one silenced guard
     #     teaches that guards are advisory.
+    #
+    # THE DECISION, PER FAMILY: NONE OF THE FOUR SHOULD MOVE IN-REPO. Taken in writing by dispatch
+    # 000286 phase 3(b) and transcribed here by 000287 so a future dispatch meets it where the list
+    # lives rather than having to find the outbox. No claim was weakened to make it guardable, and
+    # no family's verdict is softened in the transcription. The full reasoning is in
+    # projects/powershell-lsp/000286-PHASE-RECORDS.md section 3(b); one line each:
+    #
+    #   `stamp: counter NNNNNN (hub .counter)` -- NO. An in-repo copy is a duplicated value with no
+    #     importable single source (Hub Rule 18's exact failure mode). It would go stale silently
+    #     and the guard would then bless a stale number, which is strictly worse than naming it
+    #     unguardable.
+    #
+    #   `chip: dispatch board in-progress state (hub)` -- NO, most clearly of the four. Board state
+    #     is LIVE and changes many times a day, so any in-repo snapshot is stale before the release
+    #     asset carrying it is even built: a guard over it would assert a fact with a shelf life
+    #     shorter than its own build.
+    #
+    #   `held-PR references and PR-state chips (network)` -- NO, but this one is DIFFERENT and the
+    #     difference is the actionable half. It is not underivable: gh can read it, and this
+    #     repository already reads published GitHub state that way in
+    #     scripts/audit-release-bodies.ps1. It is deliberately not derived AT CI TIME, because a
+    #     network-dependent required check goes red for reasons its owner cannot fix, and a gate
+    #     that reddens for reasons no one can fix is a gate that gets silenced. IF IT IS EVER
+    #     GUARDED, it should take the audit-release-bodies.ps1 shape -- a maintainer-run sweep,
+    #     NEVER a CI gate. That is not "guard it later": it is the only shape under which guarding
+    #     it would be correct at all.
+    #
+    #   `North Star prose, decline reasons, risk narrative` -- NO, categorically rather than
+    #     practically. These are judgements, not facts, and the paragraph above already says what
+    #     follows from that. This decision confirms it and adds nothing.
     Unguardable = @(
         'stamp: counter NNNNNN (hub .counter)'
         'chip: dispatch board in-progress state (hub)'
