@@ -33,11 +33,29 @@ BeforeAll {
     New-Item -ItemType Directory -Path $script:TempDir -Force | Out-Null
 
     function Invoke-Assert {
+        # REDIRECT TO FILES, never `2>&1` into the pipeline. Windows PowerShell 5.1 converts a
+        # child process's stderr into ErrorRecords, and Pester runs an `It` with
+        # $ErrorActionPreference = 'Stop', so the first stderr line THROWS -- the assertion never
+        # reaches $LASTEXITCODE and the failure is reported as a RemoteException carrying the
+        # script's own usage message. PowerShell 7 does not do that, so a pwsh-only run cannot
+        # see it: this was caught by the windows-powershell CI leg and by nothing else.
+        #
+        # Start-Process with -RedirectStandardError writes the stream to a file instead of into a
+        # host that has an opinion about it, and -PassThru gives the real ExitCode rather than a
+        # $LASTEXITCODE that a thrown record would have skipped.
         param([string] $Path)
-        $host51 = (Get-Process -Id $PID).Path
-        $out = & $host51 -NoProfile -NonInteractive -ExecutionPolicy Bypass `
-            -File $script:Script -DetailsOutput $Path -PluginRoot $script:PluginRoot 2>&1
-        return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($out | Out-String) }
+        $exe = (Get-Process -Id $PID).Path
+        $so = Join-Path $script:TempDir ([guid]::NewGuid().ToString('N') + '.out')
+        $se = Join-Path $script:TempDir ([guid]::NewGuid().ToString('N') + '.err')
+        $argList = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+            '-File', $script:Script, '-DetailsOutput', $Path, '-PluginRoot', $script:PluginRoot)
+        $p = Start-Process -FilePath $exe -ArgumentList $argList -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput $so -RedirectStandardError $se
+        $text = ''
+        foreach ($f in @($so, $se)) {
+            if (Test-Path -LiteralPath $f) { $text += [System.IO.File]::ReadAllText($f) }
+        }
+        return [pscustomobject]@{ ExitCode = $p.ExitCode; Output = $text }
     }
 
     function New-MutantCapture {
