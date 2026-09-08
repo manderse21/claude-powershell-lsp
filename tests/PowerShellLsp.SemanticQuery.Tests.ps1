@@ -553,14 +553,23 @@ Describe 'the client entry point is a parameter surface, not a frozen-surface ch
     }
 
     It 'RED CONTROL: the PRIOR IMPLEMENTATION fails that collision assertion' {
-        # 000287's shipped lsp-query.ps1 is the prior implementation and it carries the defect,
-        # so the control is the real thing rather than a mutant invented to fail. Read from git
-        # by SHA, which cannot drift. If the object is unreachable the test FAILS rather than
-        # skipping -- a control that quietly did not run is the vacuity this suite keeps banking.
-        $prior = & git -C $script:PluginRoot show '8befce0:scripts/lsp-query.ps1' 2>$null
-        $LASTEXITCODE | Should -Be 0 -Because 'the prior implementation must be readable from git'
-        $priorText = ($prior -join "`n")
-        $priorText | Should -Not -BeNullOrEmpty
+        # The prior implementation is reconstructed by UNDOING the fix on the shipped source --
+        # the same textual-substitution technique the two planner mutants use -- rather than read
+        # from git by SHA. A git-object control is not runnable everywhere this suite runs: CI
+        # checks out shallow, so `git show <sha>:<path>` exits 128 there and the control fails for
+        # a reason that has nothing to do with the defect. Measured: it did exactly that on all
+        # five CI legs while passing locally.
+        #
+        # The substitution is anchored and its anchor COUNT is asserted, so a rename that makes
+        # the anchor stale fails loudly instead of testing a mutant that mutates nothing.
+        $shipped = [System.IO.File]::ReadAllText($script:QueryPath)
+        $anchor = '$respLine = $readTask.Result'
+        ([regex]::Matches($shipped, [regex]::Escape($anchor))).Count | Should -Be 1 -Because 'the control needs exactly one anchor'
+        $priorText = $shipped.
+            Replace($anchor, '$line = $readTask.Result').
+            Replace('IsNullOrWhiteSpace($respLine)', 'IsNullOrWhiteSpace($line)').
+            Replace('$resp = $respLine | ConvertFrom-Json', '$resp = $line | ConvertFrom-Json')
+        $priorText | Should -Not -Be $shipped -Because 'the control must actually differ from the shipped source'
 
         $ast = [System.Management.Automation.Language.Parser]::ParseInput($priorText, [ref]$null, [ref]$null)
         $typedParams = @()
@@ -654,7 +663,11 @@ Describe 'ROUND TRIP -- the client can actually process a daemon response' {
             $respFile = [System.IO.Path]::GetTempFileName()
             [System.IO.File]::WriteAllText($respFile, $ResponseJson,
                 (New-Object System.Text.UTF8Encoding($false)))
-            $srv = Start-Process -FilePath 'pwsh' -PassThru -WindowStyle Hidden `
+            # -NoNewWindow, never -WindowStyle: -WindowStyle is not supported by Start-Process
+            # on non-Windows editions of PowerShell and throws NotSupportedException there, which
+            # turned all five of these tests red on the ubuntu, macos and container CI legs while
+            # they passed on Windows.
+            $srv = Start-Process -FilePath 'pwsh' -PassThru -NoNewWindow `
                 -RedirectStandardOutput $srvOut -RedirectStandardError $srvErr `
                 -ArgumentList @('-NoProfile', '-File', $script:RtServerPath,
                 '-PipeName', $pipe, '-ResponseFile', $respFile, '-ReadyFile', $readyFile)
@@ -679,7 +692,7 @@ Describe 'ROUND TRIP -- the client can actually process a daemon response' {
             $cOut = [System.IO.Path]::GetTempFileName()
             $cErr = [System.IO.Path]::GetTempFileName()
             $argv = @('-NoProfile', '-File', $script:QueryPath) + $ClientArgs + @('-SessionId', $sid)
-            $c = Start-Process -FilePath 'pwsh' -PassThru -Wait -WindowStyle Hidden `
+            $c = Start-Process -FilePath 'pwsh' -PassThru -Wait -NoNewWindow `
                 -RedirectStandardOutput $cOut -RedirectStandardError $cErr -ArgumentList $argv
             $o = ''
             $e = ''
