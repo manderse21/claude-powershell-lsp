@@ -288,3 +288,80 @@ jobs:
             psls-test-data/logs/**
             psls-test-data/session/**
           if-no-files-found: ignore
+
+  # --------------------------------------------------------------------------------------------
+  # claude-code-compat -- P1-3's REGISTRATION half (dispatch 000287; docket P1-3, review item 4).
+  #
+  # ITS OWN JOB WITH ITS OWN NAME, for the reason the container leg is: the `pester` job above is
+  # named ${{ matrix.label }}, so a new dimension there would re-key the four legs it covers and
+  # RENAME their check contexts, silently removing required checks. Nothing above this line is
+  # touched. The five existing identities -- windows-pwsh, windows-powershell, ubuntu-pwsh,
+  # macos-pwsh, container-pwsh -- are unchanged.
+  #
+  # ADVISORY, NOT REQUIRED, and that is a ruling rather than a preference: R-G, ruled 2026-09-05,
+  # verbatim -- "Claude Code Current-1 is Advisory, not Required." A required leg that cannot
+  # obtain an older client blocks every release, which trades one enterprise risk for a worse one.
+  # `continue-on-error: true` is what makes that ruling true of the job rather than only of the
+  # prose about it.
+  #
+  # WHAT IT PROVES, AND WHAT IT DOES NOT. It proves a REAL CLIENT, at a pinned version, registers
+  # this plugin's components -- reading our own manifest back to ourselves would prove only that
+  # the file we wrote is the file we wrote. It does NOT prove a diagnostic surfaces: that needs a
+  # live agent turn and therefore a credential, which this repository does not hold and this leg
+  # does not fabricate. So NO `claudeCodeCompatibility` block is written from this: the docket
+  # requires the declaration be "written from what the matrix proved, never ahead of it", and
+  # docs/SUPPORT-POLICY.md refuses to declare an untested floor in so many words.
+  #
+  # THE VERSIONS ARE PINNED, not resolved at run time, because "obtaining and pinning two client
+  # versions" is the slice's stated work and `latest` is not a pin. Measured from the npm registry
+  # on 2026-09-08: dist-tags were latest=2.1.263, stable=2.1.236, and the published versions
+  # immediately below latest were 2.1.261 and 2.1.260. Current = 2.1.263; Current-1 = 2.1.261.
+  #
+  # CLAUDE_CONFIG_DIR is deliberately OUTSIDE the workspace. That is the 000286 container lesson
+  # applied ahead of the failure rather than after it: a client config inside the checkout puts
+  # installed plugin files into the tree this repository's own repo-wide scans walk.
+  claude-code-compat:
+    name: claude-code-compat
+    runs-on: ubuntu-24.04
+    continue-on-error: true      # ADVISORY per ruling R-G
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v5.0.0
+        with:
+          node-version: '22'
+
+      - name: Register and enumerate under Claude Code 2.1.263 (Current)
+        env:
+          CLAUDE_CODE_VERSION: '2.1.263'
+          CLAUDE_CONFIG_DIR: ${{ runner.temp }}/ccconfig-current
+        # `bash <script>` and not `./<script>`: this repository is authored on Windows, where the
+        # executable bit is not a property of the filesystem, so a shell script can reach git as
+        # mode 100644 and the runner answers with exit 126 -- "command found, not executable" --
+        # before a single line of it runs. That is exactly what happened on this leg's first run.
+        # The bit is set in the index as well; invoking through bash is what makes losing it again
+        # a non-event rather than a repeat.
+        run: bash ./.github/scripts/claude-code-compat.sh
+
+      - name: Register and enumerate under Claude Code 2.1.261 (Current-1)
+        if: always()
+        env:
+          CLAUDE_CODE_VERSION: '2.1.261'
+          CLAUDE_CONFIG_DIR: ${{ runner.temp }}/ccconfig-prev
+        # `bash <script>` and not `./<script>`: this repository is authored on Windows, where the
+        # executable bit is not a property of the filesystem, so a shell script can reach git as
+        # mode 100644 and the runner answers with exit 126 -- "command found, not executable" --
+        # before a single line of it runs. That is exactly what happened on this leg's first run.
+        # The bit is set in the index as well; invoking through bash is what makes losing it again
+        # a non-event rather than a repeat.
+        run: bash ./.github/scripts/claude-code-compat.sh
+
+      - name: Upload the client inventories
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: claude-code-inventory
+          path: claude-code-details-*.txt
+          if-no-files-found: ignore

@@ -1,0 +1,23 @@
+PowerShell Diagnostics (PSES) (powershell-lsp) 1.34.0
+  Description: Real-time PowerShell diagnostics in Claude Code: as Claude edits a .ps1/.psm1/.psd1, it runs PowerShell Editor Services + PSScriptAnalyzer over that file and surfaces syntax errors and lint fixes inline. Hover, go-to-definition, and find-references serve natively through an opt-in handshake shim (userConfig nativeServe, off by default).
+  Source: powershell-lsp@claude-powershell-lsp
+
+Component inventory
+  Skills (4)  doctor, query, scan, status
+  Agents (0)
+  Hooks (3)  SessionStart, PostToolUse, SessionEnd  (harness-only — no model context cost)
+  MCP servers (0)
+  LSP servers (1)  powershell  (out-of-process tooling; no model context cost)
+
+Projected token cost
+  Always-on:   ~150 tok   added to every session
+
+Per-component (rounded)
+  component  always-on  on-invoke
+  doctor           ~40      ~1.8k
+  query            ~40       ~550
+  scan             ~40       ~820
+  status           ~30       ~280
+
+  On-invoke cost is paid each time a skill or agent fires.
+  Token counts are estimates and may differ from actual usage.

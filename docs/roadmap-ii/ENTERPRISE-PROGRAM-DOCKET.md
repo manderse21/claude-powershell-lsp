@@ -544,7 +544,40 @@ not a runtime surface. **Effort: ~1 day** for the gate and the exception schema,
 - **Legs.** Six: the protocol extension (P1-4, which must land first); daemon-side dispatch;
   client-side command; the three operations; tests plus RED controls; docs.
 
-**P1-3 -- Claude Code compatibility certification (review item 4).**
+**P1-3 -- Claude Code compatibility certification (review item 4). REGISTRATION HALF BUILT by
+dispatch 000287; the diagnostic-surfacing half is BLOCKED on a credential and named below.**
+
+> **What landed.** `claude-code-compat`, its own job with its own name, `continue-on-error: true`
+> per ruling R-G. It installs two PINNED clients -- **2.1.263 (Current)** and **2.1.261
+> (Current-1)** -- registers this repository as a local marketplace, installs the plugin from it,
+> and asserts against the client's own `plugin details` inventory that all three hooks, the LSP
+> server and every shipped command are registered. The expected command set is **derived from
+> `commands/*.md`**, not listed in the assertion, because a hard-coded list is a sample wearing a
+> census's clothes -- the exact shape 000287 had to fix in the P1-4 handshake census the same day.
+>
+> **THE EFFORT LINE BELOW IS WRONG AND IS LEFT IN PLACE SO THE CORRECTION IS LEGIBLE.** It says
+> P1-3 is "dominated by obtaining and pinning two client versions in CI". Measured against the npm
+> registry on 2026-09-08 -- dist-tags `latest=2.1.263`, `stable=2.1.236`, with `2.1.261` and
+> `2.1.260` published below latest -- obtaining and pinning a client is **one line**. The real
+> constraint is **credentialed execution**: the two assertions the slice wants route through
+> `claude plugin details <name>`, which is credential-free but needs the plugin registered, and a
+> live agent turn, which is not. So the registration half is built and the diagnostic-surfacing
+> half is **BLOCKED**, naming its obstacle: proving "one diagnostic surfaces" requires a model
+> turn, hence a secret, which dispatch 000287 may not provision.
+>
+> **No `claudeCodeCompatibility` block was written**, and that is the ordering this slice exists to
+> protect: the declaration is the output, written from what the matrix PROVED, never ahead of it.
+> The matrix proves registration. `docs/SUPPORT-POLICY.md` still says, correctly, that no minimum
+> or maximum Claude Code version is declared anywhere in this repository.
+>
+> **Two mechanics worth not rediscovering.** `claude plugin marketplace add` rejects a bare `.`
+> ("Invalid marketplace source format") and accepts `./`. And the assertion must anchor each check
+> to its own inventory LINE: a whole-document substring search for a command name is satisfied by
+> the per-component token-cost table further down the same output, which meant an early version of
+> the assertion passed over an inventory that enumerated no commands at all. Its RED control caught
+> that, which is the only reason it is written down here rather than shipped.
+
+- **Original mechanism (as docketed).**
 
 - **Mechanism.** A CI job that installs the plugin under Claude Code Current and Current-1 and
   asserts the hook registers and one diagnostic surfaces. The **declaration is the output**: a
