@@ -337,14 +337,26 @@ jobs:
         env:
           CLAUDE_CODE_VERSION: '2.1.263'
           CLAUDE_CONFIG_DIR: ${{ runner.temp }}/ccconfig-current
-        run: ./.github/scripts/claude-code-compat.sh
+        # `bash <script>` and not `./<script>`: this repository is authored on Windows, where the
+        # executable bit is not a property of the filesystem, so a shell script can reach git as
+        # mode 100644 and the runner answers with exit 126 -- "command found, not executable" --
+        # before a single line of it runs. That is exactly what happened on this leg's first run.
+        # The bit is set in the index as well; invoking through bash is what makes losing it again
+        # a non-event rather than a repeat.
+        run: bash ./.github/scripts/claude-code-compat.sh
 
       - name: Register and enumerate under Claude Code 2.1.261 (Current-1)
         if: always()
         env:
           CLAUDE_CODE_VERSION: '2.1.261'
           CLAUDE_CONFIG_DIR: ${{ runner.temp }}/ccconfig-prev
-        run: ./.github/scripts/claude-code-compat.sh
+        # `bash <script>` and not `./<script>`: this repository is authored on Windows, where the
+        # executable bit is not a property of the filesystem, so a shell script can reach git as
+        # mode 100644 and the runner answers with exit 126 -- "command found, not executable" --
+        # before a single line of it runs. That is exactly what happened on this leg's first run.
+        # The bit is set in the index as well; invoking through bash is what makes losing it again
+        # a non-event rather than a repeat.
+        run: bash ./.github/scripts/claude-code-compat.sh
 
       - name: Upload the client inventories
         if: always()

@@ -203,6 +203,18 @@ Describe 'the leg is ADVISORY in the workflow, which is a ruling and not a prefe
         $sh.Contains('refusing to attribute this run to that version') | Should -BeTrue
     }
 
+    It 'invokes the runner in a way the Windows executable bit cannot break' {
+        # The leg's FIRST run failed with exit 126 -- "command found, not executable" -- before a
+        # line of the script ran, because this repository is authored on Windows where the exec
+        # bit is not a filesystem property and the file reached git as mode 100644. Invoking
+        # through bash makes the mode irrelevant; this asserts the invocation rather than the mode,
+        # because the mode is the thing that can silently regress.
+        $wf = [System.IO.File]::ReadAllText((Join-Path $script:PluginRoot '.github/workflows/powershell-lsp-ci.yml'))
+        ([regex]::Matches($wf, 'run: bash \./\.github/scripts/claude-code-compat\.sh')).Count |
+            Should -Be 2 -Because 'both client steps must be mode-independent'
+        $wf | Should -Not -Match 'run: \./\.github/scripts/claude-code-compat\.sh'
+    }
+
     It 'writes no claudeCodeCompatibility declaration -- the matrix has not earned one' {
         # The docket requires the declaration be written from what the matrix PROVED, and this leg
         # proves registration only. docs/SUPPORT-POLICY.md refuses to declare an untested floor.
