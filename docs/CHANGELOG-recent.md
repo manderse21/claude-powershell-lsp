@@ -48,6 +48,20 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **`docs/whitepaper.md` is r3, retracting a claim the code outgrew.** In three body places
+(sections 4, 6, 10) r2 said one acquisition route was **not** governed by the project SHA-256 pin
+-- the PSScriptAnalyzer Gallery fallback, described as resting on the Gallery's publisher/catalog
+integrity and reported by `/doctor` *"rather than as a pinned source"*. That was true when r2 was
+written and stopped being true at **PR 204**, which rebuilt the fallback as a pinned layer: it
+stages a `.nupkg` via `Save-Package` and hands it to the same `Test-PinnedFileHash` gate every
+other route passes, which "runs on the `.nupkg` REGARDLESS of source". So the pin governs every
+acquisition path with no exception, and `gallery-fallback` survives as a **provenance** label
+rather than a trust distinction. The superseded sentence is recorded in place as a dated
+correction rather than silently replaced, and r2's revision note is left intact as history. r3
+corrects that one claim and deliberately does **not** re-finalize the paper against a newer
+release: every other `[V]` citation remains one verified for v1.32.0, and advancing the version
+header without re-deriving them would acquire exactly the class of false claim this removes.
+
 MINOR: **A fifth CI leg runs the whole suite inside the official PowerShell container**
 (enterprise docket P2-3, the open half). `container-pwsh` is its OWN job with its OWN name, not a
 fifth entry in the existing matrix: that job is named `${{ matrix.label }}`, so adding a dimension
