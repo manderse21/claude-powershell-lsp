@@ -1474,6 +1474,62 @@ function Get-DiagnosticCaptureMode {
     return [string](Get-DiagnosticCaptureModeInfo).resolved
 }
 
+function Get-OtelEndpointInfo {
+    # Resolve $env:POWERSHELL_LSP_OTEL_ENDPOINT into the facts a fleet reader needs
+    # (P2-1, ENTERPRISE-PROGRAM-DOCKET item 7; the ruled env surface is item 15c):
+    #   endpoint    the collector URL to POST to, '' when export is not active. VERBATIM.
+    #   display     the same URL with userinfo and query REDACTED -- the only form that
+    #               is safe to print, log, or hand to a doctor envelope.
+    #   raw         the environment value verbatim, '' when unset. NEVER interpreted.
+    #   configured  $true when export is active. This is the exporter's single seam.
+    #   recognized  $true when raw parsed as an absolute http/https URL, $false otherwise.
+    #
+    # ONE function owns the vocabulary so the exporter and any later reporter cannot drift
+    # (Hub Rule 18) -- the same reason Get-DiagnosticCaptureModeInfo above owns its three modes.
+    #
+    # THE FALLBACK DIRECTION IS INVERTED FROM THE CAPTURE-MODE PRECEDENT, DELIBERATELY.
+    # Get-DiagnosticCaptureModeInfo resolves an unrecognized value to `full` and says so, because
+    # T6.1 is ACCEPTED-WITH-RECORD and nothing may become a gate on the capture channel: there,
+    # failing permissive costs nothing a reader did not already accept. HERE the permissive
+    # direction is a NETWORK EGRESS to a destination the administrator did not name. A malformed
+    # value therefore resolves to NOT CONFIGURED -- export off -- and carries recognized=$false so
+    # the typo is reportable rather than swallowed. The two directions are opposite because the
+    # thing on the other side of the failure is opposite, not because this one is stricter by taste.
+    #
+    # ONLY http and https are recognized. A collector reached over any other scheme is not a
+    # thing this exporter can claim to have delivered to, and `file:` in particular would turn an
+    # egress control into a silent local writer.
+    $raw = $env:POWERSHELL_LSP_OTEL_ENDPOINT
+    if ($null -eq $raw) { $raw = '' }
+    $info = [ordered]@{ endpoint = ''; display = ''; raw = [string]$raw; configured = $false; recognized = $false }
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $info }
+    $trimmed = ([string]$raw).Trim()
+    $uri = $null
+    if (-not [System.Uri]::TryCreate($trimmed, [System.UriKind]::Absolute, [ref]$uri)) { return $info }
+    if ($uri.Scheme -ne 'http' -and $uri.Scheme -ne 'https') { return $info }
+    $info.endpoint = $trimmed
+    $info.display = Get-OtelEndpointDisplay -Uri $uri
+    $info.configured = $true
+    $info.recognized = $true
+    return $info
+}
+
+function Get-OtelEndpointDisplay {
+    # The printable form of a collector URL: scheme, host, port and path only.
+    #
+    # USERINFO AND QUERY ARE DROPPED BECAUSE BOTH CARRY CREDENTIALS IN PRACTICE. An OTLP
+    # collector is commonly addressed as https://user:token@host/v1/metrics or with an api-key
+    # in the query string, and this value's whole purpose is to be shown to a human or written
+    # into a report. Printing the raw URL would make a diagnostic aid into a credential leak --
+    # the same shape as the capture log quoting a source line, one layer up.
+    param([Parameter(Mandatory = $true)][System.Uri]$Uri)
+    $port = ''
+    if (-not $Uri.IsDefaultPort) { $port = ':' + [string]$Uri.Port }
+    $shown = $Uri.Scheme + '://' + $Uri.Host + $port + $Uri.AbsolutePath
+    if (-not [string]::IsNullOrEmpty($Uri.Query)) { $shown += '?<redacted>' }
+    return $shown
+}
+
 function Invoke-CaptureLogRotation {
     # Bound the capture log (T6.4, threat model section 8, ruled FIX 2026-08-21).
     #

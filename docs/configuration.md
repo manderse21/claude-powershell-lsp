@@ -776,6 +776,77 @@ that switches mode mid-life still reads as one corpus.
 
 ---
 
+## Telemetry export, and what leaves the host
+
+`enableStats` writes one JSONL timing line per analyzed edit to `logs/stats.jsonl` under
+`CLAUDE_PLUGIN_DATA`. Those lines never leave the machine, and `scripts/show-stats.ps1` is a local
+viewer for them. An organization running this plugin on a fleet usually wants the same numbers in
+the place it already watches everything else, which is an OpenTelemetry collector.
+
+`scripts/export-otel.ps1` renders that existing log as OTLP metrics. It adds no new measurement:
+every number it publishes is one `show-stats.ps1` already prints from the same file, computed the
+same way.
+
+### `POWERSHELL_LSP_OTEL_ENDPOINT`
+
+**What it does.** Names the OTLP/HTTP collector `scripts/export-otel.ps1` may POST to.
+
+**Type:** an absolute `http` or `https` URL (for example `http://localhost:4318/v1/metrics`).
+**Default:** unset -- no export.
+
+**Nothing is exported during an edit.** The exporter is a separate script you run, or schedule; it
+is not on the hook path, so it can never add latency to a diagnostic or a failure mode to an edit.
+
+**Sending is opt-in twice: the variable must be set AND `-Send` must be passed.** Without `-Send`
+the script prints the exact payload and exits, which is how you see what would be transmitted
+before anything is:
+
+```
+pwsh -File scripts/export-otel.ps1 -Show      # what is configured; sends nothing
+pwsh -File scripts/export-otel.ps1            # print the payload; sends nothing
+pwsh -File scripts/export-otel.ps1 -Send      # print it AND POST it
+```
+
+**An unrecognized value turns export OFF, which is the opposite of
+[`POWERSHELL_LSP_CAPTURE_MODE`](#powershell_lsp_capture_mode) above.** That variable resolves a
+typo to `full` because nothing may become a gate on the local capture channel. Here the permissive
+direction would be a network POST to a destination nobody named, so a value that does not parse as
+an absolute `http`/`https` URL leaves export off and `-Show` reports it as unrecognized. The two
+fall opposite ways because what sits on the other side of the failure is opposite.
+
+### What the payload contains, and what it cannot contain
+
+| Metric | Type | What it is |
+|---|---|---|
+| `powershell_lsp.edits` | Sum | Analyzed edits, split by `ext`, `taken` and `cached` |
+| `powershell_lsp.edit.duration` | Gauge | p50 / p95 in ms per `stage` (`connect`, `analysis`, `code_action`, `total`) |
+| `powershell_lsp.diagnostics.records` | Sum | Diagnostics produced |
+| `powershell_lsp.diagnostics.corrections` | Sum | Corrections offered |
+| `powershell_lsp.edit.scope_trimmed` | Sum | Diagnostics `scopeToEdit` withheld, over scoped edits only |
+
+Resource attributes are `service.name` and `service.version` and nothing else -- no hostname, no
+`service.instance.id`, no user.
+
+**A stats row carries the absolute path of the edited file; the export does not.** Attributes are
+built from an **allowlist** -- `ext`, `taken`, `cached` -- and never by copying the row. That is
+deliberate and it is not the same as removing `path`: a rule that stripped one named field would
+keep passing the day a second path-bearing field is added to the row, whereas a field that is not
+on the allowlist is never exported no matter what it is called. `ts` is off the list too, because a
+per-edit timestamp as an attribute would make every point unique and turn a metric into an
+edit-by-edit activity trace.
+
+**Credentials in the URL are never printed.** A collector is often addressed as
+`https://user:token@host/v1/metrics` or with an api-key in the query string. The URL is POSTed to
+verbatim, but every message this script prints -- including its failures -- shows userinfo and
+query redacted. A value that failed to parse is not echoed at all, because nothing can promise
+what it was.
+
+**Nothing here is a `userConfig` knob.** This variable is on the admin environment surface, so it
+is deployable by GPO or Intune to the fleet reader it is for, and it adds nothing to the frozen
+1.x contract.
+
+---
+
 ## The config panel and this reference
 
 Claude Code's `/plugin` "Configure options" panel renders the selected knob's **entire**
