@@ -18,6 +18,30 @@ BeforeAll {
     $script:ScriptsDir = Join-Path $script:RepoRoot 'scripts'
     . (Join-Path $script:ScriptsDir 'doctor.ps1')
 
+    function Test-ProvenExitCarriesSwitch {
+        # Does this -RequireProven exit code match what THIS SAME RUN's summary demands?
+        #
+        # ONE predicate, used by the live assertion and by its RED control, so the control
+        # cannot drift from the thing it controls (Hub Rule 18). It takes a summary and an exit
+        # code and nothing else -- deliberately: the whole point of the 000290 Phase 2(e) repair
+        # is that judging -RequireProven needs NO reference to a second probe, so a signature
+        # that could not accept one is the repair expressed as a type.
+        #
+        # The contract it encodes, which is doctor.ps1's own:
+        #   any FAIL      -> 1   (a failure outranks everything)
+        #   else UNKNOWN  -> 2   (the proven-only code; a DEFAULT run can never produce it,
+        #                         which is exactly why this is the switch's fingerprint)
+        #   else          -> 0
+        param(
+            [Parameter(Mandatory = $true)] $Summary,
+            [Parameter(Mandatory = $true)][int] $ProvenExit
+        )
+        $fail = [int]$Summary.fail
+        $unknown = [int]$Summary.unknown
+        $expected = if ($fail -gt 0) { 1 } elseif ($unknown -gt 0) { 2 } else { 0 }
+        return ($ProvenExit -eq $expected)
+    }
+
     function New-Fx {
         # Build a result set from a status list, through the SHIPPED New-DoctorResult seam --
         # so a fixture can never carry a status the doctor itself could not produce.
@@ -286,16 +310,71 @@ Describe 'doctor.ps1 -Json end to end on this host (dispatch 000279, leg A accep
     It 'the -RequireProven probe really carries proven semantics, not a second default run' {
         # The control for the coupling above: if -Json -RequireProven silently dropped the
         # switch, ProvenJson would be a second default run and every branch above would still
-        # pass while proving nothing. On a host with an UNKNOWN the two exits MUST differ; on
-        # a fully proven host they must both be 0, and that is stated rather than skipped.
+        # pass while proving nothing.
+        #
+        # THIS TEST USED TO MAKE THE SAME TWO-PROBE ASSUMPTION AS ITS GUARDED SIBLING, WITH NO
+        # GUARD (dispatch 000290, Phase 2(e)). It branched on the PROVEN run's summary while
+        # comparing the proven run's exit to the DEFAULT run's exit, so a host that moved
+        # between the two probes turned it red for a reason that is not a defect -- observed
+        # once locally under load by 000289, and on none of the six CI legs.
+        #
+        # COPYING THE SIBLING'S SKIP WAS REJECTED, because it would DISARM the control: this
+        # test exists to prove the switch was not dropped, and a blanket skip means it proves
+        # nothing under exactly the conditions that make it interesting.
+        #
+        # THE REPAIR REMOVES THE COUPLING INSTEAD OF TOLERATING IT. The proven-semantics signal
+        # lives entirely INSIDE the proven run: a DEFAULT run can never exit 2, so an exit of 2
+        # on a host with an unknown and no failure is itself proof the switch was carried, with
+        # no reference to the other probe at all. Judging the proven run's exit against the
+        # proven run's OWN summary is therefore STRONGER than the skip -- it holds under drift
+        # instead of standing down.
         $p = $script:ProvenJson | ConvertFrom-Json
         $p.schemaVersion | Should -Be 1
         @($p.checks).Count | Should -Be $p.summary.total
-        if ($p.summary.fail -eq 0 -and $p.summary.unknown -gt 0) {
-            $script:LiveProvenExit | Should -Not -Be $script:LiveJsonExit
-        } else {
-            $script:LiveProvenExit | Should -Be $script:LiveJsonExit
+
+        Test-ProvenExitCarriesSwitch -Summary $p.summary -ProvenExit $script:LiveProvenExit |
+            Should -BeTrue -Because 'the proven run must judge itself by its own summary'
+
+        # THE ONE CASE NOTHING CAN OBSERVE, STATED RATHER THAN SKIPPED. On a fully proven host
+        # (no fail, no unknown) a proven run and a default run both exit 0 and are
+        # indistinguishable by exit code. That is a property of the contract, not a gap in this
+        # test, and saying so is the honest form -- an assertion there would be theatre. The
+        # RED control below is what carries the proof on such a host.
+        if ($p.summary.fail -eq 0 -and $p.summary.unknown -eq 0) {
+            Write-Host ('  NOTE: this host is fully proven (0 fail, 0 unknown), so -RequireProven ' +
+                'is unobservable from exit codes here; the RED control carries the proof.')
         }
+    }
+
+    It 'RED CONTROL: a doctor that silently DROPPED -RequireProven is REPORTED, not waved through' {
+        # The mutant is the exact observable shape of a dropped switch: an envelope with a
+        # genuine unknown and no failure, paired with exit 0 -- which is what a DEFAULT run
+        # produces. A doctor honouring the switch must exit 2 there.
+        #
+        # RECORDED AS WHAT IT IS: not a prior implementation. This defect has never shipped, so
+        # what is under control is the ASSERTION rather than a past bug -- the question is
+        # whether this test would still notice if the switch went away, and that question lives
+        # at the predicate.
+        $dropped = [pscustomobject]@{ total = 2; pass = 1; fail = 0; unknown = 1 }
+        Test-ProvenExitCarriesSwitch -Summary $dropped -ProvenExit 0 |
+            Should -BeFalse -Because 'exit 0 over an UNKNOWN is precisely a dropped -RequireProven'
+
+        # NON-VACUITY: the same predicate must ACCEPT the honest pairing, so it is not simply
+        # always-false. Without this arm a predicate returning $false unconditionally would pass
+        # the assertion above.
+        Test-ProvenExitCarriesSwitch -Summary $dropped -ProvenExit 2 |
+            Should -BeTrue -Because 'exit 2 over an UNKNOWN is the switch working'
+
+        # Every remaining branch of the predicate, so none of it is unexercised.
+        $failing = [pscustomobject]@{ total = 1; pass = 0; fail = 1; unknown = 0 }
+        Test-ProvenExitCarriesSwitch -Summary $failing -ProvenExit 1 | Should -BeTrue
+        Test-ProvenExitCarriesSwitch -Summary $failing -ProvenExit 0 |
+            Should -BeFalse -Because 'a FAIL must raise the exit to 1 whatever else is true'
+        $clean = [pscustomobject]@{ total = 1; pass = 1; fail = 0; unknown = 0 }
+        Test-ProvenExitCarriesSwitch -Summary $clean -ProvenExit 0 |
+            Should -BeTrue -Because 'a fully proven host exits 0, and that is correct'
+        Test-ProvenExitCarriesSwitch -Summary $clean -ProvenExit 2 |
+            Should -BeFalse -Because 'there is nothing unproven here to raise the exit over'
     }
 }
 

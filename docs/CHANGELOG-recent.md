@@ -48,6 +48,28 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **A doctor test that could go red on host drift now judges `-RequireProven` by its own
+summary** (internal hardening; no shipped behaviour changes). `PowerShellLsp.DoctorJson.Tests.ps1`
+ran two live doctor probes and compared the *proven* run's exit code to the *default* run's, so a
+host that moved between them -- a daemon finishing warm-up, a pinned artifact arriving -- could
+turn the test red for a reason that was not a defect. Its sibling already carried a drift guard;
+this one made the same assumption with none.
+
+**Copying the sibling's skip was rejected**: that test exists to prove `-RequireProven` did not
+silently drop its switch, and a blanket skip means it proves nothing under exactly the conditions
+that make it interesting. The repair removes the coupling instead of tolerating it -- a *default*
+run can never exit `2`, so an exit of `2` on a host with an unknown and no failure is itself proof
+the switch was carried, with no reference to the other probe. Judging the proven run against its
+own summary holds under drift rather than standing down, which is strictly stronger than the skip.
+
+One predicate is shared by the live assertion and its RED control so the two cannot drift apart,
+and its signature accepts a summary and an exit code and nothing else -- the repair expressed as a
+type. The one genuinely unobservable case (a fully proven host, where both runs exit `0`) is
+**stated rather than skipped**. RED control: the observable shape of a dropped switch -- a genuine
+unknown, no failure, exit `0`. Mutating the predicate to always-true turns exactly that control red
+and nothing else; the live assertion passes under the mutant, which is precisely why the control
+exists.
+
 MINOR: **Fleet telemetry can now reach an OpenTelemetry collector, metadata only** (enterprise
 docket **P2-1**, review item 7, the timing half). `scripts/export-otel.ps1` renders the existing
 opt-in `enableStats` log (`logs/stats.jsonl`) as OTLP/HTTP JSON metrics and POSTs them to
