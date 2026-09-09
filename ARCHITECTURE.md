@@ -31,10 +31,12 @@ only outbound network is the one-time, pinned, hash-verified dependency download
 | `ensure-pssa.ps1` | Idempotent, pinned + SHA-256-verified vendor of PSScriptAnalyzer, prepended to the PSES child's `PSModulePath`. |
 | `pses-stdio.ps1` | The cold-start `-Stdio` launcher -- the destination a future native `.lsp.json` registration would target. |
 | `lib/lsp-common.ps1` | **Shared core.** Host detection, file-URI construction (uppercase drive letter), LSP framing, diagnostics ordering/dedupe/threshold/cap, and the status-banner functions (`Get-DiagnosticsStatusBanner`, `Resolve-AnalysisStatus`). Dot-sourced by the daemon, client, hooks, and tests. |
+| `lib/otel-common.ps1` | OTLP metric rendering over the stats log. Owns the export ALLOWLIST -- the only fields of a stats row that may leave the host. |
 | `lib/security-classifier.ps1` | Detect-and-explain-only classifier for managed-Windows security-control blocks (WDAC / AppLocker / ExecutionPolicy / CLM / ASR / SAC). Never bypasses a control. |
 | `doctor.ps1` | Report-only preflight self-check (prerequisites + bootstrap + warm-daemon liveness). |
 | `review-dogfood.ps1` | Offline annotator for the local dogfood capture log (fills each diagnostic's `verdict`). |
 | `show-stats.ps1` | Viewer for the opt-in `enableStats` timing log. |
+| `export-otel.ps1` | Renders that same timing log as OTLP metrics; POSTs only with `-Send` and only to `POWERSHELL_LSP_OTEL_ENDPOINT`. |
 | `bump-version.ps1` | Lockstep version stamp helper (`plugin.json` + `marketplace.json`). |
 
 ## The lifecycle: edit -> banner

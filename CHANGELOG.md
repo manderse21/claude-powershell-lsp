@@ -30,6 +30,47 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **Fleet telemetry can now reach an OpenTelemetry collector, metadata only** (enterprise
+docket **P2-1**, review item 7, the timing half). `scripts/export-otel.ps1` renders the existing
+opt-in `enableStats` log (`logs/stats.jsonl`) as OTLP/HTTP JSON metrics and POSTs them to
+`POWERSHELL_LSP_OTEL_ENDPOINT`. This is a **rendering of instruments that already exist**, not a
+new measurement layer: every number it publishes is one `scripts/show-stats.ps1` already prints
+from the same file, computed by the same nearest-rank percentile. Five metrics ship --
+`powershell_lsp.edits` (Sum, split by `ext`/`taken`/`cached`), `powershell_lsp.edit.duration`
+(Gauge, p50/p95 per stage), `powershell_lsp.diagnostics.records`,
+`powershell_lsp.diagnostics.corrections` and `powershell_lsp.edit.scope_trimmed`.
+
+**Nothing runs on the edit path.** The exporter is an out-of-band reader, the same shape
+`show-stats.ps1` is, so an export can never add latency to a diagnostic or a failure mode to an
+edit. **Sending is opt-in twice** -- the variable must be set *and* `-Send` passed -- so
+`pwsh -File scripts/export-otel.ps1` prints the exact payload and transmits nothing, which is how
+an administrator sees what would leave before any of it does.
+
+**What cannot leave is the point.** A stats row carries the **absolute path** of the edited file,
+which is why `enableStats` is `false` in every profile. Attributes are built from an **allowlist**
+(`ext`, `taken`, `cached`) and never by copying the row, so no path -- and no path-bearing field
+added to the row later -- can reach the wire without being put on that list deliberately. A
+denylist over `path` would have passed today's test and leaked the next field; the test suite
+asserts the class, not the field, by putting an unknown `settingsPath` on a row and requiring it
+absent. `ts` is off the list too: a per-edit timestamp as an attribute would turn a metric into an
+edit-by-edit activity trace. Resource attributes are `service.name` and `service.version` only --
+no hostname, no `service.instance.id`.
+
+**An unrecognized endpoint turns export OFF**, the opposite of `POWERSHELL_LSP_CAPTURE_MODE`,
+which resolves a typo to `full`. That variable may not gate the local capture channel; this one
+guards a network egress, so a value that does not parse as an absolute `http`/`https` URL means
+*do not send*. Credentials are never printed: userinfo and query string are redacted from every
+message, including failures, and a value that failed to parse is not echoed at all.
+
+`POWERSHELL_LSP_OTEL_ENDPOINT` lands on the **admin environment surface**, deployable by GPO or
+Intune, so this MINOR adds **no** `userConfig` knob, no diagnostics status token and no
+`CONTRACT.md` line -- zero 1.x freeze exposure. `scope_trimmed` is summed over **scoped rows
+only**, matching `show-stats.ps1`: an unscoped row's `scopeTotal`/`scopeSurfaced` differ whenever
+`perFileCap` truncated, and counting those would report cap truncation as edit-scope noise
+reduction. **Still unbuilt and named as the remainder:** the capture-log `hash` half of P2-1
+(diagnostic-shape cardinality), and a `doctor -Json` envelope field reporting the resolved
+endpoint the way `captureMode` reports its mode.
+
 MINOR: **An organization can now state a requirement, not only a suppression** (enterprise docket
 P1-5, review item 2, the include-side payload half -- ruling **R9**). The `orgPolicy` file gains an
 optional `SeverityOverrides` table beside its `ExcludeRules`, mapping rule code to severity
