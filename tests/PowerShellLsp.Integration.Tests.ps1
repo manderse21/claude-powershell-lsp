@@ -3649,7 +3649,7 @@ Describe 'Integration: suite-final daemon-leak backstop (dispatch 000078)' -Skip
     }
 }
 
-Describe 'P1-2 DAEMON HALF -- the real round trip, one op of EACH KIND (dispatch 000289)' {
+Describe 'P1-2 DAEMON HALF -- the real round trip, one op of EACH KIND (dispatch 000289)' -Skip:$script:SkipIntegration {
     # WHAT THIS COVERS AND WHY IT DID NOT EXIST. Dispatch 000288 built the CLIENT half of the
     # query round trip -- scripts/lsp-query.ps1 driven against a canned pipe server -- after
     # discovering that the surface had never worked at all. The DAEMON half,
@@ -3815,7 +3815,7 @@ Describe 'P1-2 DAEMON HALF -- the real round trip, one op of EACH KIND (dispatch
     }
 }
 
-Describe 'P1-2 DAEMON HALF -- what deleting the didOpen/didChange block actually does (dispatch 000289)' {
+Describe 'P1-2 DAEMON HALF -- what deleting the didOpen/didChange block actually does (dispatch 000289)' -Skip:$script:SkipIntegration {
     # THIS WAS CHARTERED AS A RED CONTROL AND IT IS NOT ONE. The 000289 charter predicted that
     # "a RED control that deletes the didOpen/didChange block must fail the two document-scoped
     # kinds and NOT the query kind". Built and MEASURED against a real PSES, that prediction is
