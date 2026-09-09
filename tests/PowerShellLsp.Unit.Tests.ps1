@@ -5568,6 +5568,260 @@ Describe 'Org policy -- integrity gate (dispatch 000259, threat T4.1)' {
     }
 }
 
+
+# --- Policy v2: the INCLUDE-SIDE payload (dispatch 000289, ruling R9) -------
+# The v1 payload is subtract-only: an org can take a rule away, it cannot ask for one. The
+# enterprise review's item 2 argued that a subtract-only payload cannot express an org
+# REQUIREMENT, and R9 ruled the include-side payload is the half to build (signing waits on a
+# trust root THREAT-MODEL T4.1 says the mechanism does not have). SeverityOverrides is that
+# half: an imposition the org makes and no local setting can undo.
+#
+# Four families, mirroring the v1 layer's own test shape:
+#   (a) off / v1-file byte-identical -- empty overrides make the applier the identity function
+#   (b) the vocabulary is DERIVED and partitioned, not restated
+#   (c) precedence -- the org's override survives every local include, and EXCLUDE still wins
+#   (d) malformed policy degrades rather than enforcing something unrankable
+
+Describe 'Org policy v2 -- the severity vocabulary is one derived, non-empty partition (dispatch 000289)' {
+    It 'every name Get-SeverityNames returns ranks below the junk default, and a non-member does not' {
+        # Hub Rule 18 in test form. Get-SeverityNames and Get-SeverityRank are two statements of
+        # one vocabulary; this is what stops them drifting apart silently. The partition is
+        # asserted NON-EMPTY on both arms -- a member set that collapsed to zero would make the
+        # first loop vacuous while still passing.
+        $names = @(Get-SeverityNames)
+        $names.Count | Should -BeGreaterThan 0
+        $junk = Get-SeverityRank 'ThisIsNotASeverity'
+        foreach ($n in $names) { (Get-SeverityRank $n) | Should -BeLessThan $junk }
+        @($names | Where-Object { (Get-SeverityRank $_) -ge $junk }).Count | Should -Be 0
+        # And the other arm is non-empty too: at least one string is NOT in the vocabulary.
+        (Resolve-SeverityName 'ThisIsNotASeverity') | Should -BeExactly ''
+    }
+    It 'canonicalises case rather than normalising it (the ToLowerInvariant lesson, 000288)' {
+        (Resolve-SeverityName 'error') | Should -BeExactly 'Error'
+        (Resolve-SeverityName 'WARNING') | Should -BeExactly 'Warning'
+        (Resolve-SeverityName '  information  ') | Should -BeExactly 'Information'
+        (Resolve-SeverityName 'hInT') | Should -BeExactly 'Hint'
+        (Resolve-SeverityName '') | Should -BeExactly ''
+        (Resolve-SeverityName 'Critical') | Should -BeExactly ''
+    }
+}
+
+Describe 'Org policy v2 -- off, and a v1 policy file, are byte-identical (dispatch 000289)' {
+    BeforeAll {
+        # Every record shape the client's stream mixes, exactly as the v1 block builds it, plus
+        # a record whose severity DIFFERS from the override target so "unchanged" is a real
+        # assertion and not a coincidence of equal values.
+        $script:V2Records = @(
+            [pscustomobject]@{ severity = 'Warning'; line = 3; col = 5; source = 'PSScriptAnalyzer'; code = 'PSAvoidUsingWriteHost'; message = 'wh' }
+            [pscustomobject]@{ severity = 'Hint'; line = 1; col = 1; source = 'powershell-lsp'; ruleId = 'NonAsciiChar'; code = 'NonAsciiChar'; message = 'dash' }
+            (ConvertTo-DiagRecord ([pscustomobject]@{ range = [pscustomobject]@{ start = [pscustomobject]@{ line = 0; character = 0 }; end = [pscustomobject]@{ line = 0; character = 4 } }; severity = 2; source = 'PSScriptAnalyzer'; code = 'PSAvoidUsingCmdletAliases'; message = 'alias' }))
+            [pscustomobject]@{ severity = 'Information'; line = 9; col = 2; source = ''; message = 'unexpected token' }
+        )
+        $script:V2Dir = Join-Path ([System.IO.Path]::GetTempPath()) ('pslsp-p15-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:V2Dir -Force | Out-Null
+        $script:V1File = Join-Path $script:V2Dir 'v1.psd1'
+        Set-Content -LiteralPath $script:V1File -Encoding ascii -Value "@{ ExcludeRules = @('PSUseApprovedVerbs') }"
+    }
+    AfterAll {
+        if ($script:V2Dir -and (Test-Path -LiteralPath $script:V2Dir)) {
+            Remove-Item -LiteralPath $script:V2Dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    It 'the knob unset yields an EMPTY policy on BOTH halves' {
+        $p = Import-OrgPolicy -Path ''
+        @($p.ExcludeRules).Count | Should -Be 0
+        $p.SeverityOverrides.Count | Should -Be 0
+        $q = Import-OrgPolicy -Path '   '
+        @($q.ExcludeRules).Count | Should -Be 0
+        $q.SeverityOverrides.Count | Should -Be 0
+    }
+    It 'a v1 policy file -- no SeverityOverrides key -- still reads its excludes and adds no overrides' {
+        # This is the compatibility claim that makes v2 free for every existing site. The
+        # exclude arm is asserted NON-EMPTY so the override arm being empty is a discrimination
+        # and not the read having failed altogether.
+        $p = Import-OrgPolicy -Path $script:V1File
+        @($p.ExcludeRules).Count | Should -Be 1
+        @($p.ExcludeRules)[0] | Should -BeExactly 'PSUseApprovedVerbs'
+        $p.SeverityOverrides.Count | Should -Be 0
+    }
+    It 'the v1 reader is a projection of the v2 one and its contract is unchanged' {
+        $w = ''
+        $codes = @(Import-OrgPolicyExcludes -Path $script:V1File -WarningOut ([ref]$w))
+        $codes.Count | Should -Be 1
+        $codes[0] | Should -BeExactly 'PSUseApprovedVerbs'
+        $w | Should -BeExactly ''
+        @(Import-OrgPolicyExcludes -Path '').Count | Should -Be 0
+    }
+    It 'is the identity function over every record shape when no severities are overridden' {
+        $before = ($script:V2Records | ConvertTo-Json -Depth 8 -Compress)
+        $after = (@(Set-OrgPolicySeverity -Records $script:V2Records -OrgSeverity @{}) | ConvertTo-Json -Depth 8 -Compress)
+        $after | Should -BeExactly $before
+    }
+    It 'is the identity function when every override names an UNRANKABLE severity' {
+        # A policy whose overrides are all malformed must behave exactly like no policy, not
+        # like a policy that enforces nothing while looking enforced.
+        $before = ($script:V2Records | ConvertTo-Json -Depth 8 -Compress)
+        $after = (@(Set-OrgPolicySeverity -Records $script:V2Records -OrgSeverity @{ 'PSAvoidUsingWriteHost' = 'Critical' }) |
+            ConvertTo-Json -Depth 8 -Compress)
+        $after | Should -BeExactly $before
+    }
+}
+
+Describe 'Org policy v2 -- the override is an imposition no local layer can undo (dispatch 000289)' {
+    BeforeAll {
+        # The pipeline SHAPE the client really runs, composed from the SHIPPED functions in the
+        # SHIPPED order: the daemon's local filter, then the org drop, then the org override.
+        # Composing them -- rather than asserting on a stand-in -- is what makes this a
+        # precedence proof rather than a tautology.
+        function Invoke-OrgV2Pipeline {
+            param([object[]]$Records, [string[]]$LocalInclude = @(), [string[]]$LocalExclude = @(),
+                  [string[]]$OrgExclude = @(), [hashtable]$OrgSeverity = @{}, [string]$Threshold = 'Hint')
+            $local = @(Select-FilteredDiagnostics -Records $Records -Threshold $Threshold -Include $LocalInclude -Exclude $LocalExclude)
+            $dropped = @(Select-OrgPolicyFiltered -Records $local -OrgExclude $OrgExclude)
+            return @(Set-OrgPolicySeverity -Records $dropped -OrgSeverity $OrgSeverity)
+        }
+        $script:V2Rec = @(
+            [pscustomobject]@{ severity = 'Hint'; line = 1; col = 1; source = 'PSScriptAnalyzer'; code = 'PSAvoidUsingWriteHost'; message = 'a' }
+            [pscustomobject]@{ severity = 'Warning'; line = 2; col = 1; source = 'PSScriptAnalyzer'; code = 'PSAvoidUsingCmdletAliases'; message = 'b' }
+            [pscustomobject]@{ severity = 'Warning'; line = 3; col = 1; source = 'PSScriptAnalyzer'; code = 'PSUseApprovedVerbs'; message = 'c' }
+        )
+    }
+    It 'the org RAISES a severity the local layer never asked to raise' {
+        $out = @(Invoke-OrgV2Pipeline -Records $script:V2Rec -OrgSeverity @{ 'PSAvoidUsingWriteHost' = 'Error' })
+        $out.Count | Should -Be 3
+        @($out | Where-Object { $_.code -eq 'PSAvoidUsingWriteHost' })[0].severity | Should -BeExactly 'Error'
+        # ...and nothing else moved. Both directions.
+        @($out | Where-Object { $_.code -eq 'PSAvoidUsingCmdletAliases' })[0].severity | Should -BeExactly 'Warning'
+        @($out | Where-Object { $_.code -eq 'PSUseApprovedVerbs' })[0].severity | Should -BeExactly 'Warning'
+    }
+    It 'an explicit local ruleInclude of the same rule does NOT put the severity back' {
+        # THE LOAD-BEARING CASE, and the whole point of the slice. A repo says "report ONLY
+        # PSAvoidUsingWriteHost" -- an include, the path where repo-local wins under v1. The org
+        # says it is an Error. The record survives the include AND carries the org's severity.
+        $out = @(Invoke-OrgV2Pipeline -Records $script:V2Rec -LocalInclude @('PSAvoidUsingWriteHost') `
+            -OrgSeverity @{ 'PSAvoidUsingWriteHost' = 'Error' })
+        $out.Count | Should -Be 1
+        $out[0].code | Should -BeExactly 'PSAvoidUsingWriteHost'
+        $out[0].severity | Should -BeExactly 'Error'
+    }
+    It 'org EXCLUDE still wins over an org override of the same rule -- exclusion is the stronger verb' {
+        # The ordering assertion. Run the override BEFORE the drop and this stays green while
+        # meaning nothing; run it after, as shipped, and a rule that is both excluded and
+        # overridden is simply gone.
+        $out = @(Invoke-OrgV2Pipeline -Records $script:V2Rec -OrgExclude @('PSAvoidUsingWriteHost') `
+            -OrgSeverity @{ 'PSAvoidUsingWriteHost' = 'Error' })
+        @($out | Where-Object { $_.code -eq 'PSAvoidUsingWriteHost' }).Count | Should -Be 0
+        $out.Count | Should -Be 2
+    }
+    It 'matches a rule code case-insensitively, as PSScriptAnalyzer own matching does' {
+        $out = @(Set-OrgPolicySeverity -Records $script:V2Rec -OrgSeverity @{ 'psavoidusingcmdletaliases' = 'Error' })
+        @($out | Where-Object { $_.code -eq 'PSAvoidUsingCmdletAliases' })[0].severity | Should -BeExactly 'Error'
+    }
+    It 'never re-stamps a record that carries no rule code (a parse error is not a rule)' {
+        # Non-vacuous by construction: the record's severity DIFFERS from the override target,
+        # so "unchanged" cannot be satisfied by accident.
+        $noCode = @([pscustomobject]@{ severity = 'Warning'; line = 9; col = 2; source = ''; message = 'unexpected token' })
+        $out = @(Set-OrgPolicySeverity -Records $noCode -OrgSeverity @{ 'PSAvoidUsingWriteHost' = 'Error' })
+        $out[0].severity | Should -BeExactly 'Warning'
+    }
+    It 'does not mutate the caller records -- the capture and the SARIF scan share this stream' {
+        $src = @([pscustomobject]@{ severity = 'Warning'; line = 1; col = 1; source = 'PSScriptAnalyzer'; code = 'PSAvoidUsingWriteHost'; message = 'a' })
+        $null = @(Set-OrgPolicySeverity -Records $src -OrgSeverity @{ 'PSAvoidUsingWriteHost' = 'Error' })
+        $src[0].severity | Should -BeExactly 'Warning'
+    }
+    It 're-stamps severityNum in lockstep, so the name and the number can never disagree' {
+        # ConvertTo-DiagRecord carries both. Moving one and leaving the other is a guard
+        # measuring a proxy of itself -- a consumer reading the number would see the pre-override
+        # level while the name claimed otherwise.
+        $rec = @(ConvertTo-DiagRecord ([pscustomobject]@{ range = [pscustomobject]@{ start = [pscustomobject]@{ line = 0; character = 0 }; end = [pscustomobject]@{ line = 0; character = 4 } }; severity = 2; source = 'PSScriptAnalyzer'; code = 'PSAvoidUsingCmdletAliases'; message = 'alias' }))
+        $rec[0].severity | Should -BeExactly 'Warning'
+        $rec[0].severityNum | Should -Be 2
+        $out = @(Set-OrgPolicySeverity -Records $rec -OrgSeverity @{ 'PSAvoidUsingCmdletAliases' = 'Error' })
+        $out[0].severity | Should -BeExactly 'Error'
+        $out[0].severityNum | Should -Be (Get-SeverityRank 'Error')
+    }
+    It 'the BOUNDARY is real and recorded: an override cannot resurrect a threshold-dropped record' {
+        # Asserted rather than glossed. At a RAISED local threshold the record never reaches the
+        # client, so the org's override has nothing to re-stamp. This test exists so the
+        # limitation is a measured property of the build and not a paragraph in a document that
+        # can quietly stop being true.
+        $out = @(Invoke-OrgV2Pipeline -Records $script:V2Rec -Threshold 'Warning' `
+            -OrgSeverity @{ 'PSAvoidUsingWriteHost' = 'Error' })
+        @($out | Where-Object { $_.code -eq 'PSAvoidUsingWriteHost' }).Count | Should -Be 0
+        # ...and at the SHIPPED default threshold the very same override IS effective. Both
+        # directions, so the assertion above is a boundary and not a broken feature.
+        $atDefault = @(Invoke-OrgV2Pipeline -Records $script:V2Rec -Threshold 'Hint' `
+            -OrgSeverity @{ 'PSAvoidUsingWriteHost' = 'Error' })
+        @($atDefault | Where-Object { $_.code -eq 'PSAvoidUsingWriteHost' })[0].severity | Should -BeExactly 'Error'
+    }
+}
+
+Describe 'Org policy v2 -- RED control: the PRIOR IMPLEMENTATION was not severity-aware (dispatch 000289)' {
+    # The control is the prior implementation in the only sense that matters: the org layer as
+    # it shipped before this slice, whose own comment says it is "deliberately NOT severity- or
+    # include-aware". It is reconstructed by UNDOING the fix on the SHIPPED SOURCE -- never by
+    # reading history with `git show <sha>:<path>`, which exits 128 under CI's shallow checkout
+    # and fails the control for a reason unrelated to the defect it guards (dispatch 000288).
+    BeforeAll {
+        $script:RcSrc = Join-Path $script:PluginRoot 'scripts/lib/lsp-common.ps1'
+        $script:RcText = Get-Content -LiteralPath $script:RcSrc -Raw
+        $script:RcAnchor = "    if (`$null -eq `$OrgSeverity -or `$OrgSeverity.Count -eq 0) { return @(`$Records) }"
+        $script:RcMutantText = $script:RcText.Replace($script:RcAnchor, "    if (`$true) { return @(`$Records) }")
+        $script:RcDir = Join-Path ([System.IO.Path]::GetTempPath()) ('pslsp-p15red-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:RcDir -Force | Out-Null
+        $script:RcFile = Join-Path $script:RcDir 'lsp-common-prior.ps1'
+        Set-Content -LiteralPath $script:RcFile -Value $script:RcMutantText -Encoding utf8 -NoNewline
+    }
+    AfterAll {
+        if ($script:RcDir -and (Test-Path -LiteralPath $script:RcDir)) {
+            Remove-Item -LiteralPath $script:RcDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    It 'the mutation anchor occurs EXACTLY ONCE in the shipped source' {
+        # Without this the substitution could silently match nothing (or match twice) and every
+        # conclusion drawn from the mutant below would be drawn from an unmutated file.
+        ([regex]::Matches($script:RcText, [regex]::Escape($script:RcAnchor))).Count | Should -Be 1
+    }
+    It 'the mutant LANDED -- the text really changed, and it still parses' {
+        $script:RcMutantText | Should -Not -BeExactly $script:RcText
+        $script:RcMutantText.Contains($script:RcAnchor) | Should -BeFalse
+        $errs = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseFile($script:RcFile, [ref]$null, [ref]$errs)
+        @($errs).Count | Should -Be 0
+    }
+    It 'under the PRIOR implementation the org override does NOTHING, while the org DROP still works' {
+        # Both arms in one child process: the severity assertion goes RED on the prior
+        # implementation (which is what makes this a control) and the exclude assertion stays
+        # GREEN (which is what proves the mutant is narrow and has not simply broken the file).
+        $probe = Join-Path $script:RcDir 'probe.ps1'
+        $lines = @(
+            ". '$($script:RcFile)'"
+            '$r = @([pscustomobject]@{ severity = ''Warning''; line = 1; col = 1; source = ''PSScriptAnalyzer''; code = ''PSAvoidUsingWriteHost''; message = ''a'' })'
+            '$sev = @(Set-OrgPolicySeverity -Records $r -OrgSeverity @{ ''PSAvoidUsingWriteHost'' = ''Error'' })'
+            '$drop = @(Select-OrgPolicyFiltered -Records $r -OrgExclude @(''PSAvoidUsingWriteHost''))'
+            'Write-Output ("SEV=" + $sev[0].severity + " DROPPED=" + $drop.Count)'
+        )
+        Set-Content -LiteralPath $probe -Value ($lines -join [Environment]::NewLine) -Encoding utf8
+        $out = Join-Path $script:RcDir 'out.txt'
+        $err = Join-Path $script:RcDir 'err.txt'
+        # Redirect to FILES, never `2>&1` into the pipeline: Windows PowerShell 5.1 turns child
+        # stderr into ErrorRecords and Pester runs an It with ErrorActionPreference Stop, so the
+        # first stderr line would THROW before any assertion (dispatch 000287).
+        $exe = (Get-Process -Id $PID).Path
+        $p = Start-Process -FilePath $exe -ArgumentList @('-NoProfile', '-File', $probe) `
+            -NoNewWindow -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+        $p.ExitCode | Should -Be 0
+        $text = (Get-Content -LiteralPath $out -Raw)
+        # THE CONTROL: the prior implementation leaves the severity at Warning. The shipped one
+        # returns Error -- asserted in the precedence block above -- so this assertion is
+        # exactly the one that goes RED when the fix is removed.
+        $text | Should -Match 'SEV=Warning'
+        $text | Should -Not -Match 'SEV=Error'
+        # ...and the drop still works under the mutant, so the control is narrow.
+        $text | Should -Match 'DROPPED=0'
+    }
+}
+
 Describe 'Test-DaemonPipePresent -- the busy-vs-unreachable discriminator (dispatch 000225)' {
     # The whole 000225 fix rests on one claim: a pipe that EXISTS is distinguishable from one that
     # does not, cheaply and read-only, from inside the client process. These assert that claim

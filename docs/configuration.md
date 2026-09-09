@@ -23,7 +23,7 @@ The knobs, in manifest order:
 - [`ps_host`](#ps_host) -- PSES host executable
 - [`ruleset`](#ruleset) -- live diagnostics ruleset tier
 - [`settingsPath`](#settingspath) -- absolute PSScriptAnalyzerSettings.psd1 override
-- [`orgPolicy`](#orgpolicy) -- org-wide ExcludeRules policy path
+- [`orgPolicy`](#orgpolicy) -- org-wide policy path (`ExcludeRules` + `SeverityOverrides`)
 - [`severityThreshold`](#severitythreshold) -- least-severe level surfaced
 - [`ruleInclude`](#ruleinclude) -- exclusive rule-code allowlist
 - [`ruleExclude`](#ruleexclude) -- rule-code suppression list
@@ -196,8 +196,8 @@ value uses auto-discovery.
 ## orgPolicy
 
 **What it does.** Points the plugin at a centrally-managed `PSScriptAnalyzerSettings.psd1` -- an
-organization's own settings layer -- and **enforces its `ExcludeRules`** over whatever the local
-project configures.
+organization's own settings layer -- and **enforces its `ExcludeRules` and `SeverityOverrides`**
+over whatever the local project configures.
 
 **Type:** string (absolute path). **Default:** empty (off).
 
@@ -206,7 +206,7 @@ the repo-local file:
 
 | Layer | Source | Effect |
 |-------|--------|--------|
-| **org policy** | `orgPolicy` (this knob) | its `ExcludeRules` are **enforced** and cannot be re-enabled locally |
+| **org policy** | `orgPolicy` (this knob) | its `ExcludeRules` and `SeverityOverrides` are **enforced** and cannot be undone locally |
 | explicit override | `settingsPath` | wins over discovery for everything below |
 | repo-local | nearest `PSScriptAnalyzerSettings.psd1`, walked up from the edited file | wins over the ruleset and the default |
 | plugin base ruleset | shipped `rulesets/base.psd1` when `ruleset` = `base` | wins over the default only |
@@ -218,10 +218,58 @@ your organization excludes therefore cannot be brought back by a repo-local
 `PSScriptAnalyzerSettings.psd1`, by `ruleInclude`, or by any other local setting -- there is no
 code path that re-adds a dropped finding.
 
-**The include path: repo-local wins.** The policy's own `IncludeRules` are **advisory** and are not
-read. An organization can take a rule **away**; it cannot force one **on**. That asymmetry is the
-design, not an omission: central config is useful for suppressing noise fleet-wide, whereas forcing
-extra rules onto a project that has deliberately excluded them produces findings nobody acts on.
+**The include path: repo-local still wins for `IncludeRules`.** The policy's own `IncludeRules` are
+**advisory** and are not read. Forcing extra rules onto a project that has deliberately excluded
+them produces findings nobody acts on, so the *membership* of the rule set stays a local decision.
+
+### `SeverityOverrides` -- how an organization states a requirement
+
+`ExcludeRules` alone is **subtract-only**: it lets an organization take a rule away, and gives it
+no way to say *"this one matters here."* `SeverityOverrides` is that missing half. It is an
+optional table beside `ExcludeRules` in the same policy file, mapping **rule code** to
+**severity**:
+
+```powershell
+@{
+    ExcludeRules = @('PSAvoidUsingPositionalParameters')
+
+    SeverityOverrides = @{
+        'PSAvoidUsingWriteHost'     = 'Error'
+        'PSAvoidUsingCmdletAliases' = 'Error'
+        'PSUseApprovedVerbs'        = 'Information'
+    }
+}
+```
+
+An override is applied at the **same final position as the exclude drop, immediately after it**, so
+it carries the same guarantee: **no repo-local settings file and no `ruleInclude` knob can put the
+severity back.** A project that narrows its surface to a single rule still sees that rule at the
+severity the organization set.
+
+The severity names are `Error`, `Warning`, `Information`, `Hint`. Matching on rule code is
+case-insensitive, as PSScriptAnalyzer's own matching is.
+
+**Exclusion is the stronger verb.** A rule that appears in *both* `ExcludeRules` and
+`SeverityOverrides` is **dropped**, not re-stamped. The drop runs first, and "an org exclude is
+final" stays true without exception.
+
+**Malformed entries are skipped, never guessed at.** A value that is not one of the four severity
+names, a non-string value, a non-string key, or a `SeverityOverrides` that is not a table at all --
+each is ignored, exactly as a non-string entry in `ExcludeRules` is ignored. An override naming a
+severity nothing can rank would look like enforcement while enforcing nothing.
+
+**The boundary, stated plainly.** An override **re-stamps a finding that is already on the
+surface**; it cannot resurrect one that your local severity threshold dropped before the client
+ever saw it. At the shipped default threshold (`Hint` -- the least severe level) nothing is
+threshold-dropped and overrides are fully effective. A site that **raises** `severityThreshold`
+can still hide a rule the organization wanted raised. Closing that gap means moving the org layer
+into the analyzer's own filter rather than applying it to the results, which is a larger change
+with a real compatibility cost; it is deliberately not done here, and this limitation is asserted
+by a test rather than only described.
+
+**A v1 policy file is unaffected.** A policy with no `SeverityOverrides` key behaves byte-for-byte
+as it did before this feature existed, and adds no new knob: the key lives inside the policy file
+the `orgPolicy` path already points at.
 
 **It fails open, but never silently.** Every failure -- a missing file, an unreadable file, an
 unparseable one, or a **relative** path (only absolute paths are honored, for the same reason as

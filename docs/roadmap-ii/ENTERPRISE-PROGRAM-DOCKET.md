@@ -380,7 +380,7 @@ The review proposes its own phasing. Scored against what this project's disk act
 | P0 Provable health | `doctor -Json`, `-RequireProven`, `status --json`, `selftest --json` | **Kept at P0 as P0-1**, folded from `DOCTOR-SURFACE-DOCKET.md` |
 | P0 Release governance | SLO release gates + exception mechanism | **DEMOTED to P1-1, and re-shaped.** The T3 survey shows a gate placed today would gate on a statistic the N=15 sample cannot support. Quiet-host re-runs come first |
 | P0 Compatibility | Claude Code Current/N-1 certification | **DEMOTED to P1-3.** It is a CI-matrix build, not a trust closure, and `SUPPORT-POLICY.md` already tracks the failure mode that has actually bitten |
-| P1 Policy v2 | Signed authoritative enterprise policy | **Kept at P1 as P1-5.** Ruling-first |
+| P1 Policy v2 | Signed authoritative enterprise policy | **Kept at P1 as P1-5.** Ruling-first. **Payload half BUILT (000289): `SeverityOverrides`. Signing still waits on a trust root** |
 | P1 Broker API | Versioned protocol + capabilities | **Kept at P1 as P1-4.** Should lead P1-2, not follow it |
 | P1 Semantic agent tools | definition / references / hover / symbol / completion / code-action | **Kept at P1 as P1-2** |
 | P1 OTel | Privacy-safe fleet health/metrics | **DEMOTED to P2-1.** Cheaper than the review thinks and less urgent than everything at P0 |
@@ -655,8 +655,8 @@ scope by Mike Andersen on 2026-09-08 (R-H / R14 below). P1-3 is COMPLETE at regi
 - **This must lead P1-2**, and that is the ordering finding the review does not draw. One dispatch,
   P1-4 first.
 
-**P1-5 -- Enterprise Policy v2 (review item 2; ruling R-B).** Declared with its shape and its cost
-driver, not costed to a number, because the mechanism depends on R-B:
+**P1-5 -- Enterprise Policy v2 (review item 2; ruling R-B). PAYLOAD HALF BUILT by dispatch 000289;
+the signing half remains unbuilt and still waits on a trust root.**
 
 - The payload change (include-side `requiredRules`, `severityOverrides`, `prohibitedSuppressions`) is
   the part the review is right about, and T4.2 never addressed it.
@@ -664,6 +664,50 @@ driver, not costed to a number, because the mechanism depends on R-B:
   T4.1's own words. That is the cost driver, and it is not small.
 - Freeze exposure: the policy *file schema* is not a Tier 1 surface, so a v2 schema is free; a new
   `userConfig` key would not be, and the `orgPolicy` key already exists and can carry a v2 file.
+
+> **BUILT (000289): `SeverityOverrides`, and the reason it is the member of the trio that shipped.**
+> The org policy file now carries an optional `SeverityOverrides` table beside `ExcludeRules`,
+> applied at the SAME final position as the exclude drop and immediately after it -- so it inherits
+> the drop's guarantee that no repo-local settings file and no `ruleInclude` knob can undo it. That
+> is the review's argument answered directly: the payload can now express an org REQUIREMENT and
+> not only a suppression. Exclusion stays the stronger verb -- a rule in both lists is dropped, not
+> re-stamped -- which is the only ordering that keeps "an org exclude is final" true.
+>
+> **Zero new surface, and the reason it is genuinely zero.** No `userConfig` key, no new file, no
+> CONTRACT line: the key lives inside the policy the existing `orgPolicy` path already points at.
+> It is read in the SAME single parse behind the SAME integrity gate as `ExcludeRules` and degrades
+> through the SAME one warning -- `Import-OrgPolicy` is now the one reader and
+> `Import-OrgPolicyExcludes` a projection of it (Hub Rule 18), so the two halves of the payload
+> cannot drift apart on path rules, integrity, or degrade vocabulary. A v1 policy file carries no
+> `SeverityOverrides` key, leaves the override map empty, and makes the applier the identity
+> function; that byte-identity is asserted, not assumed.
+>
+> **RED control: the prior implementation.** `Select-OrgPolicyFiltered`'s own comment says it is
+> "deliberately NOT severity- or include-aware", and that is precisely the prior implementation.
+> The control reconstructs it by UNDOING the fix on the shipped source -- never by `git show
+> <sha>:<path>`, which exits 128 under CI's shallow checkout and would fail for a reason unrelated
+> to the defect it guards (dispatch 000288) -- asserts the substitution anchor occurs EXACTLY ONCE,
+> proves the mutant landed and still parses, and then shows in a child process that the override
+> does nothing under it while the org DROP still works. That second arm is what keeps the control
+> narrow: a mutant that broke the file would fail both.
+>
+> **THE BOUNDARY, NAMED AND TESTED RATHER THAN GLOSSED.** An override re-stamps a finding that is
+> already on the surface; it cannot resurrect one the daemon's own `severityThreshold` dropped
+> before the client saw it. At the shipped default threshold (`Hint`, the least severe level)
+> nothing is threshold-dropped and overrides are fully effective, and BOTH arms are asserted -- the
+> raised-threshold miss and the default-threshold hit -- so the limitation is a measured property
+> of the build rather than a paragraph that can quietly stop being true. Closing it means moving
+> the org layer into the daemon's own filter instead of applying it to results, which is a
+> different slice with a real compatibility cost and is NOT proposed here.
+>
+> **`requiredRules` and `prohibitedSuppressions` are NOT built, and the reason is structural, not
+> budgetary.** The org layer is a client-side pass over findings that already exist. A rule the
+> analyzer never ran produces no record, and no post-filter can conjure one; forcing a rule ON
+> means reaching the settings the daemon hands to PSES, which is the seam
+> `Resolve-PssaSettingsPath` deliberately does not read itself. Both are therefore the same slice
+> as closing the threshold boundary above, and they belong to it. `severityOverrides` was the
+> member of the trio that the existing seam can enforce honestly, which is why it is the one that
+> shipped.
 
 ### 4.4 P2 -- declared, and costed where cheap
 
