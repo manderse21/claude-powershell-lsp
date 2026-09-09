@@ -3648,3 +3648,333 @@ Describe 'Integration: suite-final daemon-leak backstop (dispatch 000078)' -Skip
             $before.Count + ', remaining sessions: ' + (($after | ForEach-Object { $_.SessionId }) -join ', '))
     }
 }
+
+Describe 'P1-2 DAEMON HALF -- the real round trip, one op of EACH KIND (dispatch 000289)' -Skip:$script:SkipIntegration {
+    # WHAT THIS COVERS AND WHY IT DID NOT EXIST. Dispatch 000288 built the CLIENT half of the
+    # query round trip -- scripts/lsp-query.ps1 driven against a canned pipe server -- after
+    # discovering that the surface had never worked at all. The DAEMON half,
+    # Invoke-SemanticQuery in pses-daemon.ps1 (document open, request send, response pump,
+    # result shaping, against a REAL PSES), was exercised by nothing. This is that half.
+    #
+    # ONE OP OF EACH KIND, because the kinds take genuinely different paths through the
+    # function: `position` and `document` resolve a file and tell PSES about it first, and
+    # `query` skips BOTH -- no file resolution, no didOpen. A suite that exercised only the
+    # position ops would leave the two branches that were restructured in 000288 untested.
+    #
+    # HOW THE DAEMON IS BROUGHT UP, which is the question 000288 left open. Its own probe never
+    # got PSES up from a bare `pses-daemon.ps1` launch. The harness does three things a bare
+    # launch does not, and all three are load-bearing:
+    #   1. it points $env:CLAUDE_PLUGIN_DATA at a data root;
+    #   2. it runs ensure-pses.ps1 and ensure-pssa.ps1 FIRST -- the idempotent, pin-keyed vendor
+    #      steps that put PowerShellEditorServices and PSScriptAnalyzer in that data root at all;
+    #   3. it launches through the REAL SessionStart hook (scripts/session-start.ps1), whose own
+    #      header names those two as steps 1 and 2 of five, not by invoking the daemon directly.
+    # A bare daemon launch skips the vendoring, so the bundle PSES starts from is simply absent.
+    #
+    # POSITIONS ARE DERIVED FROM THE FIXTURE TEXT, never written as literals. A test pinned to a
+    # line number is a future false RED that teaches people to edit the assertion; here the
+    # fixture and the position come from the same array of lines, so they cannot drift apart.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
+        $script:Q_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:Q_DataDir = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $env:PSLS_TEST_DATA_DIR
+        } else {
+            Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data'
+        }
+        New-Item -ItemType Directory -Force -Path $script:Q_DataDir | Out-Null
+        $env:CLAUDE_PLUGIN_DATA = $script:Q_DataDir
+        $script:Q_Sid = 'qdaemon-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:Q_Pipe = 'powershell-lsp-' + $script:Q_Sid
+
+        # THE FIXTURE: purpose-made, small, and written from an array so every position below is
+        # DERIVED from the same source the file is written from.
+        $script:Q_Lines = @(
+            'function Get-QueryFixtureAlpha {'
+            '    param([int] $Value)'
+            '    return ($Value + 1)'
+            '}'
+            ''
+            'function Get-QueryFixtureBeta {'
+            '    return (Get-QueryFixtureAlpha -Value 41)'
+            '}'
+            ''
+        )
+        $script:Q_File = Join-Path $script:Q_DataDir ('queryfixture-' + $script:Q_Sid + '.ps1')
+        Set-Content -LiteralPath $script:Q_File -Value ($script:Q_Lines -join "`n") -Encoding ascii -Force
+
+        # Derive the call site of Alpha inside Beta: 1-based line, 1-based column.
+        $script:Q_CallLineIdx = -1
+        for ($i = 0; $i -lt $script:Q_Lines.Count; $i++) {
+            if ($script:Q_Lines[$i].Contains('return (Get-QueryFixtureAlpha')) { $script:Q_CallLineIdx = $i; break }
+        }
+        $script:Q_CallLine = $script:Q_CallLineIdx + 1
+        $script:Q_CallCol = if ($script:Q_CallLineIdx -ge 0) {
+            $script:Q_Lines[$script:Q_CallLineIdx].IndexOf('Get-QueryFixtureAlpha') + 1
+        } else { 0 }
+        # And the line the declaration is on, likewise derived -- the answer definition should give.
+        $script:Q_DeclLine = 0
+        for ($i = 0; $i -lt $script:Q_Lines.Count; $i++) {
+            if ($script:Q_Lines[$i].StartsWith('function Get-QueryFixtureAlpha')) { $script:Q_DeclLine = $i + 1; break }
+        }
+
+        # Bring-up, exactly as the sibling integration blocks do it.
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:Q_ScriptsDir 'ensure-pses.ps1') 2>&1 | Out-Null
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:Q_ScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+        Invoke-PluginHook -ScriptPath (Join-Path $script:Q_ScriptsDir 'session-start.ps1') `
+            -StdinJson (@{ session_id = $script:Q_Sid } | ConvertTo-Json -Compress) `
+            -ExtraArgs @('-PreferredHost', 'pwsh') -CapMs 60000 -DataRoot $script:Q_DataDir | Out-Null
+
+        # Readiness: the serve loop is answering AND a real request has completed. PSES itself
+        # must additionally be READY before a query can be answered -- the session file says so.
+        $script:Q_Ready = Wait-DaemonRequestReady -SessionId $script:Q_Sid -DataRoot $script:Q_DataDir -TimeoutMs 60000
+        $sf = Join-Path $script:Q_DataDir ('session/' + $script:Q_Sid + '.json')
+        $script:Q_PsesReady = $false
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($sw.ElapsedMilliseconds -lt 90000) {
+            if (Test-Path -LiteralPath $sf) {
+                $o = $null
+                try { $o = Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json } catch { $o = $null }
+                if ($null -ne $o -and [string](Get-Prop $o 'state') -eq 'ready') { $script:Q_PsesReady = $true; break }
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    AfterAll {
+        [void](Stop-IntegrationDaemon -SessionId $script:Q_Sid -DataRoot $script:Q_DataDir)
+        try { if (Test-Path -LiteralPath $script:Q_File) { Remove-Item -LiteralPath $script:Q_File -Force -ErrorAction SilentlyContinue } } catch { }
+    }
+
+    It 'the harness brought a REAL daemon up to ready, and the derived fixture positions are sane' {
+        # The floor. Every assertion below is about a live PSES, so a block that silently failed
+        # to bring one up would report a wall of green nothings.
+        $script:Q_Ready | Should -BeTrue -Because 'the daemon must be serving before any query is sent'
+        $script:Q_PsesReady | Should -BeTrue -Because 'a query cannot be answered until PSES itself is ready'
+        $script:Q_CallLine | Should -BeGreaterThan 0
+        $script:Q_CallCol | Should -BeGreaterThan 0
+        $script:Q_DeclLine | Should -BeGreaterThan 0
+        $script:Q_CallLine | Should -Not -Be $script:Q_DeclLine -Because 'the call and the declaration must be different lines for definition to prove anything'
+    }
+
+    It 'POSITION kind -- definition resolves the call site to the declaration, through a real PSES' {
+        $resp = Invoke-DaemonRequest -PipeName $script:Q_Pipe -Request @{
+            action = 'query'; op = 'definition'; file = $script:Q_File
+            line = $script:Q_CallLine; col = $script:Q_CallCol
+        }
+        $resp | Should -Not -BeNullOrEmpty
+        [bool](Get-Prop $resp 'ok') | Should -BeTrue -Because ('definition failed: ' + [string](Get-Prop $resp 'error'))
+        [string](Get-Prop $resp 'kind') | Should -BeExactly 'position'
+        [int](Get-Prop $resp 'count') | Should -BeGreaterThan 0
+        # The ANSWER, not merely a well-formed envelope: LSP is 0-based, the fixture is 1-based.
+        $first = @(Get-Prop $resp 'results')[0]
+        $range = Get-Prop $first 'range'
+        $start = Get-Prop $range 'start'
+        ([int](Get-Prop $start 'line') + 1) | Should -Be $script:Q_DeclLine
+    }
+
+    It 'DOCUMENT kind -- documentSymbol answers about the whole file and takes NO position' {
+        $resp = Invoke-DaemonRequest -PipeName $script:Q_Pipe -Request @{
+            action = 'query'; op = 'documentSymbol'; file = $script:Q_File
+        }
+        $resp | Should -Not -BeNullOrEmpty
+        [bool](Get-Prop $resp 'ok') | Should -BeTrue -Because ('documentSymbol failed: ' + [string](Get-Prop $resp 'error'))
+        [string](Get-Prop $resp 'kind') | Should -BeExactly 'document'
+        [int](Get-Prop $resp 'count') | Should -BeGreaterThan 0
+        # It found the fixture's OWN symbols -- not just any symbols.
+        $names = @(@(Get-Prop $resp 'results') | ForEach-Object { [string](Get-Prop $_ 'name') })
+        @($names | Where-Object { $_ -like '*Get-QueryFixtureAlpha*' }).Count | Should -BeGreaterThan 0
+        # ...and it needed no position: line/col were never sent and it still answered.
+    }
+
+    It 'QUERY kind -- workspaceSymbol skips file resolution ENTIRELY, proven with a path that does not exist' {
+        # The sharpest available proof that the query kind takes a different path: hand it a file
+        # that is NOT on disk. A position or document op answers 'file not found' for exactly this
+        # input (asserted in the next case, so this is a discrimination and not a universal); the
+        # query kind never looks, because workspace/symbol asks the SERVER and not a document.
+        $ghost = Join-Path $script:Q_DataDir ('no-such-file-' + [guid]::NewGuid().ToString('N') + '.ps1')
+        (Test-Path -LiteralPath $ghost) | Should -BeFalse
+        $resp = Invoke-DaemonRequest -PipeName $script:Q_Pipe -Request @{
+            action = 'query'; op = 'workspaceSymbol'; file = $ghost; query = 'Get-QueryFixture'
+        }
+        $resp | Should -Not -BeNullOrEmpty
+        [bool](Get-Prop $resp 'ok') | Should -BeTrue -Because ('workspaceSymbol failed: ' + [string](Get-Prop $resp 'error'))
+        [string](Get-Prop $resp 'kind') | Should -BeExactly 'query'
+    }
+
+    It 'the OTHER direction -- a document-scoped op DOES refuse the same missing path' {
+        # Without this the case above proves nothing: "did not complain" is only meaningful next
+        # to something that does complain about the very same input.
+        $ghost = Join-Path $script:Q_DataDir ('no-such-file-' + [guid]::NewGuid().ToString('N') + '.ps1')
+        $resp = Invoke-DaemonRequest -PipeName $script:Q_Pipe -Request @{
+            action = 'query'; op = 'documentSymbol'; file = $ghost
+        }
+        $resp | Should -Not -BeNullOrEmpty
+        [bool](Get-Prop $resp 'ok') | Should -BeFalse
+        [string](Get-Prop $resp 'error') | Should -BeExactly 'file not found'
+    }
+}
+
+Describe 'P1-2 DAEMON HALF -- what deleting the didOpen/didChange block actually does (dispatch 000289)' -Skip:$script:SkipIntegration {
+    # THIS WAS CHARTERED AS A RED CONTROL AND IT IS NOT ONE. The 000289 charter predicted that
+    # "a RED control that deletes the didOpen/didChange block must fail the two document-scoped
+    # kinds and NOT the query kind". Built and MEASURED against a real PSES, that prediction is
+    # FALSE, and the measurement is recorded here rather than the prediction:
+    #
+    #     under a mutant proved to have landed, on a daemon proved to be up:
+    #         definition     -> 1 result   (still answers)
+    #         documentSymbol -> 2 results  (still answers)
+    #         workspaceSymbol-> ok         (untouched, as predicted)
+    #
+    # WHY, and it is a property of the design rather than a defect. Invoke-SemanticQuery reads the
+    # document's text FROM DISK (`[System.IO.File]::ReadAllText`) and sends exactly that as the
+    # didOpen payload. So for a file that exists on disk inside the workspace PSES has indexed,
+    # didOpen carries NO information PSES does not already have, and removing it changes nothing.
+    # didOpen is load-bearing for a buffer whose content differs from disk -- which this call path
+    # never constructs, because it always reads disk.
+    #
+    # So this block is kept as a CHARACTERIZATION plus a regression guard, honestly labelled. It
+    # asserts what the daemon actually does today; if the daemon ever starts depending on didOpen
+    # for these ops, or stops answering them, this goes red and says so.
+    #
+    # The parts that DO discriminate live in the sibling block above: workspaceSymbol answers for
+    # a path that does not exist while documentSymbol refuses the same input with 'file not found'.
+    # That pair is a real discrimination and it is where the kind-branching is actually proven.
+    #
+    # The mutant is built by UNDOING the behaviour on a COPY of the shipped source, with the
+    # substitution anchor asserted to occur exactly once -- never by reading history with
+    # `git show <sha>:<path>`, which exits 128 under CI's shallow checkout (dispatch 000288).
+    #
+    # The anchor must span TWO lines: `if ($kind -ne 'query') {` appears twice in the function --
+    # once guarding file resolution, once guarding the open -- and mutating the wrong one would
+    # control something else entirely.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
+        $script:QR_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:QR_DataDir = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $env:PSLS_TEST_DATA_DIR
+        } else {
+            Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data'
+        }
+        $env:CLAUDE_PLUGIN_DATA = $script:QR_DataDir
+        $script:QR_Root = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-p2red-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:QR_Scripts = Join-Path $script:QR_Root 'scripts'
+        New-Item -ItemType Directory -Force -Path $script:QR_Root | Out-Null
+        # A VALID PLUGIN LAYOUT, not just scripts/. Measured the hard way: copying scripts/ alone
+        # produces a daemon that reports version '0.0.0-unknown' (no .claude-plugin manifest to
+        # resolve from) and whose PSES child EXITS DURING INIT. The mutant then "passed" the
+        # document-scoped arm for the wrong reason -- PSES was never up -- which is a vacuous
+        # control, and only the surviving-arm assertion caught it. Three directories are what the
+        # daemon actually needs; the rest of the repo is not in its path.
+        $pluginRoot = Split-Path -Parent $PSScriptRoot
+        foreach ($d in @('scripts', 'rulesets', '.claude-plugin')) {
+            $src = Join-Path $pluginRoot $d
+            if (Test-Path -LiteralPath $src) {
+                Copy-Item -LiteralPath $src -Destination (Join-Path $script:QR_Root $d) -Recurse -Force
+            }
+        }
+
+        $script:QR_Daemon = Join-Path $script:QR_Scripts 'pses-daemon.ps1'
+        $script:QR_Orig = Get-Content -LiteralPath $script:QR_Daemon -Raw
+        $nl = if ($script:QR_Orig.Contains("`r`n")) { "`r`n" } else { "`n" }
+        $script:QR_Anchor = "    if (`$kind -ne 'query') {" + $nl + "        `$text = ''"
+        $script:QR_AnchorCount = ([regex]::Matches($script:QR_Orig, [regex]::Escape($script:QR_Anchor))).Count
+        $script:QR_Mutated = $script:QR_Orig.Replace($script:QR_Anchor, "    if (`$false) {" + $nl + "        `$text = ''")
+        Set-Content -LiteralPath $script:QR_Daemon -Value $script:QR_Mutated -Encoding utf8 -NoNewline
+
+        $script:QR_Sid = 'qred-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:QR_Pipe = 'powershell-lsp-' + $script:QR_Sid
+        $script:QR_Lines = @(
+            'function Get-RedFixtureAlpha {'
+            '    param([int] $Value)'
+            '    return ($Value + 1)'
+            '}'
+            ''
+            'function Get-RedFixtureBeta {'
+            '    return (Get-RedFixtureAlpha -Value 41)'
+            '}'
+            ''
+        )
+        $script:QR_File = Join-Path $script:QR_DataDir ('redfixture-' + $script:QR_Sid + '.ps1')
+        Set-Content -LiteralPath $script:QR_File -Value ($script:QR_Lines -join "`n") -Encoding ascii -Force
+        $script:QR_CallIdx = -1
+        for ($i = 0; $i -lt $script:QR_Lines.Count; $i++) {
+            if ($script:QR_Lines[$i].Contains('return (Get-RedFixtureAlpha')) { $script:QR_CallIdx = $i; break }
+        }
+        $script:QR_CallLine = $script:QR_CallIdx + 1
+        $script:QR_CallCol = if ($script:QR_CallIdx -ge 0) { $script:QR_Lines[$script:QR_CallIdx].IndexOf('Get-RedFixtureAlpha') + 1 } else { 0 }
+
+        # Launch the MUTANT daemon from the copied tree, through the copied real hook. PSES and
+        # PSSA are already vendored in the shared data root by the sibling block's ensure steps,
+        # and both are idempotent, so this re-runs them for free rather than assuming.
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:QR_Scripts 'ensure-pses.ps1') 2>&1 | Out-Null
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:QR_Scripts 'ensure-pssa.ps1') 2>&1 | Out-Null
+        Invoke-PluginHook -ScriptPath (Join-Path $script:QR_Scripts 'session-start.ps1') `
+            -StdinJson (@{ session_id = $script:QR_Sid } | ConvertTo-Json -Compress) `
+            -ExtraArgs @('-PreferredHost', 'pwsh') -CapMs 60000 -DataRoot $script:QR_DataDir | Out-Null
+        $script:QR_Ready = Wait-DaemonRequestReady -SessionId $script:QR_Sid -DataRoot $script:QR_DataDir -TimeoutMs 60000
+        $sf = Join-Path $script:QR_DataDir ('session/' + $script:QR_Sid + '.json')
+        $script:QR_PsesReady = $false
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($sw.ElapsedMilliseconds -lt 90000) {
+            if (Test-Path -LiteralPath $sf) {
+                $o = $null
+                try { $o = Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json } catch { $o = $null }
+                if ($null -ne $o -and [string](Get-Prop $o 'state') -eq 'ready') { $script:QR_PsesReady = $true; break }
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    AfterAll {
+        [void](Stop-IntegrationDaemon -SessionId $script:QR_Sid -DataRoot $script:QR_DataDir)
+        try { if (Test-Path -LiteralPath $script:QR_File) { Remove-Item -LiteralPath $script:QR_File -Force -ErrorAction SilentlyContinue } } catch { }
+        try { if (Test-Path -LiteralPath $script:QR_Root) { Remove-Item -LiteralPath $script:QR_Root -Recurse -Force -ErrorAction SilentlyContinue } } catch { }
+    }
+
+    It 'the mutation anchor occurs EXACTLY ONCE, and the mutant LANDED and still parses' {
+        $script:QR_AnchorCount | Should -Be 1 -Because 'a two-line anchor must pick the didOpen guard and not the file-resolution guard'
+        $script:QR_Mutated | Should -Not -BeExactly $script:QR_Orig
+        $script:QR_Mutated.Contains($script:QR_Anchor) | Should -BeFalse
+        $errs = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseFile($script:QR_Daemon, [ref]$null, [ref]$errs)
+        @($errs).Count | Should -Be 0
+        # ...and the mutant really did come up, or nothing below means anything.
+        $script:QR_Ready | Should -BeTrue
+        $script:QR_PsesReady | Should -BeTrue
+    }
+
+    It 'the QUERY kind is UNTOUCHED by the mutation -- it never opened a document to begin with' {
+        # The surviving arm. This is what makes the control narrow rather than a proof that a
+        # broken file breaks everything.
+        $resp = Invoke-DaemonRequest -PipeName $script:QR_Pipe -Request @{
+            action = 'query'; op = 'workspaceSymbol'; file = ''; query = 'Get-RedFixture'
+        }
+        $resp | Should -Not -BeNullOrEmpty
+        [bool](Get-Prop $resp 'ok') | Should -BeTrue -Because ('the query kind must survive the mutant: ' + [string](Get-Prop $resp 'error'))
+        [string](Get-Prop $resp 'kind') | Should -BeExactly 'query'
+    }
+
+    It 'CHARACTERIZED: both document kinds still answer without didOpen, because the payload is read from disk' {
+        $def = Invoke-DaemonRequest -PipeName $script:QR_Pipe -Request @{
+            action = 'query'; op = 'definition'; file = $script:QR_File
+            line = $script:QR_CallLine; col = $script:QR_CallCol
+        }
+        $doc = Invoke-DaemonRequest -PipeName $script:QR_Pipe -Request @{
+            action = 'query'; op = 'documentSymbol'; file = $script:QR_File
+        }
+        $def | Should -Not -BeNullOrEmpty
+        $doc | Should -Not -BeNullOrEmpty
+        # "Lost its answer" is either a refusal or an empty result set -- PSES answers about a
+        # document it was told about and about no other, and "nothing here" is a legitimate
+        # answer shape the shipped code reports as count 0.
+        $defCount = if ([bool](Get-Prop $def 'ok')) { [int](Get-Prop $def 'count') } else { 0 }
+        $docCount = if ([bool](Get-Prop $doc 'ok')) { [int](Get-Prop $doc 'count') } else { 0 }
+        # Asserted as MEASURED, not as PREDICTED. Non-vacuous in both directions: the sibling
+        # block proves the shipped daemon answers these same two ops for this same shape of file,
+        # so "still answers" here is a comparison and not a lone reading. If a future change makes
+        # didOpen load-bearing for either op, or breaks either op outright, this goes red.
+        $defCount | Should -BeGreaterThan 0 -Because 'PSES resolves definition from its workspace index, not only from an opened document'
+        $docCount | Should -BeGreaterThan 0 -Because 'documentSymbol likewise answers for a file that is on disk in the indexed workspace'
+    }
+}
