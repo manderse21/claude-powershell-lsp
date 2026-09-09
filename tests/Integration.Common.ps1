@@ -566,3 +566,111 @@ function New-PluginHookOutcome {
     } catch { }
     return $o
 }
+
+# --- Invoke-PluginHook, ONE shared copy (dispatch 000289) ------------------
+# WHY THIS IS HERE. This helper is defined TEN times inside
+# PowerShellLsp.Integration.Tests.ps1, once per Describe's BeforeAll, and MEASURED at the tip
+# those ten copies are FIVE DISTINCT BODIES -- six share one, four are each unique. The drift is
+# substantive, not cosmetic: one copy has no `$ExtraEnv` parameter AT ALL, so the same helper
+# name carries different SIGNATURES in different blocks of one file. Three others add
+# `$script:LastHookExit` tracking the rest lack.
+#
+# That is the second sighting of this exact shape in this exact file: dispatch 000236 already
+# collapsed three `Wait-*DiagReady` copies here, recording that they "were three byte-identical
+# copies of a FIXED 90000 ms wall-clock ceiling and drifted apart the moment" they existed
+# separately. They had. So have these.
+#
+# THIS COPY DOES NOT COLLAPSE THE TEN, and that is deliberate. Every one of the ten Describes
+# dot-sources this file BEFORE defining its own, so a local definition SHADOWS this one and no
+# existing block changes behaviour by a single byte. New blocks use this one instead of minting
+# an eleventh variant. The collapse itself is a named slice with a real regression surface across
+# a 3,900-line integration file, and it is ROUTED with the measurement rather than done here.
+#
+# The body is the SIX-way majority verbatim -- the variant with the fullest signature, including
+# `$ExtraEnv`. Requires Add-ProcessArguments (scripts/lib/lsp-common.ps1) and
+# New-PluginHookOutcome (below), both of which every caller already has.
+
+function Invoke-PluginHook {
+    param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+    Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
+    $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
+    if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+    if ($StdinJson) {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
+        $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
+    }
+    $p.StandardInput.Close()
+    # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
+    # empty return can be told apart from a cap overrun. Return values are unchanged.
+    $swHook = [System.Diagnostics.Stopwatch]::StartNew()
+    if (-not $p.WaitForExit($CapMs)) {
+        try { $p.Kill($true) } catch { }
+        $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
+        return ''
+    }
+    # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
+    # wait on work, so bounding it by a constant unrelated to the caller's cap is what
+    # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
+    # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
+    # for output the plugin DID produce -- indistinguishable at the assertion from the
+    # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
+    # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
+    # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
+    # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
+    # Bounded by the caller's cap instead, floored at the old constant so no call site
+    # gets a shorter drain than it had. It cannot hang: the process has exited, so the
+    # redirected stream reaches EOF once its buffer is drained.
+    [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
+    if (-not $stdoutTask.IsCompleted) {
+        $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+        return ''
+    }
+    $hookReason = 'ok'
+    if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
+    $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
+    return $stdoutTask.Result
+}
+
+function Invoke-DaemonRequest {
+    # ONE pipe round-trip against a live daemon, returning the parsed response object (or $null).
+    #
+    # Three named-pipe traps this deliberately avoids, each of which fails in a way that blames
+    # the wrong component (dispatch 000288 measured all three):
+    #   * it NEVER calls Test-Path on '\\.\pipe\<name>' -- that OPENS the pipe and consumes a
+    #     single-instance server, so the client that follows times out and looks like the bug;
+    #   * it talks to the pipe DIRECTLY rather than through lsp-client.ps1, so it can never spawn
+    #     a relaunch or write a cooldown stamp that a sibling assertion is counting;
+    #   * every wait is BOUNDED and a timeout returns $null rather than hanging the suite.
+    #
+    # Requires Get-Prop (scripts/lib/lsp-common.ps1), dot-sourced by every caller.
+    param(
+        [Parameter(Mandatory = $true)][string]$PipeName,
+        [Parameter(Mandatory = $true)][hashtable]$Request,
+        [int]$ConnectMs = 5000,
+        [int]$ReadMs = 20000
+    )
+    $client = $null
+    try {
+        $client = New-Object System.IO.Pipes.NamedPipeClientStream('.', $PipeName,
+            [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::Asynchronous)
+        $client.Connect($ConnectMs)
+        $writer = New-Object System.IO.StreamWriter($client, (New-Object System.Text.UTF8Encoding($false)), 8192, $true)
+        $writer.NewLine = "`n"; $writer.AutoFlush = $true
+        $reader = New-Object System.IO.StreamReader($client, [System.Text.Encoding]::UTF8, $false, 8192, $true)
+        $writer.WriteLine(($Request | ConvertTo-Json -Compress -Depth 6)); $writer.Flush()
+        $readTask = $reader.ReadLineAsync()
+        if (-not $readTask.Wait($ReadMs)) { return $null }
+        $line = $readTask.Result
+        if ([string]::IsNullOrWhiteSpace($line)) { return $null }
+        try { return ($line | ConvertFrom-Json) } catch { return $null }
+    } catch {
+        return $null
+    } finally {
+        if ($null -ne $client) { try { $client.Dispose() } catch { } }
+    }
+}
