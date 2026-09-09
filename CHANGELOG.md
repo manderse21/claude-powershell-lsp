@@ -30,6 +30,30 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **An organization can now state a requirement, not only a suppression** (enterprise docket
+P1-5, review item 2, the include-side payload half -- ruling **R9**). The `orgPolicy` file gains an
+optional `SeverityOverrides` table beside its `ExcludeRules`, mapping rule code to severity
+(`Error` / `Warning` / `Information` / `Hint`). Until now the org payload was **subtract-only**: an
+organization could take a rule away and had no way to say *this one matters here*, which is exactly
+the gap the enterprise review named. An override is applied at the **same final position as the
+exclude drop and immediately after it**, so it carries the same guarantee -- no repo-local
+`PSScriptAnalyzerSettings.psd1` and no `ruleInclude` knob can put the severity back. Exclusion
+remains the stronger verb: a rule that appears in both is dropped, not re-stamped.
+
+**No new knob and no new file**: the key lives inside the policy the existing `orgPolicy` path
+already points at, is read in the **same single parse behind the same integrity gate** as
+`ExcludeRules`, and reports through the same one-warning degrade. A policy with no
+`SeverityOverrides` key behaves byte-for-byte as before, so every existing deployment is
+unaffected. Malformed entries -- a severity name outside the vocabulary, a non-string value or key,
+or a `SeverityOverrides` that is not a table -- are skipped rather than guessed at, because an
+override naming a level nothing can rank looks like enforcement while enforcing nothing.
+
+**The boundary is documented and asserted by a test, not merely described**: an override re-stamps
+a finding already on the surface and cannot resurrect one the local `severityThreshold` dropped
+before the client saw it. At the shipped default (`Hint`) nothing is threshold-dropped and
+overrides are fully effective. The signing half of Policy v2 remains unbuilt and waits on a trust
+root `docs/roadmap-ii/THREAT-MODEL.md` T4.1 says the mechanism does not have.
+
 PATCH: **`docs/SUPPORT-POLICY.md` states the boundary of the compatibility leg**, and P1-3 is
 closed at registration-only. Ruled 2026-09-08 (**R14**, recorded verbatim in
 `docs/decision-ledger.md`): **no CI model credential.** The advisory `claude-code-compat` leg

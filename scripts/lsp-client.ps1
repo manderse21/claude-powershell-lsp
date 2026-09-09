@@ -77,12 +77,26 @@ function Write-CLog([string]$m) {
 # degrade can be logged the moment it is detected. A degrade -- relative path, missing file,
 # unparseable data -- yields @() plus exactly ONE logged warning: the org's exclusions stop
 # applying (fail open, the edit is never blocked) but the reason is never silent.
+#
+# POLICY v2 (dispatch 000289, ruling R9) adds the INCLUDE-SIDE half: SeverityOverrides, read
+# from the SAME file in the SAME single read behind the SAME integrity gate (Hub Rule 18), and
+# applied at the same final position. A v1 policy carries no SeverityOverrides key, so
+# $OrgSeverity stays empty, Set-OrgPolicySeverity is the identity function, and a v1 site's
+# surface is byte-for-byte what it was before v2 existed -- the same guarantee the knob-off path
+# has always carried, extended to the file schema.
 $OrgPolicyWarning = ''
-$OrgExcludes = @(Import-OrgPolicyExcludes -Path (Get-PluginOption 'orgPolicy' '') -WarningOut ([ref]$OrgPolicyWarning))
+$OrgPolicy = Import-OrgPolicy -Path (Get-PluginOption 'orgPolicy' '') -WarningOut ([ref]$OrgPolicyWarning)
+$OrgExcludes = @($OrgPolicy.ExcludeRules)
+$OrgSeverity = $OrgPolicy.SeverityOverrides
 if ($OrgPolicyWarning -ne '') {
     Write-CLog $OrgPolicyWarning
-} elseif ($OrgExcludes.Count -gt 0) {
-    Write-CLog ('org policy: enforcing ' + $OrgExcludes.Count + ' excluded rule(s)')
+} else {
+    if ($OrgExcludes.Count -gt 0) {
+        Write-CLog ('org policy: enforcing ' + $OrgExcludes.Count + ' excluded rule(s)')
+    }
+    if ($OrgSeverity.Count -gt 0) {
+        Write-CLog ('org policy: enforcing ' + $OrgSeverity.Count + ' severity override(s)')
+    }
 }
 
 function Write-HookContext([string]$Context) {
@@ -386,6 +400,12 @@ try {
             Write-CLog ('org policy dropped ' + ($beforeOrg - $prePssaFindings.Count) + ' pre-PSSA finding(s)')
         }
     }
+    # Org severity imposition, surface 1 of 2 (Policy v2, dispatch 000289). AFTER the drop, so a
+    # rule the org both excludes and overrides is dropped rather than re-stamped -- exclusion is
+    # the stronger verb and stays final. $OrgSeverity empty short-circuits.
+    if ($OrgSeverity.Count -gt 0 -and $null -ne $prePssaFindings -and $prePssaFindings.Count -gt 0) {
+        $prePssaFindings = @(Set-OrgPolicySeverity -Records $prePssaFindings -OrgSeverity $OrgSeverity)
+    }
     $hasParseErrors = ($null -ne $parseErrors -and $parseErrors.Count -gt 0)
     $hasPrePssa = ($null -ne $prePssaFindings -and $prePssaFindings.Count -gt 0)
     if ($hasParseErrors -or $hasPrePssa) {
@@ -603,6 +623,13 @@ try {
         if ($diags.Count -ne $beforeOrg) {
             Write-CLog ('org policy dropped ' + ($beforeOrg - $diags.Count) + ' diagnostic(s)')
         }
+    }
+    # Org severity imposition, surface 2 of 2 (Policy v2, dispatch 000289). Same final position
+    # as the drop above and immediately after it, so this one statement covers the live surface,
+    # the dogfood capture and the SARIF scan exactly as the drop does -- and so no local include
+    # path can put the severity back. $OrgSeverity empty short-circuits, leaving $diags untouched.
+    if ($OrgSeverity.Count -gt 0 -and $diags.Count -gt 0) {
+        $diags = @(Set-OrgPolicySeverity -Records $diags -OrgSeverity $OrgSeverity)
     }
     # Closed-loop agentic correction (dispatch 000061): the daemon's additive cleared[]/
     # stillPresent[] lifecycle fields. Init-then-guard + null-filter, exactly like $projectFinds
