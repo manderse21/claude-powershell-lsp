@@ -2399,6 +2399,48 @@ the one 000287 was hoping for: the slice is not waiting on anything.
   declaration is the output of certification; a declaration written from a registration-only matrix
   would claim more than the matrix proved, which is the ordering this slice exists to protect.
 
+## Policy v2's payload half, built (P1-5, ruling R9) -- dispatch 000289, 2026-09-09
+
+**What shipped.** The `orgPolicy` file gains an optional `SeverityOverrides` table beside
+`ExcludeRules`, mapping rule code to severity, enforced at the same final position as the exclude
+drop and immediately after it. R9 (ruled by Mike Andersen 2026-09-05, ratified by acceptance of the
+000279 inbox) chartered the include-side payload only and left signing until a trust root exists;
+that split is honoured exactly -- **nothing here signs anything, and nothing here trusts what it is
+handed.**
+
+**Why this is the include side, and not a cosmetic relabel.** The enterprise review's item 2
+argument was that a subtract-only payload cannot express an org REQUIREMENT. It cannot. An
+organization could take a rule away and had no vocabulary for *"this one matters here"*. A severity
+the org sets and no local layer can undo IS that vocabulary: the load-bearing test is a repo that
+narrows its surface to a single rule with `ruleInclude` -- the path where repo-local wins under v1
+-- and still sees that rule at the org's severity.
+
+**What was deliberately NOT built, and why the reason is structural.** `requiredRules` and
+`prohibitedSuppressions`, the other two members of the docket's payload trio, are not built. The
+org layer is a client-side pass over findings that already exist, and a rule the analyzer never ran
+produces no record for a post-filter to conjure. Forcing a rule ON means reaching the settings the
+daemon hands to PSES, which is the seam `Resolve-PssaSettingsPath` deliberately does not read
+itself. That is the same slice as closing the threshold boundary below, and they belong together.
+`severityOverrides` is the member of the trio the existing seam can enforce honestly, which is why
+it is the one that shipped -- a judgement about what the seam supports, not about what was cheap.
+
+**The boundary is recorded here because it will outlive the memory of it.** An override re-stamps
+a finding already on the surface; it cannot resurrect one the daemon's own `severityThreshold`
+dropped first. At the shipped default (`Hint`) nothing is threshold-dropped and overrides are fully
+effective. BOTH arms are asserted by test -- the raised-threshold miss and the default-threshold
+hit -- so this is a measured property of the build and not a caveat in a document that can quietly
+stop being true.
+
+**Hub Rule 18 applied to the reader.** `Import-OrgPolicy` is now the single reader returning both
+halves from one parse, one integrity gate and one degrade warning; `Import-OrgPolicyExcludes` is a
+projection of it, so every existing caller and test is unchanged. Two readers would have been two
+places for the absolute-path rule, the `.sha256` gate and the degrade vocabulary to drift.
+
+**Freeze exposure: genuinely zero.** No `userConfig` key, no new file, no CONTRACT line -- the key
+lives inside the policy file the existing `orgPolicy` path already points at, and the policy file
+schema is not a Tier 1 surface. A v1 policy leaves the override map empty and the applier is then
+the identity function, which is asserted rather than assumed.
+
 ### The shape this is an instance of
 
 The ruling names it: **000283's R17 shape -- a live dependency bought for one end-to-end

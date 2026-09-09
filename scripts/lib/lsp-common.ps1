@@ -872,6 +872,39 @@ function Resolve-PssaSettingsPath {
 # gated on the knob being set -- so with `orgPolicy` unset the surfaced bytes are identical
 # to the pre-layer build.
 
+function Get-SeverityNames {
+    # THE severity vocabulary, in rank order, as ONE source (Hub Rule 18). Resolve-SeverityName
+    # canonicalises against this list, and a unit test asserts that every member of it ranks
+    # BELOW Get-SeverityRank's junk default while a non-member does not -- so this list and that
+    # ranking function cannot drift apart silently. Deriving the set and asserting the partition
+    # is non-empty is the same discipline the census rule asks for, applied to a vocabulary.
+    return @('Error', 'Warning', 'Information', 'Hint')
+}
+
+function Resolve-SeverityName {
+    # Canonical casing for a caller-supplied severity name, or '' when it names none of them.
+    #
+    # CANONICALISE, never normalise. Lowercasing or upper-casing a severity name happens to work
+    # for a vocabulary whose members are all single-cased, and stops working the moment one is
+    # not -- which is exactly how 'documentSymbol' broke ToLowerInvariant in dispatch 000288. A
+    # name that is not in the vocabulary is a MALFORMED expectation and returns '', so the caller
+    # can skip it rather than enforce a level nothing can rank.
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return '' }
+    $n = $Name.Trim()
+    foreach ($s in (Get-SeverityNames)) {
+        if ([string]::Equals($s, $n, [System.StringComparison]::OrdinalIgnoreCase)) { return $s }
+    }
+    return ''
+}
+
+function New-EmptyOrgPolicy {
+    # The knob-off / no-constraint policy value. Named rather than repeated so that "no org
+    # constraint" is ONE value with ONE shape, and a caller can never accidentally construct a
+    # half-empty one.
+    return @{ ExcludeRules = @(); SeverityOverrides = @{} }
+}
+
 function Test-OrgPolicyIntegrity {
     # The org policy INTEGRITY gate (dispatch 000259, threat T4.1). Returns '' when the policy
     # at $PolicyPath may be trusted -- either because no integrity artifact sits beside it (the
@@ -918,7 +951,7 @@ function Test-OrgPolicyIntegrity {
     return 'orgPolicy integrity check FAILED; no org exclusions applied: ' + $PolicyPath
 }
 
-function Import-OrgPolicyExcludes {
+function Import-OrgPolicy {
     # Read the ExcludeRules of the org settings .psd1 at $Path as a trimmed, de-duplicated
     # string[] of rule codes. @() means "no org constraint" -- and @() is also the answer for
     # EVERY failure: relative path, missing file, unreadable file, unparseable data, a shape
@@ -957,9 +990,10 @@ function Import-OrgPolicyExcludes {
     # accept a relative path and 'a relative path is a warned degrade' goes RED; parse the
     # policy regardless of $reason and 'a TAMPERED policy applies no exclusions' goes RED.
     param([string]$Path, [ref]$WarningOut)
-    if ([string]::IsNullOrWhiteSpace($Path)) { return @() }
+    if ([string]::IsNullOrWhiteSpace($Path)) { return (New-EmptyOrgPolicy) }
     $reason = ''
     $codes = @()
+    $sev = @{}
     try {
         if (-not [System.IO.Path]::IsPathRooted($Path)) {
             $reason = 'orgPolicy path is not absolute; no org exclusions applied: ' + $Path
@@ -989,14 +1023,57 @@ function Import-OrgPolicyExcludes {
                         if ($seen.Add($c)) { $codes += $c }
                     }
                 }
+                # POLICY v2 (dispatch 000289, ruling R9): the INCLUDE-SIDE payload, read from
+                # the SAME parse, behind the SAME integrity gate, reported through the SAME
+                # single warning. One read, one gate, one degrade -- Hub Rule 18. A v1 policy
+                # carries no SeverityOverrides key and this block leaves $sev empty, which is
+                # what keeps a v1 file byte-identical in behaviour to the pre-v2 build.
+                if ($null -ne $data -and $data.ContainsKey('SeverityOverrides')) {
+                    $table = $data['SeverityOverrides']
+                    # The value must be a dictionary. A list or a scalar here is malformed
+                    # policy, not an override set -- skipped, exactly as a non-string rule code
+                    # is skipped above, rather than coerced into something that looks enforced.
+                    if ($table -is [System.Collections.IDictionary]) {
+                        foreach ($k in @($table.Keys)) {
+                            if ($k -isnot [string]) { continue }
+                            $rule = ([string]$k).Trim()
+                            if ([string]::IsNullOrWhiteSpace($rule)) { continue }
+                            $v = $table[$k]
+                            if ($v -isnot [string]) { continue }
+                            # Canonicalise against the vocabulary rather than lowercasing or
+                            # accepting what we are handed: an unknown severity name is a
+                            # malformed expectation, and an override that names a level the
+                            # renderer cannot rank would surface as the junk default. This is
+                            # the ToLowerInvariant lesson from 000288, applied rather than
+                            # recalled.
+                            $canon = Resolve-SeverityName ([string]$v)
+                            if ($canon -eq '') { continue }
+                            if (-not $sev.ContainsKey($rule)) { $sev[$rule] = $canon }
+                        }
+                    }
+                }
             }
         }
     } catch {
         $reason = 'orgPolicy could not be read; no org exclusions applied: ' + $_.Exception.Message
         $codes = @()
+        $sev = @{}
     }
     if ($reason -ne '' -and $null -ne $WarningOut) { $WarningOut.Value = $reason }
-    return @($codes)
+    return @{ ExcludeRules = @($codes); SeverityOverrides = $sev }
+}
+
+function Import-OrgPolicyExcludes {
+    # The v1 reader, preserved EXACTLY as its callers know it: a trimmed, de-duplicated
+    # string[] of excluded rule codes, @() for every failure, one warning on a degrade. It is
+    # now a projection of Import-OrgPolicy rather than a second reader, so the integrity gate,
+    # the absolute-path rule and the degrade vocabulary cannot drift between the two halves of
+    # the payload (Hub Rule 18). Every existing caller -- lsp-client.ps1 and doctor.ps1 -- and
+    # every existing test keeps calling this and sees no change.
+    param([string]$Path, [ref]$WarningOut)
+    $pol = if ($null -eq $WarningOut) { Import-OrgPolicy -Path $Path }
+           else { Import-OrgPolicy -Path $Path -WarningOut $WarningOut }
+    return @($pol.ExcludeRules)
 }
 
 function Get-DiagnosticRuleCode {
@@ -1060,6 +1137,102 @@ function Select-OrgPolicyFiltered {
         $code = Get-DiagnosticRuleCode $r
         if (-not [string]::IsNullOrWhiteSpace($code) -and $set.Contains($code)) { continue }
         $out += $r
+    }
+    return @($out)
+}
+
+
+function Set-DiagnosticSeverity {
+    # Return $Record with its severity re-stamped, across every shape the client's stream carries.
+    #
+    # This exists for the same reason Get-DiagnosticRuleCode does, and the reason is not
+    # cosmetic: the stream mixes [pscustomobject] (JSON-parsed daemon records and the pre-PSSA
+    # finding shape) with [hashtable] and the [ordered] hashtable ConvertTo-DiagRecord returns,
+    # and no single assignment idiom reaches all three. Writing through the wrong one would
+    # silently no-op, and an enforcement layer that silently stops enforcing is the one failure
+    # it cannot afford.
+    #
+    # severityNum is re-stamped TOO, from the same vocabulary. The record shape carries both a
+    # name and the LSP numeric level, and they mean the same thing; moving one and leaving the
+    # other is a guard measuring a proxy of itself, and a downstream consumer that reads the
+    # number would see the pre-override level while the name claimed otherwise.
+    #
+    # The record is COPIED, never mutated. The diagnostics stream is also handed to the dogfood
+    # capture and to the SARIF scan, so mutating a shared record in place would re-stamp it for
+    # a consumer that never asked. Copy semantics are what make this function pure.
+    param([object]$Record, [string]$Severity)
+    if ($null -eq $Record) { return $Record }
+    $rank = Get-SeverityRank $Severity
+    if ($Record -is [System.Collections.IDictionary]) {
+        $copy = [ordered]@{}
+        foreach ($k in @($Record.Keys)) { $copy[$k] = $Record[$k] }
+        $copy['severity'] = $Severity
+        if ($Record.Contains('severityNum')) { $copy['severityNum'] = $rank }
+        return $copy
+    }
+    $copy = $Record.PSObject.Copy()
+    if ($null -ne $copy.PSObject.Properties['severity']) { $copy.severity = $Severity }
+    else { Add-Member -InputObject $copy -NotePropertyName 'severity' -NotePropertyValue $Severity -Force }
+    if ($null -ne $copy.PSObject.Properties['severityNum']) { $copy.severityNum = $rank }
+    return $copy
+}
+
+function Set-OrgPolicySeverity {
+    # THE ORG'S INCLUDE-SIDE IMPOSITION (Policy v2, dispatch 000289, ruling R9). Re-stamps the
+    # severity of every record whose rule code the org overrides, and leaves every other record
+    # -- and every other field of the overridden ones -- untouched.
+    #
+    # WHY THIS IS THE INCLUDE SIDE. The v1 payload is subtract-only: an org can take a rule away,
+    # it cannot ask for one, and the enterprise review's argument was that a subtract-only
+    # payload cannot express an org REQUIREMENT. It is right. This is the requirement half the
+    # client seam can actually enforce: because it runs after every local filter, in the same
+    # final position as the org drop, no repo-local settings file and no `ruleInclude` knob can
+    # put the severity back.
+    #
+    # ORDER: it runs AFTER Select-OrgPolicyFiltered, and the order is load-bearing. Exclusion is
+    # the stronger verb -- a rule the org excludes is gone, and re-stamping a record that is
+    # about to be dropped is work with no observable effect. Dropping first also means an org
+    # that both excludes and overrides one rule gets the exclusion, which is the only reading
+    # that keeps "org exclude is final" true.
+    #
+    # THE BOUNDARY, NAMED RATHER THAN GLOSSED: this re-stamps a record that is ALREADY on the
+    # surface. It cannot resurrect one the daemon's own severity threshold dropped before the
+    # client ever saw it. At the shipped default threshold (Hint -- the LEAST severe level)
+    # nothing is threshold-dropped and the override is fully effective; a site that RAISES its
+    # local threshold can still hide a rule the org wanted raised. Closing that gap means moving
+    # the org layer into the daemon's own filter, which is a different slice with a real freeze
+    # cost. docs/configuration.md says so in the same words.
+    #
+    # An empty $OrgSeverity makes this the IDENTITY function -- that is what keeps the knob-off
+    # surface, and a v1 policy's surface, byte-identical. Matching is on Get-DiagnosticRuleCode,
+    # the same accessor the drop uses, so the two halves of the payload cannot disagree about
+    # what a record's rule is; comparison is case-insensitive, as PSScriptAnalyzer's own matching
+    # is. A record with NO code is never re-stamped: an org rule list names rules, and a parser
+    # error is not a rule.
+    #
+    # Adversarial control: run this BEFORE the drop and 'org exclude wins over an override of
+    # the same rule' goes RED; make the comparison ordinal-case-sensitive and 'matches a rule
+    # code case-insensitively' goes RED; re-stamp a record carrying no code and 'never re-stamps
+    # a record with no code' goes RED; return $Records unconditionally and every override
+    # assertion goes RED.
+    param([object[]]$Records, [hashtable]$OrgSeverity = @{})
+    if ($null -eq $Records) { return @() }
+    if ($null -eq $OrgSeverity -or $OrgSeverity.Count -eq 0) { return @($Records) }
+    $map = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($k in @($OrgSeverity.Keys)) {
+        if ($null -eq $k) { continue }
+        $canon = Resolve-SeverityName ([string]$OrgSeverity[$k])
+        if ($canon -eq '') { continue }
+        $rule = ([string]$k).Trim()
+        if ([string]::IsNullOrWhiteSpace($rule)) { continue }
+        $map[$rule] = $canon
+    }
+    if ($map.Count -eq 0) { return @($Records) }
+    $out = @()
+    foreach ($r in $Records) {
+        $code = Get-DiagnosticRuleCode $r
+        if ([string]::IsNullOrWhiteSpace($code) -or -not $map.ContainsKey($code)) { $out += $r; continue }
+        $out += (Set-DiagnosticSeverity -Record $r -Severity $map[$code])
     }
     return @($out)
 }
