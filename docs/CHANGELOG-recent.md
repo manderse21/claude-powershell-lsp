@@ -48,6 +48,37 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **`Invoke-PluginHook` now has one definition instead of eleven** (test-only; no shipped
+behaviour changes). The integration suite drives the plugin's hooks as child processes through one
+helper, and `tests/PowerShellLsp.Integration.Tests.ps1` defined it ten times -- once per
+`Describe` -- on top of the shared copy in `tests/Integration.Common.ps1`. Measured by the parser
+rather than by brace matching, the ten were **five distinct bodies**: six were the shared body once
+indentation is set aside, one (the warm-start block's) had **no `$ExtraEnv` parameter at all**, and
+three recorded the child's exit code under **three different variable names**.
+
+**The drift failed silent.** The copies are simple functions, so passing `-ExtraEnv` to the variant
+without that parameter raised no error: PowerShell put the name and the hashtable into `$args`, and
+the child ran without the environment the caller asked for.
+
+**The shared copy's own header was wrong about how it was used.** It said every `Describe`
+dot-sourced `Integration.Common.ps1` before defining its local copy, so every local copy shadowed
+the shared one. Two did not: in the 000028 and 000030 blocks the dot-source came after the local
+definition in the same `BeforeAll`, so the shared copy replaced theirs. Those two copies were dead
+code, and the "unused" shared copy was in force for 12 of the 46 calls.
+
+Now there is one definition, and it carries the one behaviour the variants added -- the child's
+exit code in `$script:LastHookExit`, reset to `$null` on every call and set only when the child
+exits on its own -- under one name instead of three. `tests/PowerShellLsp.InvokePluginHook.Tests.ps1`
+guards it three ways: exactly **one definition** under `tests/`, with an in-band control proving
+the census counts a duplicate; the **superset** -- every call passes only named parameters and every
+name any call passes is declared, asserted over the parser's view of the calls because a text grep
+counts comments (it reads 74 "call sites" where there are 46 calls); and the **exit-code contract**.
+Each carries the prior implementation as its RED control, reconstructed by undoing the fix on the
+shipped source with its anchor count asserted, and each was measured to bite against the shipped
+files: restoring one local copy turns 1 test red, dropping `$ExtraEnv` from the signature 3,
+removing the exit-code capture 4 in this file and **11 in the integration suite** -- every one of
+them an exit-code read -- with everything else staying green.
+
 PATCH: **A one-definition test now scopes itself to the git index, not the filesystem**
 (test-only; no shipped behaviour changes). `PowerShellLsp.DaemonPipeName.Tests.ps1`'s
 *"the definition lives in exactly ONE place"* walked the repository root recursively. It passed
