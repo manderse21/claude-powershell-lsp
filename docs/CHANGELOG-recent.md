@@ -48,6 +48,36 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **The OTel export now reports diagnostic-shape CARDINALITY, without publishing the shapes**
+(enterprise docket **P2-1**, review item 7, the capture half -- which completes the item). A sixth
+metric, `powershell_lsp.diagnostics.shapes`, counts **distinct** diagnostic shapes read off the
+opt-in capture log (`dogfood/diagnostics.jsonl`), split by `ruleId`, `severity` and `source`.
+
+**It answers a question the volume counters cannot.** `diagnostics.records` says how many findings
+a host produced; it cannot tell one rule firing four hundred times from four hundred distinct
+problems. This says how many *different* things the analyzer found -- whether the host's diagnostic
+surface is widening.
+
+**The `hash` that identifies a shape is what the metric counts, and it never leaves.** One point
+per distinct hash would emit one time series per distinct diagnostic -- unbounded cardinality, and
+an event log wearing a metric's clothes. It is the same reason `ts` is off the stats allowlist. So
+the count is the metric and the shapes are not; `snippet` (the offending source line, verbatim),
+`message`, `file`, `line` and `col` are off the capture allowlist for the plainer reason that they
+are source code and locations.
+
+**There is still exactly ONE allowlist; it now answers per record kind.**
+`Get-OtelAttributeAllowList` gained a `-Kind` that *selects a list rather than adding a door*: the
+two record kinds have disjoint vocabularies, so a flat union would have silently permitted a
+capture field on a stats row and the reverse -- inert only until one record gained a field named
+like the other's. An unrecognized kind publishes **nothing** rather than falling back to another
+kind's permissions. The stats rendering is unchanged, asserted byte-for-byte against the pre-change
+payload.
+
+**With no capture log, no shapes metric is emitted at all** -- never a zero, which would tell a
+fleet dashboard this host produced no distinct diagnostics rather than that the reader was handed
+no log. `-CapturePath` reads a specific log; `-Show` reports capture row and distinct-shape counts
+and, held to the same boundary as the payload, never a hash.
+
 MINOR: **`doctor -Json` now reports whether this host is exporting metrics, and where to**
 (enterprise docket **P2-1**, review item 7, the doctor half). The envelope gains one field,
 `otelExport`, carrying `configured` (is export active), `recognized` (did

@@ -583,3 +583,215 @@ Describe 'export-otel.ps1 -- sending is opt-in twice, and refusal is loud' {
         $body | Should -Not -Match ([regex]::Escape($s.Leaf))
     }
 }
+
+Describe 'P2-1 capture half -- diagnostic-shape CARDINALITY, never the shapes (dispatch 000291)' {
+    BeforeAll {
+        $script:NaiveShapes = Join-Path $PSScriptRoot 'fixtures/red-controls/otel-common-shapes.naive-000291.ps1'
+        $script:NaiveShapesSha = 'd050b46ea383dacb2298d6ad0e8d8da2b50a295d1a17493eddd60c73d8ff79a5'
+
+        function New-CaptureRow {
+            # One capture row shaped as scripts/lib/lsp-common.ps1's Add-DiagnosticCaptureEntries
+            # writes one. $Extra adds fields the shipped writer does NOT write today, which is how
+            # the boundary is tested as a CLASS rather than as a fix for one field name.
+            param(
+                [string] $Hash = 'aaaa1111',
+                [string] $RuleId = 'PSAvoidUsingCmdletAliases',
+                [string] $Severity = 'Warning',
+                [string] $Source = 'PSScriptAnalyzer',
+                [string] $File = 'billing.ps1',
+                [string] $Snippet = 'gci . | ? { $_.Length -gt 0 }',
+                [string] $Message = 'alias gci used',
+                [int] $Line = 12, [int] $Col = 3,
+                [hashtable] $Extra = $null
+            )
+            $row = [ordered]@{
+                ts = '2026-09-10T10:00:00.0000000-04:00'; file = $File; line = $Line; col = $Col
+                ruleId = $RuleId; source = $Source; severity = $Severity; message = $Message
+                snippet = $Snippet; hash = $Hash; verdict = ''
+            }
+            if ($null -ne $Extra) { foreach ($k in $Extra.Keys) { $row[$k] = $Extra[$k] } }
+            # Round-trip through JSON so the object under test is a PSCustomObject parsed off a
+            # JSONL line -- what the exporter actually gets -- and not a hashtable the test built.
+            return (($row | ConvertTo-Json -Depth 8 -Compress) | ConvertFrom-Json)
+        }
+
+        function Get-ShapePayload {
+            param([object[]] $CaptureRows, [object[]] $StatsRows = @())
+            if (@($StatsRows).Count -eq 0) { $StatsRows = @((New-StatsRow -Path 'C:\t\a.ps1')) }
+            return (ConvertTo-OtelResourceMetrics -Records $StatsRows -ServiceVersion '9.9.9' `
+                    -Now $script:PinNow -Start $script:PinStart -CaptureRecords $CaptureRows)
+        }
+    }
+
+    It 'counts DISTINCT shapes, not occurrences' {
+        # Four rows, two distinct hashes, all in one allowlisted bucket. The volume question is
+        # already answered by diagnostics.records; this metric answers a different one, and the
+        # difference between 2 and 4 is the whole of it.
+        $rows = @(
+            (New-CaptureRow -Hash 'h-alpha'), (New-CaptureRow -Hash 'h-alpha'),
+            (New-CaptureRow -Hash 'h-beta'), (New-CaptureRow -Hash 'h-alpha')
+        )
+        $m = Get-MetricByName -Payload (Get-ShapePayload -CaptureRows $rows) -Name 'powershell_lsp.diagnostics.shapes'
+        $m | Should -Not -BeNullOrEmpty
+        @($m.sum.dataPoints).Count | Should -Be 1
+        $m.sum.dataPoints[0].asInt | Should -BeExactly '2'
+    }
+
+    It 'buckets by the allowlisted axes, so two rules do not collapse into one number' {
+        $rows = @(
+            (New-CaptureRow -Hash 'h1' -RuleId 'PSAvoidUsingCmdletAliases'),
+            (New-CaptureRow -Hash 'h2' -RuleId 'PSAvoidUsingCmdletAliases'),
+            (New-CaptureRow -Hash 'h3' -RuleId 'PSUseApprovedVerbs')
+        )
+        $m = Get-MetricByName -Payload (Get-ShapePayload -CaptureRows $rows) -Name 'powershell_lsp.diagnostics.shapes'
+        @($m.sum.dataPoints).Count | Should -Be 2
+        $byRule = @{}
+        foreach ($p in $m.sum.dataPoints) {
+            $rid = ($p.attributes | Where-Object { $_.key -eq 'ruleId' }).value.stringValue
+            $byRule[$rid] = $p.asInt
+        }
+        $byRule['PSAvoidUsingCmdletAliases'] | Should -BeExactly '2'
+        $byRule['PSUseApprovedVerbs'] | Should -BeExactly '1'
+    }
+
+    It 'THE HASH ITSELF NEVER LEAVES -- it is what the metric counts, not what it publishes' {
+        # The vacuity arm comes first: the rows must really carry the hash, or a clean payload
+        # would prove nothing. Scoped to the whole payload text, not to the shapes metric,
+        # because a hash smuggled into any other field is still published.
+        $h = 'ZZHASH-' + [guid]::NewGuid().ToString('N').Substring(0, 10)
+        $rows = @((New-CaptureRow -Hash $h), (New-CaptureRow -Hash ($h + '-two')))
+        ([string]$rows[0].hash) | Should -Match ([regex]::Escape($h)) -Because 'the fixture must really carry the hash'
+
+        $json = (Get-ShapePayload -CaptureRows $rows) | ConvertTo-Json -Depth 12 -Compress
+        $json | Should -Match 'powershell_lsp.diagnostics.shapes' -Because 'the metric must have been emitted at all'
+        $json | Should -Not -Match ([regex]::Escape($h))
+    }
+
+    It 'an UNKNOWN capture field is dropped -- the boundary is a CLASS, not a list of known-bad names' {
+        # The property the allowlist exists for. A field nobody has thought of yet must be absent
+        # WITHOUT anyone adding it to a denylist. `settingsPath` is the same probe 000290 used on
+        # the stats side, which keeps the two halves testing the same property.
+        $secret = 'ZZUNKNOWN-' + [guid]::NewGuid().ToString('N').Substring(0, 10)
+        $rows = @((New-CaptureRow -Hash 'h1' -Extra @{ settingsPath = $secret; futureField = $secret }))
+        $json = (Get-ShapePayload -CaptureRows $rows) | ConvertTo-Json -Depth 12 -Compress
+        $json | Should -Match 'powershell_lsp.diagnostics.shapes'
+        $json | Should -Not -Match ([regex]::Escape($secret))
+    }
+
+    It 'the published attribute key set IS the capture allowlist, exactly' {
+        $rows = @((New-CaptureRow -Hash 'h1'))
+        $m = Get-MetricByName -Payload (Get-ShapePayload -CaptureRows $rows) -Name 'powershell_lsp.diagnostics.shapes'
+        $keys = @($m.sum.dataPoints[0].attributes | ForEach-Object { $_.key }) | Sort-Object
+        ($keys -join ',') | Should -BeExactly 'ruleId,severity,source'
+        ($keys -join ',') | Should -BeExactly ((@(Get-OtelAttributeAllowList -Kind 'capture') | Sort-Object) -join ',')
+    }
+
+    It 'the SOURCE LINE, the message and the file never leave' {
+        # snippet is the single most sensitive field in the record -- it is verbatim source, and
+        # it is why `metadata` capture mode removes it from the log at all.
+        $mark = 'ZZSNIP-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $rows = @((New-CaptureRow -Hash 'h1' -Snippet ('$x = ' + $mark) -Message ('bad thing near ' + $mark) -File ($mark + '.ps1')))
+        ([string]$rows[0].snippet) | Should -Match ([regex]::Escape($mark)) -Because 'the fixture must really carry the source line'
+        $json = (Get-ShapePayload -CaptureRows $rows) | ConvertTo-Json -Depth 12 -Compress
+        $json | Should -Not -Match ([regex]::Escape($mark))
+    }
+
+    It 'a row with NO hash is skipped, not counted as one phantom empty shape' {
+        $rows = @(
+            (New-CaptureRow -Hash 'h1'), (New-CaptureRow -Hash ''),
+            (New-CaptureRow -Hash '   '), (New-CaptureRow -Hash 'h2')
+        )
+        $m = Get-MetricByName -Payload (Get-ShapePayload -CaptureRows $rows) -Name 'powershell_lsp.diagnostics.shapes'
+        $m.sum.dataPoints[0].asInt | Should -BeExactly '2' -Because 'the two blank-hash rows must not add a third shape'
+    }
+
+    It 'NO capture rows means NO shapes metric -- never a zero' {
+        # A zero published to a fleet dashboard reads as "this host produced no distinct
+        # diagnostics". That is a different statement from "this reader was given no capture
+        # log", and the exporter already refuses to conflate the two on the stats side.
+        $payload = Get-ShapePayload -CaptureRows @()
+        (Get-MetricByName -Payload $payload -Name 'powershell_lsp.diagnostics.shapes') | Should -BeNullOrEmpty
+    }
+
+    It 'REGRESSION: with no capture rows the payload is IDENTICAL to the pre-000291 rendering' {
+        # The refactor that gave the allowlist a -Kind must not have moved the stats half by a
+        # byte. Both renderings are produced here from the same pinned timestamps, so a
+        # difference could only come from the change under test.
+        $stats = @(
+            (New-StatsRow -Path 'C:\t\a.ps1' -TotalMs 30 -Records 3 -Corrections 1 -ScopeApplied $true -ScopeTotal 9 -ScopeSurfaced 3),
+            (New-StatsRow -Path 'C:\t\b.psm1' -Ext '.psm1' -TotalMs 420 -Records 4)
+        )
+        $withoutParam = (ConvertTo-OtelResourceMetrics -Records $stats -ServiceVersion '9.9.9' `
+                -Now $script:PinNow -Start $script:PinStart) | ConvertTo-Json -Depth 12 -Compress
+        $withEmpty = (ConvertTo-OtelResourceMetrics -Records $stats -ServiceVersion '9.9.9' `
+                -Now $script:PinNow -Start $script:PinStart -CaptureRecords @()) | ConvertTo-Json -Depth 12 -Compress
+        $withEmpty | Should -BeExactly $withoutParam
+        $withoutParam | Should -Match 'powershell_lsp.edits' -Because 'the comparison must be over a real payload'
+    }
+
+    It 'an UNRECOGNIZED -Kind publishes NOTHING, rather than falling back to another kind' {
+        # A boundary must fail closed. A typo'd kind that silently returned the stats list would
+        # let a capture row be rendered under stats permissions, which is the one direction an
+        # allowlist may never take.
+        @(Get-OtelAttributeAllowList -Kind 'captrue').Count | Should -Be 0
+        @(Get-OtelAttributeAllowList -Kind '').Count | Should -Be 0
+        @(ConvertTo-OtelRowAttributes -Record (New-CaptureRow -Hash 'h1') -Kind 'captrue').Count | Should -Be 0
+        # ...and the two real kinds still answer.
+        (@(Get-OtelAttributeAllowList -Kind 'stats') -join ',') | Should -BeExactly 'ext,taken,cached'
+        (@(Get-OtelAttributeAllowList) -join ',') | Should -BeExactly 'ext,taken,cached' -Because 'the default must stay stats for every pre-000291 caller'
+    }
+
+    It 'RED CONTROL: the fixture on disk is the one this control was written against' {
+        (Get-LfSha256 -FilePath $script:NaiveShapes) | Should -BeExactly $script:NaiveShapesSha
+    }
+
+    It 'RED CONTROL: the naive per-hash metric publishes the shapes, where the shipped one does not' {
+        # NOT a prior implementation -- New-OtelShapeCountPoints is new here and none exists. It
+        # is the obvious first pass: one point per hash, hash as an attribute. It reads as MORE
+        # informative than the shipped version, which is what makes it the right mutant.
+        $h = 'ZZRED-' + [guid]::NewGuid().ToString('N').Substring(0, 10)
+        $rows = @((New-CaptureRow -Hash $h), (New-CaptureRow -Hash ($h + '-two')))
+
+        $shipped = (Get-ShapePayload -CaptureRows $rows) | ConvertTo-Json -Depth 12 -Compress
+
+        . $script:NaiveShapes    # shadows exactly ONE function, for this It only
+        $mutant = (Get-ShapePayload -CaptureRows $rows) | ConvertTo-Json -Depth 12 -Compress
+
+        $shipped | Should -Not -BeNullOrEmpty
+        $mutant | Should -Not -BeNullOrEmpty -Because 'the mutant must RUN -- a crash is not a red control'
+        $mutant | Should -Not -BeExactly $shipped -Because 'the override must actually have taken effect'
+
+        $shipped | Should -Not -Match ([regex]::Escape($h))
+        $mutant | Should -Match ([regex]::Escape($h)) -Because 'the naive cut puts the shape hash on the wire'
+    }
+
+    It 'RED CONTROL SURVIVING ARM: the mutant changes ONLY the shapes metric' {
+        # Without this the leak assertion above would credit a fixture that simply broke the
+        # renderer. The five metrics 000290 shipped are shipped code in BOTH runs.
+        $stats = @(
+            (New-StatsRow -Path 'C:\t\a.ps1' -TotalMs 30 -Records 3 -Corrections 1 -ScopeApplied $true -ScopeTotal 9 -ScopeSurfaced 3),
+            (New-StatsRow -Path 'C:\t\b.ps1' -TotalMs 420 -Records 4)
+        )
+        $rows = @((New-CaptureRow -Hash 'h1'), (New-CaptureRow -Hash 'h2'))
+        $shipped = Get-ShapePayload -CaptureRows $rows -StatsRows $stats
+
+        . $script:NaiveShapes
+        $mutant = Get-ShapePayload -CaptureRows $rows -StatsRows $stats
+
+        foreach ($name in @('powershell_lsp.diagnostics.records',
+                'powershell_lsp.diagnostics.corrections',
+                'powershell_lsp.edit.scope_trimmed')) {
+            (Get-SumValue -Payload $mutant -Name $name) |
+                Should -Be (Get-SumValue -Payload $shipped -Name $name) -Because ($name + ' is shipped code in both runs')
+        }
+        foreach ($q in @('p50', 'p95')) {
+            (Get-GaugePoint -Payload $mutant -Name 'powershell_lsp.edit.duration' -Stage 'total' -Quantile $q) |
+                Should -Be (Get-GaugePoint -Payload $shipped -Name 'powershell_lsp.edit.duration' -Stage 'total' -Quantile $q)
+        }
+        @((Get-MetricByName -Payload $mutant -Name 'powershell_lsp.edits').sum.dataPoints).Count |
+            Should -Be @((Get-MetricByName -Payload $shipped -Name 'powershell_lsp.edits').sum.dataPoints).Count
+        # ...and the one thing it MAY change, it did.
+        @((Get-MetricByName -Payload $mutant -Name 'powershell_lsp.diagnostics.shapes').sum.dataPoints).Count |
+            Should -Not -Be @((Get-MetricByName -Payload $shipped -Name 'powershell_lsp.diagnostics.shapes').sum.dataPoints).Count
+    }
+}

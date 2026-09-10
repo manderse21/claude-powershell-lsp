@@ -27,18 +27,60 @@
 # ASCII only (Windows PowerShell 5.1 reads UTF-8-without-BOM through Windows-1252).
 
 function Get-OtelAttributeAllowList {
-    # THE metadata boundary. The ONLY stats-row fields that may leave the host as attributes.
+    # THE metadata boundary, for EVERY record kind this exporter reads. There is no second
+    # allowlist and no other path from a record's own fields to the wire.
     #
+    # `-Kind` SELECTS A LIST; IT DOES NOT ADD A DOOR. The two record kinds have disjoint
+    # vocabularies, so a single flat union would silently permit a capture field on a stats row
+    # and vice versa -- inert today only because neither record happens to carry the other's
+    # names, which is precisely the "safe until someone adds a field" shape an allowlist exists
+    # to refuse. One function still owns the whole boundary; it just answers per kind.
+    #
+    # ---- Kind 'stats' -- rows from logs/stats.jsonl (dispatch 000290) --------------------
     #   ext     the edited file's extension (.ps1 / .psm1 / .psd1) -- a type, not a location.
     #   taken   which analysis path ran ('cache-hit', 'daemon-analyze', 'pre-pssa-or-parse') --
     #           a fixed internal vocabulary, bounded cardinality.
     #   cached  whether the daemon served this edit from its cache.
     #
-    # DELIBERATELY ABSENT, and each for its own reason rather than by omission:
+    # DELIBERATELY ABSENT from 'stats', each for its own reason rather than by omission:
     #   path    the absolute path of the edited file. This is the field the boundary exists for.
     #   ts      a per-edit wall-clock stamp; as an attribute it would make every point unique
     #           and turn a metric into an event log carrying an edit-by-edit activity trace.
-    return @('ext', 'taken', 'cached')
+    #
+    # ---- Kind 'capture' -- rows from dogfood/diagnostics.jsonl (dispatch 000291) ---------
+    #   ruleId    the analyzer rule that fired (PSAvoidUsingCmdletAliases, ...). A fixed
+    #             vocabulary shipped with the analyzer -- bounded, and the axis the shape
+    #             count is worth slicing by at all.
+    #   severity  Error / Warning / Information. A three-value vocabulary.
+    #   source    which analyzer produced it ('PSScriptAnalyzer', the plugin's own pre-pass).
+    #             A two-value internal vocabulary.
+    #
+    # DELIBERATELY ABSENT from 'capture', and this list is the point of the slice:
+    #   hash      the diagnostic SHAPE hash. It is what the metric COUNTS, and it must never
+    #             become an attribute: one point per distinct hash is unbounded cardinality,
+    #             and it would turn a metric into an event log -- the same reason `ts` is off
+    #             the stats list. A COUNT of distinct shapes is a metric; the shapes are not.
+    #   snippet   the offending SOURCE LINE, verbatim. The single most sensitive field in the
+    #             record; it is why `metadata` capture mode removes it from the log at all.
+    #   message   the analyzer's text, which quotes identifiers out of the source.
+    #   file      a location. Basenamed in `metadata` mode and still a filename either way.
+    #   line/col  a location within that file.
+    #   ts        as above.
+    #   verdict   bounded, but it is dogfooding bookkeeping about a human's triage of a
+    #             finding, not a property of the host's diagnostic surface. Off by scope, not
+    #             by cardinality -- recorded here so a later reader does not read the omission
+    #             as an oversight and "fix" it.
+    param([string] $Kind = 'stats')
+    switch ($Kind) {
+        'capture' { return @('ruleId', 'severity', 'source') }
+        'stats' { return @('ext', 'taken', 'cached') }
+        default {
+            # An unrecognized kind yields NO attributes rather than the stats list. Failing
+            # closed is the only safe direction for a boundary: a typo must publish nothing,
+            # never fall back to some other record kind's permissions.
+            return @()
+        }
+    }
 }
 
 function Get-OtelField {
@@ -91,10 +133,12 @@ function New-OtelAttribute {
 
 function ConvertTo-OtelRowAttributes {
     # The allowlist applied to ONE row. This is the single seam through which a row's own
-    # fields may become attributes -- there is no other path from a stats row to the wire.
-    param([object] $Record)
+    # fields may become attributes -- there is no other path from any record to the wire.
+    # `-Kind` is forwarded to the allowlist and defaults to 'stats', so every pre-000291
+    # caller keeps its exact behaviour without being touched.
+    param([object] $Record, [string] $Kind = 'stats')
     $attrs = @()
-    foreach ($name in (Get-OtelAttributeAllowList)) {
+    foreach ($name in (Get-OtelAttributeAllowList -Kind $Kind)) {
         $v = Get-OtelField -Record $Record -Name $name
         if ($null -eq $v) { continue }
         $attrs += (New-OtelAttribute -Key $name -Value $v)
@@ -108,9 +152,9 @@ function Get-OtelBucketKey {
     # The separator is US (0x1F) via [char], NOT a `u{001f} escape: that escape is PowerShell 7
     # syntax and is a PARSE ERROR under Windows PowerShell 5.1, which is one of this plugin's
     # six CI legs.
-    param([object] $Record)
+    param([object] $Record, [string] $Kind = 'stats')
     $parts = @()
-    foreach ($name in (Get-OtelAttributeAllowList)) {
+    foreach ($name in (Get-OtelAttributeAllowList -Kind $Kind)) {
         $v = Get-OtelField -Record $Record -Name $name
         $parts += ($name + '=' + [string]$v)
     }
@@ -175,6 +219,50 @@ function New-OtelPlainSumPoints {
     )
 }
 
+function New-OtelShapeCountPoints {
+    # DIAGNOSTIC-SHAPE CARDINALITY: how many DISTINCT diagnostic shapes this host produced,
+    # sliced by the 'capture' allowlist (dispatch 000291, P2-1's capture-`hash` half).
+    #
+    # THE VALUE IS A COUNT OF DISTINCT HASHES. THE HASHES THEMSELVES NEVER LEAVE. That is the
+    # whole design: `hash` is a per-shape identifier with unbounded cardinality, so exporting it
+    # as an attribute would emit one time series per distinct diagnostic and turn a metric into
+    # an event log -- the same failure `ts` is kept off the stats list to avoid. A count answers
+    # the question the metric exists for ("is this host's diagnostic surface widening?") without
+    # publishing anything about WHICH shapes those are.
+    #
+    # De-duplication is over the hash within each bucket, so the same finding recurring on every
+    # edit counts once, which is what makes the number a cardinality rather than a volume. The
+    # volume question is already answered by powershell_lsp.diagnostics.records.
+    #
+    # A row with no `hash` is SKIPPED rather than counted as a distinct empty shape: capture
+    # rows written before the hash existed, and any malformed row, would otherwise all collapse
+    # into one phantom shape and inflate every bucket by exactly one.
+    param([object[]] $Records, [string] $TimeUnixNano, [string] $StartTimeUnixNano)
+    $buckets = [ordered]@{}
+    foreach ($r in @($Records)) {
+        $h = Get-OtelField -Record $r -Name 'hash'
+        if ($null -eq $h -or [string]::IsNullOrWhiteSpace([string]$h)) { continue }
+        $k = Get-OtelBucketKey -Record $r -Kind 'capture'
+        if (-not $buckets.Contains($k)) {
+            $buckets[$k] = [ordered]@{
+                seen  = (New-Object 'System.Collections.Generic.HashSet[string]')
+                attrs = (ConvertTo-OtelRowAttributes -Record $r -Kind 'capture')
+            }
+        }
+        [void]$buckets[$k].seen.Add([string]$h)
+    }
+    $points = @()
+    foreach ($k in $buckets.Keys) {
+        $points += [ordered]@{
+            asInt             = [string][int]$buckets[$k].seen.Count
+            timeUnixNano      = $TimeUnixNano
+            startTimeUnixNano = $StartTimeUnixNano
+            attributes        = @($buckets[$k].attrs)
+        }
+    }
+    return @($points)
+}
+
 function ConvertTo-OtelResourceMetrics {
     # Render a set of parsed stats rows as one OTLP ExportMetricsServiceRequest body.
     #
@@ -185,11 +273,18 @@ function ConvertTo-OtelResourceMetrics {
     #
     # $Now and $Start are PARAMETERS rather than Get-Date calls so a test can pin the
     # timestamps and compare two renderings byte for byte.
+    #
+    # $CaptureRecords is OPTIONAL and defaults to empty (dispatch 000291). When it is empty the
+    # payload is byte-identical to what 000290 shipped: no shapes metric is emitted at all,
+    # rather than one emitted with a zero. A zero here would be a claim to a fleet dashboard
+    # that this host produced no distinct diagnostics, which is a different statement from "this
+    # reader was given no capture log", and the exporter already refuses to conflate those.
     param(
         [object[]] $Records,
         [string]   $ServiceVersion = '0.0.0-unknown',
         [datetime] $Now = [datetime]::UtcNow,
-        [datetime] $Start = [datetime]::UtcNow
+        [datetime] $Start = [datetime]::UtcNow,
+        [object[]] $CaptureRecords = @()
     )
     $rows = @($Records)
     $tNow = Get-OtelUnixNano -When $Now
@@ -265,6 +360,12 @@ function ConvertTo-OtelResourceMetrics {
             -DataPoints (New-OtelPlainSumPoints -Value $corrTotal -TimeUnixNano $tNow -StartTimeUnixNano $tStart))
     $metrics += (New-OtelSumMetric -Name 'powershell_lsp.edit.scope_trimmed' -Unit '1' `
             -DataPoints (New-OtelPlainSumPoints -Value $trimmed -TimeUnixNano $tNow -StartTimeUnixNano $tStart))
+
+    # --- powershell_lsp.diagnostics.shapes: DISTINCT shapes, never the shapes themselves -----
+    $shapePoints = New-OtelShapeCountPoints -Records @($CaptureRecords) -TimeUnixNano $tNow -StartTimeUnixNano $tStart
+    if (@($shapePoints).Count -gt 0) {
+        $metrics += (New-OtelSumMetric -Name 'powershell_lsp.diagnostics.shapes' -Unit '1' -DataPoints $shapePoints)
+    }
 
     # RESOURCE ATTRIBUTES are fixed strings and the plugin version -- never anything derived
     # from the host, the user, or a path. service.instance.id is deliberately NOT set: it would

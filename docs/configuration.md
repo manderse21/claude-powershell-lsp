@@ -823,9 +823,29 @@ fall opposite ways because what sits on the other side of the failure is opposit
 | `powershell_lsp.diagnostics.records` | Sum | Diagnostics produced |
 | `powershell_lsp.diagnostics.corrections` | Sum | Corrections offered |
 | `powershell_lsp.edit.scope_trimmed` | Sum | Diagnostics `scopeToEdit` withheld, over scoped edits only |
+| `powershell_lsp.diagnostics.shapes` | Sum | **Distinct** diagnostic shapes seen, split by `ruleId`, `severity` and `source` |
 
 Resource attributes are `service.name` and `service.version` and nothing else -- no hostname, no
 `service.instance.id`, no user.
+
+**`powershell_lsp.diagnostics.shapes` reads the capture log, and it counts shapes without naming
+them.** Its source is `dogfood/diagnostics.jsonl` -- the same opt-in capture log
+[`POWERSHELL_LSP_CAPTURE_MODE`](#powershell_lsp_capture_mode) governs -- rather than
+`stats.jsonl`. Each capture row carries a `hash` identifying the *shape* of a diagnostic (its rule
+plus its offending line), and the metric publishes **how many distinct hashes** a bucket contained.
+
+**The hashes themselves are never exported, and that is a cardinality decision as much as a privacy
+one.** One point per distinct hash would emit one time series per distinct diagnostic on the host --
+unbounded, and an event log wearing a metric's clothes. It is the same reason `ts` is off the stats
+list. A count answers what the metric is for ("is this host's diagnostic surface widening?")
+without publishing anything about which diagnostics those are. `snippet` -- the offending source
+line, verbatim -- `message`, `file`, `line` and `col` are off the capture allowlist for the plainer
+reason: they are source code and locations.
+
+If there is no capture log, **no `powershell_lsp.diagnostics.shapes` metric is emitted at all** --
+not a zero. A zero would tell a fleet dashboard this host produced no distinct diagnostics, which
+is a different claim from "this reader was given no capture log". Pass `-CapturePath` to read a
+specific log instead of the default.
 
 **A stats row carries the absolute path of the edited file; the export does not.** Attributes are
 built from an **allowlist** -- `ext`, `taken`, `cached` -- and never by copying the row. That is
@@ -834,6 +854,14 @@ keep passing the day a second path-bearing field is added to the row, whereas a 
 on the allowlist is never exported no matter what it is called. `ts` is off the list too, because a
 per-edit timestamp as an attribute would make every point unique and turn a metric into an
 edit-by-edit activity trace.
+
+**There is ONE allowlist, and it answers per record kind.** The capture log and the stats log have
+disjoint field vocabularies, so the boundary names `ext`/`taken`/`cached` for a stats row and
+`ruleId`/`severity`/`source` for a capture row. A single flat union would have permitted a capture
+field on a stats row and the reverse -- inert only until one of the two records gained a field
+named like the other's, which is the exact "safe until someone adds a field" shape an allowlist
+exists to refuse. An unrecognized record kind publishes **no** attributes rather than falling back
+to another kind's permissions.
 
 **Credentials in the URL are never printed.** A collector is often addressed as
 `https://user:token@host/v1/metrics` or with an api-key in the query string. The URL is POSTed to
