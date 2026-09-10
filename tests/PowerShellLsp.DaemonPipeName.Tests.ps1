@@ -141,12 +141,63 @@ Describe 'Nobody builds the pipe name any other way (routed debt 2(c))' {
     }
 
     It 'the definition lives in exactly ONE place' {
+        # SCOPED TO THE GIT INDEX, NOT THE FILESYSTEM, and that distinction is this test's whole
+        # history. The first cut walked $RepoRoot recursively. It passed from a worktree and
+        # FAILED from the repository root -- `Expected 1, but got 2` -- because linked worktrees
+        # are commonly checked out under `worktrees/`, each holding its own copy of
+        # scripts/lib/lsp-common.ps1. That second copy is not a second definition; it is the
+        # SAME definition, seen twice by a scan that was looking at a directory tree when it
+        # meant "this repository".
+        #
+        # `worktrees/` is gitignored, so the index is exactly the right instrument: it answers
+        # "which files are THIS repository's" and excludes ignored trees by construction, rather
+        # than by a path filter somebody has to remember to extend. A scan that hard-coded
+        # `-notmatch 'worktrees'` would pass today and miss the next ignored directory.
+        $tracked = @(git -C $script:RepoRoot ls-files '*.ps1')
+
+        # NON-VACUITY FLOOR, asserted BEFORE the property. If git fails or returns nothing the
+        # count assertion below would still fail closed, but it would fail with a message about
+        # definitions rather than about the instrument, which sends the reader to the wrong file.
+        @($tracked).Count | Should -BeGreaterThan 30 -Because 'git ls-files must have returned the repository, or this test measures nothing'
+
+        # ...and the exclusion the scope relies on is asserted rather than assumed.
+        @($tracked | Where-Object { $_ -like 'worktrees/*' }).Count |
+            Should -Be 0 -Because 'the index must not carry linked worktrees; that is precisely why it is the right scope'
+
         $defs = @()
-        foreach ($f in @(Get-ChildItem -LiteralPath $script:RepoRoot -Recurse -File -Filter '*.ps1' -ErrorAction SilentlyContinue)) {
-            $txt = [System.IO.File]::ReadAllText($f.FullName)
-            if ($txt -match '(?m)^function Get-DaemonPipeName\b') { $defs += $f.FullName }
+        foreach ($rel in $tracked) {
+            $full = Join-Path $script:RepoRoot $rel
+            if (-not (Test-Path -LiteralPath $full)) { continue }
+            $txt = [System.IO.File]::ReadAllText($full)
+            if ($txt -match '(?m)^function Get-DaemonPipeName\b') { $defs += $rel }
         }
         @($defs).Count | Should -Be 1
         $defs[0] | Should -Match 'lsp-common\.ps1$'
+    }
+
+    It 'RED CONTROL: the PRIOR filesystem walk over-counts wherever an ignored copy exists' {
+        # The prior implementation, reconstructed exactly: a recursive walk of the root. It
+        # asserts the DIFFERENCE between the two scopes rather than a fixed number on the real
+        # tree, because whether a linked worktree happens to exist right now is a property of the
+        # machine, not of the repository -- a control that demanded `2` from the real root would
+        # itself be flaky, which is the same class of mistake it exists to document.
+        #
+        # Built under $TestDrive, so it needs no worktree and touches no ignored directory: a
+        # nested copy of a file carrying the definition is exactly what a linked worktree looks
+        # like to a filesystem walk.
+        $root = Join-Path $TestDrive 'repo'
+        $nested = Join-Path $root 'worktrees/wt1/scripts/lib'
+        New-Item -ItemType Directory -Path (Join-Path $root 'scripts/lib') -Force | Out-Null
+        New-Item -ItemType Directory -Path $nested -Force | Out-Null
+        $body = 'function Get-DaemonPipeName {' + [string][char]10 + '    return $null' + [string][char]10 + '}'
+        [System.IO.File]::WriteAllText((Join-Path $root 'scripts/lib/lsp-common.ps1'), $body)
+        [System.IO.File]::WriteAllText((Join-Path $nested 'lsp-common.ps1'), $body)
+
+        $walked = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.ps1' |
+                Where-Object { ([System.IO.File]::ReadAllText($_.FullName)) -match '(?m)^function Get-DaemonPipeName\b' })
+        $outside = @($walked | Where-Object { $_.FullName -notmatch 'worktrees' })
+
+        @($walked).Count | Should -Be 2 -Because 'the prior implementation counts the ignored copy too -- this is the defect it shipped with'
+        @($outside).Count | Should -Be 1 -Because 'and only one of the two is this repository own file'
     }
 }

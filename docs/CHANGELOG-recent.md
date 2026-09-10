@@ -48,6 +48,28 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **A one-definition test now scopes itself to the git index, not the filesystem**
+(test-only; no shipped behaviour changes). `PowerShellLsp.DaemonPipeName.Tests.ps1`'s
+*"the definition lives in exactly ONE place"* walked the repository root recursively. It passed
+from a worktree and **failed from the repository root** -- `Expected 1, but got 2` -- because
+linked worktrees are commonly checked out under the gitignored `worktrees/`, each holding its own
+copy of `scripts/lib/lsp-common.ps1`.
+
+**That second copy was never a second definition.** It is the same definition, seen twice by a scan
+that was looking at a directory tree when it meant *"this repository"* -- so the test's answer
+depended on the machine it ran on rather than on the code. Measured from a root with six linked
+worktrees: the old scan returns **3**, the fixed scan returns **1**.
+
+The scan now reads `git ls-files`, which excludes ignored trees by construction rather than by a
+path filter somebody has to remember to extend. It carries a non-vacuity floor (the index must
+return more than 30 `.ps1` files, so a failed `git` cannot fake a pass) and asserts the exclusion
+it relies on. The prior implementation is kept as a **RED control** that reconstructs the nested
+copy under `$TestDrive` and asserts the two scopes **disagree** -- rather than asserting a fixed
+number on the real tree, which would make the control itself machine-dependent.
+
+Found by `dispatch verify` re-running the suite from the configured `repo_path`, which is the
+repository root — the one place the original scan was wrong.
+
 PATCH: **The daemon pipe name now has one definition instead of twenty-three** (internal
 hardening; no shipped behaviour changes). `Get-DaemonPipeName` in `scripts/lib/lsp-common.ps1` is
 the single source, and the 23 sites across `scripts/` (6) and `tests/` (17) that built the name by
