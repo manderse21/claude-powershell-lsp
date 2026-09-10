@@ -440,7 +440,7 @@ Describe 'captureMode -- the fleet-visible half of P0-2 (dispatch 000282, ruling
         $o = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd'))) | ConvertFrom-Json
         $o.schemaVersion | Should -Be 1
         (@($o.PSObject.Properties.Name) -join ',') |
-            Should -BeExactly 'schemaVersion,status,versions,provenanceFloor,captureMode,summary,checks'
+            Should -BeExactly 'schemaVersion,status,versions,provenanceFloor,captureMode,otelExport,summary,checks'
     }
 
     It 'no check status, count or exit code moved -- captureMode is not a check' {
@@ -460,5 +460,196 @@ Describe 'captureMode -- the fleet-visible half of P0-2 (dispatch 000282, ruling
         $withOff.summary.unknown | Should -Be $withUnset.summary.unknown
         (Get-DoctorExitCode -Results $results) | Should -Be (Get-DoctorExitCode -Results $results)
         $withOff.captureMode.resolved | Should -Not -BeExactly $withUnset.captureMode.resolved
+    }
+}
+
+Describe 'otelExport -- the fleet-visible half of P2-1 (dispatch 000291)' {
+    BeforeAll {
+        $script:PrevOtel = [Environment]::GetEnvironmentVariable('POWERSHELL_LSP_OTEL_ENDPOINT')
+        $script:NaiveReport = Join-Path $PSScriptRoot 'fixtures/red-controls/lsp-common-otel-report.naive-000291.ps1'
+        # LF-normalized so the Windows and POSIX legs agree on the same bytes.
+        $script:NaiveReportSha = 'a4c67eb107fcccdefe1f57fc4b4bda41e7ef50c1611a8ea2adfc0c208294b19c'
+
+        # A collector URL of the shape the redaction exists for: userinfo AND an api-key query.
+        # Both halves are secrets, and both must be absent from anything the envelope publishes.
+        $script:SecretUser = 'svc-otel'
+        $script:SecretPass = 's3cr3t-token-000291'
+        $script:SecretKey = 'apikey-000291-must-not-appear'
+        $script:CredUrl = 'https://' + $script:SecretUser + ':' + $script:SecretPass +
+        '@collector.example.invalid:4318/v1/metrics?api-key=' + $script:SecretKey
+
+        function Get-LfSha256 {
+            param([Parameter(Mandatory = $true)][string] $FilePath)
+            $text = [System.IO.File]::ReadAllText($FilePath).Replace([string][char]13 + [string][char]10, [string][char]10)
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            try {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+                return (-join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }))
+            }
+            finally { $sha.Dispose() }
+        }
+
+        function Get-EnvelopeText {
+            # The SHIPPED renderer over one inert result. Returns JSON TEXT, not an object,
+            # because the leak assertions below are about what gets WRITTEN, not about which
+            # key it lands under -- a credential smuggled into any field is still published.
+            return (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd')))
+        }
+    }
+    AfterAll {
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_OTEL_ENDPOINT', $script:PrevOtel)
+    }
+
+    It 'carries display, configured and recognized for <Case>' -TestCases @(
+        @{ Case = 'unset'; Raw = $null; Display = ''; Configured = $false; Recognized = $false }
+        @{ Case = 'plain https'; Raw = 'https://collector.example.invalid:4318/v1/metrics'
+            Display = 'https://collector.example.invalid:4318/v1/metrics'; Configured = $true; Recognized = $true
+        }
+        @{ Case = 'http default port'; Raw = 'http://collector.example.invalid/v1/metrics'
+            Display = 'http://collector.example.invalid/v1/metrics'; Configured = $true; Recognized = $true
+        }
+        @{ Case = 'not a url'; Raw = 'collector.example.invalid'; Display = ''; Configured = $false; Recognized = $false }
+        @{ Case = 'wrong scheme'; Raw = 'file:///tmp/metrics.json'; Display = ''; Configured = $false; Recognized = $false }
+    ) {
+        param($Case, $Raw, $Display, $Configured, $Recognized)
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_OTEL_ENDPOINT', $Raw)
+        $o = (Get-EnvelopeText) | ConvertFrom-Json
+        $o.otelExport.display | Should -BeExactly $Display
+        $o.otelExport.configured | Should -Be $Configured
+        $o.otelExport.recognized | Should -Be $Recognized
+    }
+
+    It 'publishes THREE keys and no others -- an allowlist, not a denylist' {
+        # The property this field turns on. Asserting "endpoint is absent" would be a DENYLIST
+        # test, and it would keep passing the day a fourth credential-bearing field joins the
+        # resolver. Asserting the published SET is exactly these three fails closed instead --
+        # the difference between testing the fix and testing the class.
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_OTEL_ENDPOINT', $script:CredUrl)
+        $o = (Get-EnvelopeText) | ConvertFrom-Json
+        (@($o.otelExport.PSObject.Properties.Name) -join ',') |
+            Should -BeExactly 'display,configured,recognized'
+    }
+
+    It 'never publishes the credential, in ANY field of the whole envelope' {
+        # Scoped to the envelope TEXT rather than to otelExport, deliberately: a credential
+        # smuggled into some other key is still published. The resolver is first asserted to
+        # really hold the secret, so a clean result cannot come from an endpoint that never
+        # resolved at all -- that is this test's vacuity arm.
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_OTEL_ENDPOINT', $script:CredUrl)
+        $resolved = Get-OtelEndpointInfo
+        $resolved.endpoint | Should -Match ([regex]::Escape($script:SecretPass)) -Because 'the resolver must really hold the secret, or this test proves nothing'
+
+        $text = Get-EnvelopeText
+        $text | Should -Not -BeNullOrEmpty
+        $text | Should -Not -Match ([regex]::Escape($script:SecretPass))
+        $text | Should -Not -Match ([regex]::Escape($script:SecretUser))
+        $text | Should -Not -Match ([regex]::Escape($script:SecretKey))
+        # ...while still saying WHERE, so redaction has not simply blanked the field.
+        $text | Should -Match ([regex]::Escape('collector.example.invalid'))
+    }
+
+    It 'A TYPO IS VISIBLE AS A TYPO, and its FALLBACK IS THE OPPOSITE of captureMode' {
+        # The two controls fail in opposite directions on purpose. An unrecognized capture mode
+        # resolves to `full` -- permissive, because nothing may gate the capture channel. An
+        # unrecognized endpoint resolves to NOT CONFIGURED -- restrictive, because the
+        # permissive direction there is a network egress to a destination nobody named. Both
+        # directions are asserted in ONE place so neither can quietly be brought into line
+        # with the other.
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', 'metadta')
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_OTEL_ENDPOINT', 'htp://typo.example.invalid/v1')
+        $o = (Get-EnvelopeText) | ConvertFrom-Json
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $null)
+
+        $o.captureMode.recognized | Should -Be $false
+        $o.captureMode.resolved | Should -BeExactly 'full' -Because 'the capture channel is never gated by a typo'
+        $o.otelExport.recognized | Should -Be $false
+        $o.otelExport.configured | Should -Be $false -Because 'egress to a destination nobody named is never the fallback'
+        $o.otelExport.display | Should -BeExactly ''
+    }
+
+    It 'RED CONTROL: the fixture on disk is the one this control was written against' {
+        # Proves the mutant LANDED and has not drifted. Hashed over LF-normalized content so
+        # the Windows and POSIX legs agree.
+        (Get-LfSha256 -FilePath $script:NaiveReport) | Should -BeExactly $script:NaiveReportSha
+    }
+
+    It 'RED CONTROL: the naive projection leaks the credential, where the shipped one does not' {
+        # NOT a prior implementation -- the field is new in 000291 and none exists. It is the
+        # NAIVE FIRST CUT (publish the resolver verbatim), named as exactly that in the fixture
+        # header rather than dressed up as restored history. It bites against the SHIPPED path:
+        # both sides below run the real Format-DoctorJson over the real resolver, and the only
+        # difference between them is which Get-OtelEndpointReportInfo the call resolves to.
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_OTEL_ENDPOINT', $script:CredUrl)
+        $shipped = Get-EnvelopeText
+
+        . $script:NaiveReport     # shadows exactly ONE function, for this It only
+        $mutant = Get-EnvelopeText
+
+        $shipped | Should -Not -BeNullOrEmpty
+        $mutant | Should -Not -BeNullOrEmpty -Because 'the mutant must RUN -- a crash is not a red control'
+        $mutant | Should -Not -BeExactly $shipped -Because 'the override must actually have taken effect'
+
+        $shipped | Should -Not -Match ([regex]::Escape($script:SecretPass))
+        $mutant | Should -Match ([regex]::Escape($script:SecretPass)) -Because 'without the allowlist the credential goes into the envelope'
+        $mutant | Should -Match ([regex]::Escape($script:SecretKey)) -Because 'the api-key rides in the query the naive cut publishes'
+    }
+
+    It 'RED CONTROL SURVIVING ARM: the mutant changes ONLY otelExport' {
+        # Without this the leak assertion above would credit a fixture that simply broke the
+        # renderer. captureMode, the derived status, the summary counts and the check array are
+        # shipped code in BOTH runs, so every one of them must come out identical.
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_OTEL_ENDPOINT', $script:CredUrl)
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', 'metadata')
+        $results = @(
+            (New-DoctorResult -Status 'pass' -Component 'a' -Detail 'd')
+            (New-DoctorResult -Status 'unknown' -Component 'b' -Detail 'd')
+        )
+        $shipped = (Format-DoctorJson -Results $results) | ConvertFrom-Json
+
+        . $script:NaiveReport
+        $mutant = (Format-DoctorJson -Results $results) | ConvertFrom-Json
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $null)
+
+        $mutant.schemaVersion | Should -Be $shipped.schemaVersion
+        $mutant.status | Should -BeExactly $shipped.status
+        $mutant.captureMode.resolved | Should -BeExactly $shipped.captureMode.resolved
+        $mutant.captureMode.raw | Should -BeExactly $shipped.captureMode.raw
+        $mutant.summary.total | Should -Be $shipped.summary.total
+        $mutant.summary.pass | Should -Be $shipped.summary.pass
+        $mutant.summary.unknown | Should -Be $shipped.summary.unknown
+        @($mutant.checks).Count | Should -Be @($shipped.checks).Count
+        # ...and the one thing it MAY change, it did: same display, wider key set.
+        $mutant.otelExport.display | Should -BeExactly $shipped.otelExport.display
+        (@($mutant.otelExport.PSObject.Properties.Name) -join ',') |
+            Should -Not -BeExactly (@($shipped.otelExport.PSObject.Properties.Name) -join ',')
+    }
+
+    It 'is ADDITIVE -- schemaVersion does not move and no existing key changed' {
+        # The same policy captureMode established in 000282: additive fields do not bump
+        # schemaVersion, removals and renames do. otelExport is the second field added under it.
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_OTEL_ENDPOINT', $null)
+        $o = (Get-EnvelopeText) | ConvertFrom-Json
+        $o.schemaVersion | Should -Be 1
+        (@($o.PSObject.Properties.Name) -join ',') |
+            Should -BeExactly 'schemaVersion,status,versions,provenanceFloor,captureMode,otelExport,summary,checks'
+    }
+
+    It 'no check status, count or exit code moved -- otelExport is not a check' {
+        # A field on the envelope, not a check. The four-value status vocabulary, the per-check
+        # vocabulary and the summary counts are all untouched by the endpoint.
+        $results = @(
+            (New-DoctorResult -Status 'pass' -Component 'a' -Detail 'd')
+            (New-DoctorResult -Status 'unknown' -Component 'b' -Detail 'd')
+        )
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_OTEL_ENDPOINT', 'https://collector.example.invalid/v1/metrics')
+        $withEp = (Format-DoctorJson -Results $results) | ConvertFrom-Json
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_OTEL_ENDPOINT', $null)
+        $withNone = (Format-DoctorJson -Results $results) | ConvertFrom-Json
+
+        $withEp.status | Should -BeExactly $withNone.status
+        $withEp.summary.total | Should -Be $withNone.summary.total
+        $withEp.summary.unknown | Should -Be $withNone.summary.unknown
+        (Get-DoctorExitCode -Results $results) | Should -Be (Get-DoctorExitCode -Results $results)
+        $withEp.otelExport.configured | Should -Not -Be $withNone.otelExport.configured
     }
 }

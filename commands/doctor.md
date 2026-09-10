@@ -64,6 +64,7 @@ The envelope:
   "versions": { "plugin": "1.33.1", "pwsh": "7.6.5", "pses": "v4.6.0", "pssa": "1.25.0" },
   "provenanceFloor": "...",
   "captureMode": { "resolved": "full", "raw": "", "recognized": false },
+  "otelExport": { "display": "", "configured": false, "recognized": false },
   "summary": { "pass": 6, "fail": 0, "unknown": 8, "total": 14 },
   "checks": [ { "status": "pass", "component": "...", "detail": "...", "remediation": "..." } ]
 }
@@ -84,6 +85,25 @@ The envelope:
   fleet reader could not tell a host deliberately left at `full` from one whose deployed value is
   misspelled. This is how a management plane confirms the control is active on a host **without
   reading the capture log the control exists to keep it out of**.
+- **`otelExport`** reports the OTel metrics-export control
+  ([`POWERSHELL_LSP_OTEL_ENDPOINT`](../docs/configuration.md#powershell_lsp_otel_endpoint)):
+  `configured` says whether export is active, `recognized` says whether the environment value
+  parsed as an absolute `http`/`https` URL, and `display` is the collector address **with
+  userinfo and query redacted** (`""` when export is not active). It is the same argument as
+  `captureMode` applied to the other fleet control -- a management plane learns whether *this*
+  host is shipping metrics, and where to, by asking here rather than by reading the collector's
+  inbox and inferring which hosts are missing.
+
+  **Two things about it differ from `captureMode`, both deliberately.** First, there is no `raw`:
+  the endpoint value can carry credentials, and when `recognized` is `false` it did not parse at
+  all, so nothing has inspected it and nothing can promise it holds no secret. The published set
+  is an **allowlist of three names**, not the resolver's output with two fields removed -- so a
+  field added to the resolver later is absent here by default rather than published by default.
+  Second, the **fallback direction is inverted**: an unrecognized *capture mode* resolves to
+  `full` because nothing may gate the capture channel, while an unrecognized *endpoint* resolves
+  to **not configured**, because the permissive direction there is a network egress to a
+  destination the administrator never named. Both carry `recognized`, so in either case a typo
+  reads as a typo rather than as a control quietly not doing what its operator believes.
 
 ### Adding to this envelope -- the schemaVersion policy
 
@@ -93,7 +113,9 @@ them, but will never find a key it relied on missing or renamed under the same v
 
 This policy was established by dispatch 000282, which added `captureMode`, **because no policy
 existed** -- the envelope shipped in 000279 said what `schemaVersion` was for and not what moves
-it. It is recorded here rather than inferred from the one example.
+it. It is recorded here rather than inferred from the one example. Dispatch 000291 added
+`otelExport` under it unchanged, which is the second field to follow the policy rather than to
+set it.
 
 ### `status` -- how it is derived
 
