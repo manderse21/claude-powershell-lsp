@@ -78,7 +78,7 @@ try {
     Write-ELog ('--- SessionEnd (session=' + $sessionId + ') ---')
     if ([string]::IsNullOrWhiteSpace($sessionId)) { Write-ELog 'no session_id; nothing to tear down'; exit 0 }
 
-    $pipeName = 'powershell-lsp-' + $sessionId
+    $pipeName = Get-DaemonPipeName -SessionId $sessionId
     $sessionFile = Join-Path $sessionDir ($sessionId + '.json')
 
     $ok = Send-Shutdown $pipeName $ConnectTimeoutMs

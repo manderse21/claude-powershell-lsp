@@ -42,7 +42,7 @@ function Wait-DaemonPipeReady {
         [int]$TimeoutMs = 20000,
         [int]$ConnectMs = 1000
     )
-    $pipeName = 'powershell-lsp-' + $SessionId
+    $pipeName = Get-DaemonPipeName -SessionId $SessionId
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
         $client = $null
@@ -124,7 +124,7 @@ function Wait-DaemonRequestReady {
 
     # Stage 2: a real diagnostics round-trip. The probe file must EXIST so the request traverses the
     # same file-check -> serve-gate path the It's existing fixture does. Unique per session; cleaned up.
-    $pipeName = 'powershell-lsp-' + $SessionId
+    $pipeName = Get-DaemonPipeName -SessionId $SessionId
     $probeFile = Join-Path $DataRoot ('reqready-' + $SessionId + '.ps1')
     try { Set-Content -LiteralPath $probeFile -Value "function Get-ReqReady { 1 }`n" -Encoding ascii -Force } catch { }
     $sw = [System.Diagnostics.Stopwatch]::StartNew()

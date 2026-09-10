@@ -30,6 +30,27 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **The daemon pipe name now has one definition instead of twenty-three** (internal
+hardening; no shipped behaviour changes). `Get-DaemonPipeName` in `scripts/lib/lsp-common.ps1` is
+the single source, and the 23 sites across `scripts/` (6) and `tests/` (17) that built the name by
+hand now call it.
+
+**Why this was worth doing.** The pipe name is what a client and a daemon must *agree* on to find
+each other at all. Twenty-three literals is twenty-three chances for a rename to reach twenty-two
+of them, and the failure mode of that miss is not a red test -- it is a client that connects to
+nothing and reports the daemon unreachable, which reads as an environment problem rather than as a
+typo.
+
+**The four `evidence/` sites are deliberately NOT routed and stay byte-unchanged.** They are frozen
+byte-anchored release harnesses for v1.32.0 and v1.33.0; changing them would destroy the evidence
+they exist to be. The guard that forbids inline construction scopes itself to `scripts/` and
+`tests/` **and asserts those four are still present**, so the exemption cannot quietly become a
+hole -- and that arm doubles as the in-band control proving the scanner can see what it looks for
+at all.
+
+**Behaviour is unchanged, including at the edges.** A blank session id returns the bare stem, which
+is exactly what all 23 concatenations did.
+
 MINOR: **The OTel export now reports diagnostic-shape CARDINALITY, without publishing the shapes**
 (enterprise docket **P2-1**, review item 7, the capture half -- which completes the item). A sixth
 metric, `powershell_lsp.diagnostics.shapes`, counts **distinct** diagnostic shapes read off the

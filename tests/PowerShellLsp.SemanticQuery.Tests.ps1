@@ -655,7 +655,7 @@ Describe 'ROUND TRIP -- the client can actually process a daemon response' {
             # Returns @{ Exit; Out; Err } for one real lsp-query.ps1 run against a canned response.
             param([string[]] $ClientArgs, [string] $ResponseJson)
             $sid = 'rt' + [guid]::NewGuid().ToString('N').Substring(0, 10)
-            $pipe = 'powershell-lsp-' + $sid
+            $pipe = Get-DaemonPipeName -SessionId $sid
             $srvOut = [System.IO.Path]::GetTempFileName()
             $srvErr = [System.IO.Path]::GetTempFileName()
             $readyFile = [System.IO.Path]::GetTempFileName()

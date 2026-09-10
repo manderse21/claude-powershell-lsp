@@ -2689,7 +2689,7 @@ Describe 'Integration: closed-loop agentic correction (dispatch 000061)' -Skip:$
         # assertion -- returns the parsed response object, or $null on timeout.
         function Send-DaemonReq {
             param([string]$Sid, [hashtable]$Req, [int]$TimeoutMs = 20000)
-            $pipeName = 'powershell-lsp-' + $Sid
+            $pipeName = Get-DaemonPipeName -SessionId $Sid
             $client = $null
             try {
                 $client = New-Object System.IO.Pipes.NamedPipeClientStream('.', $pipeName,
@@ -3470,7 +3470,7 @@ try {
         $mutant = New-MutantClient -Dest (Join-Path $script:TH_Base 'mutant-scripts')
         $sid = 'th225red-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
         $fix = New-ThFixture -Root $root -Name 'red-fixture.ps1'
-        $null = Start-FakeDaemon -PipeName ('powershell-lsp-' + $sid) -Mode 'stall' -Requests 6
+        $null = Start-FakeDaemon -PipeName (Get-DaemonPipeName -SessionId $sid) -Mode 'stall' -Requests 6
 
         $out = Invoke-ThEdit -ClientPath $mutant -DataRoot $root -SessionId $sid -Fixture $fix
 
@@ -3483,7 +3483,7 @@ try {
         $root = New-ThRoot 'green'
         $sid = 'th225grn-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
         $fix = New-ThFixture -Root $root -Name 'green-fixture.ps1'
-        $null = Start-FakeDaemon -PipeName ('powershell-lsp-' + $sid) -Mode 'stall' -Requests 6
+        $null = Start-FakeDaemon -PipeName (Get-DaemonPipeName -SessionId $sid) -Mode 'stall' -Requests 6
 
         $out = Invoke-ThEdit -ClientPath $script:TH_Client -DataRoot $root -SessionId $sid -Fixture $fix
 
@@ -3504,7 +3504,7 @@ try {
         # not reject a second connect the same way.
         $root = New-ThRoot 'greenbusy'
         $sid = 'th225busy-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-        $pipeName = 'powershell-lsp-' + $sid
+        $pipeName = Get-DaemonPipeName -SessionId $sid
         $fix = New-ThFixture -Root $root -Name 'busy-fixture.ps1'
         $server = New-Object System.IO.Pipes.NamedPipeServerStream(
             $pipeName, [System.IO.Pipes.PipeDirection]::InOut, 1,
@@ -3534,7 +3534,7 @@ try {
         $root = New-ThRoot 'unreach'
         $sid = 'th225unr-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
         $fix = New-ThFixture -Root $root -Name 'unreach-fixture.ps1'
-        (Test-DaemonPipePresent -PipeName ('powershell-lsp-' + $sid)) | Should -BeFalse -Because 'the scenario requires no pipe'
+        (Test-DaemonPipePresent -PipeName (Get-DaemonPipeName -SessionId $sid)) | Should -BeFalse -Because 'the scenario requires no pipe'
 
         $out = Invoke-ThEdit -ClientPath $script:TH_Client -DataRoot $root -SessionId $sid -Fixture $fix
 
@@ -3563,11 +3563,11 @@ try {
         $mutant = New-MutantClient -Dest (Join-Path $script:TH_Base 'mutant-warm')
 
         $sidA = 'th225wa-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-        $null = Start-FakeDaemon -PipeName ('powershell-lsp-' + $sidA) -Mode 'respond' -Requests 4
+        $null = Start-FakeDaemon -PipeName (Get-DaemonPipeName -SessionId $sidA) -Mode 'respond' -Requests 4
         $outNew = Invoke-ThEdit -ClientPath $script:TH_Client -DataRoot $rootA -SessionId $sidA -Fixture $fix
 
         $sidB = 'th225wb-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-        $null = Start-FakeDaemon -PipeName ('powershell-lsp-' + $sidB) -Mode 'respond' -Requests 4
+        $null = Start-FakeDaemon -PipeName (Get-DaemonPipeName -SessionId $sidB) -Mode 'respond' -Requests 4
         $outOld = Invoke-ThEdit -ClientPath $mutant -DataRoot $rootB -SessionId $sidB -Fixture $fix
 
         $outNew | Should -Match 'PSLS225SyntheticRule'          # a real analyzed edit, not a banner
@@ -3595,7 +3595,7 @@ try {
         $root = New-ThRoot 'bounded'
         $sid = 'th225bnd-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
         $fix = New-ThFixture -Root $root -Name 'bounded-fixture.ps1'
-        $null = Start-FakeDaemon -PipeName ('powershell-lsp-' + $sid) -Mode 'stall' -Requests 12
+        $null = Start-FakeDaemon -PipeName (Get-DaemonPipeName -SessionId $sid) -Mode 'stall' -Requests 12
 
         $edits = 3
         $outs = @()
@@ -3686,7 +3686,7 @@ Describe 'P1-2 DAEMON HALF -- the real round trip, one op of EACH KIND (dispatch
         New-Item -ItemType Directory -Force -Path $script:Q_DataDir | Out-Null
         $env:CLAUDE_PLUGIN_DATA = $script:Q_DataDir
         $script:Q_Sid = 'qdaemon-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
-        $script:Q_Pipe = 'powershell-lsp-' + $script:Q_Sid
+        $script:Q_Pipe = Get-DaemonPipeName -SessionId $script:Q_Sid
 
         # THE FIXTURE: purpose-made, small, and written from an array so every position below is
         # DERIVED from the same source the file is written from.
@@ -3884,7 +3884,7 @@ Describe 'P1-2 DAEMON HALF -- what deleting the didOpen/didChange block actually
         Set-Content -LiteralPath $script:QR_Daemon -Value $script:QR_Mutated -Encoding utf8 -NoNewline
 
         $script:QR_Sid = 'qred-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
-        $script:QR_Pipe = 'powershell-lsp-' + $script:QR_Sid
+        $script:QR_Pipe = Get-DaemonPipeName -SessionId $script:QR_Sid
         $script:QR_Lines = @(
             'function Get-RedFixtureAlpha {'
             '    param([int] $Value)'

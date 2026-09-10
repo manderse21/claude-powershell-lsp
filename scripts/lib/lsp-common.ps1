@@ -2132,6 +2132,31 @@ function Test-PipeOptionSupported {
     try { return ([enum]::GetNames([System.IO.Pipes.PipeOptions]) -contains $Name) } catch { return $false }
 }
 
+function Get-DaemonPipeName {
+    # THE per-session daemon pipe name. One source for a value that had 23 independent copies
+    # across scripts/ and tests/ (Hub Rule 18, dispatch 000291).
+    #
+    # WHY THIS IS WORTH A FUNCTION rather than a constant somebody remembers to reuse: the stem
+    # and the session id are what a client and a daemon must AGREE on to find each other at all.
+    # Twenty-three literals is twenty-three chances for a rename to reach twenty-two of them, and
+    # the failure mode of that miss is not a red test -- it is a client that connects to nothing
+    # and reports the daemon unreachable, which reads as an environment problem rather than as a
+    # typo. The seam being load-bearing is asserted directly: mutating this function's stem must
+    # turn its callers red, and a caller still building the name inline would stay green.
+    #
+    # A BLANK SESSION ID RETURNS THE BARE STEM RATHER THAN THROWING, which is what every one of
+    # the 23 call sites did by concatenation and is therefore the behaviour being preserved
+    # rather than a new decision. Callers that care already guard on the id before calling.
+    #
+    # THE FOUR `evidence/` SITES ARE DELIBERATELY NOT ROUTED THROUGH THIS. They are frozen
+    # byte-anchored release harnesses for v1.32.0 and v1.33.0; changing them destroys the
+    # evidence they exist to be. The guard test that forbids inline construction scopes itself
+    # to scripts/ and tests/ and asserts the evidence sites are STILL THERE, so the exemption
+    # cannot quietly become a hole.
+    param([string] $SessionId = '')
+    return ('powershell-lsp-' + [string]$SessionId)
+}
+
 function Get-DaemonPipeOptions {
     # The PipeOptions the daemon's server stream is created with (T5.1).
     #

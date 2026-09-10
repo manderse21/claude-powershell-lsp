@@ -463,7 +463,7 @@ try {
         exit 0
     }
 
-    $pipeName = 'powershell-lsp-' + $sessionId
+    $pipeName = Get-DaemonPipeName -SessionId $sessionId
     Write-CLog ('requesting diagnostics for ' + $path + ' via ' + $pipeName)
 
     # Edit-range scoping (000019): derive the touched line range from the PostToolUse
