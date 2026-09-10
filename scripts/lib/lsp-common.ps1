@@ -1530,6 +1530,41 @@ function Get-OtelEndpointDisplay {
     return $shown
 }
 
+function Get-OtelEndpointReportInfo {
+    # The subset of Get-OtelEndpointInfo that is safe to PUBLISH -- to a doctor envelope, a
+    # report, a log line, anything a human or a management plane reads.
+    #
+    # ONE function owns "what may leave this host about the collector address" (Hub Rule 18),
+    # for the same reason Get-OtelAttributeAllowList owns what may leave it about a stats row.
+    # A second consumer that re-derived the safe view would be free to re-derive it wrongly,
+    # and the whole value of a privacy boundary is that there is exactly one of it.
+    #
+    # IT IS AN ALLOWLIST, NOT A DENYLIST, and that is the decision this function turns on. It
+    # NAMES the three fields it publishes rather than removing the two it does not, so a field
+    # added to Get-OtelEndpointInfo later is absent here until somebody decides otherwise. A
+    # rule written as "drop endpoint and raw" keeps passing the day a third credential-bearing
+    # field joins the record; this one fails closed instead. The test that tells the two apart
+    # is "is an UNKNOWN field absent", never "is the known-bad field absent".
+    #
+    # WHY `endpoint` AND `raw` ARE NOT ON IT:
+    #   endpoint  the collector URL VERBATIM, userinfo and query intact. It is what the
+    #             exporter POSTs to, and it is exactly the credential-bearing form that
+    #             Get-OtelEndpointDisplay above exists to redact.
+    #   raw       the environment value verbatim. When `recognized` is $false it did not parse
+    #             as a URL at all, so nothing has inspected it and nothing can promise it holds
+    #             no secret. A value that failed to parse cannot be shown safely, which is why
+    #             export-otel.ps1's own -Show refuses to echo it.
+    #
+    # `display` is '' whenever `configured` is $false -- the unparseable case included -- so the
+    # published shape never depends on an unpublished field in order to be safe.
+    $info = Get-OtelEndpointInfo
+    return [ordered]@{
+        display    = [string]$info.display
+        configured = [bool]$info.configured
+        recognized = [bool]$info.recognized
+    }
+}
+
 function Invoke-CaptureLogRotation {
     # Bound the capture log (T6.4, threat model section 8, ruled FIX 2026-08-21).
     #

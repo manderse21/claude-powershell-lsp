@@ -48,6 +48,30 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **`doctor -Json` now reports whether this host is exporting metrics, and where to**
+(enterprise docket **P2-1**, review item 7, the doctor half). The envelope gains one field,
+`otelExport`, carrying `configured` (is export active), `recognized` (did
+`POWERSHELL_LSP_OTEL_ENDPOINT` parse as an absolute `http`/`https` URL) and `display` (the
+collector address with **userinfo and query redacted**, `""` when export is not active).
+
+**It is `captureMode`'s argument applied to the other fleet control.** A management plane could
+already ask a host whether the diagnostics-capture control was active; it could not ask whether
+that host was shipping metrics. Answering it required reading the collector's inbox and inferring
+which hosts were missing -- which cannot distinguish a host that is not configured from one that
+is configured and failing. Now the host answers for itself.
+
+**The published set is an allowlist of three names, not the resolver's output with two fields
+removed.** `Get-OtelEndpointReportInfo` owns that boundary as one function, for the same reason
+`Get-OtelAttributeAllowList` owns what may leave about a stats row. `endpoint` is the collector
+URL verbatim with credentials intact; `raw` is the environment value, and when it did not parse
+nothing has inspected it and nothing can promise it holds no secret. A rule written as "drop
+`endpoint` and `raw`" would keep passing the day a third credential-bearing field joined the
+resolver -- so the test asserts the published key set is exactly `display,configured,recognized`,
+not that the known-bad fields are absent.
+
+**`schemaVersion` does not move.** This is the second field added under the additive-fields policy
+dispatch 000282 wrote into `commands/doctor.md`, and the first to merely follow it.
+
 PATCH: **A doctor test that could go red on host drift now judges `-RequireProven` by its own
 summary** (internal hardening; no shipped behaviour changes). `PowerShellLsp.DoctorJson.Tests.ps1`
 ran two live doctor probes and compared the *proven* run's exit code to the *default* run's, so a

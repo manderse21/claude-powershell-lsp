@@ -2288,7 +2288,23 @@ function Format-DoctorJson {
     # ADDITIVE FIELDS DO NOT BUMP schemaVersion; REMOVALS AND RENAMES DO. commands/doctor.md
     # stated no policy on this before dispatch 000282, which is why 000282 both wrote the policy
     # there and followed it here: captureMode is a new key and nothing existing moved, so a
-    # consumer written against schemaVersion 1 keeps reading this envelope correctly.
+    # consumer written against schemaVersion 1 keeps reading this envelope correctly. otelExport
+    # is the second field added under that policy (dispatch 000291) and follows it identically.
+    #
+    # otelExport is captureMode's argument applied to the OTHER fleet control: an export the
+    # fleet cannot verify is half an export. A management plane learns whether THIS host is
+    # shipping metrics, and where to, by asking here -- not by reading the collector's inbox and
+    # inferring which hosts are missing. It carries the three PUBLISHABLE facts and, unlike
+    # captureMode, deliberately NOT the raw value: see Get-OtelEndpointReportInfo, which owns
+    # that boundary as an allowlist so a field added to the resolver later is absent here by
+    # default rather than published by default.
+    #
+    # THE TWO FIELDS' FALLBACK DIRECTIONS ARE OPPOSITE, AND THE ENVELOPE MUST NOT HIDE THAT. An
+    # unrecognized capture mode resolves to `full` -- permissive, because nothing may gate the
+    # capture channel. An unrecognized endpoint resolves to NOT CONFIGURED -- restrictive,
+    # because the permissive direction there is a network egress to a destination nobody named.
+    # Both carry `recognized`, so in both cases a typo reads as a typo rather than as a control
+    # that is quietly not doing what its administrator believes it is doing.
     #
     # captureMode exists because a control the fleet cannot verify is half a control (ruling R19).
     # P0-2's reader is a management plane -- EDR, backup, eDiscovery, DLP -- and it learns whether
@@ -2325,6 +2341,7 @@ function Format-DoctorJson {
         }
         provenanceFloor = $Provenance
         captureMode     = (Get-DiagnosticCaptureModeInfo)
+        otelExport      = (Get-OtelEndpointReportInfo)
         summary         = [ordered]@{
             pass    = @($all | Where-Object { $_.Status -eq 'pass' }).Count
             fail    = @($all | Where-Object { $_.Status -eq 'fail' }).Count
