@@ -30,6 +30,40 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **A one-definition test now scopes itself to the git index, not the filesystem**
+(test-only; no shipped behaviour changes). `PowerShellLsp.DaemonPipeName.Tests.ps1`'s
+*"the definition lives in exactly ONE place"* walked the repository root recursively. It passed
+from a worktree and **failed from the repository root** -- `Expected 1, but got 2` -- because
+linked worktrees are commonly checked out under the gitignored `worktrees/`, each holding its own
+copy of `scripts/lib/lsp-common.ps1`.
+
+**That second copy was never a second definition.** It is the same definition, seen twice by a scan
+that was looking at a directory tree when it meant *"this repository"* -- so the test's answer
+depended on the machine it ran on rather than on the code. Measured from a root with six linked
+worktrees: the old scan returns **3**, the fixed scan returns **1**.
+
+**The obvious fix -- `git ls-files` -- was tried and rejected on measurement.** It is correct on
+every developer machine and fails on `container-pwsh`, because the official PowerShell image ships
+**no git** (recorded in the docket under P2-3), so the test died with `CommandNotFoundException` on
+a leg where nothing was wrong with the repository. A guard may not require a tool its own CI does
+not have.
+
+The scan therefore prunes **structurally and without git**: it refuses to descend into any
+directory carrying its own `.git`. That is what a nested checkout *is* -- a linked worktree has a
+`.git` **file**, a clone has a `.git` **directory**, and one `Test-Path` covers both. It
+generalises past the literal name `worktrees`, which a hard-coded `-notmatch` would not, and it is
+inert in the container, where nothing is nested.
+
+It carries a non-vacuity floor (more than 30 `.ps1` files, so a walk that found nothing cannot fake
+a pass). Two controls guard it: the **prior implementation** run side by side with the prune over
+the same synthetic tree, asserting the two **disagree** (2 versus 1) rather than asserting a fixed
+number on the real tree — which would make the control itself machine-dependent — and a second
+arm proving the prune is **not simply blind**, by requiring it to agree with a naive walk over a
+tree that has no nested checkout.
+
+Found by `dispatch verify` re-running the suite from the configured `repo_path`, which is the
+repository root — the one place the original scan was wrong.
+
 PATCH: **The daemon pipe name now has one definition instead of twenty-three** (internal
 hardening; no shipped behaviour changes). `Get-DaemonPipeName` in `scripts/lib/lsp-common.ps1` is
 the single source, and the 23 sites across `scripts/` (6) and `tests/` (17) that built the name by
