@@ -60,12 +60,24 @@ that was looking at a directory tree when it meant *"this repository"* -- so the
 depended on the machine it ran on rather than on the code. Measured from a root with six linked
 worktrees: the old scan returns **3**, the fixed scan returns **1**.
 
-The scan now reads `git ls-files`, which excludes ignored trees by construction rather than by a
-path filter somebody has to remember to extend. It carries a non-vacuity floor (the index must
-return more than 30 `.ps1` files, so a failed `git` cannot fake a pass) and asserts the exclusion
-it relies on. The prior implementation is kept as a **RED control** that reconstructs the nested
-copy under `$TestDrive` and asserts the two scopes **disagree** -- rather than asserting a fixed
-number on the real tree, which would make the control itself machine-dependent.
+**The obvious fix -- `git ls-files` -- was tried and rejected on measurement.** It is correct on
+every developer machine and fails on `container-pwsh`, because the official PowerShell image ships
+**no git** (recorded in the docket under P2-3), so the test died with `CommandNotFoundException` on
+a leg where nothing was wrong with the repository. A guard may not require a tool its own CI does
+not have.
+
+The scan therefore prunes **structurally and without git**: it refuses to descend into any
+directory carrying its own `.git`. That is what a nested checkout *is* -- a linked worktree has a
+`.git` **file**, a clone has a `.git` **directory**, and one `Test-Path` covers both. It
+generalises past the literal name `worktrees`, which a hard-coded `-notmatch` would not, and it is
+inert in the container, where nothing is nested.
+
+It carries a non-vacuity floor (more than 30 `.ps1` files, so a walk that found nothing cannot fake
+a pass). Two controls guard it: the **prior implementation** run side by side with the prune over
+the same synthetic tree, asserting the two **disagree** (2 versus 1) rather than asserting a fixed
+number on the real tree — which would make the control itself machine-dependent — and a second
+arm proving the prune is **not simply blind**, by requiring it to agree with a naive walk over a
+tree that has no nested checkout.
 
 Found by `dispatch verify` re-running the suite from the configured `repo_path`, which is the
 repository root — the one place the original scan was wrong.

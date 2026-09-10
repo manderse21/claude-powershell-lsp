@@ -35,6 +35,48 @@ BeforeAll {
     $script:Stem = 'powershell' + '-lsp-'
     $script:Needle = $q + $script:Stem + $q + ' + '
 
+    function Get-OwnCheckoutPs1 {
+        # Every .ps1 belonging to THIS checkout: a recursive walk that refuses to descend into a
+        # NESTED CHECKOUT. A linked worktree carries a `.git` FILE at its root and a clone carries
+        # a `.git` DIRECTORY; Test-Path sees both, so one predicate covers both and needs no git
+        # binary -- which matters, because the container CI leg has none.
+        #
+        # The root's own `.git` is skipped by name; every OTHER directory is pruned if it carries
+        # one. That is structural rather than nominal, so it keeps working when the next ignored
+        # checkout is not called `worktrees`.
+        param([Parameter(Mandatory = $true)][string] $Root)
+        $out = @()
+        $stack = New-Object System.Collections.Stack
+        [void]$stack.Push($Root)
+        while ($stack.Count -gt 0) {
+            $dir = [string]$stack.Pop()
+            foreach ($e in @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) {
+                if ($e.PSIsContainer) {
+                    if ($e.Name -eq '.git') { continue }
+                    if (Test-Path -LiteralPath (Join-Path $e.FullName '.git')) { continue }
+                    [void]$stack.Push($e.FullName)
+                }
+                elseif ($e.Extension -eq '.ps1') { $out += $e.FullName }
+            }
+        }
+        return @($out)
+    }
+
+    function New-NestedCheckoutFixture {
+        # A miniature repository with a nested checkout inside it: the shape that broke the first
+        # implementation. Returns the root. Needs no git -- a `.git` FILE is what a linked
+        # worktree actually has, so writing one reproduces the condition exactly.
+        param([Parameter(Mandatory = $true)][string] $Root)
+        $body = 'function Get-DaemonPipeName {' + [string][char]10 + '    return $null' + [string][char]10 + '}'
+        New-Item -ItemType Directory -Path (Join-Path $Root 'scripts/lib') -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $Root 'scripts/lib/lsp-common.ps1'), $body)
+        $nested = Join-Path $Root 'worktrees/wt1'
+        New-Item -ItemType Directory -Path (Join-Path $nested 'scripts/lib') -Force | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $nested 'scripts/lib/lsp-common.ps1'), $body)
+        [System.IO.File]::WriteAllText((Join-Path $nested '.git'), 'gitdir: /somewhere/.git/worktrees/wt1')
+        return $Root
+    }
+
     function Get-InlinePipeNameSite {
         # Every line under $Root that builds the pipe name by hand. Returns the matches so a
         # failure names the file and line rather than only a count.
@@ -141,63 +183,72 @@ Describe 'Nobody builds the pipe name any other way (routed debt 2(c))' {
     }
 
     It 'the definition lives in exactly ONE place' {
-        # SCOPED TO THE GIT INDEX, NOT THE FILESYSTEM, and that distinction is this test's whole
-        # history. The first cut walked $RepoRoot recursively. It passed from a worktree and
-        # FAILED from the repository root -- `Expected 1, but got 2` -- because linked worktrees
-        # are commonly checked out under `worktrees/`, each holding its own copy of
-        # scripts/lib/lsp-common.ps1. That second copy is not a second definition; it is the
-        # SAME definition, seen twice by a scan that was looking at a directory tree when it
-        # meant "this repository".
+        # THE SCOPE IS "THIS CHECKOUT", AND THAT IS THE WHOLE OF THIS TEST'S HISTORY. The first
+        # cut walked $RepoRoot recursively. It passed from a worktree and FAILED from the
+        # repository root -- `Expected 1, but got 2` -- because linked worktrees are commonly
+        # checked out under the gitignored `worktrees/`, each holding its own copy of
+        # scripts/lib/lsp-common.ps1. That second copy is not a second definition; it is the SAME
+        # definition, seen twice by a scan that was looking at a directory tree when it meant
+        # "this repository". The answer depended on the machine, not on the code.
         #
-        # `worktrees/` is gitignored, so the index is exactly the right instrument: it answers
-        # "which files are THIS repository's" and excludes ignored trees by construction, rather
-        # than by a path filter somebody has to remember to extend. A scan that hard-coded
-        # `-notmatch 'worktrees'` would pass today and miss the next ignored directory.
-        $tracked = @(git -C $script:RepoRoot ls-files '*.ps1')
+        # THE SECOND CUT USED `git ls-files` AND WAS WRONG FOR A DIFFERENT REASON: the
+        # `container-pwsh` leg runs inside the official PowerShell image, which ships NO GIT
+        # (docs/roadmap-ii/ENTERPRISE-PROGRAM-DOCKET.md records this under P2-3), so the test died
+        # with CommandNotFoundException on a leg where nothing was wrong with the repository.
+        # A guard may not require a tool its own CI does not have.
+        #
+        # SO THE PRUNE IS STRUCTURAL AND NEEDS NO GIT BINARY: refuse to descend into any directory
+        # that carries its own `.git`. That is the definition of a nested checkout -- a linked
+        # worktree has a `.git` FILE, a clone has a `.git` DIRECTORY, and `Test-Path` sees both.
+        # It generalises past the literal name `worktrees`, which a hard-coded `-notmatch` would
+        # not, and it is correct in the container (nothing nested there, so nothing is pruned).
+        $found = Get-OwnCheckoutPs1 -Root $script:RepoRoot
 
-        # NON-VACUITY FLOOR, asserted BEFORE the property. If git fails or returns nothing the
-        # count assertion below would still fail closed, but it would fail with a message about
-        # definitions rather than about the instrument, which sends the reader to the wrong file.
-        @($tracked).Count | Should -BeGreaterThan 30 -Because 'git ls-files must have returned the repository, or this test measures nothing'
+        # NON-VACUITY FLOOR, asserted BEFORE the property. Without it, a walk that returned
+        # nothing would report zero definitions and fail with a message about definitions rather
+        # than about the instrument, sending the reader to the wrong file.
+        @($found).Count | Should -BeGreaterThan 30 -Because 'the walk must have found the repository, or this test measures nothing'
 
-        # ...and the exclusion the scope relies on is asserted rather than assumed.
-        @($tracked | Where-Object { $_ -like 'worktrees/*' }).Count |
-            Should -Be 0 -Because 'the index must not carry linked worktrees; that is precisely why it is the right scope'
-
-        $defs = @()
-        foreach ($rel in $tracked) {
-            $full = Join-Path $script:RepoRoot $rel
-            if (-not (Test-Path -LiteralPath $full)) { continue }
-            $txt = [System.IO.File]::ReadAllText($full)
-            if ($txt -match '(?m)^function Get-DaemonPipeName\b') { $defs += $rel }
-        }
+        $defs = @($found | Where-Object { ([System.IO.File]::ReadAllText($_)) -match '(?m)^function Get-DaemonPipeName\b' })
         @($defs).Count | Should -Be 1
         $defs[0] | Should -Match 'lsp-common\.ps1$'
     }
 
-    It 'RED CONTROL: the PRIOR filesystem walk over-counts wherever an ignored copy exists' {
-        # The prior implementation, reconstructed exactly: a recursive walk of the root. It
-        # asserts the DIFFERENCE between the two scopes rather than a fixed number on the real
-        # tree, because whether a linked worktree happens to exist right now is a property of the
-        # machine, not of the repository -- a control that demanded `2` from the real root would
-        # itself be flaky, which is the same class of mistake it exists to document.
+    It 'RED CONTROL: the PRIOR walk over-counts a nested checkout, and the prune does not' {
+        # The prior implementation, reconstructed exactly -- a recursive walk of the root -- run
+        # side by side with the shipped prune over the SAME synthetic tree. Asserting the two
+        # DISAGREE is the right shape: whether a linked worktree exists on the real root right
+        # now is a property of the machine, not of the repository, so a control that demanded a
+        # fixed number from the real root would itself be machine-dependent -- the very mistake
+        # it exists to document.
         #
-        # Built under $TestDrive, so it needs no worktree and touches no ignored directory: a
-        # nested copy of a file carrying the definition is exactly what a linked worktree looks
-        # like to a filesystem walk.
-        $root = Join-Path $TestDrive 'repo'
-        $nested = Join-Path $root 'worktrees/wt1/scripts/lib'
-        New-Item -ItemType Directory -Path (Join-Path $root 'scripts/lib') -Force | Out-Null
-        New-Item -ItemType Directory -Path $nested -Force | Out-Null
-        $body = 'function Get-DaemonPipeName {' + [string][char]10 + '    return $null' + [string][char]10 + '}'
-        [System.IO.File]::WriteAllText((Join-Path $root 'scripts/lib/lsp-common.ps1'), $body)
-        [System.IO.File]::WriteAllText((Join-Path $nested 'lsp-common.ps1'), $body)
+        # The fixture writes a `.git` FILE, which is what a linked worktree actually has, so this
+        # reproduces the condition without git and therefore runs on the container leg too.
+        $root = New-NestedCheckoutFixture -Root (Join-Path $TestDrive 'repo')
 
-        $walked = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.ps1' |
+        $prior = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.ps1' -ErrorAction SilentlyContinue |
                 Where-Object { ([System.IO.File]::ReadAllText($_.FullName)) -match '(?m)^function Get-DaemonPipeName\b' })
-        $outside = @($walked | Where-Object { $_.FullName -notmatch 'worktrees' })
+        $fixed = @((Get-OwnCheckoutPs1 -Root $root) |
+                Where-Object { ([System.IO.File]::ReadAllText($_)) -match '(?m)^function Get-DaemonPipeName\b' })
 
-        @($walked).Count | Should -Be 2 -Because 'the prior implementation counts the ignored copy too -- this is the defect it shipped with'
-        @($outside).Count | Should -Be 1 -Because 'and only one of the two is this repository own file'
+        @($prior).Count | Should -Be 2 -Because 'the prior walk counts the nested checkout too -- this is the defect it shipped with'
+        @($fixed).Count | Should -Be 1 -Because 'the prune sees one checkout, which is the property under test'
+        $fixed[0] | Should -Not -Match 'worktrees' -Because 'and it kept the right one'
+    }
+
+    It 'the prune is not simply blind -- it still walks everything that is NOT a nested checkout' {
+        # The other half of the discrimination. A prune that returned nothing would also make the
+        # count-of-1 above impossible to reach, but this states it directly: over a tree with no
+        # nested checkout the pruning walk and the naive walk must AGREE, so the prune is not
+        # quietly dropping ordinary directories.
+        $root = Join-Path $TestDrive 'plain'
+        New-Item -ItemType Directory -Path (Join-Path $root 'a/b/c') -Force | Out-Null
+        foreach ($rel in @('a/one.ps1', 'a/b/two.ps1', 'a/b/c/three.ps1')) {
+            [System.IO.File]::WriteAllText((Join-Path $root $rel), '# ' + $rel)
+        }
+        $naive = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.ps1' | ForEach-Object { $_.FullName })
+        $pruned = @(Get-OwnCheckoutPs1 -Root $root)
+        @($pruned).Count | Should -Be 3
+        (($pruned | Sort-Object) -join '|') | Should -BeExactly (($naive | Sort-Object) -join '|')
     }
 }
