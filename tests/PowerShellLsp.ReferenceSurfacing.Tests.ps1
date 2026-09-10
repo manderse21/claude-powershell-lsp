@@ -219,7 +219,7 @@ Describe 'Integration: reference surfacing through the REAL warm daemon (dispatc
         # unsettled/incomplete pass. Returns the response object so a test can inspect the
         # referenceFindings field (present or absent). $null on timeout.
         function Get-RsResponse { param([string]$Sid, [string]$File)
-            $pipeName = 'powershell-lsp-' + $Sid
+            $pipeName = Get-DaemonPipeName -SessionId $Sid
             $sw = [System.Diagnostics.Stopwatch]::StartNew()
             while ($sw.ElapsedMilliseconds -lt 45000) {
                 $client = $null

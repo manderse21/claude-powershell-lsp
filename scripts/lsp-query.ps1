@@ -94,7 +94,7 @@ function Resolve-QueryPipeName([string]$Sid) {
     # rule (scripts/doctor.ps1, Get-DoctorDaemonObservation): a live candidate is a parseable
     # session handle whose recorded pid is alive; several live daemons and no session id is
     # UNKNOWN rather than a pick.
-    if (-not [string]::IsNullOrWhiteSpace($Sid)) { return ('powershell-lsp-' + $Sid) }
+    if (-not [string]::IsNullOrWhiteSpace($Sid)) { return (Get-DaemonPipeName -SessionId $Sid) }
 
     $sessionDir = ''
     try { $sessionDir = Get-SessionDir } catch { $sessionDir = '' }
@@ -118,7 +118,7 @@ function Resolve-QueryPipeName([string]$Sid) {
         try { $alive = ($null -ne (Get-Process -Id $recPid -ErrorAction SilentlyContinue)) } catch { $alive = $false }
         if (-not $alive) { continue }
         $pipe = [string](Get-Prop $obj 'pipe')
-        if ([string]::IsNullOrWhiteSpace($pipe)) { $pipe = 'powershell-lsp-' + [string](Get-Prop $obj 'sessionId') }
+        if ([string]::IsNullOrWhiteSpace($pipe)) { $pipe = Get-DaemonPipeName -SessionId ([string](Get-Prop $obj 'sessionId')) }
         $live += $pipe
     }
     if (@($live).Count -eq 0) {

@@ -1677,7 +1677,7 @@ function Write-SessionFile([string]$pipeName, [string]$state) {
 
 # ===========================================================================
 $script:startedIso = (Get-Date -Format 'o')
-$pipeName = 'powershell-lsp-' + $SessionId
+$pipeName = Get-DaemonPipeName -SessionId $SessionId
 # First-start latch (000024, generalized by 000028): serveUnavailable=$true when PSES cannot be
 # brought up AT ALL -- the bundle never bootstrapped (install-missing) OR it is present but fails
 # to initialize (sub-case B). Either way the daemon stays up serving the PERMANENT 'unavailable'

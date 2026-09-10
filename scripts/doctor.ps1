@@ -1303,7 +1303,7 @@ function Get-DoctorDaemonObservation {
         try { $alive = ($null -ne (Get-Process -Id $recPid -ErrorAction SilentlyContinue)) } catch { $alive = $false }
         if (-not $alive) { continue }
         $pipe = [string](Get-Prop $obj 'pipe')
-        if ([string]::IsNullOrWhiteSpace($pipe)) { $pipe = 'powershell-lsp-' + [string](Get-Prop $obj 'sessionId') }
+        if ([string]::IsNullOrWhiteSpace($pipe)) { $pipe = Get-DaemonPipeName -SessionId ([string](Get-Prop $obj 'sessionId')) }
         # DaemonVersion (DX finding O2): the version the RUNNING daemon stamped into its own
         # record. '' when the record carries no such field -- which is exactly what a daemon
         # older than the field looks like, and is reported as unknown, never as a mismatch.

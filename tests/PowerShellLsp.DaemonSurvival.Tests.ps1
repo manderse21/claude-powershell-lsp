@@ -302,7 +302,7 @@ Describe 'Integration: the real daemon survives an abandoned reply (dispatch 000
         $script:DsDataRoot = Join-Path ([IO.Path]::GetTempPath()) ('psl-000237-' + [guid]::NewGuid().ToString('N').Substring(0, 10))
         New-Item -ItemType Directory -Force -Path $script:DsDataRoot | Out-Null
         $script:DsSid = 'ds' + [guid]::NewGuid().ToString('N').Substring(0, 10)
-        $script:DsPipe = 'powershell-lsp-' + $script:DsSid
+        $script:DsPipe = Get-DaemonPipeName -SessionId $script:DsSid
 
         $daemon = Join-Path $script:DsRoot 'scripts/pses-daemon.ps1'
         $psi = New-Object System.Diagnostics.ProcessStartInfo

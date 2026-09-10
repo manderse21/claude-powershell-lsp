@@ -193,7 +193,7 @@ else {
 
         # The endpoint path is the plugin's own derivation (lsp-common.ps1): the pipe name
         # is 'powershell-lsp-<sid>' and .NET backs it with <temp>/CoreFxPipe_<pipename>.
-        $pipeName = 'powershell-lsp-' + $sid
+        $pipeName = Get-DaemonPipeName -SessionId $sid
         $sockPath = Join-Path ([System.IO.Path]::GetTempPath()) ('CoreFxPipe_' + $pipeName)
         $result.t51.pipeName = $pipeName
         $result.t51.socketPath = $sockPath

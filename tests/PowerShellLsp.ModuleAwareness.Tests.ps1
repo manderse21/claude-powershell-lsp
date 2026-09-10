@@ -223,7 +223,7 @@ Describe 'Integration: module-awareness corpus through the REAL warm daemon (dis
         # token) -- so a silent case is proven silent on a REAL analysis, never trivially on an
         # unsettled/incomplete pass. Returns the count of ModuleNotInstalled findings, or -1 on timeout.
         function Get-MaCount { param([string]$Sid, [string]$File)
-            $pipeName = 'powershell-lsp-' + $Sid
+            $pipeName = Get-DaemonPipeName -SessionId $Sid
             $sw = [System.Diagnostics.Stopwatch]::StartNew()
             while ($sw.ElapsedMilliseconds -lt 45000) {
                 $client = $null
