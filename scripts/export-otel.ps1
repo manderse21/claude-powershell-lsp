@@ -34,6 +34,12 @@ param(
     # sibling (<path>.1) is included automatically when present.
     [string] $Path = '',
 
+    # Explicit diagnostics.jsonl to read for the shape-cardinality metric (dispatch 000291).
+    # Default: the live dogfood dir's diagnostics.jsonl, rolled sibling included when present.
+    # The capture log is opt-in telemetry exactly as stats.jsonl is; when it does not exist
+    # this reader contributes nothing and no shapes metric is emitted at all.
+    [string] $CapturePath = '',
+
     # Report the endpoint resolution and the sample count, then exit. Sends nothing, renders
     # nothing. This is the "is the control actually active on this host" question.
     [switch] $Show,
@@ -65,6 +71,12 @@ if ([string]::IsNullOrWhiteSpace($Path)) {
     $script:RootKnown = [bool]$res.Known
     $script:Provenance = [string]$res.Provenance
     $Path = Join-Path (Get-LogDir) 'stats.jsonl'
+}
+# The capture log resolves independently and NEVER re-decides $script:RootKnown. That flag
+# exists to say whether the STATS reader looked in a directory somebody named, and the refusal
+# below turns on it; letting a second reader touch it would make the refusal mean two things.
+if ([string]::IsNullOrWhiteSpace($CapturePath)) {
+    $CapturePath = Get-DogfoodLogPath
 }
 
 function Read-StatsLines {
@@ -101,6 +113,20 @@ if ($Show) {
     }
     $n = @(@(Read-StatsLines -File $Path) + @(Read-StatsLines -File ($Path + '.1'))).Count
     Write-Host ('  samples available: ' + $n)
+    # The capture reader reports its own COUNTS -- rows seen and distinct shapes among them --
+    # and never a hash. -Show is a report to a human about what would leave, so it is held to
+    # the same boundary as the payload: if a value may not be exported, it may not be printed
+    # here either. This is the same reason an unparseable endpoint is not echoed above.
+    $capRows = @()
+    if (-not [string]::IsNullOrWhiteSpace($CapturePath)) {
+        $capRows = @(@(Read-StatsLines -File $CapturePath) + @(Read-StatsLines -File ($CapturePath + '.1')))
+    }
+    $capShapes = New-OtelShapeCountPoints -Records $capRows -TimeUnixNano '0' -StartTimeUnixNano '0'
+    $capDistinct = 0
+    foreach ($p in @($capShapes)) { $capDistinct += [int]$p.asInt }
+    Write-Host ('  capture log: ' + $(if ([string]::IsNullOrWhiteSpace($CapturePath)) { '(none)' } else { $CapturePath }))
+    Write-Host ('  capture rows available: ' + @($capRows).Count +
+        '   distinct diagnostic shapes: ' + $capDistinct)
     exit 0
 }
 
@@ -116,7 +142,13 @@ if (@($records).Count -eq 0 -and -not $script:RootKnown) {
     exit 1
 }
 
-$payload = ConvertTo-OtelResourceMetrics -Records $records -ServiceVersion (Get-PluginVersion)
+$captureRecords = @()
+if (-not [string]::IsNullOrWhiteSpace($CapturePath)) {
+    $captureRecords = @(@(Read-StatsLines -File $CapturePath) + @(Read-StatsLines -File ($CapturePath + '.1')))
+}
+
+$payload = ConvertTo-OtelResourceMetrics -Records $records -ServiceVersion (Get-PluginVersion) `
+    -CaptureRecords $captureRecords
 $json = ($payload | ConvertTo-Json -Depth 12 -Compress)
 
 if (-not [string]::IsNullOrWhiteSpace($OutFile)) {
