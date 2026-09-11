@@ -332,6 +332,23 @@ Describe 'Flake instrumentation: EVERY process-spawning hook in the suite record
         $script:HiSpawners = @($funcs | Where-Object { $_.Extent.Text -match '\$p\.WaitForExit\(' })
         $script:HiCollapsers = @($script:HiSpawners | Where-Object { $_.Extent.Text -match "return\s*''" })
         $script:HiExcluded = @($script:HiSpawners | Where-Object { $_.Extent.Text -notmatch "return\s*''" })
+
+        # THE SHARED SUPPORT FILE IS IN SCOPE TOO (dispatch 000292). Invoke-PluginHook used to be
+        # defined ten times in the integration file -- the only file this scan read -- and the
+        # collapse moved its ONE definition into Integration.Common.ps1. Without this block the
+        # guard would have silently stopped covering the most-called hook helper in the suite, and
+        # it had in fact NEVER covered the shared copy, although that copy was in force for 12 of
+        # the 46 calls before the collapse. Describe ownership still comes from the integration
+        # file alone: a support-file function belongs to no Describe.
+        $script:HiSupportFile = Join-Path $PSScriptRoot 'Integration.Common.ps1'
+        $tokens = $null; $errors = $null
+        $sast = [System.Management.Automation.Language.Parser]::ParseFile($script:HiSupportFile, [ref]$tokens, [ref]$errors)
+        $script:HiParseErrors = @($script:HiParseErrors) + @($errors)
+        $sfuncs = @($sast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
+        $script:HiSupportSpawners = @($sfuncs | Where-Object { $_.Extent.Text -match '\$p\.WaitForExit\(' })
+        $script:HiSupportCollapsers = @($script:HiSupportSpawners | Where-Object { $_.Extent.Text -match "return\s*''" })
+        $script:HiAllCollapsers = @($script:HiCollapsers) + @($script:HiSupportCollapsers)
+        $script:HiExcluded = @($script:HiExcluded) + @($script:HiSupportSpawners | Where-Object { $_.Extent.Text -notmatch "return\s*''" })
     }
 
     It 'the integration suite parses clean (the scan is over real code, not a broken parse)' {
@@ -341,14 +358,20 @@ Describe 'Flake instrumentation: EVERY process-spawning hook in the suite record
     It 'the covered set is NON-EMPTY -- the scan actually reaches the hook functions' {
         $script:HiSpawners.Count | Should -BeGreaterThan 0
         $script:HiCollapsers.Count | Should -BeGreaterThan 0
-        # Sanity floor: ten Invoke-PluginHook copies plus Invoke-HookEnvU and Invoke-DfHook.
-        # If this drops, the derivation broke rather than the suite improving.
-        $script:HiCollapsers.Count | Should -BeGreaterOrEqual 12
+        # Sanity floor, RE-DERIVED by dispatch 000292 rather than lowered to fit. It was 12 -- ten
+        # Invoke-PluginHook copies plus Invoke-HookEnvU and Invoke-DfHook -- and the ten copies were
+        # collapsed onto ONE definition in Integration.Common.ps1. What remains is that one, plus
+        # Invoke-HookEnvU, Invoke-DfHook and Invoke-ThEdit in the integration file. The shared
+        # definition is required BY NAME, so the floor cannot be met by the three integration-file
+        # hooks while the most-called one drops out of scope unnoticed -- which is exactly what
+        # happened, and what the old floor of 12 caught.
+        @($script:HiSupportCollapsers | Where-Object { $_.Name -eq 'Invoke-PluginHook' }).Count | Should -Be 1
+        $script:HiAllCollapsers.Count | Should -BeGreaterOrEqual 4
     }
 
     It 'every collapsing hook records ALL THREE outcomes -- the class is closed, not one instance' {
         $missing = New-Object System.Collections.ArrayList
-        foreach ($f in $script:HiCollapsers) {
+        foreach ($f in $script:HiAllCollapsers) {
             $body = $f.Extent.Text
             foreach ($reason in @('killed-at-cap', 'stdout-read-timeout', 'exited-empty-stdout')) {
                 if ($body -notmatch [regex]::Escape($reason)) {
@@ -405,7 +428,7 @@ Describe 'Flake instrumentation: EVERY process-spawning hook in the suite record
 
     It 'NO hook still collapses the two paths into a bare shared return' {
         # The exact pre-fix tail. Its survival anywhere means an instance was missed.
-        $src = Get-Content -LiteralPath $script:HiTargetFile -Raw
+        $src = (Get-Content -LiteralPath $script:HiTargetFile -Raw) + (Get-Content -LiteralPath $script:HiSupportFile -Raw)
         $collapsed = [regex]::Matches($src, [regex]::Escape('if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '''' }'))
         $collapsed.Count | Should -Be 0
     }
@@ -531,7 +554,11 @@ Describe 'The harness stdout drain is bounded by the CALLER''S cap, not a consta
         # would-be offender. A census that matches its own text measures the wrong thing,
         # and the miscount is silent because both needles look exactly like real ones.
         $script:HdSelf = [System.IO.Path]::GetFileName($PSCommandPath)
-        $script:HdFiles = @(Get-ChildItem -LiteralPath $script:HdRoot -Filter '*.Tests.ps1' -File |
+        # Every top-level tests/*.ps1, not only *.Tests.ps1 (dispatch 000292): the ONE
+        # Invoke-PluginHook drain now lives in the support file Integration.Common.ps1, which a
+        # *.Tests.ps1 filter never read -- so the census would have silently stopped seeing the
+        # most-called drain in the suite the day the ten copies were collapsed onto it.
+        $script:HdFiles = @(Get-ChildItem -LiteralPath $script:HdRoot -Filter '*.ps1' -File |
             Where-Object { $_.Name -ne $script:HdSelf })
     }
 
@@ -561,8 +588,12 @@ Describe 'The harness stdout drain is bounded by the CALLER''S cap, not a consta
             $bounded += @([regex]::Matches($src, [regex]::Escape('$stdoutTask.Wait([Math]::Max(1500, $CapMs))'))).Count
             $total += @([regex]::Matches($src, [regex]::Escape('$stdoutTask.Wait('))).Count
         }
-        $total | Should -BeGreaterThan 10 -Because 'a floor, so this cannot pass by finding nothing'
-        $bounded | Should -BeGreaterThan 10 -Because 'the same floor on the other side of the comparison'
+        # The floor was 10, pinned to thirteen drains, ten of them the Invoke-PluginHook copies that
+        # dispatch 000292 collapsed. It is RE-DERIVED, not merely lowered: three drains remain -- the
+        # shared Invoke-PluginHook, Invoke-HookEnvU and Invoke-DfHook -- and the census now reads the
+        # support file that holds the first of them, which it had never read before.
+        $total | Should -BeGreaterOrEqual 3 -Because 'a floor, so this cannot pass by finding nothing'
+        $bounded | Should -BeGreaterOrEqual 3 -Because 'the same floor on the other side of the comparison'
         $bounded | Should -Be $total -Because 'a drain that is not cap-bounded is the defect this guards'
     }
 }

@@ -42,57 +42,8 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Stop-IntegrationDaemon (info-independent reap, dispatch 000078)
 
-        # Helpers must be defined in the run phase (a top-level function would only
-        # exist during discovery and be invisible here). Defined in BeforeAll, they
-        # are available to this block and every It below it.
-        function Invoke-PluginHook {
-            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot)
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
-            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
-            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
-            $p = [System.Diagnostics.Process]::Start($psi)
-            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
-            if ($StdinJson) {
-                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)   # no BOM
-                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
-                $p.StandardInput.BaseStream.Flush()
-            }
-            $p.StandardInput.Close()
-            $script:LastHookExit = $null   # Track A fail-safe test reads the hook's exit code
-            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
-            # empty return can be told apart from a cap overrun. Return values are unchanged.
-            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
-            if (-not $p.WaitForExit($CapMs)) {
-                try { $p.Kill($true) } catch { }
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            $script:LastHookExit = $p.ExitCode
-            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
-            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
-            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
-            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
-            # for output the plugin DID produce -- indistinguishable at the assertion from the
-            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
-            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
-            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
-            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
-            # Bounded by the caller's cap instead, floored at the old constant so no call site
-            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
-            # redirected stream reaches EOF once its buffer is drained.
-            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
-            if (-not $stdoutTask.IsCompleted) {
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            $hookReason = 'ok'
-            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
-            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-            return $stdoutTask.Result
-        }
-
+        # Invoke-PluginHook comes from Integration.Common.ps1, dot-sourced above -- the ONE
+        # definition every Describe now shares (dispatch 000292 collapsed ten copies onto it).
         $script:ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         # DataDir is a throwaway scratch root. Default: a temp subdir (local runs
         # unchanged). CI sets PSLS_TEST_DATA_DIR to a workspace path so the warm
@@ -484,52 +435,6 @@ Describe 'Integration: honor PSScriptAnalyzerSettings.psd1 (dispatch 000018)' -S
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Stop-IntegrationDaemon (info-independent reap, dispatch 000078)
 
-        function Invoke-PluginHook {
-            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
-            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
-            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
-            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
-            $p = [System.Diagnostics.Process]::Start($psi)
-            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
-            if ($StdinJson) {
-                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
-                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
-            }
-            $p.StandardInput.Close()
-            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
-            # empty return can be told apart from a cap overrun. Return values are unchanged.
-            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
-            if (-not $p.WaitForExit($CapMs)) {
-                try { $p.Kill($true) } catch { }
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
-            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
-            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
-            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
-            # for output the plugin DID produce -- indistinguishable at the assertion from the
-            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
-            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
-            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
-            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
-            # Bounded by the caller's cap instead, floored at the old constant so no call site
-            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
-            # redirected stream reaches EOF once its buffer is drained.
-            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
-            if (-not $stdoutTask.IsCompleted) {
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            $hookReason = 'ok'
-            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
-            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-            return $stdoutTask.Result
-        }
-
         $script:H_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         # Share the warm-start block's data root so PSES/PSSA bootstrap is a no-op here
         # (no second download per CI leg). Fixtures live in a dedicated subtree and
@@ -723,52 +628,6 @@ Describe 'Integration: opt-in ruleset=base broadens the live surface (dispatch 0
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Stop-IntegrationDaemon (info-independent reap, dispatch 000078)
-
-        function Invoke-PluginHook {
-            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
-            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
-            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
-            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
-            $p = [System.Diagnostics.Process]::Start($psi)
-            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
-            if ($StdinJson) {
-                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
-                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
-            }
-            $p.StandardInput.Close()
-            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
-            # empty return can be told apart from a cap overrun. Return values are unchanged.
-            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
-            if (-not $p.WaitForExit($CapMs)) {
-                try { $p.Kill($true) } catch { }
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
-            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
-            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
-            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
-            # for output the plugin DID produce -- indistinguishable at the assertion from the
-            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
-            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
-            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
-            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
-            # Bounded by the caller's cap instead, floored at the old constant so no call site
-            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
-            # redirected stream reaches EOF once its buffer is drained.
-            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
-            if (-not $stdoutTask.IsCompleted) {
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            $hookReason = 'ok'
-            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
-            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-            return $stdoutTask.Result
-        }
 
         $script:B87ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         $script:B87Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
@@ -1079,52 +938,6 @@ Describe 'Integration: edit-range diagnostic scoping (dispatch 000019)' -Skip:$s
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Stop-IntegrationDaemon (info-independent reap, dispatch 000078)
 
-        function Invoke-PluginHook {
-            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
-            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
-            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
-            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
-            $p = [System.Diagnostics.Process]::Start($psi)
-            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
-            if ($StdinJson) {
-                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
-                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
-            }
-            $p.StandardInput.Close()
-            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
-            # empty return can be told apart from a cap overrun. Return values are unchanged.
-            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
-            if (-not $p.WaitForExit($CapMs)) {
-                try { $p.Kill($true) } catch { }
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
-            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
-            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
-            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
-            # for output the plugin DID produce -- indistinguishable at the assertion from the
-            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
-            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
-            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
-            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
-            # Bounded by the caller's cap instead, floored at the old constant so no call site
-            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
-            # redirected stream reaches EOF once its buffer is drained.
-            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
-            if (-not $stdoutTask.IsCompleted) {
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            $hookReason = 'ok'
-            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
-            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-            return $stdoutTask.Result
-        }
-
         $script:S_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         $script:S_Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
             $env:PSLS_TEST_DATA_DIR
@@ -1263,52 +1076,6 @@ Describe 'Integration: supervised restart + incomplete/degraded status (dispatch
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Stop-IntegrationDaemon (info-independent reap, dispatch 000078)
-
-        function Invoke-PluginHook {
-            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
-            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
-            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
-            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
-            $p = [System.Diagnostics.Process]::Start($psi)
-            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
-            if ($StdinJson) {
-                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
-                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
-            }
-            $p.StandardInput.Close()
-            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
-            # empty return can be told apart from a cap overrun. Return values are unchanged.
-            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
-            if (-not $p.WaitForExit($CapMs)) {
-                try { $p.Kill($true) } catch { }
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
-            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
-            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
-            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
-            # for output the plugin DID produce -- indistinguishable at the assertion from the
-            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
-            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
-            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
-            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
-            # Bounded by the caller's cap instead, floored at the old constant so no call site
-            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
-            # redirected stream reaches EOF once its buffer is drained.
-            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
-            if (-not $stdoutTask.IsCompleted) {
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            $hookReason = 'ok'
-            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
-            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-            return $stdoutTask.Result
-        }
 
         # Launch pses-daemon.ps1 DIRECTLY (long-lived) with arbitrary args + env. Returns
         # the daemon Process. The daemon writes nothing to stdout/stderr (it logs to files);
@@ -1799,52 +1566,6 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
 
-        function Invoke-PluginHook {
-            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
-            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
-            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
-            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
-            $p = [System.Diagnostics.Process]::Start($psi)
-            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
-            if ($StdinJson) {
-                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
-                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
-            }
-            $p.StandardInput.Close()
-            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
-            # empty return can be told apart from a cap overrun. Return values are unchanged.
-            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
-            if (-not $p.WaitForExit($CapMs)) {
-                try { $p.Kill($true) } catch { }
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
-            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
-            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
-            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
-            # for output the plugin DID produce -- indistinguishable at the assertion from the
-            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
-            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
-            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
-            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
-            # Bounded by the caller's cap instead, floored at the old constant so no call site
-            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
-            # redirected stream reaches EOF once its buffer is drained.
-            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
-            if (-not $stdoutTask.IsCompleted) {
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            $hookReason = 'ok'
-            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
-            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-            return $stdoutTask.Result
-        }
-
         function Start-RawDaemon {
             param([string]$Sid, [string]$DataRoot, [string[]]$ExtraArgs, [hashtable]$ExtraEnv)
             $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -2047,52 +1768,6 @@ Describe 'Integration: auto-relaunch the idle-stopped daemon (dispatch 000030)' 
     # permanent reachable case) -- NO wall-clock gate (the 000026 flaky-proxy lesson).
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
-
-        function Invoke-PluginHook {
-            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
-            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
-            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
-            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
-            $p = [System.Diagnostics.Process]::Start($psi)
-            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
-            if ($StdinJson) {
-                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
-                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
-            }
-            $p.StandardInput.Close()
-            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
-            # empty return can be told apart from a cap overrun. Return values are unchanged.
-            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
-            if (-not $p.WaitForExit($CapMs)) {
-                try { $p.Kill($true) } catch { }
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
-            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
-            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
-            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
-            # for output the plugin DID produce -- indistinguishable at the assertion from the
-            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
-            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
-            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
-            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
-            # Bounded by the caller's cap instead, floored at the old constant so no call site
-            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
-            # redirected stream reaches EOF once its buffer is drained.
-            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
-            if (-not $stdoutTask.IsCompleted) {
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            $hookReason = 'ok'
-            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
-            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-            return $stdoutTask.Result
-        }
 
         function Start-RawDaemon {
             param([string]$Sid, [string]$DataRoot, [string[]]$ExtraArgs, [hashtable]$ExtraEnv)
@@ -2637,54 +2312,6 @@ Describe 'Integration: closed-loop agentic correction (dispatch 000061)' -Skip:$
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Wait-DaemonRequestReady (deterministic gate)
 
-        function Invoke-PluginHook {
-            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
-            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
-            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
-            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
-            $p = [System.Diagnostics.Process]::Start($psi)
-            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
-            if ($StdinJson) {
-                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
-                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
-            }
-            $p.StandardInput.Close()
-            $script:LastHookExit = $null
-            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
-            # empty return can be told apart from a cap overrun. Return values are unchanged.
-            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
-            if (-not $p.WaitForExit($CapMs)) {
-                try { $p.Kill($true) } catch { }
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            $script:LastHookExit = $p.ExitCode
-            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
-            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
-            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
-            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
-            # for output the plugin DID produce -- indistinguishable at the assertion from the
-            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
-            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
-            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
-            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
-            # Bounded by the caller's cap instead, floored at the old constant so no call site
-            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
-            # redirected stream reaches EOF once its buffer is drained.
-            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
-            if (-not $stdoutTask.IsCompleted) {
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            $hookReason = 'ok'
-            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
-            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-            return $stdoutTask.Result
-        }
-
         # Talk to the daemon pipe DIRECTLY (never via lsp-client) for the wire-level no-token
         # assertion -- returns the parsed response object, or $null on timeout.
         function Send-DaemonReq {
@@ -2862,54 +2489,6 @@ Describe 'Integration: format-on-edit suggestion (dispatch 000059)' -Skip:$scrip
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Stop-IntegrationDaemon (info-independent reap, dispatch 000078)
 
-        function Invoke-PluginHook {
-            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
-            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
-            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
-            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
-            $p = [System.Diagnostics.Process]::Start($psi)
-            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
-            if ($StdinJson) {
-                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
-                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
-            }
-            $p.StandardInput.Close()
-            $script:F_LastExit = $null
-            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
-            # empty return can be told apart from a cap overrun. Return values are unchanged.
-            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
-            if (-not $p.WaitForExit($CapMs)) {
-                try { $p.Kill($true) } catch { }
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            $script:F_LastExit = $p.ExitCode
-            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
-            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
-            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
-            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
-            # for output the plugin DID produce -- indistinguishable at the assertion from the
-            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
-            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
-            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
-            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
-            # Bounded by the caller's cap instead, floored at the old constant so no call site
-            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
-            # redirected stream reaches EOF once its buffer is drained.
-            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
-            if (-not $stdoutTask.IsCompleted) {
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            $hookReason = 'ok'
-            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
-            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-            return $stdoutTask.Result
-        }
-
         $script:F_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         $script:F_Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
             $env:PSLS_TEST_DATA_DIR
@@ -3003,7 +2582,7 @@ Describe 'Integration: format-on-edit suggestion (dispatch 000059)' -Skip:$scrip
     It 'knob ON surfaces a unified-diff suggestion and NEVER rewrites the file (suggest-not-apply)' {
         $before = [System.IO.File]::ReadAllBytes($script:F_PlainFile)
         $out = Get-FmtHook -File $script:F_PlainFile -Cwd $script:F_PlainDir -Mode 'suggest'
-        $script:F_LastExit | Should -Be 0                                  # the hook always exits 0
+        $script:LastHookExit | Should -Be 0                                  # the hook always exits 0
         $ctx = Get-AddlContext $out
         $ctx | Should -Match 'PowerShell formatting suggestion'            # a suggestion is surfaced
         $ctx | Should -Match 'NOT modified'                                # and it says so, plainly
@@ -3036,7 +2615,7 @@ Describe 'Integration: format-on-edit suggestion (dispatch 000059)' -Skip:$scrip
     It 'a malformed settings file degrades honestly: no suggestion, hook exits 0, file untouched' {
         $before = [System.IO.File]::ReadAllBytes($script:F_BadFile)
         $out = Get-FmtHook -File $script:F_BadFile -Cwd $script:F_BadDir -Mode 'suggest'
-        $script:F_LastExit | Should -Be 0                                  # editing is never broken
+        $script:LastHookExit | Should -Be 0                                  # editing is never broken
         (Get-AddlContext $out) | Should -Not -Match 'formatting suggestion'  # the failure surfaces NO suggestion
         [System.IO.File]::ReadAllBytes($script:F_BadFile) | Should -Be $before   # and never rewrites the file
     }
@@ -3057,53 +2636,6 @@ Describe 'Integration: format-on-edit APPLY -- the guarded write-back (dispatch 
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
 
-        function Invoke-PluginHook {
-            param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
-            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-            Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
-            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
-            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
-            $p = [System.Diagnostics.Process]::Start($psi)
-            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
-            if ($StdinJson) {
-                $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)
-                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
-            }
-            $p.StandardInput.Close()
-            $script:AP_LastExit = $null
-            # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
-            # empty return can be told apart from a cap overrun. Return values are unchanged.
-            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
-            if (-not $p.WaitForExit($CapMs)) {
-                try { $p.Kill($true) } catch { }
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            $script:AP_LastExit = $p.ExitCode
-            # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
-            # wait on work, so bounding it by a constant unrelated to the caller's cap is what
-            # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
-            # process can miss it, `stdout-read-timeout` fires, and Invoke-PluginHook returns ''
-            # for output the plugin DID produce -- indistinguishable at the assertion from the
-            # silent connect-fail these tests exist to catch. MEASURED, dispatch 000283: CI run
-            # 34076840651 windows-pwsh, `stdout-read-timeout ... [elapsedMs=2628 capMs=25000
-            # exit=0 script=lsp-client.ps1]`, with that session's own client log recording
-            # `emitted 0 diagnostic(s) [status=incomplete]` 1.6s BEFORE the harness gave up.
-            # Bounded by the caller's cap instead, floored at the old constant so no call site
-            # gets a shorter drain than it had. It cannot hang: the process has exited, so the
-            # redirected stream reaches EOF once its buffer is drained.
-            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
-            if (-not $stdoutTask.IsCompleted) {
-                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-                return ''
-            }
-            $hookReason = 'ok'
-            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
-            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath $ScriptPath -DataRoot $DataRoot
-            return $stdoutTask.Result
-        }
         function Get-AddlContext { param([string]$Out) if ([string]::IsNullOrWhiteSpace($Out)) { return '' } try { return [string]((($Out | ConvertFrom-Json).hookSpecificOutput).additionalContext) } catch { return '' } }
         function Set-RawFile { param([string]$Path, [byte[]]$Bytes) [System.IO.File]::WriteAllBytes($Path, $Bytes) }
         function Get-U8 { param([string]$S) [System.Text.Encoding]::UTF8.GetBytes($S) }
@@ -3205,7 +2737,7 @@ Describe 'Integration: format-on-edit APPLY -- the guarded write-back (dispatch 
         $before = [System.IO.File]::ReadAllBytes($script:AP_PlainFile)
         ([System.Text.Encoding]::UTF8.GetString($before)) | Should -Not -Match '(?m)^    Get-Process$'   # pre: not yet indented
         $out = Get-ApplyHook -File $script:AP_PlainFile -Cwd $script:AP_PlainDir -Mode 'apply'
-        $script:AP_LastExit | Should -Be 0
+        $script:LastHookExit | Should -Be 0
         $ctx = Get-AddlContext $out
         $ctx | Should -Match 'formatting APPLIED'
         $ctx | Should -Match 'WAS MODIFIED'
@@ -3217,7 +2749,7 @@ Describe 'Integration: format-on-edit APPLY -- the guarded write-back (dispatch 
 
     It 'BYTE FIDELITY: a CRLF + BOM file round-trips with BOM and CRLF preserved, only the formatting delta' {
         $out = Get-ApplyHook -File $script:AP_CrlfFile -Cwd $script:AP_CrlfDir -Mode 'apply'
-        $script:AP_LastExit | Should -Be 0
+        $script:LastHookExit | Should -Be 0
         (Get-AddlContext $out) | Should -Match 'WAS MODIFIED'
         $after = [System.IO.File]::ReadAllBytes($script:AP_CrlfFile)
         # BOM preserved (first three bytes), and the body decoded from byte 3 is EXACTLY the 4-space
@@ -3229,7 +2761,7 @@ Describe 'Integration: format-on-edit APPLY -- the guarded write-back (dispatch 
 
     It 'BYTE FIDELITY: a LF + no-BOM file round-trips with no BOM and LF preserved, only the formatting delta' {
         $out = Get-ApplyHook -File $script:AP_LfFile -Cwd $script:AP_LfDir -Mode 'apply'
-        $script:AP_LastExit | Should -Be 0
+        $script:LastHookExit | Should -Be 0
         (Get-AddlContext $out) | Should -Match 'WAS MODIFIED'
         $after = [System.IO.File]::ReadAllBytes($script:AP_LfFile)
         $after[0] | Should -Be 0x66   # 'f' of function -- no BOM was added
@@ -3241,7 +2773,7 @@ Describe 'Integration: format-on-edit APPLY -- the guarded write-back (dispatch 
         $mtimeBefore = (Get-Item -LiteralPath $script:AP_CleanFile).LastWriteTimeUtc
         Start-Sleep -Milliseconds 50
         $out = Get-ApplyHook -File $script:AP_CleanFile -Cwd $script:AP_CleanDir -Mode 'apply'
-        $script:AP_LastExit | Should -Be 0
+        $script:LastHookExit | Should -Be 0
         $ctx = Get-AddlContext $out
         $ctx | Should -Not -Match 'formatting APPLIED'
         $ctx | Should -Not -Match 'formatting suggestion'
@@ -3252,7 +2784,7 @@ Describe 'Integration: format-on-edit APPLY -- the guarded write-back (dispatch 
     It 'MIXED EOL: apply ABORTS to a suggestion (OQ4) -- file untouched, honest reason surfaced' {
         $before = [System.IO.File]::ReadAllBytes($script:AP_MixedFile)
         $out = Get-ApplyHook -File $script:AP_MixedFile -Cwd $script:AP_MixedDir -Mode 'apply'
-        $script:AP_LastExit | Should -Be 0
+        $script:LastHookExit | Should -Be 0
         $ctx = Get-AddlContext $out
         $ctx | Should -Match 'formatting suggestion'          # the suggest-shaped fallback
         $ctx | Should -Match 'apply did NOT run'
@@ -3264,7 +2796,7 @@ Describe 'Integration: format-on-edit APPLY -- the guarded write-back (dispatch 
     It 'FAIL-SAFE: a malformed settings file degrades -- no write, hook exits 0, file untouched' {
         $before = [System.IO.File]::ReadAllBytes($script:AP_BadFile)
         $out = Get-ApplyHook -File $script:AP_BadFile -Cwd $script:AP_BadDir -Mode 'apply'
-        $script:AP_LastExit | Should -Be 0
+        $script:LastHookExit | Should -Be 0
         (Get-AddlContext $out) | Should -Not -Match 'WAS MODIFIED'
         [System.IO.File]::ReadAllBytes($script:AP_BadFile) | Should -Be $before
     }

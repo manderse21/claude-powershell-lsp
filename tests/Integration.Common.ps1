@@ -567,28 +567,35 @@ function New-PluginHookOutcome {
     return $o
 }
 
-# --- Invoke-PluginHook, ONE shared copy (dispatch 000289) ------------------
-# WHY THIS IS HERE. This helper is defined TEN times inside
-# PowerShellLsp.Integration.Tests.ps1, once per Describe's BeforeAll, and MEASURED at the tip
-# those ten copies are FIVE DISTINCT BODIES -- six share one, four are each unique. The drift is
-# substantive, not cosmetic: one copy has no `$ExtraEnv` parameter AT ALL, so the same helper
-# name carries different SIGNATURES in different blocks of one file. Three others add
-# `$script:LastHookExit` tracking the rest lack.
+# --- Invoke-PluginHook, the ONE definition (000289 added it; 000292 collapsed onto it) ---
+# WHY THERE IS ONLY ONE. This helper used to be defined TEN more times inside
+# PowerShellLsp.Integration.Tests.ps1, once per Describe's BeforeAll. MEASURED by the parser at
+# the collapse (dispatch 000292), the ten were FIVE DISTINCT BODIES: six were this body once
+# indentation is set aside, one had NO $ExtraEnv parameter at all, and three recorded the
+# child's exit code under THREE different variable names. The same helper name therefore meant
+# different signatures and different side effects in different blocks of one file -- the drift
+# 000236 had already recorded when it collapsed three Wait-*DiagReady copies into this file.
 #
-# That is the second sighting of this exact shape in this exact file: dispatch 000236 already
-# collapsed three `Wait-*DiagReady` copies here, recording that they "were three byte-identical
-# copies of a FIXED 90000 ms wall-clock ceiling and drifted apart the moment" they existed
-# separately. They had. So have these.
+# WHAT THIS HEADER USED TO CLAIM, AND WHY IT WAS WRONG. It said every Describe dot-sourced this
+# file BEFORE defining its own copy, so a local copy always shadowed this one. Two did not: in
+# the 000028 and 000030 blocks the dot-source came AFTER the local definition in the same
+# BeforeAll, so THIS copy replaced theirs. Those two local copies were dead code, and this
+# "unused" copy was in force for 12 of the 46 calls -- harmless only because those two bodies
+# happened to match it.
 #
-# THIS COPY DOES NOT COLLAPSE THE TEN, and that is deliberate. Every one of the ten Describes
-# dot-sources this file BEFORE defining its own, so a local definition SHADOWS this one and no
-# existing block changes behaviour by a single byte. New blocks use this one instead of minting
-# an eleventh variant. The collapse itself is a named slice with a real regression surface across
-# a 3,900-line integration file, and it is ROUTED with the measurement rather than done here.
+# THE CONTRACT every caller now shares:
+#   - parameters: the union of what every caller passes -- ScriptPath, StdinJson, ExtraArgs,
+#     CapMs, DataRoot, ExtraEnv -- passed BY NAME (the guard asserts no call is positional or
+#     splatted, which is what makes the union a proof rather than a sample);
+#   - $script:PslsHookOutcome: the structured outcome (dispatch 000159 leg 1a), unchanged;
+#   - $script:LastHookExit: the child's exit code, reset to $null at the start of EVERY call and
+#     set only when the child exits on its own -- so a reader can never see an earlier call's
+#     code, and a child killed at the cap reads $null rather than a fabricated one. This is the
+#     one behaviour the variants added, now under one name instead of three.
 #
-# The body is the SIX-way majority verbatim -- the variant with the fullest signature, including
-# `$ExtraEnv`. Requires Add-ProcessArguments (scripts/lib/lsp-common.ps1) and
-# New-PluginHookOutcome (below), both of which every caller already has.
+# tests/PowerShellLsp.InvokePluginHook.Tests.ps1 guards all three, each with the PRIOR
+# IMPLEMENTATION as its RED control. Requires Add-ProcessArguments (scripts/lib/lsp-common.ps1)
+# and New-PluginHookOutcome (above), both of which every caller already has.
 
 function Invoke-PluginHook {
     param([string]$ScriptPath, [string]$StdinJson, [string[]]$ExtraArgs, [int]$CapMs, [string]$DataRoot, [hashtable]$ExtraEnv)
@@ -605,6 +612,7 @@ function Invoke-PluginHook {
         $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
     }
     $p.StandardInput.Close()
+    $script:LastHookExit = $null   # reset per call -- never a stale value from an earlier call
     # Diagnosability only (dispatch 000159 leg 1a): times stdin-close -> exit/kill so an
     # empty return can be told apart from a cap overrun. Return values are unchanged.
     $swHook = [System.Diagnostics.Stopwatch]::StartNew()
@@ -613,6 +621,7 @@ function Invoke-PluginHook {
         $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath $ScriptPath -DataRoot $DataRoot
         return ''
     }
+    $script:LastHookExit = $p.ExitCode   # only a child that exited on its own has a code; a kill leaves $null
     # THE CHILD HAS ALREADY EXITED -- this is a DRAIN of bytes already in the pipe, not a
     # wait on work, so bounding it by a constant unrelated to the caller's cap is what
     # loses them. 1500ms was that constant. On a loaded runner the drain of an exited
