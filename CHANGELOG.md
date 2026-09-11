@@ -30,6 +30,24 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **The suite's daemon-leak backstop now recognizes a suite-owned daemon by its DATA ROOT,
+not by a hand-maintained `-SessionId` prefix allowlist** (test-only; no shipped behaviour changes).
+`Get-IntegrationDaemonLeak` (`tests/Integration.Common.ps1`) previously matched a live
+`pses-daemon.ps1` process only when its `-SessionId` started with one of 15 hardcoded prefixes.
+Dispatch 000225's `th225unr-*` daemon was never in that list and survived a full suite run while
+the "PROVE zero suite daemons survived" backstop reported zero. Every daemon the suite launches
+carries an explicit `-DataRoot` on its own command line (`Start-PsesDaemonDetached`,
+`scripts/lib/lsp-common.ps1`), and every test-minted data root -- the shared `psls-pester-data` and
+every isolated `psls-<id>-<guid>` / `pslsp-<...>` root alike -- lives under the OS temp directory
+with a leaf name starting `psls`; a production daemon's data root never does. The census now reads
+the daemon's own `-DataRoot` and checks that structural property instead of maintaining a prefix
+list, so a new fixture's session-id naming can never again go silently unrecognized.
+`PowerShellLsp.Integration.Tests.ps1` adds a two-test proof: a fake `pses-daemon.ps1`-named process
+carrying the exact `th225unr-*` prefix is now detected via its `-DataRoot`, and the same prefix with
+a non-suite data root is correctly NOT flagged (the control). RED control: reverting to the prior
+allowlist-only match turns the first case red (`Expected 1 ... but got 0`) while the control stays
+green either way, proving the fix -- not merely the test -- is what closes the gap.
+
 PATCH: **`Invoke-PluginHook` now has one definition instead of eleven** (test-only; no shipped
 behaviour changes). The integration suite drives the plugin's hooks as child processes through one
 helper, and `tests/PowerShellLsp.Integration.Tests.ps1` defined it ten times -- once per
