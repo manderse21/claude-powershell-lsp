@@ -3206,7 +3206,7 @@ Describe 'Integration: Get-IntegrationDaemonLeak recognizes a daemon by DATA ROO
         $dataRoot = Join-Path $script:Db_FakeDir 'case1'
         $fake = Start-DbFakeDaemon -SessionId $sid -DataRoot $dataRoot
 
-        $found = @(Get-IntegrationDaemonLeak) | Where-Object { $_.Id -eq $fake.Id }
+        $found = @(Get-IntegrationDaemonLeak | Where-Object { $_.Id -eq $fake.Id })
 
         $found.Count | Should -Be 1 -Because 'the daemon-leak backstop must see a suite daemon by its DataRoot regardless of SessionId prefix'
         $found[0].SessionId | Should -Be $sid
@@ -3218,7 +3218,7 @@ Describe 'Integration: Get-IntegrationDaemonLeak recognizes a daemon by DATA ROO
         $prodLikeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('not-a-suite-root-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         $fake = Start-DbFakeDaemon -SessionId $sid -DataRoot $prodLikeRoot
 
-        $found = @(Get-IntegrationDaemonLeak) | Where-Object { $_.Id -eq $fake.Id }
+        $found = @(Get-IntegrationDaemonLeak | Where-Object { $_.Id -eq $fake.Id })
 
         $found.Count | Should -Be 0 -Because 'a DataRoot that is not a suite-minted psls* temp root must never be treated as ours, even with an unlisted SessionId prefix'
     }
