@@ -59,7 +59,21 @@ Each carries the prior implementation as its RED control, reconstructed by undoi
 shipped source with its anchor count asserted, and each was measured to bite against the shipped
 files: restoring one local copy turns 1 test red, dropping `$ExtraEnv` from the signature 3,
 removing the exit-code capture 4 in this file and **11 in the integration suite** -- every one of
-them an exit-code read -- with everything else staying green.
+them an exit-code read -- with everything else staying green. A fourth property is new because the
+collapse made it load-bearing: every `Describe` that calls the helper must dot-source
+`Integration.Common.ps1`, since no block has a local copy to fall back on any more (removing one
+block's dot-source turns exactly that block's check red, by name).
+
+**Collapsing the copies moved the helper out of two guards' sight, and that was repaired rather
+than papered over.** `PowerShellLsp.HookInstrumentation.Tests.ps1`'s collapser scan read only the
+integration file and its drain census only `*.Tests.ps1` files, so the one remaining definition, in
+`Integration.Common.ps1`, was invisible to both -- as the shared copy always had been, although it
+was in force for 12 calls. Their copy-count floors (12 collapsers, more than 10 drains) went red,
+and lowering them would have left both guards fully green over a regressed helper. Both now read the
+support file, the floors are re-derived from what remains (4 collapsers, 3 drains), and the shared
+definition is required by name. Measured both ways: the pre-000283 constant drain and the pre-000159
+collapsed tail, each applied to the shared helper, are caught by name by the repaired guards and
+missed by the pre-repair ones, whose only reds were the floors.
 
 PATCH: **A one-definition test now scopes itself to the git index, not the filesystem**
 (test-only; no shipped behaviour changes). `PowerShellLsp.DaemonPipeName.Tests.ps1`'s

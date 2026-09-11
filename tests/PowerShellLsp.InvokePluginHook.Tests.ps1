@@ -147,6 +147,55 @@ BeforeAll {
         [System.IO.File]::WriteAllLines($p, $Lines)
         return $p
     }
+
+    function Get-IHUndottedDescribe {
+        # Every TOP-LEVEL Describe in $Path that calls Invoke-PluginHook but would not have it
+        # defined when the call runs. Returns @{ Checked; Offenders }. Two shapes fail:
+        #   - the Describe never dot-sources Integration.Common.ps1 at all;
+        #   - a call that executes DURING a BeforeAll (not inside an It, not inside a nested
+        #     function body) sits before that Describe's first dot-source.
+        # A call inside an It, or inside a helper function the BeforeAll defines, runs only
+        # after the BeforeAll has finished, so any dot-source in the Describe precedes it.
+        param([Parameter(Mandatory = $true)][string] $Path)
+        $tok = $null; $errs = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tok, [ref]$errs)
+        $isDescribe = { param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Describe' }
+        $isDot = {
+            param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Dot -and
+            $n.Extent.Text -match 'Integration\.Common\.ps1'
+        }
+        $offenders = @(); $checked = 0
+        foreach ($d in @($ast.FindAll($isDescribe, $true))) {
+            $up = $d.Parent; $nestedDescribe = $false
+            while ($null -ne $up) { if ((& $isDescribe $up)) { $nestedDescribe = $true; break }; $up = $up.Parent }
+            if ($nestedDescribe) { continue }
+            $calls = @($d.FindAll($script:IH_IsCall, $true))
+            if ($calls.Count -eq 0) { continue }
+            $checked++
+            $title = if ($d.CommandElements.Count -gt 1) { $d.CommandElements[1].Extent.Text } else { '<untitled>' }
+            $dots = @($d.FindAll($isDot, $true))
+            if ($dots.Count -eq 0) {
+                $offenders += ($title + ' @L' + $d.Extent.StartLineNumber + ': calls Invoke-PluginHook, never dot-sources Integration.Common.ps1')
+                continue
+            }
+            $firstDot = @($dots | ForEach-Object { $_.Extent.StartOffset } | Sort-Object)[0]
+            foreach ($c in $calls) {
+                $runsLater = $false
+                $p = $c.Parent
+                while ($null -ne $p -and $p -ne $d) {
+                    if ($p -is [System.Management.Automation.Language.FunctionDefinitionAst]) { $runsLater = $true; break }
+                    if ($p -is [System.Management.Automation.Language.CommandAst] -and $p.GetCommandName() -eq 'It') { $runsLater = $true; break }
+                    $p = $p.Parent
+                }
+                if (-not $runsLater -and $c.Extent.StartOffset -lt $firstDot) {
+                    $offenders += ($title + ' @L' + $c.Extent.StartLineNumber + ': a BeforeAll-time call precedes the dot-source')
+                }
+            }
+        }
+        return [pscustomobject]@{ Checked = $checked; Offenders = $offenders }
+    }
 }
 
 Describe 'Invoke-PluginHook -- ONE definition, the superset of every caller (routed debt 2(e))' {
@@ -222,6 +271,45 @@ Describe 'Invoke-PluginHook -- ONE definition, the superset of every caller (rou
         ($priorParams -contains 'ExtraEnv') | Should -BeFalse
         $miss = Get-IHUndeclared -Declared $priorParams -Calls $script:IH_Census.Calls
         ($miss -join ',') | Should -BeExactly 'ExtraEnv'
+    }
+
+    It 'every Describe that calls the helper DOT-SOURCES Integration.Common.ps1 -- now load-bearing' {
+        # Before the collapse a Describe-local copy made the dot-source irrelevant to this helper;
+        # now it is the ONLY place the helper comes from, and a Describe that forgets it fails with
+        # "not recognized" at RUN time -- in a block a local run may skip. 000024 and 000039 hit
+        # exactly that with New-PluginHookOutcome (PowerShellLsp.HookInstrumentation.Tests.ps1).
+        $r = Get-IHUndottedDescribe -Path (Join-Path $script:IH_TestsDir 'PowerShellLsp.Integration.Tests.ps1')
+        $why = '12 Describes called the helper at the collapse; a census that checked none proves nothing'
+        $r.Checked | Should -BeGreaterOrEqual 10 -Because $why
+        ($r.Offenders -join '; ') | Should -BeExactly ''
+    }
+
+    It 'IN-BAND CONTROL: both failing shapes are named, and a correct Describe is not' {
+        # NO PRIOR IMPLEMENTATION EXISTS for this property: before the collapse a local copy made the
+        # dot-source irrelevant to this helper, so nothing needed to hold. The control is the two
+        # shapes that WOULD fail at run time, built under $TestDrive beside one that would not.
+        $p = Join-Path $TestDrive 'Undotted.Tests.ps1'
+        [System.IO.File]::WriteAllLines($p, @(
+                'Describe ''never dot-sources'' {',
+                '    It ''calls'' { Invoke-PluginHook -ScriptPath ''a'' }',
+                '}',
+                'Describe ''calls too early'' {',
+                '    BeforeAll {',
+                '        Invoke-PluginHook -ScriptPath ''a''',
+                '        . (Join-Path $PSScriptRoot ''Integration.Common.ps1'')',
+                '    }',
+                '}',
+                'Describe ''correct'' {',
+                '    BeforeAll { . (Join-Path $PSScriptRoot ''Integration.Common.ps1'') }',
+                '    It ''calls'' { Invoke-PluginHook -ScriptPath ''a'' }',
+                '}'
+            ))
+        $r = Get-IHUndottedDescribe -Path $p
+        $r.Checked | Should -Be 3
+        @($r.Offenders).Count | Should -Be 2
+        ($r.Offenders -join '|') | Should -Match 'never dot-sources'
+        ($r.Offenders -join '|') | Should -Match 'calls too early'
+        ($r.Offenders -join '|') | Should -Not -Match '''correct'''
     }
 }
 
