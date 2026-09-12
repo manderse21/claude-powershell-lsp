@@ -391,10 +391,24 @@ Describe 'Airgap bundle builder (dispatch 000244)' {
             { & $script:BuilderPath -RepoRoot $script:PluginRoot -SourceDir $sandbox -VerifyOnly } |
                 Should -Throw -ExpectedMessage '*does NOT match its pin*'
         } finally {
-            if (Test-Path -LiteralPath $sandbox) {
-                Get-ChildItem -LiteralPath $sandbox -File | Remove-Item -Force -ErrorAction SilentlyContinue
-                Remove-Item -LiteralPath $sandbox -ErrorAction SilentlyContinue
-            }
+            # Remove-PslsRootWithRetry (Integration.Common.ps1), not the old two-step "delete the
+            # files, then rmdir the now-hopefully-empty directory" dance: that final Remove-Item
+            # carried no -Recurse, trusting the Get-ChildItem -File pass just above to have
+            # emptied $sandbox first -- but Get-ChildItem without -Force does not return a HIDDEN
+            # item, and PowerShell's non-Windows FileSystem provider treats a dot-prefixed name
+            # (Set-PslsOwnerMarker's own .psls-owner.json, written into this sandbox above) as
+            # Hidden by Unix convention; Windows does not infer Hidden from a leading dot, so the
+            # marker was skipped and left behind on POSIX only. A non-empty directory removed
+            # with no -Recurse hits PowerShell's own "container ... and the Recurse parameter was
+            # not specified" prompt (Microsoft's own docs: -Confirm:$false does not suppress it,
+            # by design), which a non-interactive CI host cannot answer -- it throws
+            # NullReferenceException trying to render the prompt instead. This was never reachable
+            # from release/New-AirgapBundle.ps1 itself: its own pin-mismatch handling is a plain
+            # throw with no interactive anything, and its own staging-directory cleanup already
+            # passes -Recurse. -Recurse -Force removes the whole directory in one call regardless
+            # of what is in it, hidden or not -- the same idiom every other marked psls root in
+            # this suite tears down with.
+            Remove-PslsRootWithRetry -Path $sandbox
         }
     }
     It 'states that the manifest is documentation, not a trust input' {
