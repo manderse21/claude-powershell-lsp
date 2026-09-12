@@ -30,6 +30,55 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **Every test-minted `psls*` temp-root now carries an ownership marker, tears itself down,
+and a janitor can safely reclaim one that does not** (test-only; no shipped behaviour changes).
+Dispatch 000293 surfaced roughly 1,000 leftover `psls*` directories on the dev machine -- isolated
+data roots the suite mints per-Describe under `[IO.Path]::GetTempPath()` that nothing proved was
+ever torn down. `Set-PslsOwnerMarker` (`tests/Integration.Common.ps1`) writes a `.psls-owner.json`
+marker (owner pid, a per-run id, a UTC ISO-8601 timestamp, the minting file) into a root at the
+moment it is created; every transient root the suite mints now calls it, immediately after its own
+`New-Item`. Long-lived, deliberately-reused roots (`psls-pester-data`, `psls-bench-data`, and their
+siblings) get no marker -- reusable caches must never look owned-and-abandoned to a janitor that
+reads age.
+
+**Three sites leaked their root directory on every run and now do not.**
+`PowerShellLsp.Integration.Tests.ps1`'s poisoned-PSSA-cache block (dispatch 000049) minted
+`psls-000049-data-*` / `psls-000049-cache-*` through a closure with no `AfterAll` at all; the
+closure now records every root it mints and an `AfterAll` removes them. `tests/bench/
+Invoke-LatencyBench.ps1` and `tests/bench/Invoke-ProfileSweep.ps1` each stopped their daemon in a
+`finally` block but never removed their own `-DataRoot`; both now do. (`Invoke-ProfileSweep.ps1`'s
+separate, fixed-name `ScratchDir` is one of the deliberately-reused roots above and is untouched.)
+
+**`Remove-StalePslsRoots` is the janitor**, and its whole contract is what it refuses. It deletes a
+`psls*`-leafed directory under the OS temp root only when ALL of: a `.psls-owner.json` marker is
+present and parses; the marker's owner pid is dead; and its `createdAt` is more than 24 hours old.
+Anything else -- no marker, a live owner, too young, or a marker that fails to parse -- is left
+strictly alone, which is what makes it safe to run against the pre-existing debris: none of those
+~1,000 directories carries a marker, so the janitor cannot touch a single one of them (the sweep of
+that existing debris is a separate, Mike-run, list-then-confirm script -- ruling R29). `-DryRun`
+defaults to `$true`.
+
+**RED controls, each measured, not asserted.** A synthetic four-case set (marker+dead-pid+25h-old,
+marker+live-pid, no-marker, marker+dead-pid+1h-old) proves the janitor deletes exactly the first and
+leaves the other three -- the live pid is a real spawned-and-reaped process, independently proven
+dead before the case runs, never a guessed number. Each of the three survivor guards then carries
+its own mutant: a copy of the shipped function body with exactly one `continue` removed, run against
+a fresh case holding only that guard's shape, asserting the survivor is now gone -- proving the
+*guard* is what kept it alive, not an accident of the fixture. A fourth case (an unparseable marker)
+and a fifth (a non-`psls` leaf) are refused too. A **sixth, independent RED control** measures the
+directory-census backstop below against the REAL pre-fix code: with the `psls-000049` `AfterAll`
+temporarily reverted to empty, a targeted Pester run (suite-start census + that block + the
+suite-final backstop) reports `Expected 0 ... but got` the two leaked roots by name -- the census
+would have caught the actual historical bug, not a synthetic stand-in for it. Reverted back to a
+byte-identical restore before push.
+
+**A new suite-final assertion proves zero net new `psls*` roots survive a full run**, the directory
+sibling of the existing suite-final daemon-leak backstop (dispatch 000078): a name-only census is
+taken at suite start and differenced against one taken at suite end, excluding the deliberately
+long-lived roots named above. A filtered run that never executes the suite-start `Describe` has no
+baseline to difference against and reports `Inconclusive` by name, rather than a false pass or a
+false failure.
+
 PATCH: **The suite's daemon-leak backstop now recognizes a suite-owned daemon by its DATA ROOT,
 not by a hand-maintained `-SessionId` prefix allowlist** (test-only; no shipped behaviour changes).
 `Get-IntegrationDaemonLeak` (`tests/Integration.Common.ps1`) previously matched a live

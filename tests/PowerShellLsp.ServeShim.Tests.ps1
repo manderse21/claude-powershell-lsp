@@ -272,6 +272,7 @@ Describe 'ServeShim: the broken-pipe (EPIPE) guard on the write path (dispatch 0
         # runspace shutdown hang and the forced exit load-bearing.
         BeforeAll {
             . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+            . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Set-PslsOwnerMarker (dispatch 000295)
 
             $script:G = @{ ShimPid = 0; StubPid = 0 }
             $root = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-epipe-' + ([guid]::NewGuid().ToString('N').Substring(0, 8)))
@@ -279,6 +280,7 @@ Describe 'ServeShim: the broken-pipe (EPIPE) guard on the write path (dispatch 0
             $dataDir = Join-Path $root 'data'
             New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
             New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+            Set-PslsOwnerMarker -DataRoot $root -MintingFile 'tests/PowerShellLsp.ServeShim.Tests.ps1'
             $script:EpipeRoot = $root
             $script:EpipeStubPidFile = Join-Path $root 'stub.pid'
             $script:EpipeStubRxFile = Join-Path $root 'stub.rx'

@@ -54,14 +54,22 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'Benchmark.Common.ps1')
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'Integration.Common.ps1')   # Set-PslsOwnerMarker (dispatch 000295)
 
 $paths = Get-BenchPaths
 $scriptsDir = $paths.ScriptsDir
 
-if ([string]::IsNullOrWhiteSpace($DataRoot)) {
+# OWNERSHIP, not just existence. -DataRoot is a caller-supplied parameter: a root the caller
+# named is theirs, and neither the marker nor the teardown below may touch it. Only the
+# guid-suffixed root this script mints for itself is transient (dispatch 000295).
+$ownsDataRoot = [string]::IsNullOrWhiteSpace($DataRoot)
+if ($ownsDataRoot) {
     $DataRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-latency-bench-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 }
 New-Item -ItemType Directory -Force -Path $DataRoot | Out-Null
+if ($ownsDataRoot) {
+    Set-PslsOwnerMarker -DataRoot $DataRoot -MintingFile 'tests/bench/Invoke-LatencyBench.ps1'
+}
 $env:CLAUDE_PLUGIN_DATA = $DataRoot
 
 Write-Host ('[bench] data root : ' + $DataRoot)
@@ -139,6 +147,11 @@ try {
     } catch { }
     foreach ($pidVal in @($daemon.pid, $daemon.psesPid)) {
         if ($pidVal) { Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue }
+    }
+    # AFTER the daemon is stopped, so nothing is still writing into the tree (dispatch 000295).
+    # Only a root this script minted; a caller-supplied -DataRoot is never removed.
+    if ($ownsDataRoot) {
+        Remove-Item -LiteralPath $DataRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 

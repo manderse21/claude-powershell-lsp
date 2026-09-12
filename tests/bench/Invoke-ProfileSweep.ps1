@@ -99,6 +99,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'Benchmark.Common.ps1')
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'Integration.Common.ps1')   # Set-PslsOwnerMarker (dispatch 000295)
 
 $paths = Get-BenchPaths
 $scriptsDir = $paths.ScriptsDir
@@ -107,14 +108,24 @@ if (-not (Test-Path -LiteralPath $dirtyFixture)) {
     throw ('the findings fixture is missing: ' + $dirtyFixture)
 }
 
-if ([string]::IsNullOrWhiteSpace($DataRoot)) {
+# OWNERSHIP, not just existence. -DataRoot is a caller-supplied parameter: a root the caller
+# named is theirs, and neither the marker nor the teardown below may touch it. Only the
+# guid-suffixed root this script mints for itself is transient (dispatch 000295).
+$ownsDataRoot = [string]::IsNullOrWhiteSpace($DataRoot)
+if ($ownsDataRoot) {
     $DataRoot = Join-Path ([System.IO.Path]::GetTempPath()) `
     ('psls-profile-sweep-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 }
 New-Item -ItemType Directory -Force -Path $DataRoot | Out-Null
+if ($ownsDataRoot) {
+    Set-PslsOwnerMarker -DataRoot $DataRoot -MintingFile 'tests/bench/Invoke-ProfileSweep.ps1'
+}
 
 # FIXED, NOT PER-RUN. The analyzed path is embedded in the rendered context, so this is
 # what keeps the byte totals comparable between profiles. See the .DESCRIPTION note.
+# LONG-LIVED BY DESIGN: reused across runs and across profiles, so it gets NO ownership
+# marker and is never torn down -- a marker here would eventually hand a live, reusable
+# scratch tree to the age/dead-pid janitor (dispatch 000295).
 if ([string]::IsNullOrWhiteSpace($ScratchDir)) {
     $ScratchDir = Join-Path ([System.IO.Path]::GetTempPath()) 'psls-profile-sweep-scratch'
 }
@@ -279,6 +290,12 @@ try {
     } catch { }
     foreach ($pidVal in @((Get-BenchProp $daemon 'pid'), (Get-BenchProp $daemon 'psesPid'))) {
         if ($pidVal) { Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue }
+    }
+    # AFTER the daemon is stopped, so nothing is still writing into the tree (dispatch 000295).
+    # DataRoot only, and only when this script minted it: $ScratchDir is long-lived by design
+    # and a caller-supplied -DataRoot is never removed.
+    if ($ownsDataRoot) {
+        Remove-Item -LiteralPath $DataRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 

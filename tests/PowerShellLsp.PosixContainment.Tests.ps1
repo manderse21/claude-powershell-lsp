@@ -31,6 +31,7 @@ BeforeAll {
     $script:PcPluginRoot = Split-Path -Parent $PSScriptRoot
     $script:PcScriptsDir = Join-Path $script:PcPluginRoot 'scripts'
     . (Join-Path $script:PcScriptsDir 'lib/lsp-common.ps1')
+    . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Set-PslsOwnerMarker (dispatch 000295)
 
     function Get-PcMode {
         # Octal mode of one path, via stat(1) -- the same instrument tests/measure-posix-surface.ps1
@@ -71,6 +72,10 @@ BeforeAll {
         # scratch root itself never contributes containment the assertion could mistake for the fix.
         $p = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-pc-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
         New-Item -ItemType Directory -Force -Path $p | Out-Null
+        # ONE marker call covers all ten per-It roots: every one of them is minted by this
+        # New-Item and by no other (dispatch 000295). The marker is a FILE, so it cannot
+        # change the mode of the scratch root the containment assertions measure.
+        Set-PslsOwnerMarker -DataRoot $p -MintingFile 'tests/PowerShellLsp.PosixContainment.Tests.ps1'
         return $p
     }
 

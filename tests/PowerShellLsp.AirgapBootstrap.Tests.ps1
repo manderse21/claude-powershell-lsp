@@ -12,6 +12,7 @@ BeforeAll {
     $script:PluginRoot = Split-Path -Parent $PSScriptRoot
     $script:ScriptsDir = Join-Path $script:PluginRoot 'scripts'
     . (Join-Path $script:ScriptsDir 'lib/lsp-common.ps1')
+    . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Set-PslsOwnerMarker (dispatch 000295)
 
     # Save the ambient values ONCE. CI sets none of these, but a developer box might, and a
     # suite that clobbered a real value would be a nasty thing to debug.
@@ -78,6 +79,7 @@ Describe 'Artifact-source resolution order and misses (dispatch 000244)' {
         $script:OutDir = Join-Path $script:SandBox 'out'
         New-Item -ItemType Directory -Force -Path $script:StageDir | Out-Null
         New-Item -ItemType Directory -Force -Path $script:OutDir | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:SandBox -MintingFile 'tests/PowerShellLsp.AirgapBootstrap.Tests.ps1'
     }
     AfterAll {
         # Scoped to this suite's own GUID-named sandbox under the temp directory.
@@ -375,6 +377,7 @@ Describe 'Airgap bundle builder (dispatch 000244)' {
         # machine, far from the build that caused it.
         $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-bad-' + [Guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path $sandbox | Out-Null
+        Set-PslsOwnerMarker -DataRoot $sandbox -MintingFile 'tests/PowerShellLsp.AirgapBootstrap.Tests.ps1'
         try {
             $psesTag = ([regex]"\`$PsesTag\s*=\s*'([^']+)'").Match(
                 (Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'ensure-pses.ps1') -Raw)).Groups[1].Value

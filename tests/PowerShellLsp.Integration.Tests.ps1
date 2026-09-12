@@ -24,6 +24,12 @@ Describe 'Integration: suite-start daemon census (dispatch 000078)' -Skip:$scrip
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
         $script:Pre000078 = @(Get-IntegrationDaemonLeak)
+        # DIRECTORY census, the baseline half of the zero-net-new-roots backstop (dispatch
+        # 000295). Names only, taken BEFORE anything in this run mints a root, so the
+        # suite-final assertion can compute a SET DIFFERENCE. Whatever already sat here
+        # pre-dates this run and belongs to R29's separate hand sweep, never to this suite.
+        $script:PreRootCensus295 = @(Get-ChildItem -Path ([IO.Path]::GetTempPath()) -Directory -Filter 'psls*' -ErrorAction SilentlyContinue |
+                Select-Object -ExpandProperty Name)
         foreach ($d in $script:Pre000078) {
             Write-Warning ('dispatch 000078: pre-existing suite-owned daemon at suite-start (pid=' + $d.Id +
                 ' session=' + $d.SessionId + '); a prior run leaked it -- the suite-final backstop will sweep it.')
@@ -1142,6 +1148,7 @@ Describe 'Integration: supervised restart + incomplete/degraded status (dispatch
         # bundle so PSES still launches. pssaAvailable resolves $false -> parser-only.
         $script:R_DataD = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-degraded-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Force -Path $script:R_DataD | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:R_DataD -MintingFile 'tests/PowerShellLsp.Integration.Tests.ps1'
         $script:R_BundleShared = Join-Path $script:R_Data 'PowerShellEditorServices'
         $script:R_SidD = 'degraded-000022-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
         $script:R_ProcD = Start-RawDaemon -Sid $script:R_SidD -DataRoot $script:R_DataD -ExtraArgs @() -ExtraEnv @{ PSES_BUNDLE_PATH = $script:R_BundleShared }
@@ -1418,6 +1425,9 @@ Describe 'Integration: first-start install-incomplete is VISIBLE (dispatch 00002
             param($tag)
             $d = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000024-' + $tag + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
             New-Item -ItemType Directory -Force -Path $d | Out-Null
+            # Inside the closure, so EVERY root it mints is marked, not just the first
+            # (dispatch 000295).
+            Set-PslsOwnerMarker -DataRoot $d -MintingFile 'tests/PowerShellLsp.Integration.Tests.ps1'
             return $d
         }
         $script:U_RootMarquee = & $mk 'marquee'
@@ -1510,10 +1520,25 @@ Describe 'Integration: first-start install-incomplete is VISIBLE (dispatch 00002
         $out | Should -Match 'unavailable'
 
         # Reap the detached daemon session-start launched (it came up serving 'unavailable').
+        # WAIT-UNTIL-DEAD, not fire-and-forget (dispatch 000295): Stop-Process -Force returns
+        # once the kill is REQUESTED, not once Windows has released the process's open handles
+        # on $script:U_RootSurface -- and this Describe's AfterAll removes that root moments
+        # later. On a loaded host the removal can lose that race, which is exactly how the new
+        # dispatch-000295 zero-net-new-roots census caught a real (if rare) `psls-000024-
+        # surface-*` survivor: the kill had been requested but not yet completed when AfterAll's
+        # Remove-Item ran, which then failed silently (-ErrorAction SilentlyContinue) rather
+        # than retrying. Bounded at 5s total; a pid that is still alive after that is left for
+        # AfterAll's own best-effort Remove-Item, unchanged from before.
         $sf = Join-Path $script:U_RootSurface ('session/' + $sid + '.json')
         if (Test-Path $sf) {
             $o = Get-Content $sf -Raw | ConvertFrom-Json
-            foreach ($pidVal in @((Get-Prop $o 'pid'), (Get-Prop $o 'psesPid'))) { if ($pidVal) { Stop-Process -Id ([int]$pidVal) -Force -ErrorAction SilentlyContinue } }
+            foreach ($pidVal in @((Get-Prop $o 'pid'), (Get-Prop $o 'psesPid'))) {
+                if (-not $pidVal) { continue }
+                try { Stop-Process -Id ([int]$pidVal) -Force -ErrorAction SilentlyContinue } catch { }
+                for ($i = 0; $i -lt 100 -and $null -ne (Get-Process -Id ([int]$pidVal) -ErrorAction SilentlyContinue); $i++) {
+                    Start-Sleep -Milliseconds 50
+                }
+            }
         }
     }
 }
@@ -1617,6 +1642,7 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
         # (A) dummy that SLEEPS (present, never answers initialize) + high init timeout -> stays initializing.
         $script:P_DataA = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000028-A-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Force -Path $script:P_DataA | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:P_DataA -MintingFile 'tests/PowerShellLsp.Integration.Tests.ps1'
         $script:P_BundleA = New-DummyBundle -Root (Join-Path $script:P_DataA 'dummy') -Body "Start-Sleep -Seconds 300`n"
         $script:P_SidA = 'pf-init-000028-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
         $script:P_ProcA = Start-RawDaemon -Sid $script:P_SidA -DataRoot $script:P_DataA -ExtraArgs @('-InitTimeoutMs', '120000') -ExtraEnv @{ PSES_BUNDLE_PATH = $script:P_BundleA }
@@ -1629,6 +1655,7 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
         # (B) dummy that EXITS at once (present, init fails) -> daemon stays up serving unavailable.
         $script:P_DataB = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000028-B-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Force -Path $script:P_DataB | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:P_DataB -MintingFile 'tests/PowerShellLsp.Integration.Tests.ps1'
         $script:P_BundleB = New-DummyBundle -Root (Join-Path $script:P_DataB 'dummy') -Body "exit 0`n"
         $script:P_SidB = 'pf-fail-000028-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
         $script:P_ProcB = Start-RawDaemon -Sid $script:P_SidB -DataRoot $script:P_DataB -ExtraArgs @('-InitTimeoutMs', '8000') -ExtraEnv @{ PSES_BUNDLE_PATH = $script:P_BundleB }
@@ -1652,6 +1679,24 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
             if ($null -ne $info) { foreach ($pidVal in @($info.pid, $info.psesPid)) { if ($pidVal) { Stop-Process -Id ([int]$pidVal) -Force -ErrorAction SilentlyContinue } } }
         }
         foreach ($p in @($script:P_ProcA, $script:P_ProcB, $script:P_ProcW)) { try { if ($null -ne $p -and -not $p.HasExited) { $p.Kill($true) } } catch { } }
+        # WAIT-UNTIL-DEAD before removing the roots (dispatch 000295): Stop-Process -Force and
+        # Process.Kill() both return once termination is REQUESTED, not once Windows has
+        # released the process's open handles on its own -DataRoot -- case (A)'s daemon is
+        # force-killed mid-300-second-sleep, the shape most likely to still be tearing down
+        # when Remove-Item runs moments later. This is exactly how the new dispatch-000295
+        # zero-net-new-roots census caught a real `psls-000028-A-*` survivor: the kill had
+        # been requested but not completed, and Remove-Item's -ErrorAction SilentlyContinue
+        # swallowed the resulting failure instead of retrying. Bounded at 5s per pid; a pid
+        # still alive after that falls through to the unchanged best-effort Remove-Item below.
+        foreach ($pidVal in @($script:P_InfoA.pid, $script:P_InfoA.psesPid, $script:P_InfoB.pid, $script:P_InfoB.psesPid)) {
+            if (-not $pidVal) { continue }
+            for ($i = 0; $i -lt 100 -and $null -ne (Get-Process -Id ([int]$pidVal) -ErrorAction SilentlyContinue); $i++) {
+                Start-Sleep -Milliseconds 50
+            }
+        }
+        foreach ($p in @($script:P_ProcA, $script:P_ProcB)) {
+            if ($null -ne $p) { try { [void]$p.WaitForExit(5000) } catch { } }
+        }
         # the warm session file lives in the SHARED root; clean only OUR session file there.
         $sfW = Join-Path $script:P_Data ('session/' + $script:P_SidW + '.json')
         if (Test-Path -LiteralPath $sfW) { Remove-Item -LiteralPath $sfW -Force -ErrorAction SilentlyContinue }
@@ -1842,11 +1887,13 @@ Describe 'Integration: auto-relaunch the idle-stopped daemon (dispatch 000030)' 
         # Bundle-less root for the "relaunch cannot initialize" test (no PowerShellEditorServices).
         $script:RL_NoBundle = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000030-nobundle-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Force -Path $script:RL_NoBundle | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:RL_NoBundle -MintingFile 'tests/PowerShellLsp.Integration.Tests.ps1'
         $script:RL_MissingBundle = Join-Path $script:RL_NoBundle 'no-such-bundle'
 
         # Dummy-exit bundle for the permanent sub-case B test (present, init fails -> unavailable).
         $script:RL_DummyRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000030-dummy-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Force -Path $script:RL_DummyRoot | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:RL_DummyRoot -MintingFile 'tests/PowerShellLsp.Integration.Tests.ps1'
         $script:RL_DummyBundle = New-DummyBundle -Root (Join-Path $script:RL_DummyRoot 'dummy') -Body "exit 0`n"
     }
 
@@ -2104,6 +2151,7 @@ Describe 'Integration: dogfood diagnostic capture (dispatch 000039)' -Skip:$scri
         $script:DfScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         $script:DfData = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-df-itg-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Force -Path $script:DfData | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:DfData -MintingFile 'tests/PowerShellLsp.Integration.Tests.ps1'
 
         function Invoke-DfHook {
             param([string]$StdinJson, [hashtable]$ExtraEnv)
@@ -2231,7 +2279,11 @@ Describe 'Integration: poisoned PSSA .nupkg cache FAILS CLOSED on restore (dispa
     # (install the cached bytes unconditionally) and this goes RED.
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Set-PslsOwnerMarker (dispatch 000295)
         $script:C_ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        # Every root $mk mints, recorded for the AfterAll below. A list, not two named
+        # variables: the teardown then covers whatever the closure actually made this run.
+        $script:C_MintedRoots = New-Object System.Collections.ArrayList
 
         # Run a script under pwsh with an explicit data root + extra env; capture exit code, stdout,
         # and stderr separately (mirrors the 000024 Invoke-CaptureU pattern; pwsh is on PATH on every
@@ -2262,6 +2314,8 @@ Describe 'Integration: poisoned PSSA .nupkg cache FAILS CLOSED on restore (dispa
             param($tag)
             $d = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000049-' + $tag + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
             New-Item -ItemType Directory -Force -Path $d | Out-Null
+            Set-PslsOwnerMarker -DataRoot $d -MintingFile 'tests/PowerShellLsp.Integration.Tests.ps1'
+            [void]$script:C_MintedRoots.Add($d)
             return $d
         }
         # Fresh data root (no .ok marker -> the fast-path no-op is skipped and Method 1 runs).
@@ -2275,6 +2329,16 @@ Describe 'Integration: poisoned PSSA .nupkg cache FAILS CLOSED on restore (dispa
         $script:C_Result = Invoke-CaptureC -ScriptPath (Join-Path $script:C_ScriptsDir 'ensure-pssa.ps1') `
             -DataRoot $script:C_DataRoot -ExtraEnv @{ POWERSHELL_LSP_PSSA_CACHE = $script:C_CacheDir }
         $script:C_Modules = Join-Path $script:C_DataRoot 'modules'
+    }
+
+    AfterAll {
+        # THIS BLOCK HAD NO TEARDOWN AT ALL before dispatch 000295: both roots $mk minted
+        # (psls-000049-data-* and psls-000049-cache-*) survived every run, which is part of
+        # what 000293 found accumulated under the temp root. Driven off the closure's own
+        # record, so a third root added to $mk tomorrow is swept without an edit here.
+        foreach ($r in @($script:C_MintedRoots)) {
+            if ($r) { Remove-Item -LiteralPath $r -Recurse -Force -ErrorAction SilentlyContinue }
+        }
     }
 
     It 'refuses the poisoned cache: non-zero exit + a hash-mismatch integrity message on stderr' {
@@ -2831,6 +2895,7 @@ Describe 'Integration: a live-but-busy daemon is never relaunched (dispatch 0002
         $script:TH_Client = Join-Path $script:TH_ScriptsDir 'lsp-client.ps1'
         $script:TH_Base = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000225-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Force -Path $script:TH_Base | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:TH_Base -MintingFile 'tests/PowerShellLsp.Integration.Tests.ps1'
         $script:TH_Procs = New-Object System.Collections.Generic.List[object]
 
         # One fake daemon, two modes. 'stall' models a daemon whose settle cap outlives the
@@ -3170,6 +3235,7 @@ Describe 'Integration: Get-IntegrationDaemonLeak recognizes a daemon by DATA ROO
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
         $script:Db_FakeDir = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000293fake-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Force -Path $script:Db_FakeDir | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:Db_FakeDir -MintingFile 'tests/PowerShellLsp.Integration.Tests.ps1'
         $script:Db_FakeScript = Join-Path $script:Db_FakeDir 'pses-daemon.ps1'
         Set-Content -LiteralPath $script:Db_FakeScript -Encoding ASCII -Value @(
             'param($SessionId, $PsHost, $DataRoot, $SeverityThreshold, $DebounceMs, $IdleTtlMin, $PerFileCap)',
@@ -3224,6 +3290,239 @@ Describe 'Integration: Get-IntegrationDaemonLeak recognizes a daemon by DATA ROO
     }
 }
 
+Describe 'Integration: Remove-StalePslsRoots janitor refuses everything except marker+dead-pid+old (dispatch 000295)' {
+    # WHAT IS ON TRIAL. Remove-StalePslsRoots deletes a directory, so the interesting property is
+    # NEGATIVE: what it REFUSES. Its four conditions (a parseable .psls-owner.json, a DEAD
+    # ownerPid, an age past -MinAgeHours, a psls*-leafed name) are each a separate `continue`,
+    # and a `continue` that silently stopped being reached is indistinguishable from a green
+    # test -- so each of the three survivor guards carries its own MEASURED red control below.
+    #
+    # NEVER THE REAL TEMP ROOT. Every case lives inside a synthetic root passed as -TempRoot, so
+    # the worst a bug in this block can do is delete its own fixtures. A test that swept
+    # [IO.Path]::GetTempPath() would have the live fixtures of every other Describe in range,
+    # and the ~1,000 pre-existing roots 000293 found are R29's hand sweep to deal with -- this
+    # block must not be able to touch one.
+    #
+    # THE RED CONTROLS ARE IN-FILE MUTANTS, not a historical diff. 000293 reconstructed its
+    # prior implementation from git because one existed; this code is new in this dispatch, so
+    # there is nothing to check out. Each mutant is a copy of the shipped body with EXACTLY ONE
+    # guard neutralized, run against a fresh root holding only that guard's case, asserting the
+    # directory that survived the real janitor is GONE. Every mutant is called from exactly one
+    # It, so a mutant can never be what a green assertion elsewhere measured.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
+
+        $script:Jn_Base = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000295-jan-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:Jn_Base | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:Jn_Base -MintingFile 'tests/PowerShellLsp.Integration.Tests.ps1'
+
+        # A REAL dead pid: spawned, reaped, then PROVEN gone by the first It below. Never a
+        # number assumed to be free -- the dead-pid arm would otherwise pass because Get-Process
+        # missed a pid that was never a process at all, which is a different claim than "the
+        # owner exited". Raw ProcessStartInfo, the idiom every other block in this file uses,
+        # rather than Start-Process -WindowStyle: CreateNoWindow is honoured on all four legs
+        # and -WindowStyle is a Windows concept this suite cannot verify on the POSIX legs.
+        $jpsi = New-Object System.Diagnostics.ProcessStartInfo
+        $jpsi.FileName = (Get-Process -Id $PID).Path
+        $jpsi.UseShellExecute = $false
+        $jpsi.CreateNoWindow = $true
+        Add-ProcessArguments $jpsi @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'exit 0')
+        $jproc = [System.Diagnostics.Process]::Start($jpsi)
+        $script:Jn_DeadPid = $jproc.Id
+        [void]$jproc.WaitForExit(60000)
+        for ($i = 0; $i -lt 100 -and $null -ne (Get-Process -Id $script:Jn_DeadPid -ErrorAction SilentlyContinue); $i++) {
+            Start-Sleep -Milliseconds 50
+        }
+
+        function New-JnCase {
+            # One synthetic psls*-leafed case directory under $Parent, with or without a marker.
+            param(
+                [Parameter(Mandatory = $true)][string]$Parent,
+                [Parameter(Mandatory = $true)][string]$Leaf,
+                [switch]$NoMarker,
+                [int]$OwnerPid = 0,
+                [double]$AgeHours = 25
+            )
+            $d = Join-Path $Parent $Leaf
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+            if (-not $NoMarker) {
+                $m = [ordered]@{
+                    ownerPid  = $OwnerPid
+                    runId     = 'jn-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+                    createdAt = (Get-Date).ToUniversalTime().AddHours(-$AgeHours).ToString('o')
+                    mintedBy  = 'tests/PowerShellLsp.Integration.Tests.ps1 (dispatch 000295 synthetic case)'
+                }
+                Set-Content -LiteralPath (Join-Path $d '.psls-owner.json') -Encoding ascii -Force `
+                    -Value ($m | ConvertTo-Json -Compress)
+            }
+            return $d
+        }
+
+        function New-JnRoot {
+            # A fresh synthetic -TempRoot, so no two Its (or mutants) can see each other's cases.
+            param([Parameter(Mandatory = $true)][string]$Tag)
+            $r = Join-Path $script:Jn_Base ($Tag + '-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+            New-Item -ItemType Directory -Force -Path $r | Out-Null
+            return $r
+        }
+
+        # ---- the three mutants: the shipped body, each missing exactly one guard -------------
+        # Kept deliberately verbatim against Remove-StalePslsRoots except for the single named
+        # omission, so what a red proves is that guard and not a rewrite.
+
+        function Invoke-JnMutantNoLiveCheck {
+            # OMITS: the live-owner guard (`if (Get-Process -Id $ownerPid) { continue }`).
+            param([string]$TempRoot, [double]$MinAgeHours = 24)
+            $acted = New-Object System.Collections.ArrayList
+            foreach ($d in @(Get-ChildItem -LiteralPath $TempRoot -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^psls' })) {
+                $markerPath = Join-Path $d.FullName '.psls-owner.json'
+                if (-not (Test-Path -LiteralPath $markerPath)) { continue }
+                $marker = $null
+                try { $marker = (Get-Content -LiteralPath $markerPath -Raw -ErrorAction Stop) | ConvertFrom-Json } catch { continue }
+                if ($null -eq $marker) { continue }
+                $ownerPid = 0
+                try { $ownerPid = [int](Get-Prop $marker 'ownerPid') } catch { continue }
+                if ($ownerPid -le 0) { continue }
+                $createdAt = $null
+                try { $createdAt = [datetime](Get-Prop $marker 'createdAt') } catch { continue }
+                if (((Get-Date).ToUniversalTime() - $createdAt.ToUniversalTime()).TotalHours -lt $MinAgeHours) { continue }
+                [void]$acted.Add($d.FullName)
+                try { Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction Stop } catch { }
+            }
+            return $acted.ToArray()
+        }
+
+        function Invoke-JnMutantNoMarkerCheck {
+            # OMITS: the marker requirement entirely -- a BARE psls* GLOB, which is precisely the
+            # pre-000295 behaviour Remove-StalePslsRoots' header forbids by name. With no marker
+            # there is no pid and no createdAt to test, so this mutant deletes on the name alone.
+            param([string]$TempRoot, [double]$MinAgeHours = 24)
+            $acted = New-Object System.Collections.ArrayList
+            foreach ($d in @(Get-ChildItem -LiteralPath $TempRoot -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^psls' })) {
+                [void]$acted.Add($d.FullName)
+                try { Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction Stop } catch { }
+            }
+            return $acted.ToArray()
+        }
+
+        function Invoke-JnMutantNoAgeCheck {
+            # OMITS: the minimum-age guard (`if ($ageHours -lt $MinAgeHours) { continue }`).
+            param([string]$TempRoot, [double]$MinAgeHours = 24)
+            $acted = New-Object System.Collections.ArrayList
+            foreach ($d in @(Get-ChildItem -LiteralPath $TempRoot -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^psls' })) {
+                $markerPath = Join-Path $d.FullName '.psls-owner.json'
+                if (-not (Test-Path -LiteralPath $markerPath)) { continue }
+                $marker = $null
+                try { $marker = (Get-Content -LiteralPath $markerPath -Raw -ErrorAction Stop) | ConvertFrom-Json } catch { continue }
+                if ($null -eq $marker) { continue }
+                $ownerPid = 0
+                try { $ownerPid = [int](Get-Prop $marker 'ownerPid') } catch { continue }
+                if ($ownerPid -le 0) { continue }
+                if ($null -ne (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue)) { continue }
+                [void]$acted.Add($d.FullName)
+                try { Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction Stop } catch { }
+            }
+            return $acted.ToArray()
+        }
+    }
+
+    AfterAll {
+        if ($script:Jn_Base -and (Test-Path -LiteralPath $script:Jn_Base)) {
+            Remove-Item -LiteralPath $script:Jn_Base -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'the reaped owner pid really is dead (this block cannot pass on a pid that was never alive)' {
+        $script:Jn_DeadPid | Should -BeGreaterThan 0
+        (Get-Process -Id $script:Jn_DeadPid -ErrorAction SilentlyContinue) | Should -BeNullOrEmpty
+    }
+
+    It 'deletes ONLY the marker+dead-pid+old root, and leaves the other three strictly alone' {
+        $root = New-JnRoot -Tag 'main'
+        $oldDead = New-JnCase -Parent $root -Leaf 'psls-red-old-dead' -OwnerPid $script:Jn_DeadPid -AgeHours 25
+        $live = New-JnCase -Parent $root -Leaf 'psls-red-live' -OwnerPid $PID -AgeHours 25
+        $noMarker = New-JnCase -Parent $root -Leaf 'psls-red-nomarker' -NoMarker
+        $young = New-JnCase -Parent $root -Leaf 'psls-red-young' -OwnerPid $script:Jn_DeadPid -AgeHours 1
+
+        $acted = @(Remove-StalePslsRoots -TempRoot $root -DryRun:$false)
+
+        (Test-Path -LiteralPath $oldDead) | Should -BeFalse -Because 'marker + dead ownerPid + older than 24h is the ONLY deletable shape'
+        (Test-Path -LiteralPath $live) | Should -BeTrue -Because 'a LIVE owner pid is refused regardless of age'
+        (Test-Path -LiteralPath $noMarker) | Should -BeTrue -Because 'no .psls-owner.json means nothing proved ownership, so it is never touched'
+        (Test-Path -LiteralPath $young) | Should -BeTrue -Because 'younger than -MinAgeHours is refused even with a dead owner'
+        # The return value must agree with the disk, or "nothing was deleted" and "the report is
+        # empty" would be indistinguishable.
+        @($acted).Count | Should -Be 1
+        @($acted)[0].Path | Should -BeExactly $oldDead
+    }
+
+    It 'DryRun is the default: it reports the deletable root and deletes NOTHING' {
+        $root = New-JnRoot -Tag 'dry'
+        $oldDead = New-JnCase -Parent $root -Leaf 'psls-red-old-dead' -OwnerPid $script:Jn_DeadPid -AgeHours 25
+
+        $acted = @(Remove-StalePslsRoots -TempRoot $root)
+
+        @($acted).Count | Should -Be 1 -Because 'the report is what makes a report-only invocation useful'
+        (Test-Path -LiteralPath $oldDead) | Should -BeTrue -Because 'the DEFAULT must not delete'
+    }
+
+    It 'RED CONTROL -- without the live-pid guard, the LIVE-owner root is destroyed' {
+        $root = New-JnRoot -Tag 'red-live'
+        $live = New-JnCase -Parent $root -Leaf 'psls-red-live' -OwnerPid $PID -AgeHours 25
+
+        (Test-Path -LiteralPath $live) | Should -BeTrue -Because 'the case must exist before the mutant runs, or the red is vacuous'
+        $acted = @(Invoke-JnMutantNoLiveCheck -TempRoot $root)
+
+        @($acted).Count | Should -Be 1
+        (Test-Path -LiteralPath $live) | Should -BeFalse -Because 'the surviving-case guard IS the live-pid continue, not an accident of the fixture'
+    }
+
+    It 'RED CONTROL -- without the marker requirement, the UNMARKED root is destroyed' {
+        $root = New-JnRoot -Tag 'red-nomarker'
+        $noMarker = New-JnCase -Parent $root -Leaf 'psls-red-nomarker' -NoMarker
+
+        (Test-Path -LiteralPath $noMarker) | Should -BeTrue -Because 'the case must exist before the mutant runs, or the red is vacuous'
+        $acted = @(Invoke-JnMutantNoMarkerCheck -TempRoot $root)
+
+        @($acted).Count | Should -Be 1
+        (Test-Path -LiteralPath $noMarker) | Should -BeFalse -Because 'a bare psls* glob deletes what nothing claimed -- the exact pre-000295 hazard'
+    }
+
+    It 'RED CONTROL -- without the minimum-age guard, the ONE-HOUR-OLD root is destroyed' {
+        $root = New-JnRoot -Tag 'red-young'
+        $young = New-JnCase -Parent $root -Leaf 'psls-red-young' -OwnerPid $script:Jn_DeadPid -AgeHours 1
+
+        (Test-Path -LiteralPath $young) | Should -BeTrue -Because 'the case must exist before the mutant runs, or the red is vacuous'
+        $acted = @(Invoke-JnMutantNoAgeCheck -TempRoot $root)
+
+        @($acted).Count | Should -Be 1
+        (Test-Path -LiteralPath $young) | Should -BeFalse -Because 'the surviving-case guard IS the age continue'
+    }
+
+    It 'an UNPARSEABLE marker is refused, not treated as absent-and-deletable' {
+        $root = New-JnRoot -Tag 'garbage'
+        $bad = Join-Path $root 'psls-red-badjson'
+        New-Item -ItemType Directory -Force -Path $bad | Out-Null
+        Set-Content -LiteralPath (Join-Path $bad '.psls-owner.json') -Encoding ascii -Value 'this is not json {{{'
+
+        $acted = @(Remove-StalePslsRoots -TempRoot $root -DryRun:$false)
+
+        @($acted).Count | Should -Be 0
+        (Test-Path -LiteralPath $bad) | Should -BeTrue -Because 'an unreadable marker must fail CLOSED, and must not abort the sweep either'
+    }
+
+    It 'a NON-psls leaf is invisible to the sweep even with a perfect marker' {
+        $root = New-JnRoot -Tag 'leaf'
+        $notOurs = New-JnCase -Parent $root -Leaf 'not-a-psls-root' -OwnerPid $script:Jn_DeadPid -AgeHours 99
+
+        $acted = @(Remove-StalePslsRoots -TempRoot $root -DryRun:$false)
+
+        @($acted).Count | Should -Be 0
+        (Test-Path -LiteralPath $notOurs) | Should -BeTrue -Because 'the leaf pattern is a condition in its own right, not decoration'
+    }
+}
+
 Describe 'Integration: suite-final daemon-leak backstop (dispatch 000078)' -Skip:$script:SkipIntegration {
     # The teardown guarantee + in-suite proof. After every daemon block's AfterAll has run its
     # info-independent per-session reap (Stop-IntegrationDaemon), sweep any STRAGGLER suite-owned
@@ -3251,6 +3550,46 @@ Describe 'Integration: suite-final daemon-leak backstop (dispatch 000078)' -Skip
         $after = @(Get-IntegrationDaemonLeak)
         $after.Count | Should -Be 0 -Because ('no suite-owned daemon may survive a full run (dispatch 000078); swept ' +
             $before.Count + ', remaining sessions: ' + (($after | ForEach-Object { $_.SessionId }) -join ', '))
+    }
+
+    It 'leaves ZERO NET NEW psls* data-root directories under the OS temp root (dispatch 000295)' {
+        # The DIRECTORY half of the backstop whose PROCESS half is the assertion above. 000293
+        # found ~1,000 psls* temp dirs / ~11 GB accumulated on the dev machine because every
+        # per-Describe data root was minted and nothing proved it was ever torn down.
+        #
+        # A SET DIFFERENCE against the census this file's FIRST BeforeAll took, never a bare
+        # count and never a bare glob: a root that pre-dates this run belongs to R29's separate
+        # hand sweep, and a co-tenant process minting its own root mid-run would fail a count
+        # comparison while adding nothing of ours.
+        # NO BASELINE, NO VERDICT. The census is taken by the FIRST Describe in this file, so a
+        # filtered run that selects only this block has nothing to difference against. Saying so
+        # by name beats the two silent alternatives: an unset baseline is @($null) -- Count 1,
+        # holding $null -- which makes every pre-existing root look new and reddens an innocent
+        # run, and defaulting it to @() would make the assertion trivially green instead.
+        if (-not (Test-Path 'Variable:PreRootCensus295')) {
+            Set-ItResult -Inconclusive -Because ('the suite-start directory census never ran, so there is no ' +
+                'baseline to difference against; this arm is meaningful only in a full-file run')
+            return
+        }
+        $afterRoots = @(Get-ChildItem -Path ([IO.Path]::GetTempPath()) -Directory -Filter 'psls*' -ErrorAction SilentlyContinue |
+                Select-Object -ExpandProperty Name)
+        # LONG-LIVED BY DESIGN: reused across runs, deliberately never torn down, and for that
+        # same reason never given an ownership marker (Set-PslsOwnerMarker's header names this
+        # set). A first run on a clean machine legitimately creates these, so a new one here is
+        # not debris.
+        $longLived = @(
+            'psls-pester-data', 'psls-bench-data', 'psls-corpus-data', 'psls-corpus-test-data',
+            'psls-sarifscan-test-data', 'psls-maxwait-test-data', 'psls-serveshim-data',
+            'psls-posix-measure', 'psls-profile-sweep-scratch', 'psls-n1-000229-data',
+            'psls-000039-data'
+        )
+        $preRoots = @($script:PreRootCensus295)
+        $newRoots = @($afterRoots | Where-Object { $preRoots -notcontains $_ -and $longLived -notcontains $_ })
+        # @() around the count. Under Windows PowerShell 5.1 a filtered result that matches
+        # EXACTLY ONE item is a scalar string, whose .Count is $null -- and $null -eq 0 reports
+        # as a PASS, so the one-leak case is exactly the case a bare .Count would hide.
+        @($newRoots).Count | Should -Be 0 -Because ('a full run must leave no new psls* temp root behind (dispatch 000295); surviving: ' +
+            (@($newRoots) -join ', '))
     }
 }
 
@@ -3466,6 +3805,7 @@ Describe 'P1-2 DAEMON HALF -- what deleting the didOpen/didChange block actually
         $script:QR_Root = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-p2red-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         $script:QR_Scripts = Join-Path $script:QR_Root 'scripts'
         New-Item -ItemType Directory -Force -Path $script:QR_Root | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:QR_Root -MintingFile 'tests/PowerShellLsp.Integration.Tests.ps1'
         # A VALID PLUGIN LAYOUT, not just scripts/. Measured the hard way: copying scripts/ alone
         # produces a daemon that reports version '0.0.0-unknown' (no .claude-plugin manifest to
         # resolve from) and whose PSES child EXITS DURING INIT. The mutant then "passed" the
