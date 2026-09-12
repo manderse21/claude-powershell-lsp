@@ -1525,17 +1525,25 @@ Describe 'Integration: first-start install-incomplete is VISIBLE (dispatch 00002
         $out | Should -Match 'bootstrap'               # the actionable failure message
         $out | Should -Match 'unavailable'
 
-        # Reap the detached daemon session-start launched (it came up serving 'unavailable').
-        # WAIT-UNTIL-DEAD, not fire-and-forget (dispatch 000295): Stop-Process -Force returns
-        # once the kill is REQUESTED, not once Windows has released the process's open handles
-        # on $script:U_RootSurface -- and this Describe's AfterAll removes that root moments
-        # later. On a loaded host the removal can lose that race, which is exactly how the new
-        # dispatch-000295 zero-net-new-roots census caught a real (if rare) `psls-000024-
-        # surface-*` survivor: the kill had been requested but not yet completed when AfterAll's
-        # Remove-Item ran, which then failed silently (-ErrorAction SilentlyContinue) rather
-        # than retrying. Bounded at 5s total; a pid that is still alive after that is left for
-        # AfterAll's own best-effort Remove-Item, unchanged from before.
+        # Reap the detached daemon session-start launched (it comes up serving 'unavailable').
+        # THE REAL dispatch-000295 defect (fix-forward, not a Windows handle-drain race -- that
+        # explanation is falsified by this same fixture leaking deterministically on ubuntu-pwsh
+        # and macos-pwsh too, where an unlink does not wait on a live process's open handles):
+        # session-start.ps1 fires Start-PsesDaemonDetached and exits immediately WITHOUT waiting
+        # for the daemon to do anything (000030's fire-and-forget launch, by design), so by the
+        # time Invoke-HookEnvU returns, the daemon's session/<sid>.json may not exist yet. Every
+        # OTHER daemon in this file is launched via the test's own Start-RawDaemonU/Start-
+        # RawDaemon and explicitly waited to a determinate state (Wait-DaemonStateU /
+        # Wait-DaemonAnyState) before the test ever proceeds -- this was the one case that
+        # skipped that wait and read the session file exactly once. A one-shot Test-Path here
+        # loses that startup race often enough to be the deterministic `psls-000024-surface-*`
+        # survivor the census caught on every CI leg: the reap below was skipped ENTIRELY, the
+        # daemon (designed to NEVER exit while 'unavailable') was never asked to die, and no
+        # amount of retrying the DIRECTORY REMOVAL in AfterAll can wait out a process that was
+        # never told to stop. WAIT for the file first, same bound as BeforeAll's own
+        # Wait-DaemonStateU for the marquee sub-case, THEN kill by pid.
         $sf = Join-Path $script:U_RootSurface ('session/' + $sid + '.json')
+        for ($w = 0; $w -lt 80 -and -not (Test-Path $sf); $w++) { Start-Sleep -Milliseconds 300 }
         if (Test-Path $sf) {
             $o = Get-Content $sf -Raw | ConvertFrom-Json
             foreach ($pidVal in @((Get-Prop $o 'pid'), (Get-Prop $o 'psesPid'))) {

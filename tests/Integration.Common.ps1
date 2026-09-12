@@ -579,17 +579,26 @@ function Remove-PslsRootWithRetry {
     # survives every retry is exactly what the dispatch-000295 zero-net-new-roots census exists
     # to catch, not something this helper should paper over by trying forever).
     #
-    # BOUND, MEASURED not guessed: a first attempt at 5x300ms (1.5s total) still left a real
-    # survivor (psls-000024-surface-*) that a DIRECT manual Remove-Item, tried again roughly two
-    # minutes later, cleared instantly -- proving the lock is transient, not permanent, and that
-    # 1.5s was simply too short a window. A killed PSES host is a heavy .NET process tree
-    # (Kill($true) kills the whole tree, but the OS releasing every handle across every process
-    # in it is not instantaneous), so 20x1.5s (30s worst case) trades a small, rare per-teardown
-    # delay for not flagging a real root as abandoned while its own kill is still draining.
+    # BOUND, MEASURED not guessed, and REVISED (dispatch 000295 fix-forward): this originally
+    # shipped at 20x1.5s (30s worst case), sized off a `psls-000024-surface-*` survivor that a
+    # direct manual Remove-Item, tried again roughly two minutes later, cleared instantly. That
+    # was read at the time as "the lock is transient, just slower than any bound tried" -- but
+    # the same fixture then leaked DETERMINISTICALLY on every CI leg, including ubuntu-pwsh and
+    # macos-pwsh, where an unlink does not wait on a live process's open handles at all, which a
+    # transient-lock story cannot explain. The actual cause was a SEPARATE bug in that fixture's
+    # own reap step (see its `It`, tests/PowerShellLsp.Integration.Tests.ps1): the daemon was
+    # never killed in the first place, so the "two minutes later" clearing was that daemon
+    # finally being caught by the suite-final leak backstop, not a slow OS handle release. No
+    # amount of retrying the DELETE here can wait out a process nobody asked to stop -- that is
+    # now fixed at its source. What is left for this helper is the narrower, still-real case its
+    # own pid-death-wait cannot fully close: a killed PSES host is a heavy .NET process tree, and
+    # the OS releasing every handle across every process in it is not always instantaneous even
+    # after the pid is confirmed gone. Back to 5x300ms (1.5s worst case), the window this was
+    # first measured at before the 000024-surface misdiagnosis inflated it.
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [int]$MaxAttempts = 20,
-        [int]$DelayMs = 1500
+        [int]$MaxAttempts = 5,
+        [int]$DelayMs = 300
     )
     if (-not (Test-Path -LiteralPath $Path)) { return }
     for ($i = 0; $i -lt $MaxAttempts; $i++) {

@@ -53,22 +53,32 @@ separate, fixed-name `ScratchDir` is one of the deliberately-reused roots above 
 caught three MORE pre-existing leaks on its first real runs** -- dispatch 000024's, 000028's, and
 000030's daemon `AfterAll`s, none of them this dispatch's own code, none part of the three sites
 above. All three killed a daemon and removed its data root in the same breath, with no wait for
-Windows to actually release the killed process's open handles first. Two of the three (000028,
-000030) are now reliably clean: the fix waits for the killed pid to leave `Get-Process`, then
-retries the removal itself (`Remove-PslsRootWithRetry`, up to 30s) rather than trying once.
+the killed process to actually be gone first. All three are now reliably clean: the fix waits for
+the killed pid to leave `Get-Process`, then retries the removal itself
+(`Remove-PslsRootWithRetry`, up to 1.5s) rather than trying once -- closing the narrow window
+where a killed PSES host's open handles on its own `-DataRoot` have not all released the instant
+`Get-Process` stops seeing the pid.
 
-**The third, dispatch 000024's `'surface'` sub-case, is NOT fully resolved by this dispatch.**
-Both mitigations above are applied to it too, and both measurably help, but a residual,
-intermittent leak survived every attempt to close it this session -- including a 30-second retry
-window, confirmed by direct measurement to still be shorter than the lock actually needs on an
-occasional run (a manual `Remove-Item` against the same directory, tried again roughly two
-minutes later, cleared instantly, proving the lock is transient and merely slower than any bound
-tried, not permanent). The root cause is understood only at that level -- a killed PSES host is a
-heavy .NET process tree whose handles do not all release the instant `Get-Process` stops seeing
-the pid -- not more precisely. **If a future CI or local run shows `leaves ZERO NET NEW psls*
-data-root directories` red with `psls-000024-surface-*` as the sole survivor, this is that known,
-still-open issue, not a new regression** -- see the dispatch 000295 outbox (strategic-dispatch
-hub) for the full account and next_suggested for the recommended follow-up.
+**Dispatch 000024's `'surface'` sub-case needed a second, different fix, not a longer retry.**
+An earlier pass on this same work mistook it for a slower version of the same handle-release
+race and widened `Remove-PslsRootWithRetry` to 20x1.5s (30s) to cover it. That diagnosis was
+wrong: the fixture then leaked deterministically on every CI leg -- including ubuntu-pwsh and
+macos-pwsh, where an `unlink` does not wait on a live process's open handles at all, so a
+handle-drain race cannot occur there, let alone on every run. The real defect was in the
+fixture's own reap step. `'surface'` is the one daemon in this suite launched through the
+production `session-start.ps1` path (`Start-PsesDaemonDetached`, fire-and-forget by design -- the
+hook exits without waiting for the daemon to do anything), rather than the test's own direct
+process launch that every other daemon here uses; its `AfterAll` therefore has no process handle
+to kill and no prior wait for a determinate state, so the test instead read the daemon's pid from
+its session file with a single, unretried `Test-Path` immediately after the hook returned. That
+file often did not exist yet, so the reap was skipped outright, and the daemon -- which by design
+never exits while serving `'unavailable'` -- was left running for `AfterAll` to find no process to
+kill and nothing but a live directory to fail to remove. No amount of retrying the *deletion* can
+wait out a process nobody ever asked to stop. The fix waits for the session file to appear (same
+bound the other daemons in this file already wait on) before reading its pid, so the daemon is
+reliably reaped before teardown ever calls `Remove-PslsRootWithRetry` -- which is why that
+helper's window could come back down to 1.5s instead of staying inflated to paper over a leak it
+was never able to fix.
 
 **`Remove-StalePslsRoots` is the janitor**, and its whole contract is what it refuses. It deletes a
 `psls*`-leafed directory under the OS temp root only when ALL of: a `.psls-owner.json` marker is
