@@ -36,6 +36,7 @@
 Describe 'ServeShim instrumentation: the exit-path discriminator, on the REAL run-30472816851 log (000163 leg 2)' {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'ServeShim.Common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Set-PslsOwnerMarker (dispatch 000295)
         $script:FixturePath = Join-Path $PSScriptRoot 'fixtures/serveshim-run-30472816851-pses-serve-shim.log'
         # Hash the LF-NORMALIZED bytes, never the bytes as checked out. Get-FileHash on the worktree
         # file asserts a CHECKOUT PROPERTY: git converts LF -> CRLF on a Windows checkout, so the raw
@@ -51,6 +52,7 @@ Describe 'ServeShim instrumentation: the exit-path discriminator, on the REAL ru
         ).Replace('-', '')
         $script:DiscRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000163-disc-' + ([guid]::NewGuid().ToString('N').Substring(0, 8)))
         New-Item -ItemType Directory -Force -Path (Join-Path $script:DiscRoot 'logs') | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:DiscRoot -MintingFile 'tests/PowerShellLsp.ServeShimInstrumentation.Tests.ps1'
         Copy-Item -LiteralPath $script:FixturePath -Destination (Join-Path $script:DiscRoot 'logs/pses-serve-shim.log') -Force
         $script:SliceCrash = @(Get-ServeShimLogSlice -DataRoot $script:DiscRoot -ShimPid 18428)
         $script:SliceNav = @(Get-ServeShimLogSlice -DataRoot $script:DiscRoot -ShimPid 18197)
@@ -141,8 +143,10 @@ Describe 'ServeShim instrumentation: the exit-path discriminator, on the REAL ru
 Describe 'ServeShim instrumentation: per-run isolation of the SHARED shim log (000163 leg 2)' {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'ServeShim.Common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Set-PslsOwnerMarker (dispatch 000295)
         $script:IsoRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000163-iso-' + ([guid]::NewGuid().ToString('N').Substring(0, 8)))
         New-Item -ItemType Directory -Force -Path (Join-Path $script:IsoRoot 'logs') | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:IsoRoot -MintingFile 'tests/PowerShellLsp.ServeShimInstrumentation.Tests.ps1'
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/serveshim-run-30472816851-pses-serve-shim.log') -Destination (Join-Path $script:IsoRoot 'logs/pses-serve-shim.log') -Force
     }
     AfterAll {
@@ -259,8 +263,10 @@ Describe 'ServeShim instrumentation: a SIMULATED shim-lifecycle failure produces
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path $PSScriptRoot 'ServeShim.Common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Set-PslsOwnerMarker (dispatch 000295)
         $script:SimRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000163-sim-' + ([guid]::NewGuid().ToString('N').Substring(0, 8)))
         New-Item -ItemType Directory -Force -Path (Join-Path $script:SimRoot 'logs') | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:SimRoot -MintingFile 'tests/PowerShellLsp.ServeShimInstrumentation.Tests.ps1'
 
         # The sentinel is generated into a VARIABLE, then used BOTH in the child's command and in
         # the assertion -- so a corrupted or absent payload cannot pass. Never a literal retyped twice.

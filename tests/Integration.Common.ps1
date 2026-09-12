@@ -461,6 +461,158 @@ function Get-IntegrationDaemonLeak {
 }
 
 # ===========================================================================
+# Test data-root ownership, teardown, janitor (dispatch 000295, docket W1-2)
+# ===========================================================================
+# WHY: 000293 surfaced ~1,000 psls* temp dirs / ~11 GB on the dev machine -- isolated data
+# roots the suite mints per-Describe under [IO.Path]::GetTempPath() that nothing proved was
+# ever torn down. R29 (ruled 2026-09-12) leaves the EXISTING debris to a separate, Mike-run,
+# list-then-confirm sweep; this pair exists so NEW debris cannot accumulate the same way
+# again. Set-PslsOwnerMarker is the ONE place that writes the marker's shape (Hub Rule 18);
+# Remove-StalePslsRoots is the ONE janitor that reads it. Neither is a second recognizer of
+# what counts as "ours" -- both key off the SAME structural property Get-IntegrationDaemonLeak
+# already uses (a leaf name starting 'psls' directly under the OS temp root), never a name
+# list, so a fixture that mints a new pattern tomorrow is still covered without an edit here.
+
+function Set-PslsOwnerMarker {
+    # Writes .psls-owner.json into a just-minted psls*-leafed TRANSIENT data root, so
+    # Remove-StalePslsRoots can later prove ownership before ever deleting a root nothing
+    # else claims. Call this ONCE, immediately after the New-Item that creates the root.
+    #
+    # NEVER call this for a LONG-LIVED shared root (psls-pester-data, psls-bench-data,
+    # psls-corpus-data, psls-corpus-test-data, psls-sarifscan-test-data, psls-maxwait-test-data,
+    # psls-serveshim-data, psls-posix-measure, psls-profile-sweep-scratch, and siblings reused
+    # by design across runs) -- those are never torn down between runs on purpose, so a marker
+    # would eventually make the age/dead-pid janitor delete a live, reusable cache the moment
+    # its minting process exits and 24 hours pass. Markers belong ONLY on a root meant to die
+    # with the run that made it.
+    #
+    # ownerPid is $PID -- the current process, exactly the identity Get-IntegrationDaemonLeak's
+    # sibling helpers (Test-IsOurIntegrationDaemon) already key liveness off, so a dead check
+    # here means exactly what it means there. runId groups every marker one suite invocation
+    # wrote (a fresh GUID per process, cached module-scope so repeated calls in the same run
+    # share it) -- useful for a human reading a debris list, not read by the janitor's decision.
+    # Never throws: a marker write must not be able to fail a test that does not check it.
+    param(
+        [Parameter(Mandatory = $true)][string]$DataRoot,
+        [string]$MintingFile = ''
+    )
+    # Test-Path on the variable, not a bare read. Set-StrictMode -Version Latest -- which
+    # tests/bench/Invoke-LatencyBench.ps1 and Invoke-ProfileSweep.ps1 both set, and which the
+    # first call into this function therefore inherits -- makes reading an unset $script:
+    # variable THROW. MEASURED before this guard existed: the call threw "The variable
+    # '$script:PslsSuiteRunId' cannot be retrieved because it has not been set" and wrote NO
+    # marker, from OUTSIDE the try below, so the "never throws" contract and the instrumentation
+    # both failed silently in exactly the two scripts that leak hardest.
+    if (-not (Test-Path 'Variable:PslsSuiteRunId') -or [string]::IsNullOrWhiteSpace($script:PslsSuiteRunId)) {
+        $script:PslsSuiteRunId = [guid]::NewGuid().ToString()
+    }
+    try {
+        $marker = [ordered]@{
+            ownerPid  = $PID
+            runId     = $script:PslsSuiteRunId
+            createdAt = (Get-Date).ToUniversalTime().ToString('o')
+            mintedBy  = $MintingFile
+        }
+        $json = $marker | ConvertTo-Json -Compress
+        Set-Content -LiteralPath (Join-Path $DataRoot '.psls-owner.json') -Value $json -Encoding ascii -Force
+    } catch { }
+}
+
+function Remove-StalePslsRoots {
+    # The janitor. Deletes ONLY a psls*-leafed directory, directly under the OS temp root,
+    # that satisfies ALL FOUR: a present AND parseable .psls-owner.json; that marker's
+    # ownerPid is DEAD (Get-Process finds nothing); createdAt is older than $MinAgeHours;
+    # and (redundant with the marker check, stated for clarity) the leaf matches
+    # $DataRootLeafPattern. Any one condition failing means the root is left STRICTLY ALONE:
+    # NEVER a bare psls* glob, NEVER a root with no marker (every pre-dispatch-000295 root,
+    # and any fixture this pass did not instrument, has none -- R29's hand sweep is the only
+    # thing that ever touches those), NEVER a live owner pid regardless of age.
+    #
+    # -DryRun (default) reports what WOULD be removed without touching disk -- the shape a
+    # RED control or a report-only invocation wants. Pass -DryRun:$false to actually delete.
+    # Never throws on an individual root: one unreadable/unparseable marker must not abort the
+    # sweep of every other root; that root is simply left alone (same effect as no marker).
+    param(
+        [string]$TempRoot = ([System.IO.Path]::GetTempPath().TrimEnd('\', '/')),
+        [string]$DataRootLeafPattern = '^psls',
+        [double]$MinAgeHours = 24,
+        [switch]$DryRun = $true
+    )
+    $acted = New-Object System.Collections.ArrayList
+    $dirs = @(Get-ChildItem -LiteralPath $TempRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match $DataRootLeafPattern })
+    foreach ($d in $dirs) {
+        $markerPath = Join-Path $d.FullName '.psls-owner.json'
+        if (-not (Test-Path -LiteralPath $markerPath)) { continue }
+        $marker = $null
+        try { $marker = (Get-Content -LiteralPath $markerPath -Raw -ErrorAction Stop) | ConvertFrom-Json }
+        catch { continue }
+        if ($null -eq $marker) { continue }
+        $ownerPid = 0
+        try { $ownerPid = [int](Get-Prop $marker 'ownerPid') } catch { continue }
+        if ($ownerPid -le 0) { continue }
+        if ($null -ne (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue)) { continue }
+        $createdAt = $null
+        try { $createdAt = [datetime](Get-Prop $marker 'createdAt') } catch { continue }
+        $ageHours = ((Get-Date).ToUniversalTime() - $createdAt.ToUniversalTime()).TotalHours
+        if ($ageHours -lt $MinAgeHours) { continue }
+        [void]$acted.Add([pscustomobject]@{ Path = $d.FullName; OwnerPid = $ownerPid; AgeHours = $ageHours })
+        if (-not $DryRun) {
+            try { Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction Stop } catch { }
+        }
+    }
+    return $acted.ToArray()
+}
+
+function Remove-PslsRootWithRetry {
+    # A fixture's AfterAll routinely kills the daemon it launched and then removes that
+    # daemon's -DataRoot in the same breath. Waiting for the killed pid to disappear from
+    # Get-Process (as the dispatch-000024/000028 AfterAlls now do before calling this) closes
+    # most of that race, but not all of it: MEASURED this session, one Remove-Item still lost
+    # the race even after its pid-death wait succeeded (the process was gone; the OS had not
+    # yet finished releasing its open handle on the directory) -- a second, narrower window
+    # that pid-liveness cannot see because the process is, by that point, already gone.
+    #
+    # CURE: retry the removal itself, rather than assume one attempt is enough. Never throws --
+    # teardown must not be able to fail a test that does not check it -- and gives up silently
+    # after $MaxAttempts, exactly like the single-attempt call sites this replaces (a root that
+    # survives every retry is exactly what the dispatch-000295 zero-net-new-roots census exists
+    # to catch, not something this helper should paper over by trying forever).
+    #
+    # BOUND, MEASURED not guessed, and REVISED (dispatch 000295 fix-forward): this originally
+    # shipped at 20x1.5s (30s worst case), sized off a `psls-000024-surface-*` survivor that a
+    # direct manual Remove-Item, tried again roughly two minutes later, cleared instantly. That
+    # was read at the time as "the lock is transient, just slower than any bound tried" -- but
+    # the same fixture then leaked DETERMINISTICALLY on every CI leg, including ubuntu-pwsh and
+    # macos-pwsh, where an unlink does not wait on a live process's open handles at all, which a
+    # transient-lock story cannot explain. The actual cause was a SEPARATE bug in that fixture's
+    # own reap step (see its `It`, tests/PowerShellLsp.Integration.Tests.ps1): the daemon was
+    # never killed in the first place, so the "two minutes later" clearing was that daemon
+    # finally being caught by the suite-final leak backstop, not a slow OS handle release. No
+    # amount of retrying the DELETE here can wait out a process nobody asked to stop -- that is
+    # now fixed at its source. What is left for this helper is the narrower, still-real case its
+    # own pid-death-wait cannot fully close: a killed PSES host is a heavy .NET process tree, and
+    # the OS releasing every handle across every process in it is not always instantaneous even
+    # after the pid is confirmed gone. Back to 5x300ms (1.5s worst case), the window this was
+    # first measured at before the 000024-surface misdiagnosis inflated it.
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [int]$MaxAttempts = 5,
+        [int]$DelayMs = 300
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    for ($i = 0; $i -lt $MaxAttempts; $i++) {
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            return
+        } catch {
+            if ($i -eq $MaxAttempts - 1) { return }
+            Start-Sleep -Milliseconds $DelayMs
+        }
+    }
+}
+
+# ===========================================================================
 # Flake instrumentation (dispatch 000159 leg 1a -- steps 1 and 2 of the 000156 shape)
 # ===========================================================================
 # WHY: dispatch 000156 leg 4 FALSIFIED the standing explanation of the honor-block

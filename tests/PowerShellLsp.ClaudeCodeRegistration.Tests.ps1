@@ -29,8 +29,10 @@ BeforeAll {
     $script:PluginRoot = Split-Path -Parent $PSScriptRoot
     $script:Script = Join-Path $PSScriptRoot 'assert-claude-code-registration.ps1'
     $script:Fixture = Join-Path $PSScriptRoot 'fixtures/claude-code/details-registered.txt'
+    . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Set-PslsOwnerMarker (dispatch 000295)
     $script:TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-ccreg-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
     New-Item -ItemType Directory -Path $script:TempDir -Force | Out-Null
+    Set-PslsOwnerMarker -DataRoot $script:TempDir -MintingFile 'tests/PowerShellLsp.ClaudeCodeRegistration.Tests.ps1'
 
     function Invoke-Assert {
         # REDIRECT TO FILES, never `2>&1` into the pipeline. Windows PowerShell 5.1 converts a

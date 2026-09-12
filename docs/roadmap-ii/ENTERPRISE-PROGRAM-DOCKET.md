@@ -722,7 +722,7 @@ the signing half remains unbuilt and still waits on a trust root.**
 
 | Slice | Why it is P3 |
 | --- | --- |
-| **P3-1 module / `.NET` broker split** (item 8) | The claim is fair -- `lsp-common.ps1` is 4,736 lines and 135 functions, an internal platform inside a `.ps1`. But a rewrite in flight taxes every slice above it, and none of them needs it. Revisit after P1 |
+| **P3-1 module / `.NET` broker split** (item 8) | The claim is fair -- `lsp-common.ps1` is 5,154 lines and 150 functions, an internal platform inside a `.ps1`. But a rewrite in flight taxes every slice above it, and none of them needs it. Revisit after P1 |
 | **Ephemeral daemon for doctor check 11** (docket S3) | Changes a documented behavioural promise in three shipped places; needs its own charter and its own ruling. Unchanged from `DOCTOR-SURFACE-DOCKET.md` |
 
 ### 4.6 Hub hygiene -- a cross-repo slice, recorded because it is a control and not a memory
