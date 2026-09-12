@@ -150,8 +150,11 @@ try {
     }
     # AFTER the daemon is stopped, so nothing is still writing into the tree (dispatch 000295).
     # Only a root this script minted; a caller-supplied -DataRoot is never removed.
+    # RETRY, not one-shot (dispatch 000295 fix-forward): Stop-Process above requests termination
+    # but does not wait for it, so a heavy PSES process tree can still be releasing its open
+    # handles on $DataRoot the instant this runs -- see Remove-PslsRootWithRetry's own header.
     if ($ownsDataRoot) {
-        Remove-Item -LiteralPath $DataRoot -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-PslsRootWithRetry -Path $DataRoot
     }
 }
 

@@ -450,7 +450,12 @@ Start-Sleep -Seconds 600
                     if ($null -ne $doomed) { try { $doomed.Kill($true) } catch { try { $doomed.Kill() } catch { } } }
                 } catch { }
             }
-            try { if (Test-Path -LiteralPath $script:EpipeRoot) { Remove-Item -LiteralPath $script:EpipeRoot -Recurse -Force -ErrorAction SilentlyContinue } } catch { }
+            # RETRY, not one-shot (dispatch 000295 fix-forward): the shim is a real pwsh host
+            # actively writing pses-serve-shim.log under EpipeRoot when the guard fires, and the
+            # test asserts on its exit rather than always waiting it out first (a failed-guard run
+            # reaches this AfterAll with the shim still alive). See Remove-PslsRootWithRetry's own
+            # header for why a Kill() with no subsequent wait cannot be trusted into one attempt.
+            Remove-PslsRootWithRetry -Path $script:EpipeRoot
         }
 
         It 'the client->PSES write path WORKED and the stub was ALIVE at injection (the guard cannot pass vacuously)' {

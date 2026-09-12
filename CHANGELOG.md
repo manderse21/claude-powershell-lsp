@@ -80,6 +80,29 @@ reliably reaped before teardown ever calls `Remove-PslsRootWithRetry` -- which i
 helper's window could come back down to 1.5s instead of staying inflated to paper over a leak it
 was never able to fix.
 
+**Fix-forward on the same census: the retry-on-remove idiom above had only been applied to
+000024/000028/000030, not to every `AfterAll` that kills a daemon and removes its own `-DataRoot`.**
+A follow-up sweep of every fixture that mints a `psls*` root, prompted by the census turning up a
+fourth survivor (`psls-degraded-*`, dispatch 000022's `(d)` sub-case, windows-pwsh and
+windows-powershell only -- both POSIX legs stayed clean, the same signature that ruled out a
+`Remove-PslsRootWithRetry`-side regression and pointed at another unfixed call site instead), found
+the identical unretried `Remove-Item` immediately after a kill in eight more places: 000022's `(d)`
+itself, 000225's relaunch-control root, 000293's `Get-IntegrationDaemonLeak` fixture, the second
+000289 block (whose mutant daemon runs a REAL copied `pses-daemon.ps1` from its own root),
+`PowerShellLsp.ServeShim.Tests.ps1`'s EPIPE-guard shim+stub, `PowerShellLsp.DaemonSurvival.Tests.ps1`'s
+dispatch-000237 integration root, and both `tests/bench/Invoke-LatencyBench.ps1` and
+`Invoke-ProfileSweep.ps1` (the two files the paragraph above gave an `AfterAll` at all -- that pass
+added the removal but not the retry). All eight now route their final removal through
+`Remove-PslsRootWithRetry`.
+
+**One of the eight also carried a naming defect that hid it from every backstop at once.**
+`PowerShellLsp.DaemonSurvival.Tests.ps1`'s dispatch-000237 integration root minted as
+`psl-000237-*` -- missing the `s` every sibling `psls-<dispatch>-*` fixture carries -- which put it
+outside both the directory census (`-Filter 'psls*'`) and `Get-IntegrationDaemonLeak`'s own
+`^psls`-leaf recognition, and it never called `Set-PslsOwnerMarker` either, so the janitor could not
+have reclaimed it regardless. Corrected to `psls-000237-*` and given a marker, so a leak there is
+now visible to the same machinery as everywhere else.
+
 **`Remove-StalePslsRoots` is the janitor**, and its whole contract is what it refuses. It deletes a
 `psls*`-leafed directory under the OS temp root only when ALL of: a `.psls-owner.json` marker is
 present and parses; the marker's owner pid is dead; and its `createdAt` is more than 24 hours old.

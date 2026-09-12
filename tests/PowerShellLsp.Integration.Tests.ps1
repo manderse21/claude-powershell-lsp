@@ -1174,7 +1174,7 @@ Describe 'Integration: supervised restart + incomplete/degraded status (dispatch
         # (no Process handle), so reap it info-independently by recorded session id, reading the
         # session file fresh -- the dispatch 000078 leak vector the null-gated $infos loop missed
         # when Wait-DaemonReady timed out under contention. Daemons (b)/(d)/(e) are raw launches
-        # whose Process handles Kill($true) the tree below (already leak-safe).
+        # whose Process handles Kill($true) the tree below.
         [void](Stop-IntegrationDaemon -SessionId $script:R_SidA -DataRoot $script:R_Data)
         $infos = @($script:R_InfoA, $script:R_InfoB, $script:R_InfoD, $script:R_InfoE)
         foreach ($info in $infos) {
@@ -1191,7 +1191,16 @@ Describe 'Integration: supervised restart + incomplete/degraded status (dispatch
             $sf = Join-Path $pair[0] ('session/' + $pair[1] + '.json')
             if (Test-Path -LiteralPath $sf) { Remove-Item -LiteralPath $sf -Force -ErrorAction SilentlyContinue }
         }
-        if (Test-Path -LiteralPath $script:R_DataD) { Remove-Item -LiteralPath $script:R_DataD -Recurse -Force -ErrorAction SilentlyContinue }
+        # RETRY, not one-shot (dispatch 000295 fix-forward): this root's daemon (d) is a raw
+        # launch whose Process handle Kill($true) reaches above, same as (b)/(e) -- but unlike
+        # those two (which route their -DataRoot removal through Remove-PslsRootWithRetry a few
+        # lines below in their own sibling blocks), this one still called a single-shot
+        # Remove-Item straight after the kill. MEASURED on this branch: windows-pwsh and
+        # windows-powershell both left a `psls-degraded-*` survivor while every POSIX leg (whose
+        # unlink does not wait on a live process's open handles at all) stayed clean -- the exact
+        # signature of the kill/remove race Remove-PslsRootWithRetry exists to absorb, per its own
+        # header. Route through it instead of a bare Remove-Item.
+        Remove-PslsRootWithRetry -Path $script:R_DataD
     }
 
     It '(a) recovers from a mid-session PSES exit: a subsequent request returns a real diagnostic (R1 + R2-fatal)' {
@@ -3071,7 +3080,13 @@ try {
             }
         } catch { }
         Start-Sleep -Milliseconds 400
-        if (Test-Path -LiteralPath $script:TH_Base) { Remove-Item -LiteralPath $script:TH_Base -Recurse -Force -ErrorAction SilentlyContinue }
+        # RETRY, not one-shot (dispatch 000295 fix-forward): the 400ms sleep above is a fixed
+        # guess at handle-drain, not a bound tied to Remove-PslsRootWithRetry's own MEASURED
+        # window -- and this block's whole premise is a daemon that may have been relaunched (a
+        # real pses-daemon.ps1 + PSES child under TH_Base), the exact heavy-process-tree shape
+        # that helper exists for. See Remove-PslsRootWithRetry's own header for why a kill alone
+        # is not enough on Windows.
+        Remove-PslsRootWithRetry -Path $script:TH_Base
     }
 
     It '(control 1 -- RED) pre-000225 routing DOES relaunch a live daemon: the gate is what stops it' {
@@ -3278,7 +3293,10 @@ Describe 'Integration: Get-IntegrationDaemonLeak recognizes a daemon by DATA ROO
         foreach ($p in $script:Db_Procs) {
             try { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } } catch { }
         }
-        try { Remove-Item -LiteralPath $script:Db_FakeDir -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+        # RETRY, not one-shot (dispatch 000295 fix-forward) -- see Remove-PslsRootWithRetry's own
+        # header for why a Stop-Process with no subsequent wait cannot be followed by a single
+        # removal attempt.
+        Remove-PslsRootWithRetry -Path $script:Db_FakeDir
     }
 
     It 'finds a daemon whose SessionId prefix (th225unr-) was never in the old allowlist, via its DataRoot' {
@@ -3888,7 +3906,12 @@ Describe 'P1-2 DAEMON HALF -- what deleting the didOpen/didChange block actually
     AfterAll {
         [void](Stop-IntegrationDaemon -SessionId $script:QR_Sid -DataRoot $script:QR_DataDir)
         try { if (Test-Path -LiteralPath $script:QR_File) { Remove-Item -LiteralPath $script:QR_File -Force -ErrorAction SilentlyContinue } } catch { }
-        try { if (Test-Path -LiteralPath $script:QR_Root) { Remove-Item -LiteralPath $script:QR_Root -Recurse -Force -ErrorAction SilentlyContinue } } catch { }
+        # RETRY, not one-shot (dispatch 000295 fix-forward): QR_Root hosts the COPIED scripts/ the
+        # mutant daemon actually ran from (a real pses-daemon.ps1 + PSES child), so Stop-
+        # IntegrationDaemon's kill above is exactly the heavy-process-tree case Remove-
+        # PslsRootWithRetry's own header describes -- see it for why a single Remove-Item
+        # immediately after cannot be trusted on Windows.
+        Remove-PslsRootWithRetry -Path $script:QR_Root
     }
 
     It 'the mutation anchor occurs EXACTLY ONCE, and the mutant LANDED and still parses' {
