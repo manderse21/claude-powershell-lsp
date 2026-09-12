@@ -564,6 +564,45 @@ function Remove-StalePslsRoots {
     return $acted.ToArray()
 }
 
+function Remove-PslsRootWithRetry {
+    # A fixture's AfterAll routinely kills the daemon it launched and then removes that
+    # daemon's -DataRoot in the same breath. Waiting for the killed pid to disappear from
+    # Get-Process (as the dispatch-000024/000028 AfterAlls now do before calling this) closes
+    # most of that race, but not all of it: MEASURED this session, one Remove-Item still lost
+    # the race even after its pid-death wait succeeded (the process was gone; the OS had not
+    # yet finished releasing its open handle on the directory) -- a second, narrower window
+    # that pid-liveness cannot see because the process is, by that point, already gone.
+    #
+    # CURE: retry the removal itself, rather than assume one attempt is enough. Never throws --
+    # teardown must not be able to fail a test that does not check it -- and gives up silently
+    # after $MaxAttempts, exactly like the single-attempt call sites this replaces (a root that
+    # survives every retry is exactly what the dispatch-000295 zero-net-new-roots census exists
+    # to catch, not something this helper should paper over by trying forever).
+    #
+    # BOUND, MEASURED not guessed: a first attempt at 5x300ms (1.5s total) still left a real
+    # survivor (psls-000024-surface-*) that a DIRECT manual Remove-Item, tried again roughly two
+    # minutes later, cleared instantly -- proving the lock is transient, not permanent, and that
+    # 1.5s was simply too short a window. A killed PSES host is a heavy .NET process tree
+    # (Kill($true) kills the whole tree, but the OS releasing every handle across every process
+    # in it is not instantaneous), so 20x1.5s (30s worst case) trades a small, rare per-teardown
+    # delay for not flagging a real root as abandoned while its own kill is still draining.
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [int]$MaxAttempts = 20,
+        [int]$DelayMs = 1500
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    for ($i = 0; $i -lt $MaxAttempts; $i++) {
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            return
+        } catch {
+            if ($i -eq $MaxAttempts - 1) { return }
+            Start-Sleep -Milliseconds $DelayMs
+        }
+    }
+}
+
 # ===========================================================================
 # Flake instrumentation (dispatch 000159 leg 1a -- steps 1 and 2 of the 000156 shape)
 # ===========================================================================

@@ -67,6 +67,27 @@ Invoke-LatencyBench.ps1` and `tests/bench/Invoke-ProfileSweep.ps1` each stopped 
 `finally` block but never removed their own `-DataRoot`; both now do. (`Invoke-ProfileSweep.ps1`'s
 separate, fixed-name `ScratchDir` is one of the deliberately-reused roots above and is untouched.)
 
+**A new suite-final assertion (below) that proves zero net new `psls*` roots survive a full run
+caught three MORE pre-existing leaks on its first real runs** -- dispatch 000024's, 000028's, and
+000030's daemon `AfterAll`s, none of them this dispatch's own code, none part of the three sites
+above. All three killed a daemon and removed its data root in the same breath, with no wait for
+Windows to actually release the killed process's open handles first. Two of the three (000028,
+000030) are now reliably clean: the fix waits for the killed pid to leave `Get-Process`, then
+retries the removal itself (`Remove-PslsRootWithRetry`, up to 30s) rather than trying once.
+
+**The third, dispatch 000024's `'surface'` sub-case, is NOT fully resolved by this dispatch.**
+Both mitigations above are applied to it too, and both measurably help, but a residual,
+intermittent leak survived every attempt to close it this session -- including a 30-second retry
+window, confirmed by direct measurement to still be shorter than the lock actually needs on an
+occasional run (a manual `Remove-Item` against the same directory, tried again roughly two
+minutes later, cleared instantly, proving the lock is transient and merely slower than any bound
+tried, not permanent). The root cause is understood only at that level -- a killed PSES host is a
+heavy .NET process tree whose handles do not all release the instant `Get-Process` stops seeing
+the pid -- not more precisely. **If a future CI or local run shows `leaves ZERO NET NEW psls*
+data-root directories` red with `psls-000024-surface-*` as the sole survivor, this is that known,
+still-open issue, not a new regression** -- see the dispatch 000295 outbox (strategic-dispatch
+hub) for the full account and next_suggested for the recommended follow-up.
+
 **`Remove-StalePslsRoots` is the janitor**, and its whole contract is what it refuses. It deletes a
 `psls*`-leafed directory under the OS temp root only when ALL of: a `.psls-owner.json` marker is
 present and parses; the marker's owner pid is dead; and its `createdAt` is more than 24 hours old.

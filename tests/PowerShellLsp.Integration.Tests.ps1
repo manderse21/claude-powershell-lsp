@@ -1465,8 +1465,14 @@ Describe 'Integration: first-start install-incomplete is VISIBLE (dispatch 00002
             }
         }
         try { if ($null -ne $script:U_Proc -and -not $script:U_Proc.HasExited) { $script:U_Proc.Kill($true) } } catch { }
+        # RETRY, not one-shot (dispatch 000295): a killed daemon's file handles on its own
+        # -DataRoot are not always released the instant Get-Process stops seeing the pid --
+        # MEASURED this session, one Remove-Item here still lost that narrower race even after
+        # an upstream pid-death wait succeeded. Remove-PslsRootWithRetry is the shared retry
+        # (Integration.Common.ps1); never throws, so a root that survives every retry is left
+        # for the dispatch-000295 zero-net-new-roots census to catch, exactly as intended.
         foreach ($d in @($script:U_RootMarquee, $script:U_RootLoud, $script:U_RootNonDestr, $script:U_RootSurface)) {
-            if ($d -and (Test-Path -LiteralPath $d)) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+            if ($d) { Remove-PslsRootWithRetry -Path $d }
         }
     }
 
@@ -1700,7 +1706,8 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
         # the warm session file lives in the SHARED root; clean only OUR session file there.
         $sfW = Join-Path $script:P_Data ('session/' + $script:P_SidW + '.json')
         if (Test-Path -LiteralPath $sfW) { Remove-Item -LiteralPath $sfW -Force -ErrorAction SilentlyContinue }
-        foreach ($d in @($script:P_DataA, $script:P_DataB)) { if ($d -and (Test-Path -LiteralPath $d)) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue } }
+        # RETRY, not one-shot (dispatch 000295) -- see Remove-PslsRootWithRetry's own header for why.
+        foreach ($d in @($script:P_DataA, $script:P_DataB)) { if ($d) { Remove-PslsRootWithRetry -Path $d } }
     }
 
     It '(A) a request while PSES is still INITIALIZING surfaces the TRANSIENT incomplete, never silence' {
@@ -1912,9 +1919,8 @@ Describe 'Integration: auto-relaunch the idle-stopped daemon (dispatch 000030)' 
             }
         }
         foreach ($p in $script:RL_Procs) { try { if ($null -ne $p -and -not $p.HasExited) { $p.Kill($true) } } catch { } }
-        foreach ($d in @($script:RL_NoBundle, $script:RL_DummyRoot)) {
-            if ($d -and (Test-Path -LiteralPath $d)) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
-        }
+        # RETRY, not one-shot (dispatch 000295) -- see Remove-PslsRootWithRetry's own header for why.
+        foreach ($d in @($script:RL_NoBundle, $script:RL_DummyRoot)) { if ($d) { Remove-PslsRootWithRetry -Path $d } }
     }
 
     It '(recovery) a cleanly idle-stopped daemon is SILENTLY relaunched and recovers; a subsequent edit gets real analysis (the headline)' {
