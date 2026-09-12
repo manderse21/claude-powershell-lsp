@@ -3151,6 +3151,79 @@ try {
     }
 }
 
+Describe 'Integration: Get-IntegrationDaemonLeak recognizes a daemon by DATA ROOT, not SessionId prefix (dispatch 000293)' -Skip:$script:SkipIntegration {
+    # PROOF that the fix bites against the actual dispatch 000225 miss: a daemon whose
+    # -SessionId is 'th225unr-*' was NEVER in the old hand-maintained prefix allowlist
+    # (`^(pester|honor|scope|restart|incomplete|degraded|exhaust|unavail|ss-surface|pf|rl|
+    # loop|bench|no-daemon|fmt)-`) and survived a full suite run undetected. Reverting
+    # Get-IntegrationDaemonLeak to that allowlist and re-running case 1 alone turns it RED
+    # (measured 2026-09-11, manual revert -- CI checks out shallow, so this is not encoded
+    # as a git-show RED control per Hub Rule; see the outbox). Case 2 is the control: same
+    # unlisted prefix, but a DataRoot that is NOT a suite-minted temp root must NOT be
+    # flagged, proving the new gate is the data root and not "any pses-daemon.ps1 process".
+    #
+    # Both cases use a FAKE script merely NAMED pses-daemon.ps1 (accepting the same flags,
+    # doing nothing but sleep) so the census's command-line match fires without paying for
+    # a real PSES child.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
+        $script:Db_FakeDir = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-000293fake-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:Db_FakeDir | Out-Null
+        $script:Db_FakeScript = Join-Path $script:Db_FakeDir 'pses-daemon.ps1'
+        Set-Content -LiteralPath $script:Db_FakeScript -Encoding ASCII -Value @(
+            'param($SessionId, $PsHost, $DataRoot, $SeverityThreshold, $DebounceMs, $IdleTtlMin, $PerFileCap)',
+            'Start-Sleep -Seconds 60'
+        )
+        $script:Db_Procs = New-Object System.Collections.ArrayList
+
+        function Start-DbFakeDaemon {
+            param([string]$SessionId, [string]$DataRoot)
+            New-Item -ItemType Directory -Force -Path $DataRoot | Out-Null
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+            Add-ProcessArguments $psi @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                $script:Db_FakeScript, '-SessionId', $SessionId, '-PsHost', 'pwsh', '-DataRoot', $DataRoot,
+                '-SeverityThreshold', 'Hint', '-DebounceMs', '150', '-IdleTtlMin', '30', '-PerFileCap', '20')
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $null = $p.StandardOutput.ReadLineAsync()
+            $null = $p.StandardError.ReadLineAsync()
+            Start-Sleep -Milliseconds 300
+            [void]$script:Db_Procs.Add($p)
+            return $p
+        }
+    }
+    AfterAll {
+        foreach ($p in $script:Db_Procs) {
+            try { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } } catch { }
+        }
+        try { Remove-Item -LiteralPath $script:Db_FakeDir -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+    }
+
+    It 'finds a daemon whose SessionId prefix (th225unr-) was never in the old allowlist, via its DataRoot' {
+        $sid = 'th225unr-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $dataRoot = Join-Path $script:Db_FakeDir 'case1'
+        $fake = Start-DbFakeDaemon -SessionId $sid -DataRoot $dataRoot
+
+        $found = @(Get-IntegrationDaemonLeak | Where-Object { $_.Id -eq $fake.Id })
+
+        $found.Count | Should -Be 1 -Because 'the daemon-leak backstop must see a suite daemon by its DataRoot regardless of SessionId prefix'
+        $found[0].SessionId | Should -Be $sid
+        $found[0].DataRoot | Should -Be $dataRoot
+    }
+
+    It 'does NOT flag a pses-daemon.ps1-shaped process whose DataRoot is not a suite-minted temp root (control)' {
+        $sid = 'th225unr-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $prodLikeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('not-a-suite-root-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $fake = Start-DbFakeDaemon -SessionId $sid -DataRoot $prodLikeRoot
+
+        $found = @(Get-IntegrationDaemonLeak | Where-Object { $_.Id -eq $fake.Id })
+
+        $found.Count | Should -Be 0 -Because 'a DataRoot that is not a suite-minted psls* temp root must never be treated as ours, even with an unlisted SessionId prefix'
+    }
+}
+
 Describe 'Integration: suite-final daemon-leak backstop (dispatch 000078)' -Skip:$script:SkipIntegration {
     # The teardown guarantee + in-suite proof. After every daemon block's AfterAll has run its
     # info-independent per-session reap (Stop-IntegrationDaemon), sweep any STRAGGLER suite-owned

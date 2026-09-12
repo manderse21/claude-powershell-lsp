@@ -417,15 +417,28 @@ function Stop-IntegrationDaemon {
 
 function Get-IntegrationDaemonLeak {
     # READ-ONLY census of LIVE suite-owned daemons: PowerShell hosts whose command line
-    # references pses-daemon.ps1 AND carries a -SessionId matching the suite's own naming
-    # scheme (the prefixes the fixtures mint their sids from). Never kills -- used by the
-    # suite-start guard (report a contaminated environment) and the suite-final backstop
-    # (PROVE zero suite daemons survived). The pses-daemon.ps1 + sid-prefix signature can
-    # never match a co-tenant editor host or the operator's shell. Returns objects with
-    # .Id and .SessionId so a caller can verify-before-kill a straggler if it chooses.
+    # references pses-daemon.ps1 AND whose OWN -DataRoot resolves under the OS temp
+    # directory with a suite-minted leaf name (dispatch 000293). Recognition by DATA ROOT,
+    # not by -SessionId prefix: the prior allowlist (`^(pester|honor|scope|...)-`) required
+    # every fixture author to remember to register a new prefix, and dispatch 000225's
+    # th225unr-* proved it silently blind to any prefix nobody added -- it survived a full
+    # suite run while this backstop reported zero. Get-PluginDataRoot (scripts/lib/lsp-
+    # common.ps1) is the ONLY source of a daemon's -DataRoot (Start-PsesDaemonDetached
+    # always emits it as a literal, always-present argument), and every test root this
+    # suite mints -- the shared psls-pester-data and every isolated psls-<nnnnnn>-<guid> /
+    # pslsp-<...> Describe-scoped root alike -- lives under [IO.Path]::GetTempPath() with a
+    # leaf name starting 'psls' (verified: zero exceptions across the suite). A production
+    # daemon's DataRoot is CLAUDE_PLUGIN_DATA (never a temp path) or the temp fallback
+    # 'powershell-lsp-data' (does not start 'psls'), so this can never match a co-tenant
+    # editor host or the operator's own daemon. No prefix list to fall out of sync with a
+    # new fixture ever again. Never kills -- used by the suite-start guard (report a
+    # contaminated environment) and the suite-final backstop (PROVE zero suite daemons
+    # survived). Returns objects with .Id, .SessionId and .DataRoot so a caller can
+    # verify-before-kill a straggler if it chooses.
     param(
-        [string]$SessionIdPattern = '^(pester|honor|scope|restart|incomplete|degraded|exhaust|unavail|ss-surface|pf|rl|loop|bench|no-daemon|fmt)-'
+        [string]$DataRootLeafPattern = '^psls'
     )
+    $tempRoot = [System.IO.Path]::GetTempPath().TrimEnd('\', '/')
     $leaks = New-Object System.Collections.ArrayList
     try {
         $procs = @(Get-Process -Name 'pwsh', 'powershell' -ErrorAction SilentlyContinue)
@@ -433,11 +446,15 @@ function Get-IntegrationDaemonLeak {
             $cl = Get-ProcessCommandLine $p.Id
             if ([string]::IsNullOrWhiteSpace($cl)) { continue }
             if ($cl -notmatch 'pses-daemon\.ps1') { continue }
-            $m = [regex]::Match($cl, '-SessionId\s+(\S+)')
-            if (-not $m.Success) { continue }
-            $sid = $m.Groups[1].Value.Trim('"')
-            if ($sid -notmatch $SessionIdPattern) { continue }
-            [void]$leaks.Add([pscustomobject]@{ Id = $p.Id; SessionId = $sid })
+            $dm = [regex]::Match($cl, '-DataRoot\s+"?([^"\s]+)"?')
+            if (-not $dm.Success) { continue }
+            $dataRoot = $dm.Groups[1].Value
+            if (-not $dataRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $leaf = ($dataRoot.Substring($tempRoot.Length).TrimStart('\', '/') -split '[\\/]')[0]
+            if ($leaf -notmatch $DataRootLeafPattern) { continue }
+            $sm = [regex]::Match($cl, '-SessionId\s+(\S+)')
+            $sid = if ($sm.Success) { $sm.Groups[1].Value.Trim('"') } else { '' }
+            [void]$leaks.Add([pscustomobject]@{ Id = $p.Id; SessionId = $sid; DataRoot = $dataRoot })
         }
     } catch { }
     return $leaks.ToArray()
