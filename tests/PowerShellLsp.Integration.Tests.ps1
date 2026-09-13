@@ -1707,34 +1707,44 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
             if ($null -ne $info) { foreach ($pidVal in @($info.pid, $info.psesPid)) { if ($pidVal) { Stop-Process -Id ([int]$pidVal) -Force -ErrorAction SilentlyContinue } } }
         }
         foreach ($p in @($script:P_ProcA, $script:P_ProcB, $script:P_ProcW)) { try { if ($null -ne $p -and -not $p.HasExited) { $p.Kill($true) } } catch { } }
-        # WAIT-UNTIL-DEAD before removing the roots (dispatch 000295): Stop-Process -Force and
-        # Process.Kill() both return once termination is REQUESTED, not once Windows has
-        # released the process's open handles on its own -DataRoot -- case (A)'s daemon is
-        # force-killed mid-300-second-sleep, the shape most likely to still be tearing down
-        # when Remove-Item runs moments later. This is exactly how the new dispatch-000295
-        # zero-net-new-roots census caught a real `psls-000028-A-*` survivor: the kill had
-        # been requested but not completed, and Remove-Item's -ErrorAction SilentlyContinue
-        # swallowed the resulting failure instead of retrying. Bounded at 5s per pid; a pid
-        # still alive after that falls through to the unchanged best-effort Remove-Item below.
-        #
-        # MEASURED 2026-09-13 (review-II night 1, Q1/Q2/Q3): for case (A) specifically, this
-        # bound is not merely tight, it is the WRONG TOOL. $script:P_InfoA.psesPid is NULL by
-        # construction, every time -- pses-daemon.ps1 writes the session file's first 'starting'
-        # record (Write-SessionFile, before Start-PsesProcess assigns $script:proc) and
-        # Wait-DaemonAnyState (BeforeAll) returns on that FIRST match, so the snapshot this
+        # FIX (dispatch 000295 Q1/Q2/Q3, review-II night 1, 2026-09-13): the two loops above are a
+        # fast head-start (harmless no-ops where they cannot reach a pid) but NOT sufficient for (A)
+        # on their own. MEASURED: $script:P_InfoA.psesPid is NULL by construction, every time --
+        # pses-daemon.ps1 writes the session file's first 'starting' record (Write-SessionFile,
+        # scripts/pses-daemon.ps1:1696) BEFORE Start-PsesProcess (line 1699) assigns $script:proc,
+        # and Wait-DaemonAnyState (BeforeAll) returns on that FIRST match -- so the snapshot this
         # AfterAll captured was taken before the dummy child process even existed. The direct
         # `Stop-Process -Id $info.psesPid` two loops up is therefore a silent no-op for (A): it
-        # never had a real pid to target. That leaves $p.Kill($true) (Job-Object tree-kill on the
-        # daemon host) as the ONLY mechanism reaching the dummy child, and direct process
-        # inspection (Get-CimInstance Win32_Process, both a local pwsh-7 and a WinPS-5.1 repro
-        # loop, ~20-25% of iterations under concurrent load) caught it failing to do so: the
-        # parent daemon pid confirmed GONE, its dummy child pid confirmed STILL RUNNING --
-        # `Start-Sleep -Seconds 300` executing on, undisturbed -- for the full remainder of its
-        # 300s script, which is what was actually gating Remove-PslsRootWithRetry's failure, not
-        # a slow handle release after a genuine kill. See the probe below and
-        # Remove-PslsRootWithRetry's own header for the full account and why MaxAttempts/DelayMs
-        # was deliberately NOT widened to chase this.
-        foreach ($pidVal in @($script:P_InfoA.pid, $script:P_InfoA.psesPid, $script:P_InfoB.pid, $script:P_InfoB.psesPid)) {
+        # never had a real pid to target, leaving $p.Kill($true) (Job-Object tree-kill on the daemon
+        # host) as the only mechanism reaching the dummy child -- and direct process inspection
+        # (Get-CimInstance Win32_Process, ~35 combined local iterations under pwsh 7 and Windows
+        # PowerShell 5.1, ~20-25% reproduction under concurrent load, the same order as CI's 1-in-5)
+        # caught it failing to do so: parent daemon pid confirmed GONE, dummy child pid confirmed
+        # STILL RUNNING its `Start-Sleep -Seconds 300`, undisturbed, for the remainder of that sleep.
+        #
+        # CONFIRMED the daemon DOES rewrite the session file with a populated psesPid (traced, not
+        # assumed): its heartbeat (`$lastHeartbeat = [DateTime]::MinValue`, scripts/pses-daemon.ps1
+        # ~1713) fires on the very first serve-loop iteration -- essentially immediately after
+        # Start-PsesProcess returns -- and every 10s after, rewriting psesPid every time regardless
+        # of state. By this AfterAll's time (seconds to tens of seconds after BeforeAll started the
+        # daemon), a fresh read is for all practical purposes guaranteed current. Stop-IntegrationDaemon
+        # already implements exactly this fresh-read-then-verified-kill idiom (dispatch 000078; used
+        # by every OTHER daemon block in this file) -- this block is the one that did not call it.
+        # Route (A) and (B) through it now: it re-reads the session file AT THIS MOMENT (not the
+        # BeforeAll-time snapshot), verifies each pid is genuinely ours (Test-IsOurIntegrationDaemon /
+        # Test-IsOurIntegrationPses), and Stop-Process's it directly -- a single verified-pid signal,
+        # not a Job-Object tree-walk, so it does not depend on tree-walk nesting working at all.
+        $script:P_KilledA = @(Stop-IntegrationDaemon -SessionId $script:P_SidA -DataRoot $script:P_DataA)
+        $script:P_KilledB = @(Stop-IntegrationDaemon -SessionId $script:P_SidB -DataRoot $script:P_DataB)
+        # WAIT-UNTIL-DEAD before removing the roots (dispatch 000295): Stop-Process -Force and
+        # Process.Kill() both return once termination is REQUESTED, not once Windows has released
+        # the process's open handles on its own -DataRoot. Waits on the UNION of the stale BeforeAll
+        # snapshot's pids (harmless when null/already-dead) and the freshly-verified pids
+        # Stop-IntegrationDaemon actually signaled above -- covering (A)'s dummy child, which the
+        # stale snapshot alone could never name. Bounded at 5s per pid; a pid still alive after that
+        # falls through to the unchanged best-effort Remove-Item below.
+        $waitPids = @($script:P_InfoA.pid, $script:P_InfoA.psesPid, $script:P_InfoB.pid, $script:P_InfoB.psesPid) + $script:P_KilledA + $script:P_KilledB
+        foreach ($pidVal in ($waitPids | Select-Object -Unique)) {
             if (-not $pidVal) { continue }
             for ($i = 0; $i -lt 100 -and $null -ne (Get-Process -Id ([int]$pidVal) -ErrorAction SilentlyContinue); $i++) {
                 Start-Sleep -Milliseconds 50
@@ -1743,13 +1753,11 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
         foreach ($p in @($script:P_ProcA, $script:P_ProcB)) {
             if ($null -ne $p) { try { [void]$p.WaitForExit(5000) } catch { } }
         }
-        # dispatch 000295 Q1 -- kept permanently, not just for this session's investigation: names
-        # WHICH pid, if any, is still alive right after the wait-until-dead loop above gives up on
-        # it, distinguishing "kill requested but not yet completed" (a bounded, retry-fixable race)
-        # from "kill silently did not reach this pid at all" (confirmed the real shape for case A,
-        # see above -- unbounded, no retry count fixes a process nobody asked to stop). Silent in
-        # the common case; a future recurrence self-explains in the CI log instead of needing this
-        # investigation repeated from scratch.
+        # dispatch 000295 Q1 -- kept permanently as a correctness proof, not just for this session's
+        # investigation: names WHICH pid, if any, is still alive right after the wait-until-dead loop
+        # above gives up on it. Before the fix above this fired for (A) every time it lost the race;
+        # after it, this should be silent -- a future recurrence (a NEW gap, not the one fixed here)
+        # self-explains in the CI log instead of needing this investigation repeated from scratch.
         foreach ($tag in 'A', 'B') {
             $info = if ($tag -eq 'A') { $script:P_InfoA } else { $script:P_InfoB }
             if ($null -eq $info) { continue }
@@ -1769,11 +1777,11 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
         # -MeasureTag/-SinceKill (dispatch 000295 Q1): (A) is the heaviest kill in the suite (force-killed
         # mid-300s-sleep) and the one CI caught surviving; (B) rides the same instrumentation for free
         # since it is killed and reaped through the identical path, just a lighter process. STILL AT THE
-        # DEFAULT 5x300ms -- measured 2026-09-13 and deliberately left unchanged: when (A) loses this race
-        # the cause is an orphaned dummy child the kill above never reached (see the WAIT-UNTIL-DEAD comment
-        # and the probe just above), not a slow-but-real handle release, so no MaxAttempts/DelayMs value
-        # fixes it -- widening this would only re-run the exact mistake 36cc4a6 already made once on a
-        # different site. Left open; see CHANGELOG.md [Unreleased] and Remove-PslsRootWithRetry's header.
+        # DEFAULT 5x300ms, deliberately -- the fix above (Stop-IntegrationDaemon, fresh-read) now reaches
+        # (A)'s dummy child reliably, so this window is back to guarding only the narrower, genuine
+        # handle-release race it was originally sized for, not standing in for a kill that never landed.
+        # Widening it further was never the right tool (see Remove-PslsRootWithRetry's own header) and
+        # still is not, now that the actual defect is fixed rather than compensated for.
         if ($script:P_DataA) { Remove-PslsRootWithRetry -Path $script:P_DataA -MeasureTag 'psls-000028-A' -SinceKill $script:P_KillSw }
         if ($script:P_DataB) { Remove-PslsRootWithRetry -Path $script:P_DataB -MeasureTag 'psls-000028-B' -SinceKill $script:P_KillSw }
     }

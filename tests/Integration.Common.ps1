@@ -604,29 +604,42 @@ function Remove-PslsRootWithRetry {
     # time off the caller's own kill timestamp, so a CI log carries real per-attempt numbers
     # instead of another guess. See the 028 AfterAll for the one site that opts in.
     #
-    # MEASURED 2026-09-13, AND THE ANSWER IS "DO NOT WIDEN THIS." Local repro (pwsh 7 and Windows
-    # PowerShell 5.1, the isolated dispatch-000028 Describe looped under concurrent load, ~35
-    # combined iterations) reproduced the exact CI signature 4 times (~20-25%, the same order as
-    # CI's 1-in-5): case (A)'s retry exhausted all 5 attempts in ~1.3-1.5s -- this window's own
+    # MEASURED 2026-09-13, AND THE FIRST ANSWER WAS "DO NOT WIDEN THIS." Local repro (pwsh 7 and
+    # Windows PowerShell 5.1, the isolated dispatch-000028 Describe looped under concurrent load,
+    # ~35 combined iterations) reproduced the exact CI signature 4 times (~20-25%, the same order
+    # as CI's 1-in-5): case (A)'s retry exhausted all 5 attempts in ~1.3-1.5s -- this window's own
     # bound working exactly as sized -- while the outer iteration then blocked for the ENTIRE
     # remaining ~300s of the dummy's own `Start-Sleep -Seconds 300`. Direct process inspection
     # (Get-CimInstance Win32_Process) caught the mechanism live: the daemon host pid confirmed
     # dead, its dummy PSES-child pid confirmed STILL RUNNING, well past both the AfterAll's 5s
-    # wait-until-dead loop and its WaitForExit(5000). Root cause, traced into pses-daemon.ps1: the
-    # session-file snapshot the test captures at state 'starting' is written BEFORE the daemon
-    # assigns its PSES-child process handle, so that snapshot's `psesPid` is null by construction
-    # for case (A) every time -- the AfterAll's direct `Stop-Process -Id psesPid` never had a real
-    # pid to target, leaving `$p.Kill($true)`'s Job-Object tree-walk as the sole path to the child,
-    # and that path is not the one this helper controls or can compensate for. A dead-but-orphaned
-    # child that is still ALIVE and still doing real work is not a slow handle release -- no
-    # MaxAttempts/DelayMs value bounds how long it keeps the directory open, so none was chosen.
-    # This is the deliberately-not-taken fork the Q3 charter asked for: measure, then STOP rather
-    # than re-guess a bigger number when the evidence says the window is unbounded. The real fix
-    # belongs at the kill step (re-read a fresh psesPid from the session file at AfterAll time,
-    # where the daemon has almost certainly since rewritten it, and Stop-Process it directly -- the
-    # same class of fix 36cc4a6 already used for the 000024-surface case), which is out of scope
-    # for this instrumentation-and-measurement pass; see CHANGELOG.md [Unreleased] for the account
-    # left for whoever picks up that follow-up.
+    # wait-until-dead loop and its WaitForExit(5000). A dead-but-orphaned child that is still ALIVE
+    # and still doing real work is not a slow handle release -- no MaxAttempts/DelayMs value bounds
+    # how long it keeps the directory open, so none was chosen. That was the deliberately-not-taken
+    # fork the Q3 charter first asked for: measure, then STOP rather than re-guess a bigger number
+    # when the evidence says the window is unbounded.
+    #
+    # THE REAL FIX LANDED THE SAME ROUND (same dispatch, next question asked): root cause traced
+    # into pses-daemon.ps1 -- the session-file snapshot the 028 AfterAll captured at state
+    # 'starting' is written BEFORE the daemon assigns its PSES-child process handle, so that
+    # snapshot's `psesPid` is null by construction for case (A) every time, and the AfterAll's
+    # direct `Stop-Process -Id psesPid` never had a real pid to target -- leaving `$p.Kill($true)`'s
+    # Job-Object tree-walk as the sole path to the child, a path that does not always reach it.
+    # CONFIRMED (not assumed) that the daemon DOES rewrite the session file with a populated
+    # psesPid: its heartbeat fires on the very first serve-loop iteration (`$lastHeartbeat` starts
+    # at `[DateTime]::MinValue`) and every 10s after, so by AfterAll time a FRESH read is reliably
+    # current. The 028 AfterAll now routes (A) and (B) through `Stop-IntegrationDaemon` (dispatch
+    # 000078's own fresh-read-then-verified-kill helper, already used by every OTHER daemon block
+    # in this file) instead of trusting the stale snapshot -- a verified single-pid `Stop-Process`,
+    # not a tree-walk, so it does not depend on Job-Object nesting working at all. Audited every
+    # other `psesPid`-reading kill site in the suite (tests/corpus, tests/bench, every other
+    # Describe here) for the same "captured before the daemon could have populated it" shape: none
+    # of the others are vulnerable -- they either capture at 'ready' (many heartbeats already
+    # elapsed, psesPid reliable by construction), capture 'unavailable' via a path where the
+    # process is already dead anyway, or already route their kill through a fresh-read helper
+    # (`Stop-IntegrationDaemon` or a local `Stop-DaemonBySession`/`Get-SessionInfo` equivalent).
+    # 028 sub-case A was the one site with the exploitable combination: an early, unreliable
+    # snapshot AND a workload that hangs if the kill silently fails to land. This helper's own
+    # MaxAttempts/DelayMs stayed untouched throughout -- the fix was never here.
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [int]$MaxAttempts = 5,
