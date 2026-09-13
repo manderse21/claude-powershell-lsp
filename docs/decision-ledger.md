@@ -2448,3 +2448,92 @@ assertion.** R17 declined a live gallery dependency on the ground that the struc
 stopping point. This is the same trade and it loses on three further axes that R17 did not face,
 because the dependency here is a *credential* in a repository that publishes attested artifacts,
 not merely a network call. Recorded as a second sighting of that shape.
+
+## Dispatch 000295 -- Review II night 1: rulings R23-R31 of 2026-09-12 RATIFIED by acceptance
+
+### The rulings, verbatim
+
+Carried verbatim per **R18**, which this entry both records and complies with, so each ruling is
+attributable from disk without the chat that produced it. All nine are dated 2026-09-12 and are
+ratified by Mike Andersen's acceptance of dispatch `powershell-lsp/000295`.
+
+**R23 (prohibitedSuppressions enforcement), ruled by Mike Andersen 2026-09-12.** *"**R23**
+(prohibitedSuppressions enforcement) = **D**. A = second -IncludeSuppressed pass in the daemon per
+edit; B = plugin-owned rule flagging a SuppressMessageAttribute that names a prohibited rule, on
+the edit path; C = drop; D = B on the edit path plus A inside lsp-scan.ps1 for the repository and
+CI path. Consumer: dispatch 000294, P1-5 remainder, via issue #235."*
+
+**R24 (PK ratchet), ruled by Mike Andersen 2026-09-12.** *"**R24** (PK ratchet) = **option 1**,
+KeepDispatchCount floor 15. Options as costed in 000293-PHASE-RECORDS.md. Consumer: the next PK
+collection."*
+
+**R25 (capture default), ruled by Mike Andersen 2026-09-12.** *"**R25** (capture default) =
+**flip**. keep = R8 stands, full remains the default; flip = metadata becomes the default for new
+installs, full is explicit opt-in, MINOR, with THREAT-MODEL T6.1, TRUST.md and README amended and
+doctor -Json captureMode (R19) as the fleet check. Consumer: its own charter; not built by Review
+II night 1."*
+
+**R26 (night reports), ruled by Mike Andersen 2026-09-12.** *"**R26** (night reports) = **a**. a =
+hub repo Issues; b = hub Discussions; c = leave. Consumer: leg B of this dispatch if a; the nine
+existing plugin-repo report issues are retro-closed by Mike by hand in every case."*
+
+**R27 (effectiveness benchmark), ruled by Mike Andersen 2026-09-12.** *"**R27** (effectiveness
+benchmark) = **yes**, harness in hub. Three arms, pre-registered metrics, PSSA-CLI-scored, outside
+the publishing repo per R-H. Consumer: W2-1, its own charter."*
+
+**R28 (Pester 6 lane), ruled by Mike Andersen 2026-09-12.** *"**R28** (Pester 6 lane) = **yes**. A
+seventh job with its own name, continue-on-error, Pester 6 on one leg; the 5.x pin stands.
+Consumer: W2-4, its own charter."*
+
+**R29 (existing psls* debris), ruled by Mike Andersen 2026-09-12.** *"**R29** (existing psls*
+debris) = **sweep**. sweep = Mike runs a separate list-then-confirm script; wait = leave until
+further notice; never = leave. In every case leg C of this dispatch refuses roots without a
+marker. Consumer: Mike, and leg C."*
+
+**R30 (display positioning, slug unchanged), ruled by Mike Andersen 2026-09-12.** *"**R30**
+(display positioning, slug unchanged) = **Real PowerShell analysis after every AI edit -- with
+proof it ran**. Consumer: W1-4, its own small charter (plugin.json description, GitHub About,
+README H1)."*
+
+**R31 (direct-analyzer probe), ruled by Mike Andersen 2026-09-12.** *"**R31** (direct-analyzer
+probe) = **yes**. yes = segment decomposition plus a byte-equivalence-gated in-daemon
+Invoke-ScriptAnalyzer probe, nothing ships; segments-only = leg 1 only. Consumer: W2-2, its own
+charter; informs R23 option A."*
+
+### What was built
+
+**Leg A -- the Review II docket landed.** `docs/roadmap-ii/REVIEW-II-DOCKET.md` lands for the first
+time, re-scored against the tip (four of thirty section-1 rows moved: 1, 11, 12, 22 -- see that
+file's own header note and dispatch 000295's outbox for the full account), carrying section 8
+above as its own verbatim record of these same nine rulings. `ENTERPRISE-PROGRAM-DOCKET.md`'s P3-1
+row is corrected from the stale 4,736 lines / 135 functions to the re-derived 5,154 / 150 for
+`scripts/lib/lsp-common.ps1` -- and only that one row; its other two occurrences of the same stale
+figure (the item-8a scorecard row and the item-9 table) are left untouched, out of that item's
+stated scope. `ROADMAP.md` gains one sentence under Next pointing at the docket. R23 is posted
+verbatim as a comment on issue #235, so dispatch 000294 finds it where its own anchor says to look,
+without this dispatch touching P1-5 itself.
+
+**Leg C -- test data-root ownership, teardown, and a janitor (R29's leg C clause).** Every
+transient `psls*`-leafed root the suite mints now writes a `.psls-owner.json` marker at creation
+(`Set-PslsOwnerMarker`, `tests/Integration.Common.ps1`) and is torn down in its own `AfterAll` or
+`finally`; three sites that previously leaked their root directory (`PowerShellLsp.Integration.
+Tests.ps1`'s `psls-000049-*` closure, and both `tests/bench/` driver scripts) now tear down too.
+`Remove-StalePslsRoots` -- the janitor, same file -- deletes only a root that carries a parseable
+marker, whose owner pid is dead, and whose age exceeds 24 hours; a root with no marker (every
+pre-existing `psls*` directory, by construction) is never touched, per R29's own instruction to
+leg C. Full account, the RED-control measurements, and the before/after directory census are in
+dispatch 000295's outbox.
+
+**R25, R27, R28, R30, R31 are recorded here and NOT built by this dispatch** -- each is its own
+later charter, per the ruling text above. **R24** feeds the next PK collection, not a code change.
+**R29** is Mike's own separate hand action (the existing debris sweep); leg C's refusal of
+markerless roots is the only part of R29 this dispatch builds.
+
+### External actions: none
+
+No merge, no promotion to `verified`, no `dispatch f2`, no tag, no workflow trigger of any kind
+including a dry run, no publish, post or submission, no force-push, no branch deleted, no version
+bump, and nothing touched that belongs to another session or another dispatch's own scope (P1-5's
+remainder stays dispatch 000294's to build). One comment was posted on plugin issue #235 (R23,
+verbatim, per leg A item 6) -- a comment, not a merge or a state change on that issue's own
+dispatch. Both PRs this dispatch opens are held for Mike; neither is merged here.

@@ -90,6 +90,8 @@ Queued, not started.
   than quietly dropped. What remains open is the part ratification deliberately did **not** close --
   no target is offered for cold start to first-analysis-ready, because no basis for one exists that
   is not simply the measured value rounded back into a promise.
+- **Review II, the external audit turned into a roadmap.** Rulings ratified by acceptance; the
+  ordered build queue lives at [docs/roadmap-ii/REVIEW-II-DOCKET.md](docs/roadmap-ii/REVIEW-II-DOCKET.md).
 
 ## Gated and paced
 

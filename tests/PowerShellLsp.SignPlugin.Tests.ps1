@@ -48,6 +48,7 @@ BeforeAll {
     $script:SpPluginRoot = Split-Path -Parent $PSScriptRoot
     $script:SpScriptsDir = Join-Path $script:SpPluginRoot 'scripts'
     $script:SpScript     = Join-Path $script:SpScriptsDir 'sign-plugin.ps1'
+    . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Set-PslsOwnerMarker (dispatch 000295)
     # Run the helper under the SAME host the suite is running under, so the windows-powershell
     # leg exercises it on Windows PowerShell 5.1 and the pwsh legs on PowerShell 7.
     $script:SpHost       = (Get-Process -Id $PID).Path
@@ -230,6 +231,7 @@ Describe 'sign-plugin.ps1 -- surface and fail-closed controls (Windows legs)' -S
     BeforeAll {
         $script:SpEmptyDir = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-signempty-' + [guid]::NewGuid().ToString('N').Substring(0, 10))
         [void](New-Item -ItemType Directory -Path (Join-Path $script:SpEmptyDir 'scripts') -Force)
+        Set-PslsOwnerMarker -DataRoot $script:SpEmptyDir -MintingFile 'tests/PowerShellLsp.SignPlugin.Tests.ps1'
     }
 
     AfterAll {
@@ -278,6 +280,7 @@ Describe 'sign-plugin.ps1 -- behavioral signing with a throwaway certificate (Wi
         # them here would leave a modified working tree behind and would change bytes that other
         # guards hash.
         [void](New-Item -ItemType Directory -Path $script:SpCopyRoot -Force)
+        Set-PslsOwnerMarker -DataRoot $script:SpSandbox -MintingFile 'tests/PowerShellLsp.SignPlugin.Tests.ps1'
         Copy-Item -LiteralPath $script:SpScriptsDir -Destination (Join-Path $script:SpCopyRoot 'scripts') -Recurse -Force
         foreach ($f in @(Get-SpSurfaceFile -Root (Join-Path $script:SpCopyRoot 'scripts'))) {
             $script:SpOriginal[$f.FullName] = [System.IO.File]::ReadAllBytes($f.FullName)

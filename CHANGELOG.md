@@ -30,6 +30,148 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **Every test-minted `psls*` temp-root now carries an ownership marker, tears itself down,
+and a janitor can safely reclaim one that does not** (test-only; no shipped behaviour changes).
+Dispatch 000293 surfaced roughly 1,000 leftover `psls*` directories on the dev machine -- isolated
+data roots the suite mints per-Describe under `[IO.Path]::GetTempPath()` that nothing proved was
+ever torn down. `Set-PslsOwnerMarker` (`tests/Integration.Common.ps1`) writes a `.psls-owner.json`
+marker (owner pid, a per-run id, a UTC ISO-8601 timestamp, the minting file) into a root at the
+moment it is created; every transient root the suite mints now calls it, immediately after its own
+`New-Item`. Long-lived, deliberately-reused roots (`psls-pester-data`, `psls-bench-data`, and their
+siblings) get no marker -- reusable caches must never look owned-and-abandoned to a janitor that
+reads age.
+
+**Three sites leaked their root directory on every run and now do not.**
+`PowerShellLsp.Integration.Tests.ps1`'s poisoned-PSSA-cache block (dispatch 000049) minted
+`psls-000049-data-*` / `psls-000049-cache-*` through a closure with no `AfterAll` at all; the
+closure now records every root it mints and an `AfterAll` removes them. `tests/bench/
+Invoke-LatencyBench.ps1` and `tests/bench/Invoke-ProfileSweep.ps1` each stopped their daemon in a
+`finally` block but never removed their own `-DataRoot`; both now do. (`Invoke-ProfileSweep.ps1`'s
+separate, fixed-name `ScratchDir` is one of the deliberately-reused roots above and is untouched.)
+
+**A new suite-final assertion (below) that proves zero net new `psls*` roots survive a full run
+caught three MORE pre-existing leaks on its first real runs** -- dispatch 000024's, 000028's, and
+000030's daemon `AfterAll`s, none of them this dispatch's own code, none part of the three sites
+above. All three killed a daemon and removed its data root in the same breath, with no wait for
+the killed process to actually be gone first. The fix waits for the killed pid to leave
+`Get-Process`, then retries the removal itself (`Remove-PslsRootWithRetry`, up to 1.5s) rather
+than trying once -- closing the narrow window where a killed PSES host's open handles on its own
+`-DataRoot` have not all released the instant `Get-Process` stops seeing the pid. 000030 and
+000028's sub-case B were reliably clean under this fix; **dispatch 000028's sub-case A was not**
+-- see below (the prior text here claiming all three were clean was itself wrong, the same
+over-claim corrected once already for the `'surface'` sub-case two paragraphs down) -- but is now.
+
+**Dispatch 000028 sub-case A needed a kill fix, not a longer retry, and now has one.** Review-II
+night 1 (2026-09-13): PR #236's windows-pwsh leg caught a real `psls-000028-A-*` survivor
+pre-merge. Instrumenting `Remove-PslsRootWithRetry` (optional `-MeasureTag`/`-SinceKill`, inert
+unless a caller opts in) plus a direct pid-liveness probe in the `AfterAll` (both now permanent)
+reproduced the exact signature locally under pwsh 7 and Windows PowerShell 5.1 alike, ~20-25% of
+loop iterations under concurrent load -- the same order as CI's 1-in-5. Root cause, confirmed by
+direct process inspection (`Get-CimInstance Win32_Process`): the daemon host pid dies on request,
+but its dummy PSES-child pid does not -- it keeps running its test-only `Start-Sleep -Seconds 300`
+for the full remainder of that sleep, holding the `-DataRoot` open the entire time. Traced into
+`pses-daemon.ps1`: the session-file snapshot the test captures at state `'starting'` is written
+before the daemon assigns its PSES-child process handle, so that snapshot's `psesPid` is `$null`
+by construction for case (A) every time -- the `AfterAll`'s direct `Stop-Process -Id psesPid`
+never had a real pid to target, leaving `Process.Kill($true)`'s Job-Object tree-walk as the sole
+path to the child, and that path does not always reach it. **This is not the handle-release race
+the paragraph above describes and closes** -- a still-*alive*, still-working child is not bounded
+by any `MaxAttempts`/`DelayMs`, so none was widened to chase it (that would only repeat the
+mistake the `'surface'` misdiagnosis below already made once).
+
+**The fix**, landed the same round rather than deferred: confirmed by reading `pses-daemon.ps1`
+(not assumed) that its heartbeat rewrites the session file with a populated `psesPid` on the very
+first serve-loop iteration and every 10s after, so a FRESH read at `AfterAll` time is reliably
+current by then. The `AfterAll` now routes both (A) and (B) through `Stop-IntegrationDaemon`
+(dispatch 000078's fresh-read-then-verified-kill helper, already used by every other daemon block
+in this file) instead of trusting the stale `BeforeAll`-time snapshot -- a verified single-pid
+`Stop-Process`, not a Job-Object tree-walk, so it no longer depends on tree-walk nesting working
+at all. Audited every other `psesPid`-reading kill site in the suite (`tests/corpus`, `tests/bench`,
+every other `Describe` in this file) for the same "captured before the daemon could have populated
+it" shape: none of the others are vulnerable -- they capture at `'ready'` (many heartbeats already
+elapsed), capture `'unavailable'` via a path where the process is already dead anyway, or already
+route their kill through a fresh-read helper (`Stop-IntegrationDaemon` or a local
+`Stop-DaemonBySession`/`Get-SessionInfo` equivalent). Case (A) was the one site with the
+exploitable combination: an early, unreliable snapshot AND a workload that hangs if the kill
+silently fails to land. Verified: the isolated dispatch-000028 Describe looped under the same
+concurrent-load conditions that reproduced the original ~20-25% failure rate, under both pwsh 7
+and Windows PowerShell 5.1, with zero reproductions across the combined run. `Remove-PslsRootWithRetry`'s
+`MaxAttempts`/`DelayMs` were never touched -- the fix was never there.
+
+**Dispatch 000024's `'surface'` sub-case needed a second, different fix, not a longer retry.**
+An earlier pass on this same work mistook it for a slower version of the same handle-release
+race and widened `Remove-PslsRootWithRetry` to 20x1.5s (30s) to cover it. That diagnosis was
+wrong: the fixture then leaked deterministically on every CI leg -- including ubuntu-pwsh and
+macos-pwsh, where an `unlink` does not wait on a live process's open handles at all, so a
+handle-drain race cannot occur there, let alone on every run. The real defect was in the
+fixture's own reap step. `'surface'` is the one daemon in this suite launched through the
+production `session-start.ps1` path (`Start-PsesDaemonDetached`, fire-and-forget by design -- the
+hook exits without waiting for the daemon to do anything), rather than the test's own direct
+process launch that every other daemon here uses; its `AfterAll` therefore has no process handle
+to kill and no prior wait for a determinate state, so the test instead read the daemon's pid from
+its session file with a single, unretried `Test-Path` immediately after the hook returned. That
+file often did not exist yet, so the reap was skipped outright, and the daemon -- which by design
+never exits while serving `'unavailable'` -- was left running for `AfterAll` to find no process to
+kill and nothing but a live directory to fail to remove. No amount of retrying the *deletion* can
+wait out a process nobody ever asked to stop. The fix waits for the session file to appear (same
+bound the other daemons in this file already wait on) before reading its pid, so the daemon is
+reliably reaped before teardown ever calls `Remove-PslsRootWithRetry` -- which is why that
+helper's window could come back down to 1.5s instead of staying inflated to paper over a leak it
+was never able to fix.
+
+**Fix-forward on the same census: the retry-on-remove idiom above had only been applied to
+000024/000028/000030, not to every `AfterAll` that kills a daemon and removes its own `-DataRoot`.**
+A follow-up sweep of every fixture that mints a `psls*` root, prompted by the census turning up a
+fourth survivor (`psls-degraded-*`, dispatch 000022's `(d)` sub-case, windows-pwsh and
+windows-powershell only -- both POSIX legs stayed clean, the same signature that ruled out a
+`Remove-PslsRootWithRetry`-side regression and pointed at another unfixed call site instead), found
+the identical unretried `Remove-Item` immediately after a kill in eight more places: 000022's `(d)`
+itself, 000225's relaunch-control root, 000293's `Get-IntegrationDaemonLeak` fixture, the second
+000289 block (whose mutant daemon runs a REAL copied `pses-daemon.ps1` from its own root),
+`PowerShellLsp.ServeShim.Tests.ps1`'s EPIPE-guard shim+stub, `PowerShellLsp.DaemonSurvival.Tests.ps1`'s
+dispatch-000237 integration root, and both `tests/bench/Invoke-LatencyBench.ps1` and
+`Invoke-ProfileSweep.ps1` (the two files the paragraph above gave an `AfterAll` at all -- that pass
+added the removal but not the retry). All eight now route their final removal through
+`Remove-PslsRootWithRetry`.
+
+**One of the eight also carried a naming defect that hid it from every backstop at once.**
+`PowerShellLsp.DaemonSurvival.Tests.ps1`'s dispatch-000237 integration root minted as
+`psl-000237-*` -- missing the `s` every sibling `psls-<dispatch>-*` fixture carries -- which put it
+outside both the directory census (`-Filter 'psls*'`) and `Get-IntegrationDaemonLeak`'s own
+`^psls`-leaf recognition, and it never called `Set-PslsOwnerMarker` either, so the janitor could not
+have reclaimed it regardless. Corrected to `psls-000237-*` and given a marker, so a leak there is
+now visible to the same machinery as everywhere else.
+
+**`Remove-StalePslsRoots` is the janitor**, and its whole contract is what it refuses. It deletes a
+`psls*`-leafed directory under the OS temp root only when ALL of: a `.psls-owner.json` marker is
+present and parses; the marker's owner pid is dead; and its `createdAt` is more than 24 hours old.
+Anything else -- no marker, a live owner, too young, or a marker that fails to parse -- is left
+strictly alone, which is what makes it safe to run against the pre-existing debris: none of those
+~1,000 directories carries a marker, so the janitor cannot touch a single one of them (the sweep of
+that existing debris is a separate, Mike-run, list-then-confirm script -- ruling R29). `-DryRun`
+defaults to `$true`.
+
+**RED controls, each measured, not asserted.** A synthetic four-case set (marker+dead-pid+25h-old,
+marker+live-pid, no-marker, marker+dead-pid+1h-old) proves the janitor deletes exactly the first and
+leaves the other three -- the live pid is a real spawned-and-reaped process, independently proven
+dead before the case runs, never a guessed number. Each of the three survivor guards then carries
+its own mutant: a copy of the shipped function body with exactly one `continue` removed, run against
+a fresh case holding only that guard's shape, asserting the survivor is now gone -- proving the
+*guard* is what kept it alive, not an accident of the fixture. A fourth case (an unparseable marker)
+and a fifth (a non-`psls` leaf) are refused too. A **sixth, independent RED control** measures the
+directory-census backstop below against the REAL pre-fix code: with the `psls-000049` `AfterAll`
+temporarily reverted to empty, a targeted Pester run (suite-start census + that block + the
+suite-final backstop) reports `Expected 0 ... but got` the two leaked roots by name -- the census
+would have caught the actual historical bug, not a synthetic stand-in for it. Reverted back to a
+byte-identical restore before push.
+
+**A new suite-final assertion proves zero net new `psls*` roots survive a full run**, the directory
+sibling of the existing suite-final daemon-leak backstop (dispatch 000078): a name-only census is
+taken at suite start and differenced against one taken at suite end, excluding the deliberately
+long-lived roots named above. A filtered run that never executes the suite-start `Describe` has no
+baseline to difference against and reports `Inconclusive` by name, rather than a false pass or a
+false failure.
+
 PATCH: **The suite's daemon-leak backstop now recognizes a suite-owned daemon by its DATA ROOT,
 not by a hand-maintained `-SessionId` prefix allowlist** (test-only; no shipped behaviour changes).
 `Get-IntegrationDaemonLeak` (`tests/Integration.Common.ps1`) previously matched a live

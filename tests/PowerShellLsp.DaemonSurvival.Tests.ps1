@@ -298,9 +298,20 @@ Describe 'Integration: the real daemon survives an abandoned reply (dispatch 000
     BeforeAll {
         $script:DsRoot = Split-Path -Parent $PSScriptRoot
         . (Join-Path $script:DsRoot 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Set-PslsOwnerMarker + Remove-PslsRootWithRetry (dispatch 000295 fix-forward)
 
-        $script:DsDataRoot = Join-Path ([IO.Path]::GetTempPath()) ('psl-000237-' + [guid]::NewGuid().ToString('N').Substring(0, 10))
+        # NAMING FIX (dispatch 000295 fix-forward): this root minted as 'psl-000237-*' -- missing
+        # the 's' every sibling fixture's 'psls-<dispatch>-*' convention carries -- which put it
+        # outside BOTH the suite-final directory census (Get-ChildItem -Filter 'psls*') and
+        # Get-IntegrationDaemonLeak's own daemon-recognition pattern (leaf name matching '^psls'),
+        # so a real pses-daemon.ps1 launched with -DataRoot under the old name could survive a
+        # whole run undetected by either backstop. It also never got a Set-PslsOwnerMarker call,
+        # so Remove-StalePslsRoots could not have reclaimed it either. All three are fixed together
+        # here: the corrected prefix makes this root visible to the census and the leak scan, and
+        # the marker below makes it eligible for the janitor.
+        $script:DsDataRoot = Join-Path ([IO.Path]::GetTempPath()) ('psls-000237-' + [guid]::NewGuid().ToString('N').Substring(0, 10))
         New-Item -ItemType Directory -Force -Path $script:DsDataRoot | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:DsDataRoot -MintingFile 'tests/PowerShellLsp.DaemonSurvival.Tests.ps1'
         $script:DsSid = 'ds' + [guid]::NewGuid().ToString('N').Substring(0, 10)
         $script:DsPipe = Get-DaemonPipeName -SessionId $script:DsSid
 
@@ -357,7 +368,9 @@ Describe 'Integration: the real daemon survives an abandoned reply (dispatch 000
         if ($null -ne $script:DsProc) {
             try { if (-not $script:DsProc.HasExited) { $script:DsProc.Kill($true) } } catch { }
         }
-        try { Remove-Item -LiteralPath $script:DsDataRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+        # RETRY, not one-shot (dispatch 000295 fix-forward) -- see Remove-PslsRootWithRetry's own
+        # header for why a Kill($true) with no subsequent wait cannot be trusted into one attempt.
+        Remove-PslsRootWithRetry -Path $script:DsDataRoot
     }
 
     It 'the daemon came up and answered a ping (the block cannot pass vacuously)' {

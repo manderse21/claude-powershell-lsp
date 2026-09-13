@@ -12,6 +12,7 @@ BeforeAll {
     $script:PluginRoot = Split-Path -Parent $PSScriptRoot
     $script:ScriptsDir = Join-Path $script:PluginRoot 'scripts'
     . (Join-Path $script:ScriptsDir 'lib/lsp-common.ps1')
+    . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Set-PslsOwnerMarker (dispatch 000295)
 
     # Save the ambient values ONCE. CI sets none of these, but a developer box might, and a
     # suite that clobbered a real value would be a nasty thing to debug.
@@ -78,6 +79,7 @@ Describe 'Artifact-source resolution order and misses (dispatch 000244)' {
         $script:OutDir = Join-Path $script:SandBox 'out'
         New-Item -ItemType Directory -Force -Path $script:StageDir | Out-Null
         New-Item -ItemType Directory -Force -Path $script:OutDir | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:SandBox -MintingFile 'tests/PowerShellLsp.AirgapBootstrap.Tests.ps1'
     }
     AfterAll {
         # Scoped to this suite's own GUID-named sandbox under the temp directory.
@@ -375,6 +377,7 @@ Describe 'Airgap bundle builder (dispatch 000244)' {
         # machine, far from the build that caused it.
         $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-bad-' + [Guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Force -Path $sandbox | Out-Null
+        Set-PslsOwnerMarker -DataRoot $sandbox -MintingFile 'tests/PowerShellLsp.AirgapBootstrap.Tests.ps1'
         try {
             $psesTag = ([regex]"\`$PsesTag\s*=\s*'([^']+)'").Match(
                 (Get-Content -LiteralPath (Join-Path $script:ScriptsDir 'ensure-pses.ps1') -Raw)).Groups[1].Value
@@ -388,10 +391,24 @@ Describe 'Airgap bundle builder (dispatch 000244)' {
             { & $script:BuilderPath -RepoRoot $script:PluginRoot -SourceDir $sandbox -VerifyOnly } |
                 Should -Throw -ExpectedMessage '*does NOT match its pin*'
         } finally {
-            if (Test-Path -LiteralPath $sandbox) {
-                Get-ChildItem -LiteralPath $sandbox -File | Remove-Item -Force -ErrorAction SilentlyContinue
-                Remove-Item -LiteralPath $sandbox -ErrorAction SilentlyContinue
-            }
+            # Remove-PslsRootWithRetry (Integration.Common.ps1), not the old two-step "delete the
+            # files, then rmdir the now-hopefully-empty directory" dance: that final Remove-Item
+            # carried no -Recurse, trusting the Get-ChildItem -File pass just above to have
+            # emptied $sandbox first -- but Get-ChildItem without -Force does not return a HIDDEN
+            # item, and PowerShell's non-Windows FileSystem provider treats a dot-prefixed name
+            # (Set-PslsOwnerMarker's own .psls-owner.json, written into this sandbox above) as
+            # Hidden by Unix convention; Windows does not infer Hidden from a leading dot, so the
+            # marker was skipped and left behind on POSIX only. A non-empty directory removed
+            # with no -Recurse hits PowerShell's own "container ... and the Recurse parameter was
+            # not specified" prompt (Microsoft's own docs: -Confirm:$false does not suppress it,
+            # by design), which a non-interactive CI host cannot answer -- it throws
+            # NullReferenceException trying to render the prompt instead. This was never reachable
+            # from release/New-AirgapBundle.ps1 itself: its own pin-mismatch handling is a plain
+            # throw with no interactive anything, and its own staging-directory cleanup already
+            # passes -Recurse. -Recurse -Force removes the whole directory in one call regardless
+            # of what is in it, hidden or not -- the same idiom every other marked psls root in
+            # this suite tears down with.
+            Remove-PslsRootWithRetry -Path $sandbox
         }
     }
     It 'states that the manifest is documentation, not a trust input' {

@@ -35,6 +35,7 @@ BeforeAll {
 
     $script:HiRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-hookinstr-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
     New-Item -ItemType Directory -Force -Path $script:HiRoot | Out-Null
+    Set-PslsOwnerMarker -DataRoot $script:HiRoot -MintingFile 'tests/PowerShellLsp.HookInstrumentation.Tests.ps1'
 
     # A child that NEVER exits -- blocks on an event nobody sets. No sleep, no timing window.
     $script:HiNeverExits = Join-Path $script:HiRoot 'never-exits.ps1'

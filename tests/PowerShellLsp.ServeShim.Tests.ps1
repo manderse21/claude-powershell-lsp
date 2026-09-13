@@ -272,6 +272,7 @@ Describe 'ServeShim: the broken-pipe (EPIPE) guard on the write path (dispatch 0
         # runspace shutdown hang and the forced exit load-bearing.
         BeforeAll {
             . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+            . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Set-PslsOwnerMarker (dispatch 000295)
 
             $script:G = @{ ShimPid = 0; StubPid = 0 }
             $root = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-epipe-' + ([guid]::NewGuid().ToString('N').Substring(0, 8)))
@@ -279,6 +280,7 @@ Describe 'ServeShim: the broken-pipe (EPIPE) guard on the write path (dispatch 0
             $dataDir = Join-Path $root 'data'
             New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
             New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+            Set-PslsOwnerMarker -DataRoot $root -MintingFile 'tests/PowerShellLsp.ServeShim.Tests.ps1'
             $script:EpipeRoot = $root
             $script:EpipeStubPidFile = Join-Path $root 'stub.pid'
             $script:EpipeStubRxFile = Join-Path $root 'stub.rx'
@@ -448,7 +450,12 @@ Start-Sleep -Seconds 600
                     if ($null -ne $doomed) { try { $doomed.Kill($true) } catch { try { $doomed.Kill() } catch { } } }
                 } catch { }
             }
-            try { if (Test-Path -LiteralPath $script:EpipeRoot) { Remove-Item -LiteralPath $script:EpipeRoot -Recurse -Force -ErrorAction SilentlyContinue } } catch { }
+            # RETRY, not one-shot (dispatch 000295 fix-forward): the shim is a real pwsh host
+            # actively writing pses-serve-shim.log under EpipeRoot when the guard fires, and the
+            # test asserts on its exit rather than always waiting it out first (a failed-guard run
+            # reaches this AfterAll with the shim still alive). See Remove-PslsRootWithRetry's own
+            # header for why a Kill() with no subsequent wait cannot be trusted into one attempt.
+            Remove-PslsRootWithRetry -Path $script:EpipeRoot
         }
 
         It 'the client->PSES write path WORKED and the stub was ALIVE at injection (the guard cannot pass vacuously)' {

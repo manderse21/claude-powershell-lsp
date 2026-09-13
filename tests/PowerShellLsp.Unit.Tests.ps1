@@ -8,6 +8,7 @@ BeforeAll {
     $script:ScriptsDir = Join-Path $script:PluginRoot 'scripts'
     . (Join-Path $script:ScriptsDir 'lib/lsp-common.ps1')
     . (Join-Path $script:ScriptsDir 'lib/security-classifier.ps1')
+    . (Join-Path $PSScriptRoot 'Integration.Common.ps1')   # Set-PslsOwnerMarker (dispatch 000295)
 }
 
 # The dogfood reader is a MODULE (dispatch 000156), and its Describes below run inside
@@ -438,6 +439,11 @@ Describe 'Write-StatsLine -- telemetry writer (Track A: JSONL, append, rotation,
     BeforeEach {
         $script:PrevData = $env:CLAUDE_PLUGIN_DATA
         $script:TmpData = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-stats-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        # Write-StatsLine would create this root lazily via -Force; creating it here is what
+        # gives the ownership marker somewhere to land (dispatch 000295). Behaviour-neutral:
+        # nothing below asserts the root is absent, and the writer still makes its own logs/.
+        New-Item -ItemType Directory -Force -Path $script:TmpData | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:TmpData -MintingFile 'tests/PowerShellLsp.Unit.Tests.ps1'
         $env:CLAUDE_PLUGIN_DATA = $script:TmpData
         $script:StatsFile = Join-Path (Get-LogDir) 'stats.jsonl'
     }
@@ -2864,6 +2870,7 @@ Describe 'format-on-edit APPLY helpers -- byte fidelity + stale-write guard (dis
         BeforeEach {
             $script:AppDir = Join-Path ([System.IO.Path]::GetTempPath()) ('pslsp-apply-' + [System.Guid]::NewGuid().ToString('N').Substring(0, 10))
             New-Item -ItemType Directory -Force -Path $script:AppDir | Out-Null
+            Set-PslsOwnerMarker -DataRoot $script:AppDir -MintingFile 'tests/PowerShellLsp.Unit.Tests.ps1'
             $script:AppFile = Join-Path $script:AppDir 'f.ps1'
         }
         AfterEach {
@@ -5619,6 +5626,7 @@ Describe 'Org policy v2 -- off, and a v1 policy file, are byte-identical (dispat
         )
         $script:V2Dir = Join-Path ([System.IO.Path]::GetTempPath()) ('pslsp-p15-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $script:V2Dir -Force | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:V2Dir -MintingFile 'tests/PowerShellLsp.Unit.Tests.ps1'
         $script:V1File = Join-Path $script:V2Dir 'v1.psd1'
         Set-Content -LiteralPath $script:V1File -Encoding ascii -Value "@{ ExcludeRules = @('PSUseApprovedVerbs') }"
     }
@@ -5769,6 +5777,7 @@ Describe 'Org policy v2 -- RED control: the PRIOR IMPLEMENTATION was not severit
         $script:RcMutantText = $script:RcText.Replace($script:RcAnchor, "    if (`$true) { return @(`$Records) }")
         $script:RcDir = Join-Path ([System.IO.Path]::GetTempPath()) ('pslsp-p15red-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $script:RcDir -Force | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:RcDir -MintingFile 'tests/PowerShellLsp.Unit.Tests.ps1'
         $script:RcFile = Join-Path $script:RcDir 'lsp-common-prior.ps1'
         Set-Content -LiteralPath $script:RcFile -Value $script:RcMutantText -Encoding utf8 -NoNewline
     }
