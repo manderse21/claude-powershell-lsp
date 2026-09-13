@@ -5575,6 +5575,74 @@ Describe 'Org policy -- integrity gate (dispatch 000259, threat T4.1)' {
     }
 }
 
+Describe 'Get-PolicyModeInfo -- POWERSHELL_LSP_POLICY_MODE resolution (dispatch 000299, W3-3)' {
+    BeforeAll { $script:PrevPolicyMode = [Environment]::GetEnvironmentVariable('POWERSHELL_LSP_POLICY_MODE') }
+    AfterAll { [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_POLICY_MODE', $script:PrevPolicyMode) }
+
+    It 'carries resolved, raw and recognized for <Raw>' -TestCases @(
+        @{ Raw = $null; Resolved = 'open'; ExpRaw = ''; Recognized = $false }
+        @{ Raw = 'open'; Resolved = 'open'; ExpRaw = 'open'; Recognized = $true }
+        @{ Raw = 'closed'; Resolved = 'closed'; ExpRaw = 'closed'; Recognized = $true }
+        @{ Raw = '  CLOSED  '; Resolved = 'closed'; ExpRaw = '  CLOSED  '; Recognized = $true }
+        @{ Raw = 'closd'; Resolved = 'open'; ExpRaw = 'closd'; Recognized = $false }
+    ) {
+        param($Raw, $Resolved, $ExpRaw, $Recognized)
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_POLICY_MODE', $Raw)
+        $info = Get-PolicyModeInfo
+        $info.resolved | Should -BeExactly $Resolved
+        $info.raw | Should -BeExactly $ExpRaw
+        $info.recognized | Should -Be $Recognized
+    }
+
+    It 'A TYPO IS VISIBLE AS A TYPO, and falls back to open -- the SAME direction as captureMode' {
+        # The opposite direction from Get-OtelEndpointInfo, and deliberately so: what sits on the
+        # other side of a typo here is "every edit on the fleet stops being checked", not "an
+        # egress nobody named" -- permissive is the safe fallback here, exactly as it is for
+        # POWERSHELL_LSP_CAPTURE_MODE.
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_POLICY_MODE', 'clossed')
+        $typo = Get-PolicyModeInfo
+        [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_POLICY_MODE', $null)
+        $unset = Get-PolicyModeInfo
+
+        $typo.resolved | Should -BeExactly $unset.resolved
+        $typo.resolved | Should -BeExactly 'open'
+        $typo.raw | Should -Not -BeExactly $unset.raw
+        $typo.recognized | Should -Be $false
+    }
+}
+
+Describe 'Test-PolicyEnforcementFailClosed -- the W3-3 decision, pure (dispatch 000299)' {
+    # Every branch of the decision table, so none of it is unexercised (mirrors the
+    # Test-ProvenExitCarriesSwitch discipline in PowerShellLsp.DoctorJson.Tests.ps1).
+    It 'OPEN is a no-op by construction -- $false regardless of KnobSet/Warning' {
+        Test-PolicyEnforcementFailClosed -Mode 'open' -KnobSet $true -Warning 'orgPolicy integrity check FAILED; no org exclusions applied: X' |
+            Should -BeFalse
+        Test-PolicyEnforcementFailClosed -Mode 'open' -KnobSet $false -Warning '' | Should -BeFalse
+    }
+    It 'CLOSED with no policy configured is NOT a trigger -- nothing to validate' {
+        Test-PolicyEnforcementFailClosed -Mode 'closed' -KnobSet $false -Warning '' | Should -BeFalse
+        # Defensive completeness: KnobSet=false gates first even if a caller somehow passed a
+        # non-empty warning alongside it (Import-OrgPolicy itself never produces this combination).
+        Test-PolicyEnforcementFailClosed -Mode 'closed' -KnobSet $false -Warning 'unreachable in practice' |
+            Should -BeFalse
+    }
+    It 'CLOSED with a policy configured and SATISFIED is NOT a trigger' {
+        Test-PolicyEnforcementFailClosed -Mode 'closed' -KnobSet $true -Warning '' | Should -BeFalse
+    }
+    It 'THE TRIGGER: CLOSED with a policy configured and DEGRADED fails closed' {
+        Test-PolicyEnforcementFailClosed -Mode 'closed' -KnobSet $true `
+            -Warning 'orgPolicy integrity check FAILED; no org exclusions applied: X' | Should -BeTrue
+        Test-PolicyEnforcementFailClosed -Mode 'closed' -KnobSet $true `
+            -Warning 'orgPolicy file not found; no org exclusions applied: X' | Should -BeTrue
+    }
+    It 'RED CONTROL: PROVES BOTH DIRECTIONS on the identical degrade -- the W3-3 acceptance shape' {
+        $mismatchWarning = 'orgPolicy integrity check FAILED; no org exclusions applied: C:\org\policy.psd1'
+        (Test-PolicyEnforcementFailClosed -Mode 'closed' -KnobSet $true -Warning $mismatchWarning) |
+            Should -BeTrue -Because 'closed + a hash mismatch must resolve to unavailable'
+        (Test-PolicyEnforcementFailClosed -Mode 'open' -KnobSet $true -Warning $mismatchWarning) |
+            Should -BeFalse -Because 'open + the SAME mismatch must behave exactly as today (fail-open, T4.2)'
+    }
+}
 
 # --- Policy v2: the INCLUDE-SIDE payload (dispatch 000289, ruling R9) -------
 # The v1 payload is subtract-only: an org can take a rule away, it cannot ask for one. The

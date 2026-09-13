@@ -440,7 +440,7 @@ Describe 'captureMode -- the fleet-visible half of P0-2 (dispatch 000282, ruling
         $o = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd'))) | ConvertFrom-Json
         $o.schemaVersion | Should -Be 1
         (@($o.PSObject.Properties.Name) -join ',') |
-            Should -BeExactly 'schemaVersion,status,versions,provenanceFloor,captureMode,otelExport,summary,checks'
+            Should -BeExactly 'schemaVersion,status,versions,provenanceFloor,captureMode,otelExport,orgPolicy,summary,checks'
     }
 
     It 'no check status, count or exit code moved -- captureMode is not a check' {
@@ -631,7 +631,7 @@ Describe 'otelExport -- the fleet-visible half of P2-1 (dispatch 000291)' {
         $o = (Get-EnvelopeText) | ConvertFrom-Json
         $o.schemaVersion | Should -Be 1
         (@($o.PSObject.Properties.Name) -join ',') |
-            Should -BeExactly 'schemaVersion,status,versions,provenanceFloor,captureMode,otelExport,summary,checks'
+            Should -BeExactly 'schemaVersion,status,versions,provenanceFloor,captureMode,otelExport,orgPolicy,summary,checks'
     }
 
     It 'no check status, count or exit code moved -- otelExport is not a check' {
@@ -651,5 +651,154 @@ Describe 'otelExport -- the fleet-visible half of P2-1 (dispatch 000291)' {
         $withEp.summary.unknown | Should -Be $withNone.summary.unknown
         (Get-DoctorExitCode -Results $results) | Should -Be (Get-DoctorExitCode -Results $results)
         $withEp.otelExport.configured | Should -Not -Be $withNone.otelExport.configured
+    }
+}
+
+Describe 'orgPolicy -- policy identity in the doctor envelope (dispatch 000299, W3-2)' {
+    # "Which exact policy was active on this device" -- without a trust root (signing stays
+    # deferred under R9). Unlike captureMode/otelExport this field has no env-var typo to
+    # recognize: `path` is the existing Tier-1 `orgPolicy` userConfig knob, and the interesting
+    # axis is FILE state (present/absent, sidecar present/absent/satisfied), not string parsing.
+    BeforeAll {
+        function New-OpFixtureDir {
+            $d = Join-Path $TestDrive ('op-json-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+            return $d
+        }
+        function Get-EnvelopeText {
+            return (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd')))
+        }
+    }
+    AfterEach {
+        Remove-Item Env:\CLAUDE_PLUGIN_OPTION_ORGPOLICY -ErrorAction SilentlyContinue
+    }
+
+    It 'reports the NO-POLICY state HONESTLY -- every key explicit, none absent or empty-stringed to mean it' {
+        Remove-Item Env:\CLAUDE_PLUGIN_OPTION_ORGPOLICY -ErrorAction SilentlyContinue
+        $o = (Get-EnvelopeText) | ConvertFrom-Json
+        $o.orgPolicy.path | Should -BeExactly ''
+        $o.orgPolicy.sha256 | Should -BeExactly ''
+        $o.orgPolicy.sidecarMatch | Should -BeExactly 'not-present'
+        $o.orgPolicy.applied | Should -Be $false
+    }
+
+    It 'a configured policy with NO sidecar: sha256 is the real digest, sidecarMatch is not-present, applied is true' {
+        # Pure opt-in fail-open path (dispatch 000142/000259), unchanged: no sidecar is NOT a
+        # degrade, and exclusions are genuinely applied.
+        $dir = New-OpFixtureDir
+        $policy = Join-Path $dir 'org.psd1'
+        Set-Content -LiteralPath $policy -Encoding ascii -Value "@{ ExcludeRules = @('PSUseApprovedVerbs') }"
+        $expectedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $policy).Hash
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $policy
+
+        $o = (Get-EnvelopeText) | ConvertFrom-Json
+        $o.orgPolicy.path | Should -BeExactly $policy
+        $o.orgPolicy.sha256 | Should -BeExactly $expectedHash
+        $o.orgPolicy.sidecarMatch | Should -BeExactly 'not-present'
+        $o.orgPolicy.applied | Should -Be $true
+    }
+
+    It 'a SATISFIED sidecar reports match and applied=true' {
+        $dir = New-OpFixtureDir
+        $policy = Join-Path $dir 'org.psd1'
+        Set-Content -LiteralPath $policy -Encoding ascii -Value "@{ ExcludeRules = @('PSUseApprovedVerbs') }"
+        Set-Content -LiteralPath ($policy + '.sha256') -Encoding ascii `
+            -Value (Get-FileHash -Algorithm SHA256 -LiteralPath $policy).Hash
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $policy
+
+        $o = (Get-EnvelopeText) | ConvertFrom-Json
+        $o.orgPolicy.sidecarMatch | Should -BeExactly 'match'
+        $o.orgPolicy.applied | Should -Be $true
+    }
+
+    It 'a MISMATCHED sidecar reports mismatch and applied=false -- exclusions NOT lifted' {
+        $dir = New-OpFixtureDir
+        $policy = Join-Path $dir 'org.psd1'
+        Set-Content -LiteralPath $policy -Encoding ascii -Value "@{ ExcludeRules = @('PSUseApprovedVerbs') }"
+        Set-Content -LiteralPath ($policy + '.sha256') -Encoding ascii -Value ('f' * 64)
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $policy
+
+        $o = (Get-EnvelopeText) | ConvertFrom-Json
+        $o.orgPolicy.sidecarMatch | Should -BeExactly 'mismatch'
+        $o.orgPolicy.applied | Should -Be $false
+        $o.orgPolicy.sha256 | Should -Not -BeNullOrEmpty -Because 'the digest of the file AS READ is reported regardless of whether it passed the pin'
+    }
+
+    It 'a configured but MISSING file reports the path, no hash, not-present, and applied=false' {
+        $dir = New-OpFixtureDir
+        $missing = Join-Path $dir 'gone.psd1'
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $missing
+
+        $o = (Get-EnvelopeText) | ConvertFrom-Json
+        $o.orgPolicy.path | Should -BeExactly $missing
+        $o.orgPolicy.sha256 | Should -BeExactly ''
+        $o.orgPolicy.sidecarMatch | Should -BeExactly 'not-present'
+        $o.orgPolicy.applied | Should -Be $false
+    }
+
+    It 'publishes FOUR keys and no others' {
+        $dir = New-OpFixtureDir
+        $policy = Join-Path $dir 'org.psd1'
+        Set-Content -LiteralPath $policy -Encoding ascii -Value '@{ ExcludeRules = @() }'
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $policy
+        $o = (Get-EnvelopeText) | ConvertFrom-Json
+        (@($o.orgPolicy.PSObject.Properties.Name) -join ',') | Should -BeExactly 'path,sha256,sidecarMatch,applied'
+    }
+
+    It 'RED CONTROL: a naive byte-equality sidecar check misreads the sha256sum shape as a mismatch' {
+        # The exact hazard the dispatch guards against: deriving sidecarMatch from a SEPARATE,
+        # naive comparison instead of calling the shipped Test-OrgPolicyIntegrity. The
+        # 'sha256sum shape' ('<hash> *<name>') is a form Test-OrgPolicyIntegrity already accepts
+        # (see "Org policy -- integrity gate" -- "accepts the sha256sum shape"), so a mutant that
+        # does not know about it calls a SATISFIED sidecar a mismatch.
+        $dir = New-OpFixtureDir
+        $policy = Join-Path $dir 'org.psd1'
+        Set-Content -LiteralPath $policy -Encoding ascii -Value "@{ ExcludeRules = @('PSUseApprovedVerbs') }"
+        $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $policy).Hash
+        Set-Content -LiteralPath ($policy + '.sha256') -Encoding ascii -Value ($hash + ' *org.psd1')
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $policy
+
+        function Get-NaiveSidecarMatch([string]$PolicyPath) {
+            $sidecar = $PolicyPath + '.sha256'
+            if (-not (Test-Path -LiteralPath $sidecar)) { return 'not-present' }
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $PolicyPath).Hash
+            $declared = (Get-Content -LiteralPath $sidecar -Raw).Trim()
+            if ($declared -eq $actual) { return 'match' } else { return 'mismatch' }
+        }
+
+        $shipped = (Get-EnvelopeText | ConvertFrom-Json).orgPolicy.sidecarMatch
+        $naive = Get-NaiveSidecarMatch -PolicyPath $policy
+
+        $shipped | Should -BeExactly 'match' -Because 'Test-OrgPolicyIntegrity already parses the sha256sum shape'
+        $naive | Should -BeExactly 'mismatch' -Because 'a byte-equality comparison does not know the sidecar may carry "<hash> *<name>"'
+        $shipped | Should -Not -BeExactly $naive
+    }
+
+    It 'no check status, count or exit code moved -- orgPolicy is not a check' {
+        $dir = New-OpFixtureDir
+        $policy = Join-Path $dir 'org.psd1'
+        Set-Content -LiteralPath $policy -Encoding ascii -Value "@{ ExcludeRules = @('PSUseApprovedVerbs') }"
+        $results = @(
+            (New-DoctorResult -Status 'pass' -Component 'a' -Detail 'd')
+            (New-DoctorResult -Status 'unknown' -Component 'b' -Detail 'd')
+        )
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $policy
+        $withPolicy = (Format-DoctorJson -Results $results) | ConvertFrom-Json
+        Remove-Item Env:\CLAUDE_PLUGIN_OPTION_ORGPOLICY -ErrorAction SilentlyContinue
+        $withNone = (Format-DoctorJson -Results $results) | ConvertFrom-Json
+
+        $withPolicy.status | Should -BeExactly $withNone.status
+        $withPolicy.summary.total | Should -Be $withNone.summary.total
+        $withPolicy.summary.unknown | Should -Be $withNone.summary.unknown
+        (Get-DoctorExitCode -Results $results) | Should -Be (Get-DoctorExitCode -Results $results)
+        $withPolicy.orgPolicy.applied | Should -Not -Be $withNone.orgPolicy.applied
+    }
+
+    It 'is ADDITIVE -- schemaVersion does not move and no existing key changed' {
+        Remove-Item Env:\CLAUDE_PLUGIN_OPTION_ORGPOLICY -ErrorAction SilentlyContinue
+        $o = (Get-EnvelopeText) | ConvertFrom-Json
+        $o.schemaVersion | Should -Be 1
+        (@($o.PSObject.Properties.Name) -join ',') |
+            Should -BeExactly 'schemaVersion,status,versions,provenanceFloor,captureMode,otelExport,orgPolicy,summary,checks'
     }
 }

@@ -1076,6 +1076,71 @@ function Import-OrgPolicyExcludes {
     return @($pol.ExcludeRules)
 }
 
+function Get-OrgPolicyReportInfo {
+    # The fleet-visible identity of the org policy that is (or is not) active on this host --
+    # "which exact policy was active on this device" -- for the doctor -Json envelope (dispatch
+    # 000299, W3-2). Same additive-field discipline as Get-DiagnosticCaptureModeInfo /
+    # Get-OtelEndpointReportInfo above: doctor.ps1 wires this in as a new key and nothing
+    # existing moves, so schemaVersion does not bump.
+    #
+    # NO SECOND VERIFIER (Hub Rule 18). `applied` is read straight off Import-OrgPolicyExcludes
+    # -- the SAME shipped reader lsp-client.ps1 calls to decide what actually filters a live
+    # edit -- and `sidecarMatch` is read straight off Test-OrgPolicyIntegrity -- the SAME
+    # shipped integrity gate that reader calls internally (dispatch 000259). Neither verdict is
+    # re-derived here; a second, independently-computed opinion could disagree with the one
+    # that really governs an edit and would then report confidently while being wrong. The one
+    # thing this function adds that neither shipped function surfaces on its own is a bare
+    # `Test-Path` on the discovered '<policy>.sha256' location -- needed only to tell "no
+    # sidecar next to the policy" apart from "a sidecar is there and satisfied", since
+    # Test-OrgPolicyIntegrity returns '' for both. That is an existence check, not a hash
+    # computed a second way.
+    #
+    #   path         the orgPolicy knob value verbatim, '' when unset.
+    #   sha256       SHA-256 of the policy file AS READ (Get-FileHash, the one hashing
+    #                primitive this codebase uses for a pinned artifact -- see
+    #                Test-PinnedFileHash above), '' when there is no file to hash.
+    #   sidecarMatch 'not-present' when no '<policy>.sha256' sits beside the file (the gate is
+    #                opt-in -- this is the common case and is NOT a degrade); 'match' when one
+    #                exists and Test-OrgPolicyIntegrity is satisfied; 'mismatch' for every other
+    #                outcome that function has (an unreadable sidecar, one with no parseable
+    #                digest, or a digest that does not hash-match). The shipped gate does not
+    #                distinguish those three from each other either -- it fails the same way,
+    #                fail-open, for all of them -- so this field does not invent a distinction
+    #                the reader it reports on does not make.
+    #   applied      whether exclusions from this policy actually govern a live edit right now:
+    #                $false with no policy configured (nothing to apply), $false on ANY read
+    #                degrade (relative path, missing file, unreadable/unparseable data, or a
+    #                failed integrity gate -- Import-OrgPolicyExcludes's own $WarningOut is
+    #                non-empty on every one of those, and empty only when it is genuinely
+    #                enforcing, whether or not it declares any rule), $true otherwise.
+    #
+    # HONEST ON "NO POLICY", NOT ABSENT OR EMPTY-STRINGED (W3-2 acceptance). All four keys are
+    # always present on every return, so a consumer never has to tell "the field is missing"
+    # apart from "the field is blank": 'not-present' / $false / '' are the explicit, honest
+    # values for "no policy governs this host" rather than a bare blank path left to imply it.
+    $path = [string](Get-PluginOption 'orgPolicy' '')
+    $info = [ordered]@{ path = $path; sha256 = ''; sidecarMatch = 'not-present'; applied = $false }
+    if ([string]::IsNullOrWhiteSpace($path)) { return $info }
+
+    $warning = ''
+    [void]@(Import-OrgPolicyExcludes -Path $path -WarningOut ([ref]$warning))
+    $info.applied = [string]::IsNullOrWhiteSpace($warning)
+
+    if (-not [System.IO.Path]::IsPathRooted($path)) { return $info }
+    $full = ''
+    try { $full = [System.IO.Path]::GetFullPath($path) } catch { return $info }
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return $info }
+
+    try { $info.sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $full -ErrorAction Stop).Hash } catch { $info.sha256 = '' }
+
+    $sidecar = $full + '.sha256'
+    if (Test-Path -LiteralPath $sidecar -PathType Leaf) {
+        $reason = Test-OrgPolicyIntegrity -PolicyPath $full
+        $info.sidecarMatch = if ($reason -eq '') { 'match' } else { 'mismatch' }
+    }
+    return $info
+}
+
 function Get-DiagnosticRuleCode {
     # The rule code of ONE diagnostic record, across every shape the client's stream carries.
     # This exists because Get-Prop alone is NOT sufficient here: it resolves via
@@ -1563,6 +1628,91 @@ function Get-OtelEndpointReportInfo {
         configured = [bool]$info.configured
         recognized = [bool]$info.recognized
     }
+}
+
+# --- managed mode: fail-closed on policy (dispatch 000299, W3-3) -----------
+# `orgPolicy` (E2.2/000142, integrity-gated by 000259) is fail-open by design (T4.2, ACCEPTED
+# WITH RECORD): a policy that cannot be validated silently stops enforcing and the edit proceeds
+# unfiltered, because an unreadable policy must never break the user's edit. That is still the
+# default and is unchanged here. `POWERSHELL_LSP_POLICY_MODE=closed` gives a fleet an OPT-IN
+# inversion for exactly the two REVIEW-II-DOCKET W3-3 cases -- a missing or hash-mismatched
+# orgPolicy FILE -- converting "silently disable exclusions" into a loud, existing `unavailable`
+# banner: the reason text is new, the status token is not (CONTRACT.md Tier 1.2 stays untouched).
+
+function Get-PolicyModeInfo {
+    # Resolve $env:POWERSHELL_LSP_POLICY_MODE into the three facts a caller needs (dispatch
+    # 000299, W3-3; Mike's ruling at acceptance: default is `open`, today's behaviour exactly):
+    #   resolved    'open' | 'closed' -- what lsp-client.ps1 obeys.
+    #   raw         the environment value verbatim, '' when unset. NEVER interpreted.
+    #   recognized  $true when raw named one of the two modes, $false otherwise.
+    #
+    # UNSET AND UNRECOGNIZED BOTH FALL BACK TO `open`, mirroring Get-DiagnosticCaptureModeInfo's
+    # direction, and for the parallel reason: nothing may become a gate on the diagnostics
+    # surface BY ACCIDENT. A GPO typo landing on `closed` would silently stop every edit on the
+    # fleet from being checked at all; falling back to `open` means a typo can only ever cost the
+    # already-accepted (T4.2) fail-open exposure, never a surprise fleet-wide diagnostics
+    # outage. This is the OPPOSITE fallback direction from Get-OtelEndpointInfo, and for the same
+    # reason that pair is opposite: what sits on the other side of a typo here is "everyone's
+    # diagnostics go dark", not "an egress nobody named" -- permissive is the safe direction here,
+    # exactly as it is for captureMode.
+    #
+    # Case- and whitespace-insensitive: a value deployed by GPO, Intune or machine-scope
+    # environment is not required to match a spelling exactly to be honoured.
+    $raw = $env:POWERSHELL_LSP_POLICY_MODE
+    if ($null -eq $raw) { $raw = '' }
+    $info = [ordered]@{ resolved = 'open'; raw = [string]$raw; recognized = $false }
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $info }
+    $norm = ([string]$raw).Trim().ToLowerInvariant()
+    if ($norm -eq 'open' -or $norm -eq 'closed') {
+        $info.resolved = $norm
+        $info.recognized = $true
+    }
+    return $info
+}
+
+function Test-PolicyEnforcementFailClosed {
+    # W3-3's central decision, pure and unit-testable: does an org policy that failed to
+    # validate resolve THIS edit to the existing `unavailable` token? Takes already-resolved
+    # inputs -- Get-PolicyModeInfo and Import-OrgPolicyExcludes already did the I/O -- so the
+    # boundary between "policy degraded" and "fail this edit closed" has exactly one owner
+    # (Hub Rule 18), matching how every other doctor/client decision in this file is split into
+    # a pure decision over already-resolved observations.
+    #
+    #   $Mode     the RESOLVED POWERSHELL_LSP_POLICY_MODE ('open' | 'closed') -- pass
+    #             (Get-PolicyModeInfo).resolved, never the raw value.
+    #   $KnobSet  the orgPolicy userConfig knob carries a non-blank value.
+    #   $Warning  Import-OrgPolicyExcludes' own degrade reason for THIS read, '' when it is not
+    #             degraded (a policy that is off, or read and satisfied, either with or without
+    #             exclusions declared).
+    #
+    # OPEN IS A NO-OP BY CONSTRUCTION: returns $false regardless of $KnobSet/$Warning, so
+    # today's fail-open behaviour is preserved byte-for-byte for every host that sets nothing --
+    # this function can never be the reason an `open` host's edit changes.
+    #
+    # CLOSED WITH NO POLICY CONFIGURED IS NOT A TRIGGER. An admin who has not deployed a policy
+    # yet has nothing to validate, which is a different state from a policy that WAS deployed and
+    # cannot be read: "a missing or hash-mismatched orgPolicy FILE" (REVIEW-II-DOCKET.md W3-3)
+    # presupposes a file was named. Widening this to also gate on an unset knob would silently
+    # disable diagnostics fleet-wide the moment an admin flips the mode, before deploying
+    # anything -- a materially different (and un-chartered) blast radius.
+    #
+    # CLOSED WITH A POLICY CONFIGURED AND DEGRADED -- for ANY of Import-OrgPolicyExcludes' own
+    # degrade reasons (missing file, unreadable, unparseable, a relative path, or a failed
+    # 000259 integrity gate) -- fails closed. Deliberately not narrowed to only the integrity
+    # gate or only a missing file: the docket's own rationale is "failure to validate policy
+    # means analysis is noncompliant" (REVIEW-II-DOCKET.md W3-3), and every one of those reasons
+    # is exactly that -- the policy could not be validated. Reusing $Warning (already computed
+    # once per edit, at lsp-client.ps1's existing org-policy read) rather than re-deriving file
+    # existence a second way keeps this a single source of truth with Import-OrgPolicyExcludes'
+    # own verdict, per the same no-second-verifier discipline Get-OrgPolicyReportInfo follows.
+    param(
+        [string]$Mode = 'open',
+        [bool]$KnobSet = $false,
+        [string]$Warning = ''
+    )
+    if ($Mode -ne 'closed') { return $false }
+    if (-not $KnobSet) { return $false }
+    return (-not [string]::IsNullOrWhiteSpace($Warning))
 }
 
 function Invoke-CaptureLogRotation {
@@ -2785,11 +2935,29 @@ function Get-DiagnosticsStatusBanner {
     # session until fixed and restarted." A broken/absent start must never read as a retryable
     # miss. Confirmed (Mike, 000024 Q(a) + 000028): one token, generalized prose that lands the
     # permanence, NOT a new token and NOT routed through 'incomplete'.
-    param([string]$Status, [string]$Path)
+    #
+    # $Reason (dispatch 000299, W3-3) is an OPTIONAL third cause under the SAME token, for
+    # managed-mode fail-closed on org policy: a missing or hash-mismatched policy under
+    # POWERSHELL_LSP_POLICY_MODE=closed is not a PSES startup failure, so the generic
+    # "editor services could not start" prose above would misdescribe the cause. CONTRACT.md
+    # Tier 1.2 freezes the TOKEN and the clean-empty/non-ok-distinct-visible property, not the
+    # banner prose (a wording refinement is a PATCH), so an optional parameter that leaves every
+    # existing call byte-identical is additive, not a contract change. Unlike the PSES case, a
+    # policy re-validates on the CALLER's own very next edit (lsp-client.ps1 re-reads the policy
+    # fresh every invocation -- it is a short-lived hook process, not the long-lived daemon), so
+    # this wording says "fix the policy", never "restart the session": that promise would be
+    # false here and is exactly the distinction $Reason exists to carry correctly.
+    param([string]$Status, [string]$Path, [string]$Reason = '')
     switch ($Status) {
         'incomplete'  { return ('PowerShell diagnostics unavailable for ' + $Path + ': analysis did not complete -- this edit was NOT checked.') }
         'degraded'    { return ('PowerShell diagnostics for ' + $Path + ': parser-only mode -- PSScriptAnalyzer unavailable, lint rules were NOT checked (syntax errors are still reported).') }
-        'unavailable' { return ('PowerShell diagnostics unavailable for ' + $Path + ': PowerShell editor services could not start -- not installed (the bootstrap did not complete), or installed but failed to start. Diagnostics will stay OFF for this whole session until it is fixed and the session is restarted; this edit was NOT checked. See logs/ensure-pses.log and logs/pses-daemon.log.') }
+        'unavailable' {
+            if (-not [string]::IsNullOrWhiteSpace($Reason)) {
+                return ('PowerShell diagnostics unavailable for ' + $Path + ': ' + $Reason +
+                    ' Diagnostics will stay OFF until this is fixed; this edit was NOT checked, and the next edit re-validates automatically (no restart needed).')
+            }
+            return ('PowerShell diagnostics unavailable for ' + $Path + ': PowerShell editor services could not start -- not installed (the bootstrap did not complete), or installed but failed to start. Diagnostics will stay OFF for this whole session until it is fixed and the session is restarted; this edit was NOT checked. See logs/ensure-pses.log and logs/pses-daemon.log.')
+        }
         default       { return '' }
     }
 }

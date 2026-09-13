@@ -2289,7 +2289,8 @@ function Format-DoctorJson {
     # stated no policy on this before dispatch 000282, which is why 000282 both wrote the policy
     # there and followed it here: captureMode is a new key and nothing existing moved, so a
     # consumer written against schemaVersion 1 keeps reading this envelope correctly. otelExport
-    # is the second field added under that policy (dispatch 000291) and follows it identically.
+    # is the second field added under that policy (dispatch 000291), and orgPolicy is the third
+    # (dispatch 000299, W3-2) -- both follow it identically.
     #
     # otelExport is captureMode's argument applied to the OTHER fleet control: an export the
     # fleet cannot verify is half an export. A management plane learns whether THIS host is
@@ -2313,6 +2314,17 @@ function Format-DoctorJson {
     # will obey, the RAW environment value verbatim ('' when unset), and whether that value was
     # RECOGNIZED -- so a typo, which resolves to `full` rather than gating the channel, is visible
     # as a typo instead of reading as a control that is quietly not active.
+    #
+    # orgPolicy answers a DIFFERENT enterprise question -- not "is a fleet control active" but
+    # "which exact policy was active on this device", without introducing a trust root (signing
+    # stays deferred under R9; see docs/roadmap-ii/THREAT-MODEL.md T4.1). See
+    # Get-OrgPolicyReportInfo (lib/lsp-common.ps1), which owns path/sha256/sidecarMatch/applied
+    # and reads them off the SAME shipped reader and integrity gate that govern a live edit --
+    # no second verifier. Unlike captureMode/otelExport it has no env-var typo to be recognized
+    # about: `path` is a userConfig knob (orgPolicy, already Tier-1 frozen), read exactly as
+    # lsp-client.ps1 reads it, and every one of its four keys is honestly populated even with no
+    # policy configured at all ('', '', 'not-present', $false) rather than the field being
+    # omitted or left to a bare empty path to imply that state.
     #
     # The seam shape matches $Version / $Provenance in the two human renderings: parameters with
     # inert defaults, so an out-of-band render still produces honest output rather than throwing.
@@ -2342,6 +2354,7 @@ function Format-DoctorJson {
         provenanceFloor = $Provenance
         captureMode     = (Get-DiagnosticCaptureModeInfo)
         otelExport      = (Get-OtelEndpointReportInfo)
+        orgPolicy       = (Get-OrgPolicyReportInfo)
         summary         = [ordered]@{
             pass    = @($all | Where-Object { $_.Status -eq 'pass' }).Count
             fail    = @($all | Where-Object { $_.Status -eq 'fail' }).Count

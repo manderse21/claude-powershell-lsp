@@ -65,6 +65,7 @@ The envelope:
   "provenanceFloor": "...",
   "captureMode": { "resolved": "full", "raw": "", "recognized": false },
   "otelExport": { "display": "", "configured": false, "recognized": false },
+  "orgPolicy": { "path": "", "sha256": "", "sidecarMatch": "not-present", "applied": false },
   "summary": { "pass": 6, "fail": 0, "unknown": 8, "total": 14 },
   "checks": [ { "status": "pass", "component": "...", "detail": "...", "remediation": "..." } ]
 }
@@ -104,6 +105,18 @@ The envelope:
   to **not configured**, because the permissive direction there is a network egress to a
   destination the administrator never named. Both carry `recognized`, so in either case a typo
   reads as a typo rather than as a control quietly not doing what its operator believes.
+- **`orgPolicy`** answers a different enterprise question -- not "is a fleet control active" but
+  "which exact policy was active on this device"
+  ([`orgPolicy`](../docs/configuration.md#orgpolicy),
+  [`POWERSHELL_LSP_POLICY_MODE`](../docs/configuration.md#managed-mode-fail-closed-policy-enforcement)):
+  `path` is the `orgPolicy` userConfig knob value verbatim, `sha256` is the SHA-256 of that file
+  as read, `sidecarMatch` is `not-present` / `match` / `mismatch` read straight off the existing
+  dispatch 000259 `<policy>.sha256` integrity gate (no second hash computed a different way), and
+  `applied` says whether exclusions from this policy actually govern a live edit right now. With
+  no policy configured every key is still explicit (`""`, `""`, `"not-present"`, `false`) rather
+  than the field being absent -- the same honesty rule `captureMode`/`otelExport` follow for an
+  unset control. No trust root is implied: signing a policy stays deferred (R9); this only reports
+  identity.
 
 ### Adding to this envelope -- the schemaVersion policy
 
@@ -114,8 +127,8 @@ them, but will never find a key it relied on missing or renamed under the same v
 This policy was established by dispatch 000282, which added `captureMode`, **because no policy
 existed** -- the envelope shipped in 000279 said what `schemaVersion` was for and not what moves
 it. It is recorded here rather than inferred from the one example. Dispatch 000291 added
-`otelExport` under it unchanged, which is the second field to follow the policy rather than to
-set it.
+`otelExport` under it unchanged, the second field to follow the policy rather than to set it, and
+dispatch 000299 added `orgPolicy` the same way, the third.
 
 ### `status` -- how it is derived
 

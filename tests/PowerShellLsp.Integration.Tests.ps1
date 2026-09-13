@@ -4019,3 +4019,105 @@ Describe 'P1-2 DAEMON HALF -- what deleting the didOpen/didChange block actually
         $docCount | Should -BeGreaterThan 0 -Because 'documentSymbol likewise answers for a file that is on disk in the indexed workspace'
     }
 }
+
+# ===========================================================================
+# Managed mode: fail-closed on policy (dispatch 000299, W3-3)
+# ===========================================================================
+Describe 'Integration: managed mode fail-closed on policy (dispatch 000299, W3-3)' -Skip:$script:SkipIntegration {
+    # The MEASURED RED CONTROL the dispatch's acceptance names explicitly: under `closed` with a
+    # hash-mismatched policy, an edit resolves to the existing `unavailable` token; under `open`
+    # with the SAME mismatch, it resolves exactly as it does today (fail-open, T4.2). Real
+    # subprocess, real policy file, real sidecar. A deliberately BROKEN .ps1 plus a NO-DAEMON
+    # session id (the dogfood block's own trick above) keeps every non-triggering case on the
+    # in-process parser pre-pass -- no live PSES/daemon needed either way: `closed` never even
+    # reaches Track B (Test-PolicyEnforcementFailClosed resolves before the parser pre-pass, let
+    # alone the pipe connect), and `open`/unset reach it exactly as they do today.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
+        $script:PmScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:PmData = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-pm-itg-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:PmData | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:PmData -MintingFile 'tests/PowerShellLsp.Integration.Tests.ps1'
+
+        $script:PmBroken = Join-Path $script:PmData 'broken-fixture.ps1'
+        "function Test-PmBroken {`n    Get-Process" | Set-Content -LiteralPath $script:PmBroken -Encoding ascii
+
+        $script:PmPolicy = Join-Path $script:PmData 'org-policy.psd1'
+        Set-Content -LiteralPath $script:PmPolicy -Encoding ascii -Value "@{ ExcludeRules = @('PSAvoidUsingWriteHost') }"
+        # A sidecar declaring the WRONG digest -- a real, on-disk hash MISMATCH, not a simulated one.
+        Set-Content -LiteralPath ($script:PmPolicy + '.sha256') -Encoding ascii -Value ('0' * 64)
+
+        function Invoke-PolicyHook {
+            param([hashtable]$ExtraEnv)
+            $stdin = (@{ session_id = ('no-daemon-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+                    tool_input = @{ file_path = $script:PmBroken }; cwd = $script:PmData } | ConvertTo-Json -Compress)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            Add-ProcessArguments $psi @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $script:PmScriptsDir 'lsp-client.ps1'))
+            $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $script:PmData
+            if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($stdin)
+            $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
+            $p.StandardInput.Close()
+            if (-not $p.WaitForExit(15000)) { try { $p.Kill($true) } catch { }; return @{ Exit = -1; Out = '' } }
+            [void]$stdoutTask.Wait(5000)
+            $out = if ($stdoutTask.IsCompleted) { $stdoutTask.Result } else { '' }
+            return @{ Exit = $p.ExitCode; Out = $out }
+        }
+    }
+    AfterAll {
+        [void](Save-IsolatedDataRootLog -DataRoot $script:PmData -Tag '000299-policy-fail-closed')
+        Remove-Item -LiteralPath $script:PmData -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'MEASURED: CLOSED + a hash-mismatched policy resolves the edit to the unavailable banner' {
+        $r = Invoke-PolicyHook -ExtraEnv @{
+            CLAUDE_PLUGIN_OPTION_ORGPOLICY = $script:PmPolicy
+            POWERSHELL_LSP_POLICY_MODE     = 'closed'
+        }
+        $r.Exit | Should -Be 0
+        $ctx = ($r.Out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $ctx | Should -Match 'unavailable'
+        $ctx | Should -Match 'organization policy'
+        $ctx | Should -Not -Match 'PowerShell editor services could not start' `
+            -Because 'the reason text is NEW -- this is not the PSES-startup cause -- the token is not'
+        $ctx | Should -Not -Match '\(parser\)' -Because 'closed resolves BEFORE the parser pre-pass runs -- this file was never checked'
+    }
+
+    It 'MEASURED (the paired control): OPEN + the SAME mismatch behaves exactly as today -- never the policy banner' {
+        $r = Invoke-PolicyHook -ExtraEnv @{
+            CLAUDE_PLUGIN_OPTION_ORGPOLICY = $script:PmPolicy
+            POWERSHELL_LSP_POLICY_MODE     = 'open'
+        }
+        $r.Exit | Should -Be 0
+        $ctx = ($r.Out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $ctx | Should -Not -Match 'organization policy' -Because 'T4.2 fail-open is unchanged under open: a degraded policy never blocks the edit'
+        $ctx | Should -Match '\(parser\)' -Because 'the edit proceeded to be checked, exactly as before this dispatch'
+    }
+
+    It 'the DEFAULT (POWERSHELL_LSP_POLICY_MODE unset) is BYTE-IDENTICAL to explicit open, on the same mismatch' {
+        # "An installed host that sets no new variable must behave byte-identically" -- proven by
+        # comparison, not by re-asserting the same string twice.
+        $withDefault = Invoke-PolicyHook -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_ORGPOLICY = $script:PmPolicy }
+        $withOpen = Invoke-PolicyHook -ExtraEnv @{
+            CLAUDE_PLUGIN_OPTION_ORGPOLICY = $script:PmPolicy
+            POWERSHELL_LSP_POLICY_MODE     = 'open'
+        }
+        $defCtx = ($withDefault.Out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $openCtx = ($withOpen.Out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $defCtx | Should -BeExactly $openCtx
+        $withDefault.Exit | Should -Be $withOpen.Exit
+    }
+
+    It 'CLOSED with the policy knob UNSET is NOT a trigger -- nothing configured, nothing to fail closed on' {
+        $r = Invoke-PolicyHook -ExtraEnv @{ POWERSHELL_LSP_POLICY_MODE = 'closed' }
+        $r.Exit | Should -Be 0
+        $ctx = ($r.Out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $ctx | Should -Not -Match 'organization policy'
+        $ctx | Should -Match '\(parser\)' -Because 'no policy was ever configured, so closed has nothing to validate and the edit proceeds'
+    }
+}
