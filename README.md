@@ -569,6 +569,7 @@ one click away.
 | What the preflight doctor checks, and what it refuses to do | [docs/preflight-doctor.md](docs/preflight-doctor.md) |
 | A specific symptom and its fix | [docs/troubleshooting.md](docs/troubleshooting.md) |
 | Which hosts are supported, and what each CI leg proves | [docs/platform-support.md](docs/platform-support.md) |
+| Deploying to a fleet: pinning, GPO/Intune config, airgap placement, a health check, OTLP | [docs/fleet-deployment.md](docs/fleet-deployment.md) |
 | The pinned components, and how to bump one | [docs/pinned-versions.md](docs/pinned-versions.md) |
 | The quirks that bite when changing the runtime | [docs/DEV_NOTES.md](docs/DEV_NOTES.md) |
 | Dogfood capture and the offline review tool | [docs/dogfood.md](docs/dogfood.md) |

@@ -1,0 +1,85 @@
+name: powershell-lsp OpenSSF Scorecard
+
+# Supply-chain posture, scored by a third party (dispatch 000299, W3-5; REVIEW-II-DOCKET W3-5).
+# This is the cheapest partial answer to "has anyone outside this repository looked at its
+# supply chain" -- free, automated, and recognised by security reviewers. It is a SEPARATE
+# workflow file: the four named CI legs (powershell-lsp-ci.yml), the SARIF code-scanning upload
+# (powershell-lsp-code-scanning.yml), and the gated release pipeline (powershell-lsp-release.yml)
+# are untouched, so nothing here can turn a merge gate red.
+#
+# INERT UNTIL MERGED, by construction, same as powershell-lsp-code-scanning.yml: there is no
+# `pull_request` trigger. `push` is scoped to main and `schedule` only ever runs on the default
+# branch, so this workflow cannot run from a topic branch -- it adds no check to the dispatch PR
+# that introduces it, and the first real run happens after a human merges.
+# `workflow_dispatch` is the manual escape hatch, same as the code-scanning workflow's.
+#
+# THE SHAPE IS THE UPSTREAM-RECOMMENDED ONE, essentially verbatim (see
+# https://github.com/ossf/scorecard/blob/main/.github/workflows/scorecard-analysis.yml, the
+# example the ossf/scorecard-action README itself points to), because `publish_results: true`
+# imposes hard structural restrictions on the producing workflow and its job -- documented in
+# that project's README under "Workflow Restrictions" -- that this file must not violate: no
+# top-level or job-level env vars or defaults, no workflow-level write permissions, only this
+# job may hold `id-token: write`, and its steps are limited to an approved action allowlist
+# (actions/checkout, actions/upload-artifact, github/codeql-action/upload-sarif,
+# ossf/scorecard-action, step-security/harden-runner). Deviating from the template to add,
+# say, a PSSA cache step (as the code-scanning workflow does) would break publishing.
+#
+# `publish_results: true` is what lets Scorecard's own public dataset and the README badge (if
+# one is ever added) reflect a REAL run of this repository's actual CI, rather than the
+# separate, slower weekly crawl OpenSSF runs over public GitHub independently. It could not be
+# exercised before this PR merges: Scorecard's own template comments the push trigger "only the
+# default branch is supported", and publishing from a topic branch would write a result to a
+# public third-party dataset that does not represent a released state -- an action dispatch 000299
+# declined to take unilaterally. See the 000299 outbox for a PRE-MERGE preview captured instead
+# via the standalone `scorecard` CLI run locally against this repository's already-public GitHub
+# state (read-only, nothing published) -- 5.8/10 as of commit 2b0618d, 2026-09-13. The real,
+# authoritative score is what THIS workflow reports after its first push-triggered (or
+# `workflow_dispatch`-on-main) run.
+
+on:
+  push:
+    # Only the default branch is supported (Scorecard's own stated constraint).
+    branches: [main]
+  schedule:
+    # Weekly, Sunday 05:00 UTC -- offset from the code-scanning workflow's Monday 06:00 UTC slot
+    # so the two third-party-facing scheduled scans do not compete for the same runner window.
+    - cron: '0 5 * * 0'
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-24.04
+    permissions:
+      # Needed for Code scanning upload.
+      security-events: write
+      # Needed for GitHub OIDC token, required by publish_results: true.
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      # Uploaded for five days for debugging, same retention the upstream template uses.
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: powershell-lsp-scorecard-sarif
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          sarif_file: results.sarif

@@ -219,6 +219,17 @@ green on every CI leg, version-locked) and cuts the tag itself on the validated 
 See [docs/RELEASING.md](./docs/RELEASING.md). This document does not modify any of those
 generators; it points at what they already produce.
 
+**A measured caveat, not a claim retracted.** OpenSSF Scorecard's automated `Signed-Releases`
+check (dispatch 000299, W3-5) does not recognize the mechanism above as a signed release: it
+looks for a signature or provenance file published **as a release asset** (an `.intoto.jsonl` or
+a Sigstore bundle a user downloads alongside the artifact), and this pipeline's attestation is
+recorded through the GitHub attestations API instead -- real, and verifiable with `gh attestation
+verify` exactly as shown above, but not in the shape that specific automated check looks for. A
+pre-merge preview of a full Scorecard run (the standalone CLI against this repository's
+already-public GitHub state, read-only) scored `Signed-Releases` `0/10` for exactly this reason;
+see the dispatch 000299 outbox for the complete run. Nothing above is inaccurate; this note exists
+so a reader who later sees that score does not read it as a contradiction of this section.
+
 ## Every external GitHub Action is pinned to an immutable commit SHA
 
 The workflows that build, scan and release this project are themselves a supply chain, and

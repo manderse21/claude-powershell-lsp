@@ -649,6 +649,42 @@ honestly, rather than to a fabricated `fail`: a zero version is the absence of a
 version below the 7.0 floor. Windows behaviour is unchanged, and a genuinely old `pwsh` is still
 failed. No `userConfig` key, diagnostics status token or `CONTRACT.md` line is touched.
 
+MINOR: **`doctor -Json` gains an `orgPolicy` object: which exact policy was active on this
+device, without a trust root.** `orgPolicy` carries `path`, `sha256` (of the file as read),
+`sidecarMatch` (`not-present` / `match` / `mismatch`, read straight off the existing dispatch
+000259 integrity gate -- no second hash computed a different way) and `applied` (whether
+exclusions from this policy actually govern a live edit right now). Additive field, alongside
+`captureMode` and `otelExport`: `schemaVersion` does not move. With no policy configured every
+key is still explicit (`''`, `''`, `'not-present'`, `$false`) rather than the field being absent
+or a bare blank path left to imply that state. Signing and a policy trust root stay deferred
+(R9); this answers "which exact policy was active" without one. Dispatch 000299 (W3-2).
+
+MINOR: **`POWERSHELL_LSP_POLICY_MODE` -- an opt-in fail-closed mode for a policy that cannot be
+validated.** `orgPolicy`'s fail-open design (T4.2, ACCEPTED WITH RECORD) is unchanged and stays
+the default (`open`): a missing or unreadable policy silently drops exclusions and logs one
+warning, exactly as before. `closed` converts the two REVIEW-II-DOCKET.md W3-3 cases -- a
+missing `orgPolicy` file, or one that fails the dispatch 000259 integrity gate -- into the
+existing `unavailable` diagnostics token for that edit, with new wording naming the cause (no
+session restart needed; the very next edit re-validates automatically). No new diagnostics
+status token and no new `userConfig` knob: `CONTRACT.md` is untouched. An installed host that
+sets nothing behaves byte-for-byte as before. Dispatch 000299 (W3-3).
+
+MINOR: **A fleet deployment recipe.** `docs/fleet-deployment.md` answers pinning a version
+through a mirrored managed marketplace, setting `POWERSHELL_LSP_*` via GPO/Intune, placing the
+airgap bundle, `doctor -Json` plus exit codes as a fleet health check, and pointing OTLP at a
+collector -- composing existing, already-documented mechanisms rather than adding new ones. No
+dashboard, no control plane, no MSI/WinGet packaging: none fit a git-distributed marketplace
+plugin, per REVIEW-II-DOCKET.md's own ruling. Dispatch 000299 (W3-4).
+
+PATCH: **An OpenSSF Scorecard workflow.** `.github/workflows/powershell-lsp-scorecard.yml` is
+inert until merged (no `pull_request` trigger; `push` scoped to `main`, plus `schedule` and
+`workflow_dispatch`), the same shape `powershell-lsp-code-scanning.yml` already uses. A pre-merge
+preview via the standalone `scorecard` CLI, run read-only against this repository's already-public
+GitHub state, measured **5.8 / 10** at commit `2b0618d` (2026-09-13) -- see the dispatch 000299
+outbox for the full per-check breakdown, including why three checks read inconclusive from
+outside a real Action run. No finding is fixed here, and the badge is deliberately left out of
+the README pending a real, in-repo run. Dispatch 000299 (W3-5).
+
 ## [1.34.0] - 2026-09-07
 MINOR: **the doctor now answers machine-readably, and will tell you when it cannot prove an
 answer.** `doctor -Json` is a third rendering beside the fix-list and `-Summary`, carrying a
