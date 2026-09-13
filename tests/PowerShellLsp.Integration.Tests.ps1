@@ -1698,6 +1698,11 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
         # sub-cases A and B are exactly the shape whose failure 000156 leg 4 could not diagnose.
         [void](Save-IsolatedDataRootLog -DataRoot $script:P_DataA -Tag '000028-A')
         [void](Save-IsolatedDataRootLog -DataRoot $script:P_DataB -Tag '000028-B')
+        # dispatch 000295 Q1: reference point for "elapsed since the kill" (started here, before
+        # either kill loop below fires) -- passed into Remove-PslsRootWithRetry at teardown so its
+        # per-attempt Write-Warning reports real elapsed time, not a re-guess. A/B are killed back
+        # to back, sub-millisecond apart, so one shared stopwatch for both is not a measurement gap.
+        $script:P_KillSw = [System.Diagnostics.Stopwatch]::StartNew()
         foreach ($info in @($script:P_InfoA, $script:P_InfoB, $script:P_InfoW)) {
             if ($null -ne $info) { foreach ($pidVal in @($info.pid, $info.psesPid)) { if ($pidVal) { Stop-Process -Id ([int]$pidVal) -Force -ErrorAction SilentlyContinue } } }
         }
@@ -1711,6 +1716,24 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
         # been requested but not completed, and Remove-Item's -ErrorAction SilentlyContinue
         # swallowed the resulting failure instead of retrying. Bounded at 5s per pid; a pid
         # still alive after that falls through to the unchanged best-effort Remove-Item below.
+        #
+        # MEASURED 2026-09-13 (review-II night 1, Q1/Q2/Q3): for case (A) specifically, this
+        # bound is not merely tight, it is the WRONG TOOL. $script:P_InfoA.psesPid is NULL by
+        # construction, every time -- pses-daemon.ps1 writes the session file's first 'starting'
+        # record (Write-SessionFile, before Start-PsesProcess assigns $script:proc) and
+        # Wait-DaemonAnyState (BeforeAll) returns on that FIRST match, so the snapshot this
+        # AfterAll captured was taken before the dummy child process even existed. The direct
+        # `Stop-Process -Id $info.psesPid` two loops up is therefore a silent no-op for (A): it
+        # never had a real pid to target. That leaves $p.Kill($true) (Job-Object tree-kill on the
+        # daemon host) as the ONLY mechanism reaching the dummy child, and direct process
+        # inspection (Get-CimInstance Win32_Process, both a local pwsh-7 and a WinPS-5.1 repro
+        # loop, ~20-25% of iterations under concurrent load) caught it failing to do so: the
+        # parent daemon pid confirmed GONE, its dummy child pid confirmed STILL RUNNING --
+        # `Start-Sleep -Seconds 300` executing on, undisturbed -- for the full remainder of its
+        # 300s script, which is what was actually gating Remove-PslsRootWithRetry's failure, not
+        # a slow handle release after a genuine kill. See the probe below and
+        # Remove-PslsRootWithRetry's own header for the full account and why MaxAttempts/DelayMs
+        # was deliberately NOT widened to chase this.
         foreach ($pidVal in @($script:P_InfoA.pid, $script:P_InfoA.psesPid, $script:P_InfoB.pid, $script:P_InfoB.psesPid)) {
             if (-not $pidVal) { continue }
             for ($i = 0; $i -lt 100 -and $null -ne (Get-Process -Id ([int]$pidVal) -ErrorAction SilentlyContinue); $i++) {
@@ -1720,11 +1743,39 @@ Describe 'Integration: pipe-first honest startup (dispatch 000028)' -Skip:$scrip
         foreach ($p in @($script:P_ProcA, $script:P_ProcB)) {
             if ($null -ne $p) { try { [void]$p.WaitForExit(5000) } catch { } }
         }
+        # dispatch 000295 Q1 -- kept permanently, not just for this session's investigation: names
+        # WHICH pid, if any, is still alive right after the wait-until-dead loop above gives up on
+        # it, distinguishing "kill requested but not yet completed" (a bounded, retry-fixable race)
+        # from "kill silently did not reach this pid at all" (confirmed the real shape for case A,
+        # see above -- unbounded, no retry count fixes a process nobody asked to stop). Silent in
+        # the common case; a future recurrence self-explains in the CI log instead of needing this
+        # investigation repeated from scratch.
+        foreach ($tag in 'A', 'B') {
+            $info = if ($tag -eq 'A') { $script:P_InfoA } else { $script:P_InfoB }
+            if ($null -eq $info) { continue }
+            foreach ($which in 'pid', 'psesPid') {
+                $pidVal = $info.$which
+                if (-not $pidVal) { continue }
+                $stillAlive = $null -ne (Get-Process -Id ([int]$pidVal) -ErrorAction SilentlyContinue)
+                if ($stillAlive) {
+                    Write-Warning "[dispatch-000295-Q1-probe] psls-000028-$tag $which=$pidVal STILL ALIVE after wait-until-dead + WaitForExit, $($script:P_KillSw.ElapsedMilliseconds)ms since kill"
+                }
+            }
+        }
         # the warm session file lives in the SHARED root; clean only OUR session file there.
         $sfW = Join-Path $script:P_Data ('session/' + $script:P_SidW + '.json')
         if (Test-Path -LiteralPath $sfW) { Remove-Item -LiteralPath $sfW -Force -ErrorAction SilentlyContinue }
         # RETRY, not one-shot (dispatch 000295) -- see Remove-PslsRootWithRetry's own header for why.
-        foreach ($d in @($script:P_DataA, $script:P_DataB)) { if ($d) { Remove-PslsRootWithRetry -Path $d } }
+        # -MeasureTag/-SinceKill (dispatch 000295 Q1): (A) is the heaviest kill in the suite (force-killed
+        # mid-300s-sleep) and the one CI caught surviving; (B) rides the same instrumentation for free
+        # since it is killed and reaped through the identical path, just a lighter process. STILL AT THE
+        # DEFAULT 5x300ms -- measured 2026-09-13 and deliberately left unchanged: when (A) loses this race
+        # the cause is an orphaned dummy child the kill above never reached (see the WAIT-UNTIL-DEAD comment
+        # and the probe just above), not a slow-but-real handle release, so no MaxAttempts/DelayMs value
+        # fixes it -- widening this would only re-run the exact mistake 36cc4a6 already made once on a
+        # different site. Left open; see CHANGELOG.md [Unreleased] and Remove-PslsRootWithRetry's header.
+        if ($script:P_DataA) { Remove-PslsRootWithRetry -Path $script:P_DataA -MeasureTag 'psls-000028-A' -SinceKill $script:P_KillSw }
+        if ($script:P_DataB) { Remove-PslsRootWithRetry -Path $script:P_DataB -MeasureTag 'psls-000028-B' -SinceKill $script:P_KillSw }
     }
 
     It '(A) a request while PSES is still INITIALIZING surfaces the TRANSIENT incomplete, never silence' {

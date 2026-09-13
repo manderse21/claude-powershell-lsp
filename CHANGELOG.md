@@ -53,11 +53,34 @@ separate, fixed-name `ScratchDir` is one of the deliberately-reused roots above 
 caught three MORE pre-existing leaks on its first real runs** -- dispatch 000024's, 000028's, and
 000030's daemon `AfterAll`s, none of them this dispatch's own code, none part of the three sites
 above. All three killed a daemon and removed its data root in the same breath, with no wait for
-the killed process to actually be gone first. All three are now reliably clean: the fix waits for
-the killed pid to leave `Get-Process`, then retries the removal itself
-(`Remove-PslsRootWithRetry`, up to 1.5s) rather than trying once -- closing the narrow window
-where a killed PSES host's open handles on its own `-DataRoot` have not all released the instant
-`Get-Process` stops seeing the pid.
+the killed process to actually be gone first. The fix waits for the killed pid to leave
+`Get-Process`, then retries the removal itself (`Remove-PslsRootWithRetry`, up to 1.5s) rather
+than trying once -- closing the narrow window where a killed PSES host's open handles on its own
+`-DataRoot` have not all released the instant `Get-Process` stops seeing the pid. 000030 and
+000028's sub-case B are reliably clean under this fix. **Dispatch 000028's sub-case A is NOT** --
+see below; the prior text here claiming all three were clean was itself wrong, the same over-claim
+corrected once already for the `'surface'` sub-case two paragraphs down.
+
+**Dispatch 000028 sub-case A needed a kill fix, not a longer retry, and does not have one yet.**
+Review-II night 1 (2026-09-13) re-opened this: PR #236's windows-pwsh leg caught a real
+`psls-000028-A-*` survivor pre-merge, and instrumenting `Remove-PslsRootWithRetry` (optional
+`-MeasureTag`/`-SinceKill`, inert unless a caller opts in) plus a direct pid-liveness probe in the
+`AfterAll` (both now permanent) reproduced the exact signature locally under pwsh 7 and Windows
+PowerShell 5.1 alike, ~20-25% of loop iterations under concurrent load -- the same order as CI's
+1-in-5. Root cause, confirmed by direct process inspection (`Get-CimInstance Win32_Process`): the
+daemon host pid dies on request, but its dummy PSES-child pid does not -- it keeps running its
+test-only `Start-Sleep -Seconds 300` for the full remainder of that sleep, holding the `-DataRoot`
+open the entire time. Traced into `pses-daemon.ps1`: the session-file snapshot the test captures
+at state `'starting'` is written before the daemon assigns its PSES-child process handle, so that
+snapshot's `psesPid` is `$null` by construction for case (A) every time -- the `AfterAll`'s direct
+`Stop-Process -Id psesPid` never had a real pid to target, leaving `Process.Kill($true)`'s
+Job-Object tree-walk as the sole path to the child, and that path does not always reach it. **This
+is not the handle-release race the paragraph above describes and closes** -- a still-*alive*,
+still-working child is not bounded by any `MaxAttempts`/`DelayMs`, so none was widened to chase it
+(that would only repeat the mistake the `'surface'` misdiagnosis below already made once). Left
+open for a follow-up dispatch: the indicated fix re-reads a fresh `psesPid` from the session file
+at `AfterAll` time (by then almost certainly populated) and `Stop-Process`es it directly, the same
+class of fix the `'surface'` case below already received.
 
 **Dispatch 000024's `'surface'` sub-case needed a second, different fix, not a longer retry.**
 An earlier pass on this same work mistook it for a slower version of the same handle-release

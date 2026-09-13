@@ -595,18 +595,66 @@ function Remove-PslsRootWithRetry {
     # the OS releasing every handle across every process in it is not always instantaneous even
     # after the pid is confirmed gone. Back to 5x300ms (1.5s worst case), the window this was
     # first measured at before the 000024-surface misdiagnosis inflated it.
+    #
+    # 000028-A (dispatch 000295 review-II night 1) then red 1/5 CI legs (windows-pwsh) on exactly
+    # this narrower window -- the mid-300s-sleep force-kill is the heaviest in the suite, and the
+    # 36cc4a6 reasoning above never measured THIS site. -MeasureTag/-SinceKill are optional and
+    # inert unless a caller opts in (both default unset; the other six call sites are
+    # byte-for-byte unaffected): when supplied, every attempt is Write-Warning'd with its elapsed
+    # time off the caller's own kill timestamp, so a CI log carries real per-attempt numbers
+    # instead of another guess. See the 028 AfterAll for the one site that opts in.
+    #
+    # MEASURED 2026-09-13, AND THE ANSWER IS "DO NOT WIDEN THIS." Local repro (pwsh 7 and Windows
+    # PowerShell 5.1, the isolated dispatch-000028 Describe looped under concurrent load, ~35
+    # combined iterations) reproduced the exact CI signature 4 times (~20-25%, the same order as
+    # CI's 1-in-5): case (A)'s retry exhausted all 5 attempts in ~1.3-1.5s -- this window's own
+    # bound working exactly as sized -- while the outer iteration then blocked for the ENTIRE
+    # remaining ~300s of the dummy's own `Start-Sleep -Seconds 300`. Direct process inspection
+    # (Get-CimInstance Win32_Process) caught the mechanism live: the daemon host pid confirmed
+    # dead, its dummy PSES-child pid confirmed STILL RUNNING, well past both the AfterAll's 5s
+    # wait-until-dead loop and its WaitForExit(5000). Root cause, traced into pses-daemon.ps1: the
+    # session-file snapshot the test captures at state 'starting' is written BEFORE the daemon
+    # assigns its PSES-child process handle, so that snapshot's `psesPid` is null by construction
+    # for case (A) every time -- the AfterAll's direct `Stop-Process -Id psesPid` never had a real
+    # pid to target, leaving `$p.Kill($true)`'s Job-Object tree-walk as the sole path to the child,
+    # and that path is not the one this helper controls or can compensate for. A dead-but-orphaned
+    # child that is still ALIVE and still doing real work is not a slow handle release -- no
+    # MaxAttempts/DelayMs value bounds how long it keeps the directory open, so none was chosen.
+    # This is the deliberately-not-taken fork the Q3 charter asked for: measure, then STOP rather
+    # than re-guess a bigger number when the evidence says the window is unbounded. The real fix
+    # belongs at the kill step (re-read a fresh psesPid from the session file at AfterAll time,
+    # where the daemon has almost certainly since rewritten it, and Stop-Process it directly -- the
+    # same class of fix 36cc4a6 already used for the 000024-surface case), which is out of scope
+    # for this instrumentation-and-measurement pass; see CHANGELOG.md [Unreleased] for the account
+    # left for whoever picks up that follow-up.
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [int]$MaxAttempts = 5,
-        [int]$DelayMs = 300
+        [int]$DelayMs = 300,
+        [string]$MeasureTag,
+        [System.Diagnostics.Stopwatch]$SinceKill
     )
     if (-not (Test-Path -LiteralPath $Path)) { return }
     for ($i = 0; $i -lt $MaxAttempts; $i++) {
         try {
             Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            if ($MeasureTag) {
+                $elapsedMs = if ($SinceKill) { $SinceKill.ElapsedMilliseconds } else { -1 }
+                Write-Warning "[dispatch-000295-Q1] $MeasureTag removal succeeded on attempt $($i + 1)/$MaxAttempts, ${elapsedMs}ms since kill"
+            }
             return
         } catch {
-            if ($i -eq $MaxAttempts - 1) { return }
+            if ($MeasureTag) {
+                $elapsedMs = if ($SinceKill) { $SinceKill.ElapsedMilliseconds } else { -1 }
+                Write-Warning "[dispatch-000295-Q1] $MeasureTag attempt $($i + 1)/$MaxAttempts still failing at ${elapsedMs}ms since kill: $($_.Exception.Message)"
+            }
+            if ($i -eq $MaxAttempts - 1) {
+                if ($MeasureTag) {
+                    $elapsedMs = if ($SinceKill) { $SinceKill.ElapsedMilliseconds } else { -1 }
+                    Write-Warning "[dispatch-000295-Q1] $MeasureTag gave up after $MaxAttempts attempts, ${elapsedMs}ms since kill"
+                }
+                return
+            }
             Start-Sleep -Milliseconds $DelayMs
         }
     }
