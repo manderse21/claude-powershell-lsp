@@ -49,7 +49,7 @@ knob, diagnostics status token, or line of `CONTRACT.md` moves in this release**
 above is additive capability, not a changed promise.
 
 The remainder is hardening rather than new capability. `docs/control-map.html`, shipped as a
-release asset, gets its first automated currency guard and is corrected to rev 4. Five separate
+release asset, gets its first automated currency guard and is corrected to rev 5. Five separate
 `psls*` temp-root leaks in the test suite are closed behind a new owner-marker-and-janitor system,
 `Invoke-PluginHook` collapses from eleven definitions to one, the doctor no longer misreports
 `pwsh 0.0.0.0` on Linux and macOS, and `audit-release-bodies.ps1` now pins the repository it
