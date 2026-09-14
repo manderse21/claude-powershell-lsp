@@ -4049,7 +4049,12 @@ Describe 'Integration: managed mode fail-closed on policy (dispatch 000299, W3-3
         Set-Content -LiteralPath ($script:PmPolicy + '.sha256') -Encoding ascii -Value ('0' * 64)
 
         function Invoke-PolicyHook {
-            param([hashtable]$ExtraEnv)
+            # Instrumented the same shape every other collapsing hook in this file uses
+            # (dispatch 000159 leg 1a; see PowerShellLsp.HookInstrumentation.Tests.ps1, which
+            # mechanically scans this file for exactly this pattern): the caller reads the exit
+            # code from $script:PmHookExit (set the instant WaitForExit confirms the process is
+            # gone) and the stdout drain is bounded by the CALLER's cap, never a bare constant.
+            param([hashtable]$ExtraEnv, [int]$CapMs = 15000)
             $stdin = (@{ session_id = ('no-daemon-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
                     tool_input = @{ file_path = $script:PmBroken }; cwd = $script:PmData } | ConvertTo-Json -Compress)
             $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -4063,10 +4068,23 @@ Describe 'Integration: managed mode fail-closed on policy (dispatch 000299, W3-3
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($stdin)
             $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $p.StandardInput.BaseStream.Flush()
             $p.StandardInput.Close()
-            if (-not $p.WaitForExit(15000)) { try { $p.Kill($true) } catch { }; return @{ Exit = -1; Out = '' } }
-            [void]$stdoutTask.Wait(5000)
-            $out = if ($stdoutTask.IsCompleted) { $stdoutTask.Result } else { '' }
-            return @{ Exit = $p.ExitCode; Out = $out }
+            $script:PmHookExit = $null
+            $swHook = [System.Diagnostics.Stopwatch]::StartNew()
+            if (-not $p.WaitForExit($CapMs)) {
+                try { $p.Kill($true) } catch { }
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'killed-at-cap' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ScriptPath 'lsp-client.ps1' -DataRoot $script:PmData
+                return ''
+            }
+            $script:PmHookExit = $p.ExitCode
+            [void]$stdoutTask.Wait([Math]::Max(1500, $CapMs))
+            if (-not $stdoutTask.IsCompleted) {
+                $script:PslsHookOutcome = New-PluginHookOutcome -Reason 'stdout-read-timeout' -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath 'lsp-client.ps1' -DataRoot $script:PmData
+                return ''
+            }
+            $hookReason = 'ok'
+            if ([string]::IsNullOrEmpty($stdoutTask.Result)) { $hookReason = 'exited-empty-stdout' }
+            $script:PslsHookOutcome = New-PluginHookOutcome -Reason $hookReason -CapMs $CapMs -ElapsedMs ([int]$swHook.ElapsedMilliseconds) -ExitCode $p.ExitCode -ScriptPath 'lsp-client.ps1' -DataRoot $script:PmData
+            return $stdoutTask.Result
         }
     }
     AfterAll {
@@ -4075,12 +4093,12 @@ Describe 'Integration: managed mode fail-closed on policy (dispatch 000299, W3-3
     }
 
     It 'MEASURED: CLOSED + a hash-mismatched policy resolves the edit to the unavailable banner' {
-        $r = Invoke-PolicyHook -ExtraEnv @{
+        $out = Invoke-PolicyHook -ExtraEnv @{
             CLAUDE_PLUGIN_OPTION_ORGPOLICY = $script:PmPolicy
             POWERSHELL_LSP_POLICY_MODE     = 'closed'
         }
-        $r.Exit | Should -Be 0
-        $ctx = ($r.Out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $script:PmHookExit | Should -Be 0
+        $ctx = ($out | ConvertFrom-Json).hookSpecificOutput.additionalContext
         $ctx | Should -Match 'unavailable'
         $ctx | Should -Match 'organization policy'
         $ctx | Should -Not -Match 'PowerShell editor services could not start' `
@@ -4089,12 +4107,12 @@ Describe 'Integration: managed mode fail-closed on policy (dispatch 000299, W3-3
     }
 
     It 'MEASURED (the paired control): OPEN + the SAME mismatch behaves exactly as today -- never the policy banner' {
-        $r = Invoke-PolicyHook -ExtraEnv @{
+        $out = Invoke-PolicyHook -ExtraEnv @{
             CLAUDE_PLUGIN_OPTION_ORGPOLICY = $script:PmPolicy
             POWERSHELL_LSP_POLICY_MODE     = 'open'
         }
-        $r.Exit | Should -Be 0
-        $ctx = ($r.Out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $script:PmHookExit | Should -Be 0
+        $ctx = ($out | ConvertFrom-Json).hookSpecificOutput.additionalContext
         $ctx | Should -Not -Match 'organization policy' -Because 'T4.2 fail-open is unchanged under open: a degraded policy never blocks the edit'
         $ctx | Should -Match '\(parser\)' -Because 'the edit proceeded to be checked, exactly as before this dispatch'
     }
@@ -4102,21 +4120,23 @@ Describe 'Integration: managed mode fail-closed on policy (dispatch 000299, W3-3
     It 'the DEFAULT (POWERSHELL_LSP_POLICY_MODE unset) is BYTE-IDENTICAL to explicit open, on the same mismatch' {
         # "An installed host that sets no new variable must behave byte-identically" -- proven by
         # comparison, not by re-asserting the same string twice.
-        $withDefault = Invoke-PolicyHook -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_ORGPOLICY = $script:PmPolicy }
-        $withOpen = Invoke-PolicyHook -ExtraEnv @{
+        $defOut = Invoke-PolicyHook -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_ORGPOLICY = $script:PmPolicy }
+        $defExit = $script:PmHookExit
+        $openOut = Invoke-PolicyHook -ExtraEnv @{
             CLAUDE_PLUGIN_OPTION_ORGPOLICY = $script:PmPolicy
             POWERSHELL_LSP_POLICY_MODE     = 'open'
         }
-        $defCtx = ($withDefault.Out | ConvertFrom-Json).hookSpecificOutput.additionalContext
-        $openCtx = ($withOpen.Out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $openExit = $script:PmHookExit
+        $defCtx = ($defOut | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $openCtx = ($openOut | ConvertFrom-Json).hookSpecificOutput.additionalContext
         $defCtx | Should -BeExactly $openCtx
-        $withDefault.Exit | Should -Be $withOpen.Exit
+        $defExit | Should -Be $openExit
     }
 
     It 'CLOSED with the policy knob UNSET is NOT a trigger -- nothing configured, nothing to fail closed on' {
-        $r = Invoke-PolicyHook -ExtraEnv @{ POWERSHELL_LSP_POLICY_MODE = 'closed' }
-        $r.Exit | Should -Be 0
-        $ctx = ($r.Out | ConvertFrom-Json).hookSpecificOutput.additionalContext
+        $out = Invoke-PolicyHook -ExtraEnv @{ POWERSHELL_LSP_POLICY_MODE = 'closed' }
+        $script:PmHookExit | Should -Be 0
+        $ctx = ($out | ConvertFrom-Json).hookSpecificOutput.additionalContext
         $ctx | Should -Not -Match 'organization policy'
         $ctx | Should -Match '\(parser\)' -Because 'no policy was ever configured, so closed has nothing to validate and the edit proceeds'
     }
