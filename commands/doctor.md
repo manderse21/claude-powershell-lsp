@@ -100,12 +100,13 @@ The envelope:
   all, so nothing has inspected it and nothing can promise it holds no secret. The published set
   is an **allowlist of three names**, not the resolver's output with two fields removed -- so a
   field added to the resolver later is absent here by default rather than published by default.
-<<<<<<< HEAD
-  Second, the **fallback direction is inverted**: an unrecognized *capture mode* resolves to
-  `full` because nothing may gate the capture channel, while an unrecognized *endpoint* resolves
-  to **not configured**, because the permissive direction there is a network egress to a
-  destination the administrator never named. Both carry `recognized`, so in either case a typo
-  reads as a typo rather than as a control quietly not doing what its operator believes.
+  Second, **what "safe" means differs between them**: an unrecognized *capture mode* resolves to
+  `metadata` -- source text and the absolute path are suppressed, but the occurrence still
+  captures, because nothing may gate the capture channel itself -- while an unrecognized
+  *endpoint* resolves to **not configured**, because there is no reduced-information tier for a
+  network egress to a destination the administrator never named; off is the only safe fallback
+  there. Both carry `recognized`, so in either case a typo reads as a typo rather than as a
+  control quietly not doing what its operator believes.
 - **`orgPolicy`** answers a different enterprise question -- not "is a fleet control active" but
   "which exact policy was active on this device"
   ([`orgPolicy`](../docs/configuration.md#orgpolicy),
@@ -118,15 +119,6 @@ The envelope:
   than the field being absent -- the same honesty rule `captureMode`/`otelExport` follow for an
   unset control. No trust root is implied: signing a policy stays deferred (R9); this only reports
   identity.
-=======
-  Second, **what "safe" means differs between them**: an unrecognized *capture mode* resolves to
-  `metadata` -- source text and the absolute path are suppressed, but the occurrence still
-  captures, because nothing may gate the capture channel itself -- while an unrecognized
-  *endpoint* resolves to **not configured**, because there is no reduced-information tier for a
-  network egress to a destination the administrator never named; off is the only safe fallback
-  there. Both carry `recognized`, so in either case a typo reads as a typo rather than as a
-  control quietly not doing what its operator believes.
->>>>>>> 2d6bb89 (Diagnostic capture defaults to metadata, not full (R25))
 
 ### Adding to this envelope -- the schemaVersion policy
 
