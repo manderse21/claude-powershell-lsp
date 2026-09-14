@@ -44,6 +44,7 @@ $CmClaimCases   = @(
             Kind          = [string]$c.Kind
             Phrase        = [string]$c.Phrase
             Pattern       = [string]$c.Pattern
+            Pattern2      = [string]$c.Pattern2
             SourcePath    = [string]$c.SourcePath
             SourcePattern = [string]$c.SourcePattern
         }
@@ -136,6 +137,24 @@ Describe 'Control-map claims -- every claim the map makes, against its derived s
                     }
                     return @{ Ok = $true; Detail = "released $claimed" }
                 }
+                'TitleStampRevisionAgree' {
+                    # The page <title> and the header stamp each name a revision independently,
+                    # and nothing compared them -- rev 4/rev 3 disagreed for an entire release
+                    # (dispatch 000297). Pattern captures the title's revision; Pattern2 the
+                    # stamp's. Both run against the SAME normalized MapText, which is why this
+                    # kind takes two patterns instead of one SourcePath/SourcePattern pair: there
+                    # is no external source, just the document disagreeing with itself.
+                    $mTitle = [regex]::Match($MapText, [string]$Claim.Pattern)
+                    $mStamp = [regex]::Match($MapText, [string]$Claim.Pattern2)
+                    if (-not $mTitle.Success) { return @{ Ok = $false; Detail = 'the page title carries no revision number' } }
+                    if (-not $mStamp.Success) { return @{ Ok = $false; Detail = 'the header stamp carries no revision number' } }
+                    $t = $mTitle.Groups[1].Value
+                    $s = $mStamp.Groups[1].Value
+                    if ($t -ne $s) {
+                        return @{ Ok = $false; Detail = "title names rev $t but the header stamp names rev $s" }
+                    }
+                    return @{ Ok = $true; Detail = "title and stamp agree: rev $t" }
+                }
             }
             throw ("unknown control-map claim kind '{0}' -- an unknown kind must THROW, never pass" -f $Claim.Kind)
         }
@@ -162,7 +181,7 @@ Describe 'Control-map claims -- every claim the map makes, against its derived s
             # and silently yields EMPTY strings when it does not apply -- which read here as
             # "unknown claim kind ''" over four correctly-loaded rows.
             $claim = @{
-                Kind = $Kind; Phrase = $Phrase; Pattern = $Pattern
+                Kind = $Kind; Phrase = $Phrase; Pattern = $Pattern; Pattern2 = $Pattern2
                 SourcePath = $SourcePath; SourcePattern = $SourcePattern
             }
             $text = script:ConvertTo-CmText -Html (Get-Content -LiteralPath $script:MapPath -Raw)
@@ -273,6 +292,29 @@ Describe 'Control-map claims -- every claim the map makes, against its derived s
                 (script:Invoke-CmClaim -Claim $c -MapText $text -Root $script:RepoRoot).Ok |
                     Should -BeTrue -Because "the tip must pass '$($c.Phrase)'"
             }
+        }
+
+        It 'the pre-rev-5 title/stamp disagreement (title rev3, stamp rev4) FAILS the new agreement claim' {
+            # MEASURED RED CONTROL for the title/stamp assertion (dispatch 000297, LEG 3). The rev 2
+            # fixture cannot carry this: rev 2's own title and stamp both say "rev 2" -- they AGREE
+            # -- so it would PASS this claim and prove nothing about the failure path. Minting a
+            # second committed fixture would also exceed the four-file commit pathspec this
+            # dispatch is held to, so this reconstructs the exact pre-rev-5 pair -- title rev3,
+            # stamp rev 4, both real strings this file carried before this dispatch's fix -- as an
+            # in-memory mutation of the CURRENT (already-fixed) map rather than a second fixture.
+            $raw = Get-Content -LiteralPath $script:MapPath -Raw
+            $mutated = $raw -replace '(Roadmap Control Map -- \d{4}-\d{2}-\d{2} )rev\d+(</title>)', '${1}rev3${2}'
+            $mutated = $mutated -replace '(<div class="stamp">rev )\d+', '${1}4'
+            $mutated | Should -Not -Be $raw -Because 'the mutation must actually change the title and the stamp'
+
+            $claim = @{
+                Kind     = 'TitleStampRevisionAgree'
+                Pattern  = 'Roadmap Control Map -- \d{4}-\d{2}-\d{2} rev(\d+)'
+                Pattern2 = 'rev\s*(\d+)\s*\.\s*\d{4}-\d{2}-\d{2}\s*\.\s*whole-roadmap view'
+            }
+            $text = script:ConvertTo-CmText -Html $mutated
+            $r = script:Invoke-CmClaim -Claim $claim -MapText $text -Root $script:RepoRoot
+            $r.Ok | Should -BeFalse -Because 'title rev3 and header-stamp rev4 disagree, and the new assertion must say so'
         }
     }
 

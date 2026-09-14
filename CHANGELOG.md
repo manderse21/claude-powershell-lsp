@@ -30,6 +30,31 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+
+## [1.35.0] - 2026-09-13
+MINOR: **A first-party semantic query surface, fleet OpenTelemetry export, and an org-policy
+severity override land on the enterprise surface, all at zero 1.x freeze exposure.**
+`scripts/lsp-query.ps1 <op> <file> <line> <col>` asks the warm daemon `definition`, `references`,
+`hover`, `documentSymbol` and `workspaceSymbol` questions directly, with no Claude Code client in
+the path (docket P1-2). `scripts/export-otel.ps1` renders the existing opt-in stats log as OTLP
+metrics for a fleet collector; `doctor -Json` gains an `otelExport` field reporting whether a host
+is configured to send and where; and a sixth metric counts distinct diagnostic shapes without
+publishing them (docket P2-1). An `orgPolicy` file can now carry `SeverityOverrides` beside
+`ExcludeRules`, so an organization can raise a rule's severity instead of only suppressing it
+(docket P1-5, ruling R9). A fifth CI leg, `container-pwsh`, runs the whole suite inside the
+official PowerShell container image (docket P2-3), and an advisory `claude-code-compat` leg proves
+two pinned real Claude Code clients register the plugin, with `docs/SUPPORT-POLICY.md` stating the
+boundary of what that leg does and does not prove (docket P1-3, ruling R14). **No `userConfig`
+knob, diagnostics status token, or line of `CONTRACT.md` moves in this release** -- every item
+above is additive capability, not a changed promise.
+
+The remainder is hardening rather than new capability. `docs/control-map.html`, shipped as a
+release asset, gets its first automated currency guard and is corrected to rev 5. Five separate
+`psls*` temp-root leaks in the test suite are closed behind a new owner-marker-and-janitor system,
+`Invoke-PluginHook` collapses from eleven definitions to one, the doctor no longer misreports
+`pwsh 0.0.0.0` on Linux and macOS, and `audit-release-bodies.ps1` now pins the repository it
+sweeps instead of trusting `gh` to resolve it.
+
 PATCH: **Every test-minted `psls*` temp-root now carries an ownership marker, tears itself down,
 and a janitor can safely reclaim one that does not** (test-only; no shipped behaviour changes).
 Dispatch 000293 surfaced roughly 1,000 leftover `psls*` directories on the dev machine -- isolated

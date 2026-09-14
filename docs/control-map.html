@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>powershell-lsp -- Roadmap Control Map -- 2026-09-07 rev3</title>
+<title>powershell-lsp -- Roadmap Control Map -- 2026-09-13 rev5</title>
 <style>
   :root{
     --ground:#0b1220; --panel:#121b2c; --panel2:#0f1726; --line:#22304a;
@@ -74,7 +74,7 @@
 <div class="wrap">
 <header>
   <h1>powershell-lsp <span class="thin">/ Roadmap Control Map</span></h1>
-  <div class="stamp">rev 4 &middot; 2026-09-07 &middot; whole-roadmap view &middot; counter 000285 &middot; released v1.34.0 &middot; Apache-2.0 fwd</div>
+  <div class="stamp">rev 5 &middot; 2026-09-13 &middot; whole-roadmap view &middot; counter 000285 &middot; released v1.35.0 &middot; Apache-2.0 fwd</div>
 </header>
 
 <div class="northstar">
@@ -260,7 +260,7 @@
   <!-- header row -->
   <text x="42" y="582" fill="#5c6d85" font-size="11" letter-spacing=".1em">LANE</text>
   <text x="420" y="582" fill="#5c6d85" font-size="11" letter-spacing=".1em">GATE (the named thing)</text>
-  <text x="900" y="582" fill="#5c6d85" font-size="11" letter-spacing=".1em">STANDING AT 09-07</text>
+  <text x="900" y="582" fill="#5c6d85" font-size="11" letter-spacing=".1em">STANDING AT 09-13</text>
   <line x1="36" y1="590" x2="1214" y2="590" stroke="#22304a"/>
 
   <text x="42" y="612" fill="#dfe7f2">Native code navigation</text>
@@ -291,23 +291,26 @@
 <!-- ================= RELEASE RAIL ================= -->
 <text x="24" y="796" fill="#8fa1b8" font-size="13" letter-spacing=".18em" class="mono">RELEASE RAIL (v1.x line -- semver freeze is a trust asset; newest right)</text>
 <line x1="24" y1="820" x2="1226" y2="820" stroke="#22304a" stroke-width="4" stroke-linecap="round"/>
-<line x1="24" y1="820" x2="1000" y2="820" stroke="#3ddc97" stroke-width="4" stroke-linecap="round"/>
+<line x1="24" y1="820" x2="1090" y2="820" stroke="#3ddc97" stroke-width="4" stroke-linecap="round"/>
 <g class="mono" font-size="11">
-  <circle cx="360" cy="820" r="5" fill="#3ddc97"/>
-  <text x="360" y="842" fill="#8fa1b8" text-anchor="middle">v1.29.x .. v1.30.0</text>
-  <circle cx="560" cy="820" r="5" fill="#3ddc97"/>
-  <text x="560" y="842" fill="#8fa1b8" text-anchor="middle">v1.31.0 .. v1.31.2</text>
-  <text x="560" y="858" fill="#5c6d85" text-anchor="middle">thrash fix &middot; daemon survival &middot; SHA pins</text>
-  <circle cx="760" cy="820" r="5" fill="#3ddc97"/>
-  <text x="760" y="842" fill="#3ddc97" text-anchor="middle">v1.32.0 (08-19)</text>
-  <text x="760" y="858" fill="#5c6d85" text-anchor="middle">relicense &middot; convergence &middot; DX close</text>
-  <circle cx="900" cy="820" r="5" fill="#3ddc97"/>
-  <text x="900" y="842" fill="#3ddc97" text-anchor="middle">v1.33.0 (08-22)</text>
-  <text x="900" y="858" fill="#5c6d85" text-anchor="middle">version reconciliation &middot; pipe restricted to invoking user</text>
-  <circle cx="1000" cy="820" r="6" fill="#0b1220" stroke="#f2726d" stroke-width="2"/>
-  <text x="1000" y="842" fill="#f2726d" text-anchor="middle">v1.34.0 (09-07)</text>
-  <text x="1000" y="858" fill="#5c6d85" text-anchor="middle">1.33.1 cut, never tagged, skipped</text>
-  <text x="1226" y="842" fill="#5c6d85" text-anchor="end">version never projected: bump-version.ps1 is TOLD it</text>
+  <circle cx="65" cy="820" r="5" fill="#3ddc97"/>
+  <text x="65" y="842" fill="#8fa1b8" text-anchor="middle">v1.29.x .. v1.30.0</text>
+  <circle cx="210" cy="820" r="5" fill="#3ddc97"/>
+  <text x="210" y="842" fill="#8fa1b8" text-anchor="middle">v1.31.0 .. v1.31.2</text>
+  <text x="210" y="858" fill="#5c6d85" text-anchor="middle">thrash fix &middot; daemon survival &middot; SHA pins</text>
+  <circle cx="410" cy="820" r="5" fill="#3ddc97"/>
+  <text x="410" y="842" fill="#3ddc97" text-anchor="middle">v1.32.0 (08-19)</text>
+  <text x="410" y="858" fill="#5c6d85" text-anchor="middle">relicense &middot; convergence &middot; DX close</text>
+  <circle cx="645" cy="820" r="5" fill="#3ddc97"/>
+  <text x="645" y="842" fill="#3ddc97" text-anchor="middle">v1.33.0 (08-22)</text>
+  <text x="645" y="858" fill="#5c6d85" text-anchor="middle">version reconciliation &middot; pipe restricted to invoking user</text>
+  <circle cx="875" cy="820" r="5" fill="#3ddc97"/>
+  <text x="875" y="842" fill="#3ddc97" text-anchor="middle">v1.34.0 (09-07)</text>
+  <text x="875" y="858" fill="#5c6d85" text-anchor="middle">1.33.1 cut, never tagged, skipped</text>
+  <circle cx="1090" cy="820" r="6" fill="#0b1220" stroke="#f2726d" stroke-width="2"/>
+  <text x="1090" y="842" fill="#f2726d" text-anchor="middle">v1.35.0 (09-13)</text>
+  <text x="1090" y="858" fill="#5c6d85" text-anchor="middle">semantic query &middot; OTel export &middot; org-policy override</text>
+  <text x="1226" y="878" fill="#5c6d85" text-anchor="end">version never projected: bump-version.ps1 is TOLD it</text>
 </g>
 </svg>
 
@@ -338,7 +341,7 @@
 <!-- ================= ATTENDED QUEUE ================= -->
 <div class="sect warm">ATTENDED QUEUE -- Mike's hand, no dispatch needed to start any</div>
 <div class="grid4">
-  <div class="card"><h3>1&#160; Release cut</h3><p><b>TAKEN -- v1.34.0 released 09-07</b> (R4 ruled 2026-09-07: one release from tip; 1.33.1 is a skipped, never-published number). T5.1's Windows arm already shipped in v1.33.0. Blocked only on this map's own currency gate (RELEASING step 5). Version is judged, not derived.</p></div>
+  <div class="card"><h3>1&#160; Release cut</h3><p><b>TAKEN -- v1.35.0 released 09-13</b> (MINOR: semantic query surface, fleet OTel export, org-policy severity overrides land on the enterprise surface; PR #237 carries the cut). Blocked only on this map's own currency gate (RELEASING step 5) -- this rev 5 refresh is that gate's fix. Version is judged, not derived.</p></div>
   <div class="card"><h3>2&#160; Promotion sitting</h3><p>Five rule candidates (charter said four; corrected), docket written, zero executed. Promotion is attended, standing.</p></div>
   <div class="card"><h3>3&#160; Arc B publication</h3><p>Package prepared-not-published, Apache-2.0 clean, SARIF rider closed (G8). Publication is your hand, always.</p></div>
   <div class="card"><h3>4&#160; Capture history + public facts</h3><p>150 rows lost to cache eviction -- consolidate surviving logs? And ROADMAP's public relaunch facts (marketplace, first post) enter only by your statement.</p></div>
