@@ -82,6 +82,43 @@ named rather than closed, the same discipline the existing `SeverityOverrides` b
 carries. No new `userConfig` knob or diagnostics status token; both keys live inside the existing
 `orgPolicy` file, which is not a Tier 1 surface.
 
+MINOR: **`POWERSHELL_LSP_CAPTURE_MODE` now defaults to `metadata`, not `full`; `full` is an
+explicit opt-in (R25).** Every captured diagnostic row used to carry the verbatim offending
+source line and the absolute file path unless an administrator explicitly turned that off. After
+this dispatch, a fresh install -- and every existing install once it upgrades -- writes
+`metadata` rows by default: no `snippet`, no `message`, `file` reduced to a basename. `full`
+still writes the same byte-identical row it always has; it is now something you opt into rather
+than something you opt out of. THE SAFE-FALLBACK CORRECTION THIS RULING ADDS: an UNRECOGNIZED
+value now ALSO resolves to `metadata`, not `full` -- before this dispatch, a typo in a GPO- or
+Intune-deployed value silently re-enabled source-text capture on exactly the fleet whose
+administrator was trying to configure it. A fallback fails toward the safe mode or it is not a
+fallback; both the absent-value path and the unrecognized-value path share one seed in
+`Get-DiagnosticCaptureModeInfo`, so correcting it corrects both at once. `doctor -Json`'s
+`captureMode` field still reports `raw` and `recognized`, so a misconfigured host stays visible
+as misconfigured rather than reading as inactive. THREAT-MODEL.md's T6.1 is amended again --
+narrowed, not withdrawn. No `userConfig` knob or diagnostics status token moved; `CONTRACT.md` is
+untouched.
+
+PATCH: **README's first screen now leads with the differentiator, not a feature list.** The top
+fold answers, in order, what an AI-generated PowerShell mistake costs, what this plugin actually
+runs, and why that beats a hand-wired PowerShell LSP setup -- proof the analysis ran, a
+self-managed toolchain, and the same engine in CI and air-gapped. A new "Why not a generic
+PowerShell LSP setup?" section makes the comparison concrete, three rows, each linking to where a
+reader can check the claim for themselves, then points at the diagnostic-correctness corpus and
+TRUST.md for the measured evidence. Nothing below the fold was reduced; `tests/doc-claims.psd1`'s
+guarded numbers are untouched and still pass unweakened. No benchmark or effectiveness number is
+claimed anywhere -- the W2-1 measurement has not run.
+
+PATCH: **The plugin's marketplace description now states the differentiator (R30), not the old
+feature summary.** `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` both led
+with "Real-time PowerShell diagnostics in Claude Code: as Claude edits a .ps1/.psm1/.psd1, it
+runs PowerShell Editor Services + PSScriptAnalyzer..." -- accurate, but silent on what makes this
+different from wiring up the same two components by hand. Both now lead with the line ruled at
+acceptance: "Real PowerShell analysis after every AI edit -- with proof it ran." The
+Hover/go-to-definition/find-references sentence is unchanged, the two files stay consistent with
+each other, and the `powershell-lsp` marketplace slug is untouched.
+
+
 ## [1.35.0] - 2026-09-13
 MINOR: **A first-party semantic query surface, fleet OpenTelemetry export, and an org-policy
 severity override land on the enterprise surface, all at zero 1.x freeze exposure.**
