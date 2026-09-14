@@ -48,10 +48,15 @@ for how it works.
   bypasses it.
 
 > A local data-capture log (`dogfood/diagnostics.jsonl`, under `CLAUDE_PLUGIN_DATA`) records
-> the diagnostics the tool surfaces, for offline quality work. It is **local-only and never
-> transmitted**, and it is **size-bounded** by the same `keepLastN` sweep that bounds the other
-> logs (see [docs/dogfood.md](docs/dogfood.md)). Optional `enableStats` (default **off**)
-> appends local timing lines. Neither leaves the machine.
+> the diagnostics the tool surfaces, for offline quality work. **By default it does not persist
+> source text or absolute source paths**: `POWERSHELL_LSP_CAPTURE_MODE` defaults to `metadata`,
+> which drops the offending line and the diagnostic message and reduces the file to a basename;
+> full capture -- source text and absolute paths, the pre-R25 behaviour -- is an explicit
+> administrator opt-in (see
+> [docs/configuration.md](docs/configuration.md#powershell_lsp_capture_mode)). It is
+> **local-only and never transmitted**, and it is **size-bounded** by the same `keepLastN` sweep
+> that bounds the other logs (see [docs/dogfood.md](docs/dogfood.md)). Optional `enableStats`
+> (default **off**) appends local timing lines. Neither leaves the machine.
 
 ## Why ExecutionPolicy Bypass appears in every hook entry point
 

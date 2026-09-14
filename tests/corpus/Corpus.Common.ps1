@@ -264,8 +264,21 @@ function Invoke-CorpusDerivation {
     # scopeToEdit=false => whole-file (a bare diagnostics request carries no edit patch
     # and already fails open to whole-file, but we set it explicitly); timeoutMs raised
     # so a first cold analysis on a slow CI leg still settles inside the client cap.
+    #
+    # CAPTURE_MODE=full is REQUIRED here, and is not a preference (R25, dispatch 000301).
+    # This derivation reads the tool's OWN dogfood capture log, and the canonical string the
+    # corpus compares includes the `message` field -- which `metadata` mode does not write.
+    # R25 made `metadata` the DEFAULT, so without this line the derivation reads an empty
+    # message for every sample and every corpus assertion fails with a rule id, source,
+    # severity, line and column that all match and a message that is blank. The harness is a
+    # test, not an install: opting into `full` explicitly is exactly the opt-in R25 created,
+    # and it keeps the default a shipped-behaviour question rather than a test-oracle one.
+    #
+    # docs/dogfood.md's claim that `metadata` costs the corpus nothing holds for `ruleId` and
+    # `hash` -- the efficacy ledger's keys -- but NOT for this canon.
     $extraEnv = @{
         POWERSHELL_LSP_DOGFOOD_LOG       = $log
+        POWERSHELL_LSP_CAPTURE_MODE      = 'full'
         CLAUDE_PLUGIN_OPTION_scopeToEdit = 'false'
         CLAUDE_PLUGIN_OPTION_timeoutMs   = '18000'
     }

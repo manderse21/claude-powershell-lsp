@@ -573,6 +573,21 @@ Describe 'Dogfood diagnostic capture (dispatch 000039)' {
     }
 
     Context 'Add-DiagnosticCaptureEntries -- append-only JSONL, every occurrence, fail-safe' {
+        # CAPTURE_MODE=full is REQUIRED, not a preference (R25, dispatch 000301): every It below
+        # calls the writer in-process and asserts the FULL-row field contract (message/snippet
+        # present and exact) -- what `metadata`, the shipped default since R25, does not write.
+        # A test oracle opting in, same as tests/corpus/Corpus.Common.ps1; scoped to this Context
+        # alone since the sibling Contexts in this Describe (Get-DogfoodLogPath, rotation, pipe
+        # options) never call the writer and do not care about the mode.
+        BeforeEach {
+            $script:PrevCaptureMode = $env:POWERSHELL_LSP_CAPTURE_MODE
+            $env:POWERSHELL_LSP_CAPTURE_MODE = 'full'
+        }
+        AfterEach {
+            if ($null -eq $script:PrevCaptureMode) { Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_CAPTURE_MODE' -ErrorAction SilentlyContinue }
+            else { $env:POWERSHELL_LSP_CAPTURE_MODE = $script:PrevCaptureMode }
+        }
+
         It 'appends one entry carrying every required field, with verdict present and EMPTY' {
             $src = Join-Path $script:DfDir 'sample.ps1'
             "line one`nfunction Frobnicate-X {`n  Get-Process`n}" | Set-Content -LiteralPath $src -Encoding ascii
@@ -5114,10 +5129,18 @@ Describe 'Per-rule lifecycle persistence -- sibling log (dispatch 000171 leg 2)'
             $src = Join-Path $TestDrive 'capsrc.ps1'
             [System.IO.File]::WriteAllText($src, "function Frobnicate-X { }`n")
             $env:POWERSHELL_LSP_DOGFOOD_LOG = $log
+            # CAPTURE_MODE=full is REQUIRED (R25, dispatch 000301): the shipped-key-order
+            # assertion below includes message/snippet, which `metadata` (the shipped default
+            # since R25) does not write. A test oracle opting in, same as
+            # tests/corpus/Corpus.Common.ps1.
+            $env:POWERSHELL_LSP_CAPTURE_MODE = 'full'
             try {
                 Add-DiagnosticCaptureEntries -File $src -Records @(@{ line = 1; col = 10; ruleId = 'PSUseApprovedVerbs'
                         source = 'PSScriptAnalyzer'; severity = 'Warning'; message = 'm' })
-            } finally { $env:POWERSHELL_LSP_DOGFOOD_LOG = $null }
+            } finally {
+                $env:POWERSHELL_LSP_DOGFOOD_LOG = $null
+                $env:POWERSHELL_LSP_CAPTURE_MODE = $null
+            }
             $keys = @((Get-Content -LiteralPath $log -Raw).Trim() | ConvertFrom-Json |
                     ForEach-Object { $_.PSObject.Properties } | ForEach-Object { $_.Name })
             ($keys -join ',') | Should -BeExactly 'ts,file,line,col,ruleId,source,severity,message,snippet,hash,verdict'

@@ -30,6 +30,60 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **R25 silently changed what `scripts/lsp-scan.ps1` -- the shipped SARIF CLI that CI and
+enterprise users run -- emits by default, and R25's own CHANGELOG entry did not say so; this
+entry closes it.** `docs/dogfood.md` argued that `metadata` (R25's new default) costs the
+analysis nothing, since the review tool and the efficacy ledger key on `ruleId` and `hash`, and
+`hash` is computed in every mode. That is true of those two readers, and it is NOT true of every
+reader of the capture log's `message` field -- there turned out to be two, not the one
+`docs/dogfood.md` named:
+
+- `tests/corpus` derives each snapshot by reading the same capture log, and the canonical string
+  it compares includes the human-readable `message`, which `metadata` does not write. Every
+  corpus sample derived a blank message -- rule id, source, severity, line and column all
+  matching, message empty -- and the corpus and one-engine SARIF assertion sets went red on every
+  CI leg. This is a TEST-ONLY consumer, fixed in three files by opting the test oracle into
+  `full` explicitly, scoped to exactly the call that needs it and restored afterward, leaving the
+  shipped default untouched: `tests/corpus/Corpus.Common.ps1`'s derivation,
+  `tests/PowerShellLsp.Integration.Tests.ps1`'s two `(000039)` capture tests, and
+  `tests/PowerShellLsp.Unit.Tests.ps1`'s two in-process `Add-DiagnosticCaptureEntries` Contexts. A
+  test oracle opting in is exactly what R25's explicit opt-in is for.
+  `tests/PowerShellLsp.SarifScan.Tests.ps1`'s one-engine identity Describe needed the SAME
+  treatment at first, but no longer opts in at all now that the second bullet's fix lands -- and
+  deliberately proves that by running with `POWERSHELL_LSP_CAPTURE_MODE` explicitly UNSET, not
+  merely unconfigured by coincidence.
+- **`scripts/lsp-scan.ps1` is not a test.** It derives every finding through
+  `Invoke-ScanFileDiagnostics` (`scripts/lib/lsp-scan-common.ps1`), which reads the SAME capture
+  log's `message` field back and never set `POWERSHELL_LSP_CAPTURE_MODE` itself -- so it inherited
+  whatever the CALLING process's ambient value was, unset on essentially every real invocation of
+  the CLI. Under R25's new default that meant an EMPTY message on every finding, which
+  `New-SarifResult`'s pre-existing (and otherwise correct) bare-rule-id fallback then papered over
+  silently: the SARIF stayed well-formed, just wrong -- `message.text` read `"PSUseApprovedVerbs"`
+  instead of `"The cmdlet 'Frobnicate-Thing' uses an unapproved verb."` This is a real,
+  shipped-behavior regression a fleet-privacy default should never have reached, and it shipped
+  invisibly because the only assertion on derived message text went through a test-only path that
+  forced `full` on itself and so could not have caught a regression in the product's own default.
+  **Fixed at the source, not worked around:** `Invoke-ScanFileDiagnostics` now forces
+  `POWERSHELL_LSP_CAPTURE_MODE=full` unconditionally on its own `-ExtraEnv`, regardless of the
+  caller's ambient value. This is sound specifically because the capture log there is a TRANSPORT,
+  not the control surface `POWERSHELL_LSP_CAPTURE_MODE` governs: the function already redirected
+  it to a brand-new per-scan temp file under `DataRoot/scan-capture/`, read back a few lines later
+  and deleted before returning, never the administrator's real, persistent
+  `dogfood/diagnostics.jsonl`. Forcing `full` on a child process's own env block changes the
+  CONTENT of a file that already existed and was already discarded; it does not change the shipped
+  `Get-DiagnosticCaptureModeInfo` default, and it cannot leak into or override the calling
+  process's own environment (a fleet's real, persistent capture log is written by a completely
+  separate code path -- the live edit-hook -- untouched by this). **Guarded going forward:** a new
+  end-to-end `lsp-scan.ps1` subprocess test, with `POWERSHELL_LSP_CAPTURE_MODE` proven unset (not
+  merely absent by luck), asserts `message.text` is the real diagnostic text; a RED control in an
+  isolated child process, dot-sourcing the PRIOR `Invoke-ScanFileDiagnostics` frozen at
+  `tests/fixtures/red-controls/lsp-scan-common.pre-000301.ps1`, measures that same assertion
+  failing against the pre-fix code -- proof the guard would have caught this, not just a claim
+  that it now would.
+
+`docs/dogfood.md`'s claim is corrected in place rather than left standing, since the next person
+to change a capture field would have read it and believed it: it named `tests/corpus` as the one
+reader `metadata` narrows and said nothing about the CLI. Dispatch 000301 N6.
 
 MINOR: **`doctor -Json` gains an `orgPolicy` object: which exact policy was active on this
 device, without a trust root.** `orgPolicy` carries `path`, `sha256` (of the file as read),
@@ -81,6 +135,43 @@ dropped by the daemon's own severity threshold before anything else sees it -- a
 named rather than closed, the same discipline the existing `SeverityOverrides` boundary already
 carries. No new `userConfig` knob or diagnostics status token; both keys live inside the existing
 `orgPolicy` file, which is not a Tier 1 surface.
+
+MINOR: **`POWERSHELL_LSP_CAPTURE_MODE` now defaults to `metadata`, not `full`; `full` is an
+explicit opt-in (R25).** Every captured diagnostic row used to carry the verbatim offending
+source line and the absolute file path unless an administrator explicitly turned that off. After
+this dispatch, a fresh install -- and every existing install once it upgrades -- writes
+`metadata` rows by default: no `snippet`, no `message`, `file` reduced to a basename. `full`
+still writes the same byte-identical row it always has; it is now something you opt into rather
+than something you opt out of. THE SAFE-FALLBACK CORRECTION THIS RULING ADDS: an UNRECOGNIZED
+value now ALSO resolves to `metadata`, not `full` -- before this dispatch, a typo in a GPO- or
+Intune-deployed value silently re-enabled source-text capture on exactly the fleet whose
+administrator was trying to configure it. A fallback fails toward the safe mode or it is not a
+fallback; both the absent-value path and the unrecognized-value path share one seed in
+`Get-DiagnosticCaptureModeInfo`, so correcting it corrects both at once. `doctor -Json`'s
+`captureMode` field still reports `raw` and `recognized`, so a misconfigured host stays visible
+as misconfigured rather than reading as inactive. THREAT-MODEL.md's T6.1 is amended again --
+narrowed, not withdrawn. No `userConfig` knob or diagnostics status token moved; `CONTRACT.md` is
+untouched.
+
+PATCH: **README's first screen now leads with the differentiator, not a feature list.** The top
+fold answers, in order, what an AI-generated PowerShell mistake costs, what this plugin actually
+runs, and why that beats a hand-wired PowerShell LSP setup -- proof the analysis ran, a
+self-managed toolchain, and the same engine in CI and air-gapped. A new "Why not a generic
+PowerShell LSP setup?" section makes the comparison concrete, three rows, each linking to where a
+reader can check the claim for themselves, then points at the diagnostic-correctness corpus and
+TRUST.md for the measured evidence. Nothing below the fold was reduced; `tests/doc-claims.psd1`'s
+guarded numbers are untouched and still pass unweakened. No benchmark or effectiveness number is
+claimed anywhere -- the W2-1 measurement has not run.
+
+PATCH: **The plugin's marketplace description now states the differentiator (R30), not the old
+feature summary.** `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` both led
+with "Real-time PowerShell diagnostics in Claude Code: as Claude edits a .ps1/.psm1/.psd1, it
+runs PowerShell Editor Services + PSScriptAnalyzer..." -- accurate, but silent on what makes this
+different from wiring up the same two components by hand. Both now lead with the line ruled at
+acceptance: "Real PowerShell analysis after every AI edit -- with proof it ran." The
+Hover/go-to-definition/find-references sentence is unchanged, the two files stay consistent with
+each other, and the `powershell-lsp` marketplace slug is untouched.
+
 
 ## [1.35.0] - 2026-09-13
 MINOR: **A first-party semantic query surface, fleet OpenTelemetry export, and an org-policy

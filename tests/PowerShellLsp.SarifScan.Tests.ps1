@@ -15,6 +15,10 @@
 #      over the CI-derived findings.
 #   3. Entry point end-to-end (warm daemon): scripts/lsp-scan.ps1 run over a real directory emits
 #      conformant SARIF carrying the expected finding, and the text mode + exit code behave.
+#   4. RED CONTROL (dispatch 000301 N6, no daemon): the PRIOR (pre-fix) Invoke-ScanFileDiagnostics,
+#      run in an isolated child process against a no-daemon parser-error file, is measured to
+#      degrade SARIF message.text to the bare rule id -- proving layer 3's default-invocation
+#      message-text assertion would have caught the R25 regression before it was fixed.
 #
 # Runs on the same platforms as the corpus/integration suites; other platforms self-skip. The
 # analysis host is always pwsh (named pipes map to Unix domain sockets on .NET), even when this
@@ -399,6 +403,19 @@ Describe 'SARIF scan -- finding identity (one engine)' -Skip:$script:SkipDaemon 
         }
         New-Item -ItemType Directory -Force -Path $script:DataDir | Out-Null
         $env:CLAUDE_PLUGIN_DATA = $script:DataDir
+        # POWERSHELL_LSP_CAPTURE_MODE explicitly UNSET here, not merely left alone (dispatch 000301
+        # N6). A prior turn forced this process's env to `full` so the identity assertion below
+        # (which compares derived `message` against the corpus snapshot) would not read an empty
+        # string under R25's new default -- but a test-side override that FORCES the correct mode
+        # proves nothing about whether the PRODUCT forces it, which is exactly the class of
+        # regression this dispatch exists to fix. The real fix now lives in Invoke-ScanFileDiagnostics
+        # itself (scripts/lib/lsp-scan-common.ps1): it forces `full` on its own private, throwaway
+        # transport unconditionally, regardless of this process's ambient value. Removing (not just
+        # omitting) the variable here, whatever an earlier Describe in this process left behind, is
+        # what makes "this Describe runs exactly like a real, default scripts/lsp-scan.ps1
+        # invocation" a proven fact rather than an assumption -- restored in AfterAll below.
+        $script:PrevSarifCaptureMode = $env:POWERSHELL_LSP_CAPTURE_MODE
+        Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_CAPTURE_MODE' -ErrorAction SilentlyContinue
 
         $script:HostExe = Resolve-PsHost 'pwsh'
 
@@ -452,6 +469,11 @@ Describe 'SARIF scan -- finding identity (one engine)' -Skip:$script:SkipDaemon 
         }
         if ($script:ScratchDir -and (Test-Path -LiteralPath $script:ScratchDir)) {
             Remove-Item -LiteralPath $script:ScratchDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if ($null -eq $script:PrevSarifCaptureMode) {
+            Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_CAPTURE_MODE' -ErrorAction SilentlyContinue
+        } else {
+            $env:POWERSHELL_LSP_CAPTURE_MODE = $script:PrevSarifCaptureMode
         }
     }
 
@@ -609,6 +631,13 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
         $script:FailOnOut = Join-Path $script:InputDir 'failon.sarif'
         $prevData = $env:CLAUDE_PLUGIN_DATA
         $env:CLAUDE_PLUGIN_DATA = $script:DataDir
+        # POWERSHELL_LSP_CAPTURE_MODE explicitly UNSET (not just left alone) around these two real
+        # CLI invocations (dispatch 000301 N6): this IS "a default lsp-scan.ps1 invocation, with no
+        # CAPTURE_MODE set" in Q1's own words, and the message-text assertion below depends on that
+        # being a proven fact -- whatever an earlier Describe in this process left behind -- not an
+        # assumption about ambient state.
+        $prevCaptureMode = $env:POWERSHELL_LSP_CAPTURE_MODE
+        Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_CAPTURE_MODE' -ErrorAction SilentlyContinue
         try {
             & $script:HostExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:ScanScript $script:InputDir -Format sarif -OutputPath $script:SarifOut 2>$null | Out-Null
             $script:SarifExit = $LASTEXITCODE
@@ -619,6 +648,8 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
             $script:FailOnExit = $LASTEXITCODE
         } finally {
             $env:CLAUDE_PLUGIN_DATA = $prevData
+            if ($null -eq $prevCaptureMode) { Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_CAPTURE_MODE' -ErrorAction SilentlyContinue }
+            else { $env:POWERSHELL_LSP_CAPTURE_MODE = $prevCaptureMode }
         }
         $script:SarifText = if (Test-Path -LiteralPath $script:SarifOut) { Get-Content -LiteralPath $script:SarifOut -Raw } else { '' }
         $script:Sarif = if (-not [string]::IsNullOrWhiteSpace($script:SarifText)) { $script:SarifText | ConvertFrom-Json } else { $null }
@@ -661,6 +692,24 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
         [string]$verb[0].locations[0].physicalLocation.artifactLocation.uri | Should -Match 'bad\.ps1$'
     }
 
+    It 'a DEFAULT invocation (no CAPTURE_MODE set) emits the REAL diagnostic text, not the bare rule id (R25 regression guard, dispatch 000301 N6)' {
+        # THE regression guard. R25 made POWERSHELL_LSP_CAPTURE_MODE default to `metadata`, and
+        # Invoke-ScanFileDiagnostics used to inherit whatever the CALLING process's ambient value
+        # was -- unset on every real invocation of this CLI, since nobody runs a CI scanner with an
+        # env var tuned for a fleet telemetry log they have never heard of. That silently degraded
+        # every SARIF result's message.text to the bare rule id (New-SarifResult's existing,
+        # unrelated fallback for a truly message-less finding) instead of the real diagnostic text.
+        # The BeforeAll above proved the env var is UNSET for this exact invocation, not merely
+        # unconfigured by coincidence -- so this is "a default lsp-scan.ps1 invocation" in the
+        # precise sense the regression was reported in. See the RED CONTROL Describe below for the
+        # measured proof this assertion would have failed before the fix.
+        $results = @($script:Sarif.runs[0].results)
+        $verb = @($results | Where-Object { [string]$_.ruleId -eq 'PSUseApprovedVerbs' })
+        $verb.Count | Should -BeGreaterThan 0
+        [string]$verb[0].message.text | Should -Match "Frobnicate-Thing.*unapproved verb" -Because 'the real PSScriptAnalyzer message, not a placeholder'
+        [string]$verb[0].message.text | Should -Not -BeExactly 'PSUseApprovedVerbs' -Because 'the bare rule id is New-SarifResult''s fallback for a message-LESS finding -- it must never be reached for one PSSA actually described'
+    }
+
     It 'does not flag the clean file (no false positive through the entry point)' {
         $results = @($script:Sarif.runs[0].results)
         @($results | Where-Object { [string]$_.locations[0].physicalLocation.artifactLocation.uri -match 'clean\.ps1$' }).Count | Should -Be 0
@@ -696,6 +745,145 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
         $errText = if (Test-Path -LiteralPath $diagErr) { Get-Content -LiteralPath $diagErr -Raw } else { '' }
         $diagLines = @([regex]::Matches($errText, 'lsp-scan diag: .+ analyzed=\w+ elapsed=\d+ms'))
         $diagLines.Count | Should -BeGreaterOrEqual 2 -Because 'the input tree has 2 PowerShell files, each timed with a real elapsed'
+    }
+}
+
+Describe 'RED CONTROL (dispatch 000301 N6): Invoke-ScanFileDiagnostics used to leak the ambient CAPTURE_MODE into SARIF message.text' -Skip:$script:SkipDaemon {
+    # WHAT IS UNDER TEST: not PSES/PSScriptAnalyzer (this needs neither -- a NO-DAEMON session id
+    # forces the in-process PARSER pre-pass, exactly the trick "Integration: dogfood diagnostic
+    # capture" uses to test the capture tap without a warm daemon), but Invoke-ScanFileDiagnostics's
+    # OWN choice of what CAPTURE_MODE its private transport runs under. tests/fixtures/red-controls/
+    # lsp-scan-common.pre-000301.ps1 is that function exactly as it stood before this dispatch's Q1
+    # fix -- see that file's header for the git-show derivation and why only this one function needs
+    # freezing (Invoke-ScanHook, which it calls, is unchanged).
+    #
+    # Proves the property Q2 asked for: "the SARIF message.text is the real diagnostic text and not
+    # the bare rule id" would have gone RED before the fix, for the exact real-world trigger --
+    # POWERSHELL_LSP_CAPTURE_MODE unset in the calling process, same as every real
+    # scripts/lsp-scan.ps1 invocation.
+    #
+    # WHY A FRESH CHILD PROCESS. Dot-sourcing the frozen fixture into THIS Pester process would
+    # override Invoke-ScanFileDiagnostics for the rest of the process's lifetime -- the exact
+    # collision tests/PowerShellLsp.CaptureMode.Tests.ps1's Invoke-CaptureRun documents avoiding the
+    # same way. Everything the child needs is embedded as a single-quoted literal in a generated
+    # driver script (no command-line argument quoting to get wrong), and stdout/stderr are
+    # redirected via Start-Process to SEPARATE files, never `2>&1` or a native `2>` redirect: under
+    # Windows PowerShell 5.1 with Pester's default $ErrorActionPreference = 'Stop', a redirected
+    # native stderr LINE is promoted to a terminating error (the same hazard the DiagnosticTiming
+    # test above neutralizes with $ErrorActionPreference = 'Continue'); Start-Process's OS-level
+    # redirection never goes through that translation at all.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        $script:Ps301RedScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:Ps301RedFixture = Join-Path $PSScriptRoot 'fixtures/red-controls/lsp-scan-common.pre-000301.ps1'
+        $script:Ps301RedHostExe = Resolve-PsHost 'pwsh'
+        $script:Ps301RedData = Join-Path ([System.IO.Path]::GetTempPath()) ('psls-p301red-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:Ps301RedData | Out-Null
+
+        # A deliberately broken .ps1 (unclosed brace) -- the SAME shape
+        # "Integration: dogfood diagnostic capture" uses -- so the parser pre-pass fires with no
+        # PSES/PSScriptAnalyzer bootstrap and no warm daemon at all.
+        $script:Ps301RedBroken = Join-Path $script:Ps301RedData 'broken.ps1'
+        "function Test-Ps301RedBroken {`n    Get-Process" | Set-Content -LiteralPath $script:Ps301RedBroken -Encoding ascii
+
+        function ConvertTo-Ps301Literal {
+            # A PowerShell single-quoted literal for an arbitrary string ('' escapes a quote) --
+            # mirrors PowerShellLsp.CaptureMode.Tests.ps1's ConvertTo-PsLiteral.
+            param([string] $Value)
+            return ("'" + (([string]$Value) -replace "'", "''") + "'")
+        }
+
+        function New-Ps301RedDriver {
+            # A bespoke driver, every value embedded as a literal: dot-sources the REAL libraries,
+            # then the FROZEN prior Invoke-ScanFileDiagnostics (which overrides it, and ONLY it),
+            # explicitly removes CAPTURE_MODE from its OWN environment (the real-world trigger --
+            # not a hand-picked adversarial value), derives the broken file with a fresh never-
+            # started session id, builds a SARIF result from the finding via the REAL (unfrozen)
+            # New-SarifResult, and prints one compact JSON line so the parent process can assert on
+            # it without any text-matching fragility.
+            $sessionIdLine = '$sid = ''p301red-'' + [guid]::NewGuid().ToString(''N'').Substring(0, 8)'
+            $text = @(
+                '$ErrorActionPreference = ''Stop'''
+                '. ' + (ConvertTo-Ps301Literal -Value (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1'))
+                '. ' + (ConvertTo-Ps301Literal -Value (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1'))
+                '. ' + (ConvertTo-Ps301Literal -Value $script:Ps301RedFixture)
+                'Remove-Item -LiteralPath ''Env:POWERSHELL_LSP_CAPTURE_MODE'' -ErrorAction SilentlyContinue'
+                $sessionIdLine
+                '$r = Invoke-ScanFileDiagnostics -ScriptsDir ' + (ConvertTo-Ps301Literal -Value $script:Ps301RedScriptsDir) +
+                    ' -DataRoot ' + (ConvertTo-Ps301Literal -Value $script:Ps301RedData) +
+                    ' -SessionId $sid -HostExe ' + (ConvertTo-Ps301Literal -Value $script:Ps301RedHostExe) +
+                    ' -FilePath ' + (ConvertTo-Ps301Literal -Value $script:Ps301RedBroken) +
+                    ' -Cwd ' + (ConvertTo-Ps301Literal -Value $script:Ps301RedData)
+                '$finding = @($r.Findings) | Select-Object -First 1'
+                '$sarifText = '''''
+                '$rawMessage = '''''
+                '$ruleKey = '''''
+                'if ($null -ne $finding) {'
+                '    $ruleKey = [string](Get-ScanRuleKey -Finding $finding)'
+                '    $rel = [string](Get-ScanRelativeUri -FilePath ([string]$finding.file) -Root ' + (ConvertTo-Ps301Literal -Value $script:Ps301RedData) + ')'
+                '    $sarifResult = New-SarifResult -Finding $finding -RuleIndex 0 -RelativeUri $rel -RuleKey $ruleKey'
+                '    $sarifText = [string]$sarifResult.message.text'
+                '    $rawMessage = [string]$finding.message'
+                '}'
+                '$out = [ordered]@{'
+                '    findingsCount    = @($r.Findings).Count'
+                '    analyzed         = [bool]$r.Analyzed'
+                '    ruleKey          = $ruleKey'
+                '    rawMessage       = $rawMessage'
+                '    sarifMessageText = $sarifText'
+                '}'
+                '($out | ConvertTo-Json -Compress) | Write-Output'
+            ) -join "`n"
+            $path = Join-Path $script:Ps301RedData ('driver-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.ps1')
+            [System.IO.File]::WriteAllText($path, $text + "`n", (New-Object System.Text.UTF8Encoding($false)))
+            return $path
+        }
+
+        $driver = New-Ps301RedDriver
+        $stem = Join-Path $script:Ps301RedData ('io-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $outFile = $stem + '.out'
+        $errFile = $stem + '.err'
+        $proc = Start-Process -FilePath $script:Ps301RedHostExe `
+            -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $driver) `
+            -Wait -PassThru -NoNewWindow -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        $script:Ps301RedExitCode = $proc.ExitCode
+        $script:Ps301RedStdout = if (Test-Path -LiteralPath $outFile) { [System.IO.File]::ReadAllText($outFile) } else { '' }
+        $script:Ps301RedStderr = if (Test-Path -LiteralPath $errFile) { [System.IO.File]::ReadAllText($errFile) } else { '' }
+        $script:Ps301RedResult = $null
+        if (-not [string]::IsNullOrWhiteSpace($script:Ps301RedStdout)) {
+            try { $script:Ps301RedResult = $script:Ps301RedStdout.Trim() | ConvertFrom-Json } catch { $script:Ps301RedResult = $null }
+        }
+    }
+
+    AfterAll {
+        if ($script:Ps301RedData -and (Test-Path -LiteralPath $script:Ps301RedData)) {
+            Remove-Item -LiteralPath $script:Ps301RedData -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'the child ran cleanly and produced a finding (not vacuous)' {
+        $script:Ps301RedExitCode | Should -Be 0 -Because ('driver stderr: ' + $script:Ps301RedStderr)
+        $script:Ps301RedResult | Should -Not -BeNullOrEmpty -Because ('driver stdout: ' + $script:Ps301RedStdout)
+        [int]$script:Ps301RedResult.findingsCount | Should -BeGreaterThan 0 -Because 'a broken .ps1 must surface a parser finding, or nothing below is measuring the regression'
+        [bool]$script:Ps301RedResult.analyzed | Should -BeTrue
+    }
+
+    It 'RED: the PRIOR implementation, with CAPTURE_MODE unset, loses the raw message (root cause)' {
+        [string]$script:Ps301RedResult.rawMessage | Should -BeExactly '' -Because 'this is the exact defect: Invoke-ScanFileDiagnostics inherited the ambient (unset -> metadata) mode instead of forcing full on its own transport'
+    }
+
+    It 'RED: the PRIOR implementation degrades SARIF message.text to the bare rule id (dispatch 000301''s own regression, measured)' {
+        # THE property layer 3's new default-invocation test asserts, proven to fail here.
+        # MEASURED, not assumed: a parser ParseError carries the parser's own ErrorId as ruleId
+        # (New-CaptureRecordFromParseError, e.g. 'MissingEndCurlyBrace' for this fixture's unclosed
+        # brace -- confirmed by the previous It, not guessed), so Get-ScanRuleKey's fallback order
+        # never falls all the way to the literal 'parser' here; it returns that ErrorId. Either way
+        # it is trivially distinguishable from the real diagnostic sentence a parser error carries
+        # ("Missing closing '}' in statement block." and similar) -- which is exactly the point:
+        # message.text degrades to a terse identifier, not the message a human would read.
+        [string]$script:Ps301RedResult.ruleKey | Should -BeExactly 'MissingEndCurlyBrace'
+        [string]$script:Ps301RedResult.sarifMessageText | Should -BeExactly 'MissingEndCurlyBrace' -Because 'New-SarifResult''s bare-rule-id fallback fired -- the same degradation R25 caused in the real SARIF CLI'
     }
 }
 

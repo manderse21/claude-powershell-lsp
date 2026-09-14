@@ -193,11 +193,11 @@ Describe 'Get-DiagnosticCaptureModeInfo -- the vocabulary, and what an unrecogni
         @{ Raw = 'off'; Resolved = 'off'; Recognized = $true }
         @{ Raw = 'Metadata'; Resolved = 'metadata'; Recognized = $true }
         @{ Raw = '  off  '; Resolved = 'off'; Recognized = $true }
-        @{ Raw = ''; Resolved = 'full'; Recognized = $false }
-        @{ Raw = '   '; Resolved = 'full'; Recognized = $false }
-        @{ Raw = 'metadta'; Resolved = 'full'; Recognized = $false }
-        @{ Raw = 'none'; Resolved = 'full'; Recognized = $false }
-        @{ Raw = 'true'; Resolved = 'full'; Recognized = $false }
+        @{ Raw = ''; Resolved = 'metadata'; Recognized = $false }
+        @{ Raw = '   '; Resolved = 'metadata'; Recognized = $false }
+        @{ Raw = 'metadta'; Resolved = 'metadata'; Recognized = $false }
+        @{ Raw = 'none'; Resolved = 'metadata'; Recognized = $false }
+        @{ Raw = 'true'; Resolved = 'metadata'; Recognized = $false }
     ) {
         param($Raw, $Resolved, $Recognized)
         [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $Raw)
@@ -216,20 +216,22 @@ Describe 'Get-DiagnosticCaptureModeInfo -- the vocabulary, and what an unrecogni
         $info = Get-DiagnosticCaptureModeInfo
         $info.raw | Should -BeExactly ''
         $info.raw | Should -Not -Be $null
-        $info.resolved | Should -BeExactly 'full'
+        $info.resolved | Should -BeExactly 'metadata'
         $info.recognized | Should -Be $false
     }
 
     It 'AN UNRECOGNIZED VALUE STILL CAPTURES -- the mode logic never gates the channel' {
         # T6.1 is ACCEPTED-WITH-RECORD and Get-CaptureLogRotateBytes states the constraint for
         # this whole family: nothing here may become a gate on the capture channel itself. A typo
-        # in a GPO-deployed variable must not silently stop capture.
+        # in a GPO-deployed variable must not silently stop capture -- and (R25) must not silently
+        # re-enable source-text capture either, which is why the row it still writes carries no
+        # snippet.
         $p = New-ProbeSource -Tag 'invalid'
         $lp = New-LogPathIn -Tag 'invalid'
         New-Item -ItemType Directory -Force -Path $lp.Dir | Out-Null
         $run = Invoke-CaptureRun -SrcFile $p.Src -LogPath $lp.Log -Mode 'metadta'
-        $run.Lines.Count | Should -Be 1 -Because 'an unrecognized value falls back to full, it does not disable capture'
-        $run.Lines[0] | Should -Match '"snippet"'
+        $run.Lines.Count | Should -Be 1 -Because 'an unrecognized value falls back to metadata, it does not disable capture'
+        $run.Lines[0] | Should -Not -Match '"snippet"'
     }
 }
 
@@ -251,9 +253,24 @@ Describe 'full mode is BYTE-IDENTICAL to the prior implementation for the same f
             Should -BeExactly (ConvertTo-TimestampFreeRow -Row $prior.Lines[0])
     }
 
-    It 'writes the same row as the merge-base writer when the variable is UNSET' {
-        # Unset is the shipped default and the case every existing install is in, so it gets its
-        # own assertion rather than resting on `full` being spelled out.
+    It 'the timestamp normalizer is not what makes those rows match' {
+        # Non-vacuity for the comparison itself: two rows differing anywhere OTHER than `ts` must
+        # still compare unequal after normalization.
+        $a = '{"ts":"2026-01-01T00:00:00.0000000-05:00","file":"a.ps1","snippet":"x"}'
+        $b = '{"ts":"2026-09-06T11:22:33.4444444-04:00","file":"a.ps1","snippet":"y"}'
+        (ConvertTo-TimestampFreeRow -Row $a) | Should -Not -BeExactly (ConvertTo-TimestampFreeRow -Row $b)
+    }
+}
+
+Describe 'RED CONTROL (R25) -- UNSET no longer matches the merge-base writer; metadata is the new default' {
+    It 'the shipped writer suppresses snippet/message/path when UNSET; the prior writer does not' {
+        # Pre-R25 (ruled 2026-09-12), unset meant `full`, and the prior Describe block above
+        # asserted the shipped row was byte-identical to the pre-000282 writer -- which has never
+        # heard of capture mode and writes unconditionally, full, every time. R25 flips the
+        # DEFAULT to `metadata`, so that identity is gone BY DESIGN. Proving it is gone -- measured,
+        # not asserted -- is the RED control leg 1 requires for the absent-value path: the prior
+        # writer is run over the exact same finding, so the only variable between the two runs is
+        # the default this dispatch changed.
         $p = New-ProbeSource -Tag 'unset'
         $lpNew = New-LogPathIn -Tag 'unset-new'
         $lpOld = New-LogPathIn -Tag 'unset-old'
@@ -264,16 +281,21 @@ Describe 'full mode is BYTE-IDENTICAL to the prior implementation for the same f
         $prior = Invoke-CaptureRun -SrcFile $p.Src -LogPath $lpOld.Log -Mode 'UNSET' -Prior
 
         $shipped.Lines.Count | Should -Be 1
-        (ConvertTo-TimestampFreeRow -Row $shipped.Lines[0]) |
-            Should -BeExactly (ConvertTo-TimestampFreeRow -Row $prior.Lines[0])
-    }
+        $prior.Lines.Count | Should -Be 1 -Because 'the prior writer must have run at all'
 
-    It 'the timestamp normalizer is not what makes those rows match' {
-        # Non-vacuity for the comparison itself: two rows differing anywhere OTHER than `ts` must
-        # still compare unequal after normalization.
-        $a = '{"ts":"2026-01-01T00:00:00.0000000-05:00","file":"a.ps1","snippet":"x"}'
-        $b = '{"ts":"2026-09-06T11:22:33.4444444-04:00","file":"a.ps1","snippet":"y"}'
-        (ConvertTo-TimestampFreeRow -Row $a) | Should -Not -BeExactly (ConvertTo-TimestampFreeRow -Row $b)
+        # THE RED HALF: the pre-000282 writer never heard of capture mode, so an unset variable
+        # produces exactly what an unfixed default would -- this is what a test asserting
+        # "no snippet when unset" would have failed against before this dispatch.
+        $prior.Lines[0] | Should -Match '"snippet"'
+        $prior.Lines[0] | Should -Match '"message"'
+        $prior.Lines[0] | Should -Match ([regex]::Escape($p.DirLeaf))
+
+        # THE SHIPPED HALF: with the variable unset, none of that is written -- no snippet, no
+        # message, and a basename rather than an absolute path.
+        $shipped.Lines[0] | Should -Not -Match '"snippet"'
+        $shipped.Lines[0] | Should -Not -Match '"message"'
+        $shipped.Lines[0] | Should -Not -Match ([regex]::Escape($p.DirLeaf))
+        ($shipped.Lines[0] | ConvertFrom-Json).file | Should -BeExactly 'probe.ps1'
     }
 }
 
@@ -522,6 +544,28 @@ Describe 'RED CONTROL -- the prior implementation EMITS the snippet under metada
         New-Item -ItemType Directory -Force -Path $lp.Dir | Out-Null
 
         $run = Invoke-CaptureRun -SrcFile $p.Src -LogPath $lp.Log -Mode 'metadata' -Prior
+
+        $run.Lines.Count | Should -Be 1 -Because 'the prior writer must have run at all'
+        $run.Lines[0] | Should -Match '"snippet"'
+        $run.Lines[0] | Should -Match '"message"'
+        $run.Lines[0] | Should -Match 'customerRecordZZQ9'
+        $run.Lines[0] | Should -Match ([regex]::Escape($p.DirLeaf))
+    }
+
+    It 'RED CONTROL (R25) -- writes snippet AND the absolute path even with an UNRECOGNIZED value' {
+        # The other half of R25's safe-fallback correction. Before this dispatch, an unrecognized
+        # value fell back to the SAME seed an absent value did ('full'); the prior writer settles
+        # what that looked like on disk, because it has never heard of the variable at all and so
+        # is blind to a garbage value exactly as it is blind to a valid one -- full, unconditional,
+        # every time. 'AN UNRECOGNIZED VALUE STILL CAPTURES' (the vocabulary Describe block above)
+        # is a RED control and not an assertion resting on itself because of what this test proves:
+        # the same garbage value, run through the writer this repository shipped before R25, would
+        # have produced exactly this row.
+        $p = New-ProbeSource -Tag 'redunrecognized'
+        $lp = New-LogPathIn -Tag 'redunrecognized'
+        New-Item -ItemType Directory -Force -Path $lp.Dir | Out-Null
+
+        $run = Invoke-CaptureRun -SrcFile $p.Src -LogPath $lp.Log -Mode 'metadta' -Prior
 
         $run.Lines.Count | Should -Be 1 -Because 'the prior writer must have run at all'
         $run.Lines[0] | Should -Match '"snippet"'

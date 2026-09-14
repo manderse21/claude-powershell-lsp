@@ -2300,20 +2300,23 @@ function Format-DoctorJson {
     # that boundary as an allowlist so a field added to the resolver later is absent here by
     # default rather than published by default.
     #
-    # THE TWO FIELDS' FALLBACK DIRECTIONS ARE OPPOSITE, AND THE ENVELOPE MUST NOT HIDE THAT. An
-    # unrecognized capture mode resolves to `full` -- permissive, because nothing may gate the
-    # capture channel. An unrecognized endpoint resolves to NOT CONFIGURED -- restrictive,
-    # because the permissive direction there is a network egress to a destination nobody named.
-    # Both carry `recognized`, so in both cases a typo reads as a typo rather than as a control
-    # that is quietly not doing what its administrator believes it is doing.
+    # THE TWO FIELDS' FALLBACKS BOTH FAIL TOWARD SAFETY, BUT "SAFE" MEANS SOMETHING DIFFERENT FOR
+    # EACH, AND THE ENVELOPE MUST NOT HIDE THAT (R25, ruled 2026-09-12). An unrecognized capture
+    # mode resolves to `metadata` -- source text and the absolute path are suppressed, but the
+    # occurrence still captures, because nothing may gate the capture channel ITSELF. An
+    # unrecognized endpoint resolves to NOT CONFIGURED -- no export at all -- because there is no
+    # reduced-information tier for a network egress to a destination nobody named; off is the only
+    # safe fallback there. Both carry `recognized`, so in both cases a typo reads as a typo rather
+    # than as a control that is quietly not doing what its administrator believes it is doing.
     #
     # captureMode exists because a control the fleet cannot verify is half a control (ruling R19).
     # P0-2's reader is a management plane -- EDR, backup, eDiscovery, DLP -- and it learns whether
     # the capture control is active by asking a machine-readable surface, NOT by reading the log
     # the control exists to keep it out of. It carries three things: the RESOLVED mode the writer
     # will obey, the RAW environment value verbatim ('' when unset), and whether that value was
-    # RECOGNIZED -- so a typo, which resolves to `full` rather than gating the channel, is visible
-    # as a typo instead of reading as a control that is quietly not active.
+    # RECOGNIZED -- so a typo, which resolves to `metadata` rather than gating the channel or
+    # silently re-enabling source-text capture, is visible as a typo instead of reading as a
+    # control that is quietly not active.
     #
     # orgPolicy answers a DIFFERENT enterprise question -- not "is a fleet control active" but
     # "which exact policy was active on this device", without introducing a trust root (signing

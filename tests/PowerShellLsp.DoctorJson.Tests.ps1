@@ -387,11 +387,11 @@ Describe 'captureMode -- the fleet-visible half of P0-2 (dispatch 000282, ruling
     }
 
     It 'carries resolved, raw and recognized for <Raw>' -TestCases @(
-        @{ Raw = $null; Resolved = 'full'; ExpRaw = ''; Recognized = $false }
+        @{ Raw = $null; Resolved = 'metadata'; ExpRaw = ''; Recognized = $false }
         @{ Raw = 'metadata'; Resolved = 'metadata'; ExpRaw = 'metadata'; Recognized = $true }
         @{ Raw = 'off'; Resolved = 'off'; ExpRaw = 'off'; Recognized = $true }
         @{ Raw = 'full'; Resolved = 'full'; ExpRaw = 'full'; Recognized = $true }
-        @{ Raw = 'metadta'; Resolved = 'full'; ExpRaw = 'metadta'; Recognized = $false }
+        @{ Raw = 'metadta'; Resolved = 'metadata'; ExpRaw = 'metadta'; Recognized = $false }
     ) {
         param($Raw, $Resolved, $ExpRaw, $Recognized)
         [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $Raw)
@@ -403,9 +403,9 @@ Describe 'captureMode -- the fleet-visible half of P0-2 (dispatch 000282, ruling
 
     It 'A TYPO IS VISIBLE AS A TYPO, not as a control that is quietly not active' {
         # The reason the field carries all three values rather than just the resolved mode. An
-        # unrecognized value resolves to `full` -- the mode logic must never gate the capture
+        # unrecognized value resolves to `metadata` -- the mode logic must never gate the capture
         # channel -- so without `raw` and `recognized` a fleet reader could not tell a host that
-        # was deliberately left at `full` from one where the GPO value is misspelled.
+        # was deliberately left at the default from one where the GPO value is misspelled.
         [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', 'metadataa')
         $typo = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd'))) | ConvertFrom-Json
         [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $null)
@@ -548,20 +548,21 @@ Describe 'otelExport -- the fleet-visible half of P2-1 (dispatch 000291)' {
         $text | Should -Match ([regex]::Escape('collector.example.invalid'))
     }
 
-    It 'A TYPO IS VISIBLE AS A TYPO, and its FALLBACK IS THE OPPOSITE of captureMode' {
-        # The two controls fail in opposite directions on purpose. An unrecognized capture mode
-        # resolves to `full` -- permissive, because nothing may gate the capture channel. An
-        # unrecognized endpoint resolves to NOT CONFIGURED -- restrictive, because the
-        # permissive direction there is a network egress to a destination nobody named. Both
-        # directions are asserted in ONE place so neither can quietly be brought into line
-        # with the other.
+    It 'A TYPO IS VISIBLE AS A TYPO, and its FALLBACK differs in kind from captureMode' {
+        # The two controls both fail toward safety, but "safe" means something different for
+        # each, on purpose. An unrecognized capture mode resolves to `metadata` -- source text
+        # and the absolute path suppressed, but the occurrence still captures, because nothing
+        # may gate the capture channel ITSELF. An unrecognized endpoint resolves to NOT
+        # CONFIGURED, because there is no reduced-information tier for a network egress to a
+        # destination nobody named. Both directions are asserted in ONE place so neither can
+        # quietly be brought into line with the other.
         [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', 'metadta')
         [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_OTEL_ENDPOINT', 'htp://typo.example.invalid/v1')
         $o = (Get-EnvelopeText) | ConvertFrom-Json
         [Environment]::SetEnvironmentVariable('POWERSHELL_LSP_CAPTURE_MODE', $null)
 
         $o.captureMode.recognized | Should -Be $false
-        $o.captureMode.resolved | Should -BeExactly 'full' -Because 'the capture channel is never gated by a typo'
+        $o.captureMode.resolved | Should -BeExactly 'metadata' -Because 'the capture channel is never gated by a typo'
         $o.otelExport.recognized | Should -Be $false
         $o.otelExport.configured | Should -Be $false -Because 'egress to a destination nobody named is never the fallback'
         $o.otelExport.display | Should -BeExactly ''

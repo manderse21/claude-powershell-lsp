@@ -13,13 +13,22 @@
 > exact boundary is stated in [What this does and does not prove](#verifying-your-install-and-a-release)
 > below and in [TRUST.md, "Honest limits"](./TRUST.md#honest-limits).
 
-As Claude edits a `.ps1`, `.psm1`, or `.psd1`, this plugin runs real PowerShell Editor Services
-(PSES) + PSScriptAnalyzer over that file and feeds the result -- syntax errors and lint findings,
-with fix suggestions -- straight back into Claude's context, so a mistake gets caught and
-corrected in the same turn. It is language tooling, not project tooling.
-No recurring prompt injection; context is added only when a PowerShell edit produces diagnostics or enabled guidance.
-A language server spawns only when a PowerShell file is edited, and one warm process serves the
-whole session, so each edit pays a fast pipe round-trip instead of a cold start.
+**An AI coding agent can produce PowerShell that looks right, is objectively wrong, and gets
+built upon before anyone notices it.** Nothing catches that until the script runs -- often much
+later, on someone else's machine.
+
+**This plugin runs Microsoft's own PowerShell analysis after every edit Claude makes and sends
+the findings straight back into Claude's context** -- real PowerShell Editor Services (PSES) +
+PSScriptAnalyzer, not a re-implementation, so a mistake gets caught and corrected in the same
+turn instead of shipping.
+
+**Why not another PowerShell LSP plugin?** It proves the analysis actually ran instead of reading
+silence as success, it manages the PowerShell toolchain itself, and it works the same way in CI
+and air-gapped as it does live in an edit.
+
+It is language tooling, not project tooling: no recurring prompt injection, context is added only
+when a PowerShell edit produces diagnostics or enabled guidance, and one warm language-server
+process per session means each edit pays a fast pipe round-trip instead of a cold start.
 
 ![demo: Claude writes an unapproved-verb function, the diagnostic appears inline, Claude fixes it next turn](docs/media/demo.gif)
 
@@ -54,6 +63,23 @@ and the PostToolUse hook returns, right in Claude's context:
 
 Claude sees its own mistake and corrects it without you switching tools. Full prerequisites and
 the step-by-step walkthrough are in [Quick start](#quick-start).
+
+## Why not a generic PowerShell LSP setup?
+
+A hand-wired PSES + PSScriptAnalyzer language-server config can give you diagnostics too. Three
+things it will not give you are what this plugin is actually for:
+
+| | A generic LSP setup | This plugin |
+|---|---|---|
+| **When the toolchain silently fails to start** | Reads as "no findings" -- indistinguishable from clean code | `/powershell-lsp:doctor` proves what actually ran, with a named fix for anything that did not (see [Diagnostics status](#diagnostics-status)) |
+| **Installing PSES + PSScriptAnalyzer** | Your job -- match versions, keep them current | Downloaded, version-pinned, and SHA-256-verified on first use; nothing to install by hand (see [What it downloads](TRUST.md#what-it-downloads-pinned-versions-and-pinned-hashes)) |
+| **CI and air-gapped hosts** | Usually editor-only | The same engine runs headless via `scripts/lsp-scan.ps1` (SARIF for code scanning) and offline from a verified, attested bundle (see [Repository and CI validation](#3-repository-and-ci-validation-opt-in), [Offline install](docs/configuration.md#offline-and-air-gapped-installation)) |
+
+None of that is a benchmark claim -- it is what the software does, and every row links to where
+you can check it yourself. The measured evidence sits further down: a
+[diagnostic-correctness corpus](#diagnostic-correctness-corpus) with a stated false-positive rate,
+and the full [security and trust posture](#security-and-trust) -- SBOM, build provenance, and
+Sigstore-signed releases -- detailed in [TRUST.md](./TRUST.md).
 
 ## What you get
 

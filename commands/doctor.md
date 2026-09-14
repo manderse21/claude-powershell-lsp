@@ -63,7 +63,7 @@ The envelope:
   "status": "DEGRADED",
   "versions": { "plugin": "1.33.1", "pwsh": "7.6.5", "pses": "v4.6.0", "pssa": "1.25.0" },
   "provenanceFloor": "...",
-  "captureMode": { "resolved": "full", "raw": "", "recognized": false },
+  "captureMode": { "resolved": "metadata", "raw": "", "recognized": false },
   "otelExport": { "display": "", "configured": false, "recognized": false },
   "orgPolicy": { "path": "", "sha256": "", "sidecarMatch": "not-present", "applied": false },
   "summary": { "pass": 6, "fail": 0, "unknown": 8, "total": 14 },
@@ -81,11 +81,11 @@ The envelope:
   ([`POWERSHELL_LSP_CAPTURE_MODE`](../docs/configuration.md#powershell_lsp_capture_mode)):
   `resolved` is the mode the capture writer will actually obey, `raw` is the environment value
   verbatim (`""` when unset), and `recognized` says whether that value named a real mode. **All
-  three are reported because an unrecognized value resolves to `full`** -- nothing about that
-  variable may become a gate on the diagnostics surface -- so without `raw` and `recognized` a
-  fleet reader could not tell a host deliberately left at `full` from one whose deployed value is
-  misspelled. This is how a management plane confirms the control is active on a host **without
-  reading the capture log the control exists to keep it out of**.
+  three are reported because an unrecognized value resolves to `metadata`** -- nothing about that
+  variable may become a gate on whether the diagnostics surface is captured at all -- so without
+  `raw` and `recognized` a fleet reader could not tell a host deliberately left at the default from
+  one whose deployed value is misspelled. This is how a management plane confirms the control is
+  active on a host **without reading the capture log the control exists to keep it out of**.
 - **`otelExport`** reports the OTel metrics-export control
   ([`POWERSHELL_LSP_OTEL_ENDPOINT`](../docs/configuration.md#powershell_lsp_otel_endpoint)):
   `configured` says whether export is active, `recognized` says whether the environment value
@@ -100,11 +100,13 @@ The envelope:
   all, so nothing has inspected it and nothing can promise it holds no secret. The published set
   is an **allowlist of three names**, not the resolver's output with two fields removed -- so a
   field added to the resolver later is absent here by default rather than published by default.
-  Second, the **fallback direction is inverted**: an unrecognized *capture mode* resolves to
-  `full` because nothing may gate the capture channel, while an unrecognized *endpoint* resolves
-  to **not configured**, because the permissive direction there is a network egress to a
-  destination the administrator never named. Both carry `recognized`, so in either case a typo
-  reads as a typo rather than as a control quietly not doing what its operator believes.
+  Second, **what "safe" means differs between them**: an unrecognized *capture mode* resolves to
+  `metadata` -- source text and the absolute path are suppressed, but the occurrence still
+  captures, because nothing may gate the capture channel itself -- while an unrecognized
+  *endpoint* resolves to **not configured**, because there is no reduced-information tier for a
+  network egress to a destination the administrator never named; off is the only safe fallback
+  there. Both carry `recognized`, so in either case a typo reads as a typo rather than as a
+  control quietly not doing what its operator believes.
 - **`orgPolicy`** answers a different enterprise question -- not "is a fleet control active" but
   "which exact policy was active on this device"
   ([`orgPolicy`](../docs/configuration.md#orgpolicy),
