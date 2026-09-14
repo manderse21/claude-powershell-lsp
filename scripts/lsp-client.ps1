@@ -89,6 +89,13 @@ $OrgPolicyWarning = ''
 $OrgPolicy = Import-OrgPolicy -Path $OrgPolicyKnob -WarningOut ([ref]$OrgPolicyWarning)
 $OrgExcludes = @($OrgPolicy.ExcludeRules)
 $OrgSeverity = $OrgPolicy.SeverityOverrides
+# P1-5 remainder (R23=D member B, dispatch 000294): ProhibitedSuppressions drives
+# Find-ProhibitedSuppression below (the edit-path half of R23's hybrid). RequiredRules is read
+# here only for the one client-side log line -- its actual enforcement happens daemon-side
+# (Initialize-PssaSettings, pses-daemon.ps1), which re-reads the SAME policy file itself since
+# the client and the daemon are separate processes.
+$OrgRequired = @($OrgPolicy.RequiredRules)
+$OrgProhibited = @($OrgPolicy.ProhibitedSuppressions)
 if ($OrgPolicyWarning -ne '') {
     Write-CLog $OrgPolicyWarning
 } else {
@@ -97,6 +104,12 @@ if ($OrgPolicyWarning -ne '') {
     }
     if ($OrgSeverity.Count -gt 0) {
         Write-CLog ('org policy: enforcing ' + $OrgSeverity.Count + ' severity override(s)')
+    }
+    if ($OrgRequired.Count -gt 0) {
+        Write-CLog ('org policy: requiring ' + $OrgRequired.Count + ' rule(s) (enforced daemon-side)')
+    }
+    if ($OrgProhibited.Count -gt 0) {
+        Write-CLog ('org policy: prohibiting ' + $OrgProhibited.Count + ' suppression(s)')
     }
 }
 
@@ -274,7 +287,8 @@ function Start-DaemonRelaunchIfRecoverable {
         -SettingsPath (Get-PluginOption 'settingsPath' '') `
         -Ruleset (Get-PluginOption 'ruleset' 'pses-default') `
         -ModuleAwareness (ConvertTo-ModuleAwarenessMode (Get-PluginOption 'moduleAwareness' 'off')) `
-        -ReferenceSurfacing (ConvertTo-ReferenceSurfacingMode (Get-PluginOption 'referenceSurfacing' 'off')))
+        -ReferenceSurfacing (ConvertTo-ReferenceSurfacingMode (Get-PluginOption 'referenceSurfacing' 'off')) `
+        -OrgPolicyPath (Get-PluginOption 'orgPolicy' ''))
     Write-CLog ('auto-relaunch: daemon launch ' + $(if ($result.LaunchOk) { 'fired' } else { 'FAILED (spawn threw)' }))
     return $result
 }
@@ -408,6 +422,25 @@ try {
     } catch {
         Write-CLog ('pre-PSSA bash-ism scan threw (degrading gracefully): ' + $_.Exception.Message)
         $bashismFindings = $null
+    }
+    # Org policy prohibited-suppression pass (P1-5 remainder, R23=D member B, dispatch 000294):
+    # flag a SuppressMessageAttribute naming an org-prohibited rule, over the SAME AST the parser
+    # pre-pass produced. $OrgProhibited empty (the knob-off default) short-circuits inside
+    # Find-ProhibitedSuppression itself, so this costs nothing when org policy is unset. Like the
+    # compat/bash-ism passes, a prohibited suppression does NOT gate the parse-error/pre-PSSA
+    # early-exit: the file still parses cleanly and must still get full PSScriptAnalyzer
+    # analysis, so this rides the daemon merge path (below) alongside bashismFindings.
+    $prohibitedSuppressionFindings = $null
+    try {
+        if ($null -ne $parsedAst -and $OrgProhibited.Count -gt 0) {
+            $prohibitedSuppressionFindings = @(Find-ProhibitedSuppression -Ast $parsedAst -ProhibitedRules $OrgProhibited)
+            if ($null -ne $prohibitedSuppressionFindings -and $prohibitedSuppressionFindings.Count -gt 0) {
+                Write-CLog ('pre-PSSA (prohibited suppression) found ' + $prohibitedSuppressionFindings.Count + ' finding(s)')
+            }
+        }
+    } catch {
+        Write-CLog ('pre-PSSA prohibited-suppression scan threw (degrading gracefully): ' + $_.Exception.Message)
+        $prohibitedSuppressionFindings = $null
     }
     # Org policy drop, surface 1 of 2 (E2.2, dispatch 000142): apply the org ExcludeRules to the
     # pre-PSSA findings BEFORE $hasPrePssa is computed. Doing it here rather than inside the
@@ -605,6 +638,9 @@ try {
     # handles their source/code/severity fields, exactly like the non-ASCII and compat findings.
     if ($null -ne $bashismFindings -and $bashismFindings.Count -gt 0) {
         $diags = @($bashismFindings) + @($diags)
+    }
+    if ($null -ne $prohibitedSuppressionFindings -and $prohibitedSuppressionFindings.Count -gt 0) {
+        $diags = @($prohibitedSuppressionFindings) + @($diags)
     }
     # Project findings (PL-6, dispatch 000062): merge manifest-consistency findings from
     # the daemon's module surface cache into the diagnostics stream. Uses the same

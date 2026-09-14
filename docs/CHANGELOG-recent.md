@@ -49,6 +49,57 @@ security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
 
+MINOR: **`doctor -Json` gains an `orgPolicy` object: which exact policy was active on this
+device, without a trust root.** `orgPolicy` carries `path`, `sha256` (of the file as read),
+`sidecarMatch` (`not-present` / `match` / `mismatch`, read straight off the existing dispatch
+000259 integrity gate -- no second hash computed a different way) and `applied` (whether
+exclusions from this policy actually govern a live edit right now). Additive field, alongside
+`captureMode` and `otelExport`: `schemaVersion` does not move. With no policy configured every
+key is still explicit (`''`, `''`, `'not-present'`, `$false`) rather than the field being absent
+or a bare blank path left to imply that state. Signing and a policy trust root stay deferred
+(R9); this answers "which exact policy was active" without one. Dispatch 000299 (W3-2).
+
+MINOR: **`POWERSHELL_LSP_POLICY_MODE` -- an opt-in fail-closed mode for a policy that cannot be
+validated.** `orgPolicy`'s fail-open design (T4.2, ACCEPTED WITH RECORD) is unchanged and stays
+the default (`open`): a missing or unreadable policy silently drops exclusions and logs one
+warning, exactly as before. `closed` converts the two REVIEW-II-DOCKET.md W3-3 cases -- a
+missing `orgPolicy` file, or one that fails the dispatch 000259 integrity gate -- into the
+existing `unavailable` diagnostics token for that edit, with new wording naming the cause (no
+session restart needed; the very next edit re-validates automatically). No new diagnostics
+status token and no new `userConfig` knob: `CONTRACT.md` is untouched. An installed host that
+sets nothing behaves byte-for-byte as before. Dispatch 000299 (W3-3).
+
+MINOR: **A fleet deployment recipe.** `docs/fleet-deployment.md` answers pinning a version
+through a mirrored managed marketplace, setting `POWERSHELL_LSP_*` via GPO/Intune, placing the
+airgap bundle, `doctor -Json` plus exit codes as a fleet health check, and pointing OTLP at a
+collector -- composing existing, already-documented mechanisms rather than adding new ones. No
+dashboard, no control plane, no MSI/WinGet packaging: none fit a git-distributed marketplace
+plugin, per REVIEW-II-DOCKET.md's own ruling. Dispatch 000299 (W3-4).
+
+PATCH: **An OpenSSF Scorecard workflow.** `.github/workflows/powershell-lsp-scorecard.yml` is
+inert until merged (no `pull_request` trigger; `push` scoped to `main`, plus `schedule` and
+`workflow_dispatch`), the same shape `powershell-lsp-code-scanning.yml` already uses. A pre-merge
+preview via the standalone `scorecard` CLI, run read-only against this repository's already-public
+GitHub state, measured **5.8 / 10** at commit `2b0618d` (2026-09-13) -- see the dispatch 000299
+outbox for the full per-check breakdown, including why three checks read inconclusive from
+outside a real Action run. No finding is fixed here, and the badge is deliberately left out of
+the README pending a real, in-repo run. Dispatch 000299 (W3-5).
+
+MINOR: **org policy can now REQUIRE a rule and PROHIBIT suppressing one, not only exclude and
+re-stamp (P1-5 remainder, ruling R23=D).** Two new optional `orgPolicy` file keys. `RequiredRules`
+forces a rule PSES would not otherwise run: the daemon merges it into the settings PSES is handed,
+pinning PSES's own no-settings default list alongside it so a settings file is never shipped that
+silently widens analysis to every installed rule; unset, the daemon is byte-identical to before.
+`ProhibitedSuppressions` is enforced two ways -- a new plugin-owned rule flags a
+`SuppressMessageAttribute` naming a prohibited rule on the live edit path (cheap, reports the
+suppression), and `lsp-scan.ps1` gains a `-OrgPolicyPath` CLI parameter that runs a real
+`-IncludeSuppressed` analyzer pass restricted to the prohibited set for the repository/CI path
+(re-surfaces the hidden finding under its own real rule id). A required rule's finding can still be
+dropped by the daemon's own severity threshold before anything else sees it -- asserted both ways,
+named rather than closed, the same discipline the existing `SeverityOverrides` boundary already
+carries. No new `userConfig` knob or diagnostics status token; both keys live inside the existing
+`orgPolicy` file, which is not a Tier 1 surface.
+
 ## [1.35.0] - 2026-09-13
 MINOR: **A first-party semantic query surface, fleet OpenTelemetry export, and an org-policy
 severity override land on the enterprise surface, all at zero 1.x freeze exposure.**
@@ -691,42 +742,6 @@ A `0.0.0.0` with no in-process answer degrades to **UNKNOWN**, which check 1 alr
 honestly, rather than to a fabricated `fail`: a zero version is the absence of a version, not a
 version below the 7.0 floor. Windows behaviour is unchanged, and a genuinely old `pwsh` is still
 failed. No `userConfig` key, diagnostics status token or `CONTRACT.md` line is touched.
-
-MINOR: **`doctor -Json` gains an `orgPolicy` object: which exact policy was active on this
-device, without a trust root.** `orgPolicy` carries `path`, `sha256` (of the file as read),
-`sidecarMatch` (`not-present` / `match` / `mismatch`, read straight off the existing dispatch
-000259 integrity gate -- no second hash computed a different way) and `applied` (whether
-exclusions from this policy actually govern a live edit right now). Additive field, alongside
-`captureMode` and `otelExport`: `schemaVersion` does not move. With no policy configured every
-key is still explicit (`''`, `''`, `'not-present'`, `$false`) rather than the field being absent
-or a bare blank path left to imply that state. Signing and a policy trust root stay deferred
-(R9); this answers "which exact policy was active" without one. Dispatch 000299 (W3-2).
-
-MINOR: **`POWERSHELL_LSP_POLICY_MODE` -- an opt-in fail-closed mode for a policy that cannot be
-validated.** `orgPolicy`'s fail-open design (T4.2, ACCEPTED WITH RECORD) is unchanged and stays
-the default (`open`): a missing or unreadable policy silently drops exclusions and logs one
-warning, exactly as before. `closed` converts the two REVIEW-II-DOCKET.md W3-3 cases -- a
-missing `orgPolicy` file, or one that fails the dispatch 000259 integrity gate -- into the
-existing `unavailable` diagnostics token for that edit, with new wording naming the cause (no
-session restart needed; the very next edit re-validates automatically). No new diagnostics
-status token and no new `userConfig` knob: `CONTRACT.md` is untouched. An installed host that
-sets nothing behaves byte-for-byte as before. Dispatch 000299 (W3-3).
-
-MINOR: **A fleet deployment recipe.** `docs/fleet-deployment.md` answers pinning a version
-through a mirrored managed marketplace, setting `POWERSHELL_LSP_*` via GPO/Intune, placing the
-airgap bundle, `doctor -Json` plus exit codes as a fleet health check, and pointing OTLP at a
-collector -- composing existing, already-documented mechanisms rather than adding new ones. No
-dashboard, no control plane, no MSI/WinGet packaging: none fit a git-distributed marketplace
-plugin, per REVIEW-II-DOCKET.md's own ruling. Dispatch 000299 (W3-4).
-
-PATCH: **An OpenSSF Scorecard workflow.** `.github/workflows/powershell-lsp-scorecard.yml` is
-inert until merged (no `pull_request` trigger; `push` scoped to `main`, plus `schedule` and
-`workflow_dispatch`), the same shape `powershell-lsp-code-scanning.yml` already uses. A pre-merge
-preview via the standalone `scorecard` CLI, run read-only against this repository's already-public
-GitHub state, measured **5.8 / 10** at commit `2b0618d` (2026-09-13) -- see the dispatch 000299
-outbox for the full per-check breakdown, including why three checks read inconclusive from
-outside a real Action run. No finding is fixed here, and the badge is deliberately left out of
-the README pending a real, in-repo run. Dispatch 000299 (W3-5).
 
 ## [1.34.0] - 2026-09-07
 MINOR: **the doctor now answers machine-readably, and will tell you when it cannot prove an

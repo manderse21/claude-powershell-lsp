@@ -380,7 +380,7 @@ The review proposes its own phasing. Scored against what this project's disk act
 | P0 Provable health | `doctor -Json`, `-RequireProven`, `status --json`, `selftest --json` | **Kept at P0 as P0-1**, folded from `DOCTOR-SURFACE-DOCKET.md` |
 | P0 Release governance | SLO release gates + exception mechanism | **DEMOTED to P1-1, and re-shaped.** The T3 survey shows a gate placed today would gate on a statistic the N=15 sample cannot support. Quiet-host re-runs come first |
 | P0 Compatibility | Claude Code Current/N-1 certification | **DEMOTED to P1-3.** It is a CI-matrix build, not a trust closure, and `SUPPORT-POLICY.md` already tracks the failure mode that has actually bitten |
-| P1 Policy v2 | Signed authoritative enterprise policy | **Kept at P1 as P1-5.** Ruling-first. **Payload half BUILT (000289): `SeverityOverrides`. Signing still waits on a trust root** |
+| P1 Policy v2 | Signed authoritative enterprise policy | **Kept at P1 as P1-5.** Ruling-first. **Payload half BUILT (000289): `SeverityOverrides`. Remainder BUILT (000294), R23=D: `requiredRules`, `prohibitedSuppressions`, the `severityThreshold` boundary. Signing still waits on a trust root** |
 | P1 Broker API | Versioned protocol + capabilities | **Kept at P1 as P1-4.** Should lead P1-2, not follow it |
 | P1 Semantic agent tools | definition / references / hover / symbol / completion / code-action | **Kept at P1 as P1-2** |
 | P1 OTel | Privacy-safe fleet health/metrics | **DEMOTED to P2-1.** Cheaper than the review thinks and less urgent than everything at P0 |
@@ -708,6 +708,69 @@ the signing half remains unbuilt and still waits on a trust root.**
 > as closing the threshold boundary above, and they belong to it. `severityOverrides` was the
 > member of the trio that the existing seam can enforce honestly, which is why it is the one that
 > shipped.
+
+> **P1-5 REMAINDER BUILT by dispatch 000294, to ruling R23 = D (plugin issue #235, 2026-09-12):
+> `requiredRules`, `prohibitedSuppressions`, and the `severityThreshold` boundary named for both --
+> one slice, per the charter's own word.**
+>
+> **`prohibitedSuppressions` (R23=D: B on the edit path, A in `lsp-scan.ps1`).** Member B is the
+> new `Find-ProhibitedSuppression` -- the 7th plugin-owned rule (`docs/assurance-pack.md`,
+> `rulesets/rule-rationales.psd1`) -- flagging a `SuppressMessageAttribute` naming a rule the new
+> `ProhibitedSuppressions` org-policy key names, matched on the attribute type name's LAST
+> dot-segment so the fully-qualified, conventional, and `using namespace`-bare forms are all
+> caught. It reports the SUPPRESSION, not the underlying finding -- cheap and deterministic, as
+> costed. Member A is a SEPARATE, direct `Invoke-ScriptAnalyzer -IncludeSuppressed` pass added to
+> `lsp-scan.ps1` (a new `-OrgPolicyPath` CLI parameter, not a userConfig knob -- matching
+> `-Format`/`-FailOn`'s own rationale), restricted to the prohibited set, re-surfacing a
+> `SuppressedRecord` under the REAL suppressed rule's own id -- true enforcement, paid for once per
+> CI run rather than once per edit, exactly the cost split R23 ruled. The two members are
+> deliberately NOT the same shape.
+>
+> **`requiredRules` (000292's measured design, executed).** The daemon (`Initialize-PssaSettings`,
+> `scripts/pses-daemon.ps1`) now reads a NEW `-OrgPolicyPath` parameter and, only when org policy
+> names a non-empty `RequiredRules`, writes a MERGED PSSA settings file under the plugin data root
+> and pushes THAT path to PSES instead of whatever would otherwise have resolved. The merge
+> (`Merge-RequiredRulesSettings`, pure) pins PSES's own no-settings default rule list (re-derived
+> from the PINNED v4.6.0 source, `AnalysisService.cs`'s `s_defaultRules` -- 15 names, verified
+> 2026-09-13 against the tagged upstream source, not recalled from a prior dispatch's partial DLL
+> string-heap extraction) alongside the required rules when no repo-local `IncludeRules` exists, so
+> a settings file is never shipped that silently widens PSSA from PSES's curated set to every
+> installed rule. Guarded against PSES version drift: the pinned list's `$PsesTag` it was verified
+> against is checked before it is trusted when no repo-local `IncludeRules` exists to merge onto
+> instead; a mismatch degrades to NOT merging (one warning), never to shipping a stale list.
+> **This is the one reversal of dispatch 000135's "daemon untouched" decision R9's include-side
+> authorization and 000292's costing anticipated** -- gated end-to-end on `RequiredRules` actually
+> being non-empty, so an org that sets nothing sees the daemon's exact pre-000294 behavior, proven
+> byte-identical by a live control daemon in the same test run, not assumed.
+>
+> **PRECEDENCE, decided and tested (no prior implementation to match -- new mechanism):** a rule
+> named in BOTH org `RequiredRules` and org `ExcludeRules` is DROPPED from the merge for that rule
+> -- "exclusion stays the stronger verb," the identical ordering `severityOverrides` already uses.
+> A rule required by org but excluded only by the REPO-LOCAL settings file is forced on regardless
+> -- the org is the outermost, centrally-managed voice on the include side exactly as it already is
+> on the exclude side. Proven against a REAL warm daemon, not only the pure function: a live
+> three-daemon integration test (control / required / self-contradictory-conflict) passes under
+> both PowerShell 5.1 and pwsh 7.
+>
+> **THE `severityThreshold` BOUNDARY, named and tested for `requiredRules` exactly as 000289 named
+> it for `severityOverrides` -- NOT closed.** A required rule's finding, once it runs via the
+> merged `IncludeRules`, can still be silently dropped by the daemon's own `SeverityThreshold`
+> filter (`Select-FilteredDiagnostics`) before anything else sees it, at a raised local threshold;
+> at the shipped default threshold (`Hint`) it survives. Both arms asserted. Closing this gap --
+> moving org enforcement ahead of the daemon's own filter -- remains the different, costlier slice
+> this docket already declined to propose, unchanged by this build.
+>
+> **RED controls.** `Find-ProhibitedSuppression` and `Merge-RequiredRulesSettings` are BRAND-NEW
+> mechanisms with no prior implementation to undo, so each control is a NAIVE FIRST-CUT variant
+> reconstructed by mutating the SHIPPED source (never `git show <sha>:<path>`), proven to land, to
+> still parse, and to bite narrowly (a plain case stays correct; only the guarded case flips). The
+> `requiredRules` daemon wiring additionally carries a REAL regression control: the untouched
+> pre-000294 path, proven live on the same fixture bytes the required case uses. Every new and
+> touched test is green under BOTH Windows PowerShell 5.1 and pwsh 7.
+>
+> **Zero new userConfig knob, zero new diagnostics status token, `CONTRACT.md` untouched.** Both
+> new org-policy keys (`RequiredRules`, `ProhibitedSuppressions`) live inside the existing
+> `orgPolicy` file, which this docket already ruled is not a Tier 1 surface.
 
 ### 4.4 P2 -- declared, and costed where cheap
 

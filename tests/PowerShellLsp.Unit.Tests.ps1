@@ -1919,17 +1919,18 @@ Describe 'rulesets/rule-rationales.psd1 -- shipped table invariants (dispatch 00
         [int]$script:RatData['owned_count'] | Should -Be $script:RatOwned.Count
         $script:RatEntries.Count | Should -Be ($baseSorted.Count + $script:RatOwned.Count)
     }
-    It 'hand-authors an entry for each of the 6 plugin-owned finders, keyed by the EMITTED ruleId' {
+    It 'hand-authors an entry for each of the 7 plugin-owned finders, keyed by the EMITTED ruleId' {
         # NOT the finder FUNCTION names: Find-ModuleAwareness emits code 'ModuleNotInstalled', and
         # Test-ManifestConsistency emits 'ManifestConsistency'; the runtime lookup keys on the
         # diagnostic `code`. An entry keyed 'ModuleAwareness' would silently never match.
         # Adversarial control: rename any key here and this goes RED.
-        $owned = @('BashIsm', 'PS7OnlySyntax', 'NonAsciiChar', 'ModuleNotInstalled', 'ManifestConsistency', 'CommandLinePlaceholder')
+        $owned = @('BashIsm', 'PS7OnlySyntax', 'NonAsciiChar', 'ModuleNotInstalled', 'ManifestConsistency', 'CommandLinePlaceholder', 'ProhibitedSuppression')
         foreach ($c in $owned) {
             $script:RatOwned | Should -Contain $c
             [string]$script:RatEntries[$c] | Should -Not -BeNullOrEmpty
         }
-        # The owned set is EXACTLY these six -- a seventh entry may not ride in silently (000124, 000139).
+        # The owned set is EXACTLY these seven -- an eighth entry may not ride in silently (000124,
+        # 000139; grown from six to seven by dispatch 000294's Find-ProhibitedSuppression, R23=D).
         $script:RatOwned.Count | Should -Be $owned.Count
     }
     It 'records the idiom-family OVERRIDE layer and asserts the set from disk (dispatch 000125)' {
@@ -5896,6 +5897,381 @@ Describe 'Org policy v2 -- RED control: the PRIOR IMPLEMENTATION was not severit
         $text | Should -Not -Match 'SEV=Error'
         # ...and the drop still works under the mutant, so the control is narrow.
         $text | Should -Match 'DROPPED=0'
+    }
+}
+
+Describe 'Org policy v2 remainder -- RequiredRules and ProhibitedSuppressions, byte-identical when absent (P1-5, R23=D, dispatch 000294)' {
+    BeforeAll {
+        $script:P294Dir = Join-Path ([System.IO.Path]::GetTempPath()) ('pslsp-p294-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:P294Dir -Force | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:P294Dir -MintingFile 'tests/PowerShellLsp.Unit.Tests.ps1'
+        $script:P294V1File = Join-Path $script:P294Dir 'v1.psd1'
+        Set-Content -LiteralPath $script:P294V1File -Encoding ascii -Value "@{ ExcludeRules = @('PSUseApprovedVerbs') }"
+        $script:P294FullFile = Join-Path $script:P294Dir 'full.psd1'
+        Set-Content -LiteralPath $script:P294FullFile -Encoding ascii -Value (
+            "@{ RequiredRules = @('PSAvoidGlobalVars', 'psavoidglobalvars', ' PSAvoidGlobalFunctions ', 42, `$null); " +
+            "ProhibitedSuppressions = @('PSAvoidUsingPlainTextForPassword', 'PSAvoidUsingPlainTextForPassword') }"
+        )
+    }
+    AfterAll {
+        if ($script:P294Dir -and (Test-Path -LiteralPath $script:P294Dir)) {
+            Remove-Item -LiteralPath $script:P294Dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    It 'the knob unset yields empty RequiredRules and ProhibitedSuppressions too' {
+        $p = New-EmptyOrgPolicy
+        @($p.RequiredRules).Count | Should -Be 0
+        @($p.ProhibitedSuppressions).Count | Should -Be 0
+        $q = Import-OrgPolicy -Path ''
+        @($q.RequiredRules).Count | Should -Be 0
+        @($q.ProhibitedSuppressions).Count | Should -Be 0
+    }
+    It 'a v1 policy file -- no RequiredRules/ProhibitedSuppressions keys -- reads its excludes and adds neither (byte-identical to pre-000294)' {
+        $p = Import-OrgPolicy -Path $script:P294V1File
+        @($p.ExcludeRules)[0] | Should -BeExactly 'PSUseApprovedVerbs'
+        @($p.RequiredRules).Count | Should -Be 0
+        @($p.ProhibitedSuppressions).Count | Should -Be 0
+    }
+    It 'reads both lists: trims, de-duplicates case-insensitively, and skips non-string/malformed entries' {
+        $p = Import-OrgPolicy -Path $script:P294FullFile
+        # 'PSAvoidGlobalVars' and 'psavoidglobalvars' collapse to ONE (first-seen casing kept);
+        # 'PSAvoidGlobalFunctions' trims; the bare int and $null are skipped, not stringified.
+        @($p.RequiredRules).Count | Should -Be 2
+        @($p.RequiredRules)[0] | Should -BeExactly 'PSAvoidGlobalVars'
+        @($p.RequiredRules)[1] | Should -BeExactly 'PSAvoidGlobalFunctions'
+        @($p.ProhibitedSuppressions).Count | Should -Be 1
+        @($p.ProhibitedSuppressions)[0] | Should -BeExactly 'PSAvoidUsingPlainTextForPassword'
+    }
+}
+
+Describe 'Find-ProhibitedSuppression -- edit-path prohibited-suppression finder (R23=D member B, dispatch 000294)' {
+    BeforeAll {
+        function New-P294Ast([string]$Src) {
+            $errs = $null
+            return [System.Management.Automation.Language.Parser]::ParseInput($Src, [ref]$null, [ref]$errs)
+        }
+        $script:P294Fq = New-P294Ast @'
+function Test-A {
+    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+    param($Password)
+}
+'@
+        $script:P294Conventional = New-P294Ast @'
+function Test-B {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+    param($Password)
+}
+'@
+        $script:P294Bare = New-P294Ast @'
+using namespace System.Diagnostics.CodeAnalysis
+function Test-C {
+    [SuppressMessage('PSAvoidUsingPlainTextForPassword', '')]
+    param($Password)
+}
+'@
+        $script:P294NoArgs = New-P294Ast @'
+function Test-D {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute()]
+    param($Password)
+}
+'@
+        $script:P294NonLiteral = New-P294Ast @'
+function Test-E {
+    param($RuleName)
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute($RuleName, '')]
+    param($Password)
+}
+'@
+        $script:P294OtherAttr = New-P294Ast @'
+function Test-F {
+    [CmdletBinding()]
+    param($Password)
+}
+'@
+    }
+    It 'returns @() for a $null AST' {
+        @(Find-ProhibitedSuppression -Ast $null -ProhibitedRules @('X')).Count | Should -Be 0
+    }
+    It 'returns @() when the prohibited list is empty -- the knob-off default costs nothing' {
+        @(Find-ProhibitedSuppression -Ast $script:P294Fq -ProhibitedRules @()).Count | Should -Be 0
+    }
+    It 'matches the FULLY-QUALIFIED attribute form' {
+        $f = @(Find-ProhibitedSuppression -Ast $script:P294Fq -ProhibitedRules @('PSAvoidUsingPlainTextForPassword'))
+        $f.Count | Should -Be 1
+        $f[0].ruleId | Should -BeExactly 'ProhibitedSuppression'
+        $f[0].source | Should -BeExactly 'powershell-lsp'
+        $f[0].message | Should -Match 'PSAvoidUsingPlainTextForPassword'
+    }
+    It 'matches the CONVENTIONAL (Diagnostics.CodeAnalysis.SuppressMessageAttribute) form' {
+        @(Find-ProhibitedSuppression -Ast $script:P294Conventional -ProhibitedRules @('PSAvoidUsingPlainTextForPassword')).Count | Should -Be 1
+    }
+    It 'matches the BARE form (a using-namespace-qualified SuppressMessage)' {
+        @(Find-ProhibitedSuppression -Ast $script:P294Bare -ProhibitedRules @('PSAvoidUsingPlainTextForPassword')).Count | Should -Be 1
+    }
+    It 'matches case-insensitively against the prohibited list' {
+        @(Find-ProhibitedSuppression -Ast $script:P294Fq -ProhibitedRules @('psAVOIDusingPLAINtextFORpassword')).Count | Should -Be 1
+    }
+    It 'does NOT match when the prohibited list names a different rule' {
+        @(Find-ProhibitedSuppression -Ast $script:P294Fq -ProhibitedRules @('PSAvoidUsingWriteHost')).Count | Should -Be 0
+    }
+    It 'does NOT match an attribute with zero positional arguments (never indexes out of range)' {
+        @(Find-ProhibitedSuppression -Ast $script:P294NoArgs -ProhibitedRules @('PSAvoidUsingPlainTextForPassword')).Count | Should -Be 0
+    }
+    It 'does NOT match when the first positional argument is not a string literal (never guesses)' {
+        @(Find-ProhibitedSuppression -Ast $script:P294NonLiteral -ProhibitedRules @('PSAvoidUsingPlainTextForPassword')).Count | Should -Be 0
+    }
+    It 'does NOT match an unrelated attribute' {
+        @(Find-ProhibitedSuppression -Ast $script:P294OtherAttr -ProhibitedRules @('PSAvoidUsingPlainTextForPassword')).Count | Should -Be 0
+    }
+}
+
+Describe 'Find-ProhibitedSuppression -- RED control: requiring an exact FullName match misses the bare/using-namespace form (dispatch 000294)' {
+    # New mechanism -- no prior implementation to undo. The control is a NAIVE FIRST-CUT variant
+    # of the SAME function (exact FullName match instead of last-dot-segment), reconstructed by
+    # mutating the SHIPPED source text, proven to land and to BITE: it still catches the
+    # fully-qualified form (narrow; not simply broken) but misses the bare `using namespace` form
+    # the real function catches (the fix this control exists to guard).
+    BeforeAll {
+        $script:FpsSrc = Join-Path $script:PluginRoot 'scripts/lib/lsp-common.ps1'
+        $script:FpsText = Get-Content -LiteralPath $script:FpsSrc -Raw
+        $script:FpsAnchor = "        if (`$lastSegment -ne 'SuppressMessage' -and `$lastSegment -ne 'SuppressMessageAttribute') { continue }"
+        $script:FpsMutantAnchor = "        if (`$typeName -ne 'SuppressMessage' -and `$typeName -ne 'SuppressMessageAttribute') { continue }"
+        $script:FpsMutantText = $script:FpsText.Replace($script:FpsAnchor, $script:FpsMutantAnchor)
+        $script:FpsDir = Join-Path ([System.IO.Path]::GetTempPath()) ('pslsp-p294red-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:FpsDir -Force | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:FpsDir -MintingFile 'tests/PowerShellLsp.Unit.Tests.ps1'
+        $script:FpsFile = Join-Path $script:FpsDir 'lsp-common-naive.ps1'
+        Set-Content -LiteralPath $script:FpsFile -Value $script:FpsMutantText -Encoding utf8 -NoNewline
+    }
+    AfterAll {
+        if ($script:FpsDir -and (Test-Path -LiteralPath $script:FpsDir)) {
+            Remove-Item -LiteralPath $script:FpsDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    It 'the mutation anchor occurs EXACTLY ONCE in the shipped source' {
+        ([regex]::Matches($script:FpsText, [regex]::Escape($script:FpsAnchor))).Count | Should -Be 1
+    }
+    It 'the mutant LANDED, still parses, and differs from the shipped text' {
+        $script:FpsMutantText | Should -Not -BeExactly $script:FpsText
+        $errs = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseFile($script:FpsFile, [ref]$null, [ref]$errs)
+        @($errs).Count | Should -Be 0
+    }
+    It 'under the NAIVE exact-match variant the bare form is MISSED while the qualified form still CATCHES (narrow mutant)' {
+        $probe = Join-Path $script:FpsDir 'probe.ps1'
+        $lines = @(
+            ". '$($script:FpsFile)'"
+            '$astFq = [System.Management.Automation.Language.Parser]::ParseInput(@'''
+            'function Test-A {'
+            "    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '''')]"
+            '    param($Password)'
+            '}'
+            '''@, [ref]$null, [ref]$null)'
+            '$astBare = [System.Management.Automation.Language.Parser]::ParseInput(@'''
+            'using namespace System.Diagnostics.CodeAnalysis'
+            'function Test-C {'
+            "    [SuppressMessage('PSAvoidUsingPlainTextForPassword', '''')]"
+            '    param($Password)'
+            '}'
+            '''@, [ref]$null, [ref]$null)'
+            '$fq = @(Find-ProhibitedSuppression -Ast $astFq -ProhibitedRules @(''PSAvoidUsingPlainTextForPassword''))'
+            '$bare = @(Find-ProhibitedSuppression -Ast $astBare -ProhibitedRules @(''PSAvoidUsingPlainTextForPassword''))'
+            'Write-Output ("FQ=" + $fq.Count + " BARE=" + $bare.Count)'
+        )
+        Set-Content -LiteralPath $probe -Value ($lines -join [Environment]::NewLine) -Encoding utf8
+        $out = Join-Path $script:FpsDir 'out.txt'
+        $err = Join-Path $script:FpsDir 'err.txt'
+        $exe = (Get-Process -Id $PID).Path
+        $p = Start-Process -FilePath $exe -ArgumentList @('-NoProfile', '-File', $probe) `
+            -NoNewWindow -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+        $p.ExitCode | Should -Be 0
+        $text = (Get-Content -LiteralPath $out -Raw)
+        # THE CONTROL, measured rather than assumed: comparing the WHOLE $typeName against the
+        # bare names 'SuppressMessage'/'SuppressMessageAttribute' can only ever match a source
+        # that ALREADY wrote the bare form (FullName = exactly 'SuppressMessage') -- so the naive
+        # variant MISSES the fully-qualified attribute (FQ=0, FullName carries the dotted
+        # namespace and can never equal the bare name) while still catching the bare form it
+        # happens to equal verbatim (BARE=1). The shipped last-segment split catches BOTH (FQ=1 in
+        # the positive test above) -- that gap between FQ=0 here and FQ=1 there is the defect this
+        # control exists to guard, and it is exactly backwards from a first guess at "exact match
+        # is stricter" -- which is why this was worth measuring instead of assuming.
+        $text | Should -Match 'FQ=0'
+        $text | Should -Match 'BARE=1'
+    }
+}
+
+Describe 'Merge-RequiredRulesSettings -- the include-side merge and its precedence (P1-5 remainder, dispatch 000294)' {
+    It 'returns $null when RequiredRules is empty -- the caller then takes the untouched pre-000294 path' {
+        Merge-RequiredRulesSettings -ResolvedSettingsPath '' -RequiredRules @() | Should -Be $null
+        Merge-RequiredRulesSettings -ResolvedSettingsPath '' -RequiredRules @($null, '') | Should -Be $null
+    }
+    It 'no repo-local file, matching PSES tag: pins the default 15 PLUS the required rule' {
+        $m = Merge-RequiredRulesSettings -ResolvedSettingsPath '' -RequiredRules @('PSAvoidGlobalVars') -CurrentPsesTag 'v4.6.0'
+        $m | Should -Not -Be $null
+        @($m.IncludeRules).Count | Should -Be 16
+        ($m.IncludeRules -contains 'PSAvoidGlobalVars') | Should -BeTrue
+        foreach ($d in @(Get-PssaDefaultRuleNames)) { ($m.IncludeRules -contains $d) | Should -BeTrue }
+    }
+    It 'no repo-local file, MISMATCHED PSES tag: degrades to $null rather than trust a stale list' {
+        Merge-RequiredRulesSettings -ResolvedSettingsPath '' -RequiredRules @('PSAvoidGlobalVars') -CurrentPsesTag 'v9.9.9' | Should -Be $null
+    }
+    It 'a required rule already in org ExcludeRules is DROPPED from the merge -- exclusion wins' {
+        $m = Merge-RequiredRulesSettings -ResolvedSettingsPath '' -RequiredRules @('PSAvoidGlobalVars', 'PSAvoidGlobalFunctions') `
+            -OrgExcludeRules @('PSAvoidGlobalVars') -CurrentPsesTag 'v4.6.0'
+        ($m.IncludeRules -contains 'PSAvoidGlobalVars') | Should -BeFalse
+        ($m.IncludeRules -contains 'PSAvoidGlobalFunctions') | Should -BeTrue
+    }
+    Context 'with a repo-local settings file' {
+        BeforeAll {
+            $script:MrgDir = Join-Path ([System.IO.Path]::GetTempPath()) ('pslsp-p294mrg-' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $script:MrgDir -Force | Out-Null
+            Set-PslsOwnerMarker -DataRoot $script:MrgDir -MintingFile 'tests/PowerShellLsp.Unit.Tests.ps1'
+            $script:MrgSettings = Join-Path $script:MrgDir 'PSScriptAnalyzerSettings.psd1'
+            Set-Content -LiteralPath $script:MrgSettings -Encoding ascii -Value @(
+                '@{'
+                "    IncludeRules = @('PSUseApprovedVerbs')"
+                "    ExcludeRules = @('PSAvoidGlobalVars')"
+                '    Severities = @(''Warning'', ''Error'')'
+                "    RuleArguments = @{ PSAvoidUsingCmdletAliases = @{ Whitelist = @('cd') } }"
+                '}'
+            )
+        }
+        AfterAll {
+            if ($script:MrgDir -and (Test-Path -LiteralPath $script:MrgDir)) {
+                Remove-Item -LiteralPath $script:MrgDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+        It 'a repo-local IncludeRules is EXTENDED with the required rule, never replaced' {
+            $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $script:MrgSettings -RequiredRules @('PSAvoidGlobalFunctions')
+            @($m.IncludeRules).Count | Should -Be 2
+            ($m.IncludeRules -contains 'PSUseApprovedVerbs') | Should -BeTrue
+            ($m.IncludeRules -contains 'PSAvoidGlobalFunctions') | Should -BeTrue
+        }
+        It 'a required rule EXCLUDED only by the REPO-LOCAL file is forced on anyway -- org beats repo-local' {
+            $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $script:MrgSettings -RequiredRules @('PSAvoidGlobalVars')
+            ($m.IncludeRules -contains 'PSAvoidGlobalVars') | Should -BeTrue
+            ($m.ExcludeRules -contains 'PSAvoidGlobalVars') | Should -BeFalse
+        }
+        It 'a MISMATCHED PSES tag is IRRELEVANT when a repo-local IncludeRules already exists (no default list needed)' {
+            $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $script:MrgSettings -RequiredRules @('PSAvoidGlobalFunctions') -CurrentPsesTag 'v9.9.9'
+            $m | Should -Not -Be $null
+        }
+        It 'preserves Severities and RuleArguments faithfully' {
+            $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $script:MrgSettings -RequiredRules @('PSAvoidGlobalFunctions')
+            @($m.Severities) -join ',' | Should -BeExactly 'Warning,Error'
+            $m.RuleArguments.PSAvoidUsingCmdletAliases.Whitelist[0] | Should -BeExactly 'cd'
+        }
+    }
+}
+
+Describe 'Merge-RequiredRulesSettings -- RED control: without the exclusion-wins branch, a self-contradictory policy forces the excluded rule on (dispatch 000294)' {
+    # New mechanism -- no prior implementation to undo. The control is the NAIVE variant that
+    # omits the org-exclude-wins check, reconstructed by mutating the SHIPPED source, proven to
+    # land and to bite: the precedence assertion flips under it while the plain require-only path
+    # stays correct (narrow, not broken).
+    BeforeAll {
+        $script:MrcSrc = Join-Path $script:PluginRoot 'scripts/lib/lsp-common.ps1'
+        $script:MrcText = Get-Content -LiteralPath $script:MrcSrc -Raw
+        $script:MrcAnchor = "        if (`$orgExcSet.Contains(`$rt)) { continue }   # org excludes it too: exclusion wins, skip"
+        $script:MrcMutantText = $script:MrcText.Replace($script:MrcAnchor, '        # exclusion-wins check removed (RED control)')
+        $script:MrcDir = Join-Path ([System.IO.Path]::GetTempPath()) ('pslsp-p294mrcred-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:MrcDir -Force | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:MrcDir -MintingFile 'tests/PowerShellLsp.Unit.Tests.ps1'
+        $script:MrcFile = Join-Path $script:MrcDir 'lsp-common-naive.ps1'
+        Set-Content -LiteralPath $script:MrcFile -Value $script:MrcMutantText -Encoding utf8 -NoNewline
+    }
+    AfterAll {
+        if ($script:MrcDir -and (Test-Path -LiteralPath $script:MrcDir)) {
+            Remove-Item -LiteralPath $script:MrcDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    It 'the mutation anchor occurs EXACTLY ONCE in the shipped source' {
+        ([regex]::Matches($script:MrcText, [regex]::Escape($script:MrcAnchor))).Count | Should -Be 1
+    }
+    It 'the mutant LANDED, still parses, and differs from the shipped text' {
+        $script:MrcMutantText | Should -Not -BeExactly $script:MrcText
+        $errs = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseFile($script:MrcFile, [ref]$null, [ref]$errs)
+        @($errs).Count | Should -Be 0
+    }
+    It 'under the NAIVE variant the self-contradictory rule is forced on anyway, while a plain require still works (narrow mutant)' {
+        $probe = Join-Path $script:MrcDir 'probe.ps1'
+        $lines = @(
+            ". '$($script:MrcFile)'"
+            '$conflict = Merge-RequiredRulesSettings -ResolvedSettingsPath '''' -RequiredRules @(''PSAvoidGlobalVars'') -OrgExcludeRules @(''PSAvoidGlobalVars'') -CurrentPsesTag ''v4.6.0'''
+            '$plain = Merge-RequiredRulesSettings -ResolvedSettingsPath '''' -RequiredRules @(''PSAvoidGlobalFunctions'') -CurrentPsesTag ''v4.6.0'''
+            'Write-Output ("CONFLICT_HAS_IT=" + ($conflict.IncludeRules -contains ''PSAvoidGlobalVars'') + " PLAIN_HAS_IT=" + ($plain.IncludeRules -contains ''PSAvoidGlobalFunctions''))'
+        )
+        Set-Content -LiteralPath $probe -Value ($lines -join [Environment]::NewLine) -Encoding utf8
+        $out = Join-Path $script:MrcDir 'out.txt'
+        $err = Join-Path $script:MrcDir 'err.txt'
+        $exe = (Get-Process -Id $PID).Path
+        $p = Start-Process -FilePath $exe -ArgumentList @('-NoProfile', '-File', $probe) `
+            -NoNewWindow -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+        $p.ExitCode | Should -Be 0
+        $text = (Get-Content -LiteralPath $out -Raw)
+        # THE CONTROL: under the naive variant the self-contradictory rule IS forced on (True) --
+        # the shipped fix's own test above asserts the opposite (BeFalse). The plain require path
+        # (no conflict) still works under the mutant, so the control is narrow.
+        $text | Should -Match 'CONFLICT_HAS_IT=True'
+        $text | Should -Match 'PLAIN_HAS_IT=True'
+    }
+}
+
+Describe 'Write-MergedPssaSettingsFile / ConvertTo-Psd1Literal -- round-trip fidelity (dispatch 000294)' {
+    BeforeAll {
+        $script:WmsDir = Join-Path ([System.IO.Path]::GetTempPath()) ('pslsp-p294wms-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:WmsDir -Force | Out-Null
+        Set-PslsOwnerMarker -DataRoot $script:WmsDir -MintingFile 'tests/PowerShellLsp.Unit.Tests.ps1'
+    }
+    AfterAll {
+        if ($script:WmsDir -and (Test-Path -LiteralPath $script:WmsDir)) {
+            Remove-Item -LiteralPath $script:WmsDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    It 'returns '''' for a $null Settings or an empty DataRoot' {
+        Write-MergedPssaSettingsFile -Settings $null -DataRoot $script:WmsDir | Should -BeExactly ''
+        Write-MergedPssaSettingsFile -Settings @{ IncludeRules = @('X') } -DataRoot '' | Should -BeExactly ''
+    }
+    It 'round-trips IncludeRules, ExcludeRules, Severities and a nested RuleArguments table' {
+        $settings = @{
+            IncludeRules  = @('PSAvoidGlobalVars', 'PSUseDeclaredVarsMoreThanAssignments')
+            ExcludeRules  = @('PSAvoidUsingWriteHost')
+            Severities    = @('Error', 'Warning')
+            RuleArguments = @{ PSAvoidUsingCmdletAliases = @{ Whitelist = @('cd', 'dir') } }
+        }
+        $path = Write-MergedPssaSettingsFile -Settings $settings -DataRoot $script:WmsDir
+        Test-Path -LiteralPath $path | Should -BeTrue
+        $reloaded = Import-PowerShellDataFile -LiteralPath $path
+        @($reloaded.IncludeRules) -join ',' | Should -BeExactly 'PSAvoidGlobalVars,PSUseDeclaredVarsMoreThanAssignments'
+        @($reloaded.ExcludeRules)[0] | Should -BeExactly 'PSAvoidUsingWriteHost'
+        $reloaded.RuleArguments.PSAvoidUsingCmdletAliases.Whitelist.Count | Should -Be 2
+        $reloaded.RuleArguments.PSAvoidUsingCmdletAliases.Whitelist[1] | Should -BeExactly 'dir'
+    }
+    It 'escapes an embedded single quote safely' {
+        $path = Write-MergedPssaSettingsFile -Settings @{ IncludeRules = @("weird'name") } -DataRoot $script:WmsDir
+        (Import-PowerShellDataFile -LiteralPath $path).IncludeRules[0] | Should -BeExactly "weird'name"
+    }
+}
+
+Describe 'requiredRules -- the severityThreshold boundary is NAMED AND TESTED, not closed (dispatch 000294)' {
+    # The SAME discipline SeverityOverrides already got (dispatch 000289's own boundary test,
+    # above): a required rule's finding, once it runs via the merged IncludeRules, is filtered by
+    # Select-FilteredDiagnostics -- the daemon's OWN threshold filter -- exactly like every other
+    # rule's finding. Closing this (moving org enforcement ahead of the daemon's own filter) is a
+    # DIFFERENT slice with a real compatibility cost (ENTERPRISE-PROGRAM-DOCKET.md, P1-5) and is
+    # deliberately NOT proposed here; this test exists so the limitation is measured, not glossed.
+    BeforeAll {
+        $script:Rtb = @([pscustomobject]@{ severity = 'Hint'; line = 1; col = 1; source = 'PSScriptAnalyzer'; code = 'PSAvoidGlobalVars'; message = 'global' })
+    }
+    It 'at a RAISED threshold a required rule''s Hint-level finding is dropped before anything else sees it' {
+        $out = @(Select-FilteredDiagnostics -Records $script:Rtb -Threshold 'Warning' -Include @() -Exclude @())
+        $out.Count | Should -Be 0
+    }
+    It 'at the SHIPPED default threshold (Hint) the SAME finding survives -- both directions, so this is a boundary, not a broken feature' {
+        $out = @(Select-FilteredDiagnostics -Records $script:Rtb -Threshold 'Hint' -Include @() -Exclude @())
+        $out.Count | Should -Be 1
+        $out[0].code | Should -BeExactly 'PSAvoidGlobalVars'
     }
 }
 

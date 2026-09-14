@@ -20,7 +20,7 @@
     pssa_version = '1.25.0'
     max_length = 180
     pssa_count = 53
-    owned_count = 6
+    owned_count = 7
     override_count = 9
     # The plugin-owned finders, hand-authored (PSScriptAnalyzer has no metadata for them).
     # Keyed by the finder ruleId/code as EMITTED, not by its function name.
@@ -30,6 +30,7 @@
         'ManifestConsistency'
         'ModuleNotInstalled'
         'NonAsciiChar'
+        'ProhibitedSuppression'
         'PS7OnlySyntax'
     )
     # Idiom-family rules whose auto-derived PSSA text is replaced by a hand-authored override
@@ -80,6 +81,7 @@
         'ManifestConsistency' = 'Manifest FunctionsToExport disagrees with the module: a listed function is never defined, so the module exports a command that does not exist. Align them.'
         'ModuleNotInstalled' = 'Command comes from a module that is not installed here and is not imported, required, or defined in this file, so the call fails at run time. Install or import the module.'
         'NonAsciiChar' = 'Non-ASCII smart punctuation in a file with no UTF-8 BOM: Windows PowerShell 5.1 reads it as Windows-1252 and mojibakes the text. Use plain ASCII, or save the file with a BOM.'
+        'ProhibitedSuppression' = 'SuppressMessageAttribute names a rule org policy prohibits suppressing: the underlying finding stays hidden, not resolved. Remove the suppression, or resolve the finding it hides.'
         'PS7OnlySyntax' = 'PowerShell 7-only syntax: a PARSE error under Windows PowerShell 5.1, so the whole file fails to load there. Use a 5.1-compatible form, or declare ''#Requires -Version 7''.'
         'PSAvoidAssignmentToAutomaticVariable' = 'Changing automatic variables might have undesired side effects -- This automatic variable is built into PowerShell and readonly.'
         'PSAvoidDefaultValueForMandatoryParameter' = 'Avoid Default Value For Mandatory Parameter -- Mandatory parameter should not be initialized with a default value in the param block because this value will be ignored.'
