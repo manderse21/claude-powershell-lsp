@@ -386,11 +386,16 @@ Describe 'Integration: warm-start daemon (Windows + Linux + macOS)' -Skip:$scrip
         $stdin = (@{ session_id = $script:Sid; tool_input = @{ file_path = $fix }; cwd = $script:DataDir } | ConvertTo-Json -Compress)
         try {
             $env:POWERSHELL_LSP_DOGFOOD_LOG = $log
+            # CAPTURE_MODE=full is REQUIRED, not a preference (R25, dispatch 000301): this test
+            # reads .snippet back below, and `metadata` -- the shipped default since R25 -- does
+            # not write it. A test oracle opting in, same as tests/corpus/Corpus.Common.ps1.
+            $env:POWERSHELL_LSP_CAPTURE_MODE = 'full'
             $out = Invoke-PluginHook -ScriptPath (Join-Path $script:ScriptsDir 'lsp-client.ps1') `
                 -StdinJson $stdin -ExtraArgs @() -CapMs 9000 -DataRoot $script:DataDir
             $exit = $script:LastHookExit
         } finally {
             Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_DOGFOOD_LOG' -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_CAPTURE_MODE' -ErrorAction SilentlyContinue
         }
         $out | Should -Match 'PSUseApprovedVerbs'    # surface unchanged: the diagnostic still emits
         $exit | Should -Be 0                          # and the hook still exits 0
@@ -2430,7 +2435,10 @@ Describe 'Integration: dogfood diagnostic capture (dispatch 000039)' -Skip:$scri
 
     It 'captures the surfaced parser diagnostic to the log with an EMPTY verdict (end to end)' {
         $log = Join-Path $script:DfData 'capture-ok.jsonl'
-        $out = Invoke-DfHook -StdinJson $script:DfStdin -ExtraEnv @{ POWERSHELL_LSP_DOGFOOD_LOG = $log }
+        # CAPTURE_MODE=full is REQUIRED (R25, dispatch 000301): this test reads .snippet back
+        # below, and `metadata` -- the shipped default since R25 -- does not write it. A test
+        # oracle opting in, same as tests/corpus/Corpus.Common.ps1; scoped to THIS hook call only.
+        $out = Invoke-DfHook -StdinJson $script:DfStdin -ExtraEnv @{ POWERSHELL_LSP_DOGFOOD_LOG = $log; POWERSHELL_LSP_CAPTURE_MODE = 'full' }
         # (a) the surface emitted the parser diagnostics block, and the hook exited 0
         $out | Should -Match 'PowerShell diagnostics'
         $out | Should -Match '\(parser\)'

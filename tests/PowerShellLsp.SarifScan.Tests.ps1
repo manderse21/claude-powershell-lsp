@@ -399,6 +399,18 @@ Describe 'SARIF scan -- finding identity (one engine)' -Skip:$script:SkipDaemon 
         }
         New-Item -ItemType Directory -Force -Path $script:DataDir | Out-Null
         $env:CLAUDE_PLUGIN_DATA = $script:DataDir
+        # CAPTURE_MODE=full is REQUIRED, not a preference (R25, dispatch 000301): the one-engine
+        # identity assertion below derives findings through Invoke-ScanFileDiagnostics, which reads
+        # the dogfood capture log's `message` field back -- and `metadata` (the shipped default
+        # since R25) does not write it. Set on THIS PROCESS rather than inside
+        # Invoke-ScanFileDiagnostics itself (scripts/lib/lsp-scan-common.ps1, shared with the real
+        # scripts/lsp-scan.ps1 entry point) because ProcessStartInfo inherits the parent process's
+        # environment and that function's own -ExtraEnv does not set this key, so it flows through
+        # to the child lsp-client.ps1 untouched. A test oracle opting in, same as
+        # tests/corpus/Corpus.Common.ps1 -- the shipped default, and lsp-scan.ps1's own behavior,
+        # are both left alone. Restored in AfterAll below.
+        $script:PrevSarifCaptureMode = $env:POWERSHELL_LSP_CAPTURE_MODE
+        $env:POWERSHELL_LSP_CAPTURE_MODE = 'full'
 
         $script:HostExe = Resolve-PsHost 'pwsh'
 
@@ -452,6 +464,11 @@ Describe 'SARIF scan -- finding identity (one engine)' -Skip:$script:SkipDaemon 
         }
         if ($script:ScratchDir -and (Test-Path -LiteralPath $script:ScratchDir)) {
             Remove-Item -LiteralPath $script:ScratchDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if ($null -eq $script:PrevSarifCaptureMode) {
+            Remove-Item -LiteralPath 'Env:POWERSHELL_LSP_CAPTURE_MODE' -ErrorAction SilentlyContinue
+        } else {
+            $env:POWERSHELL_LSP_CAPTURE_MODE = $script:PrevSarifCaptureMode
         }
     }
 
