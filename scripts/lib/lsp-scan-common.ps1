@@ -585,3 +585,110 @@ function Invoke-ScanFileDiagnostics {
         ElapsedMs = $elapsedMs
     }
 }
+
+# --- prohibitedSuppressions, repo/CI path (P1-5 remainder, R23=D member A, dispatch 000294) ---
+# True re-surfacing: Invoke-ScriptAnalyzer -IncludeSuppressed, restricted to the org-prohibited
+# rule set, re-surfaces a SuppressMessageAttribute-hidden finding UNDER ITS OWN rule identity --
+# "true enforcement", per R23's own option-A text, at a cost this codebase's cost table
+# (000292-PHASE-RECORDS.md) explicitly declined to pay on the per-edit daemon path but accepts
+# here, where a scan runs once per CI invocation rather than once per keystroke. This is a
+# SEPARATE, ONE-SHOT PSScriptAnalyzer pass in THIS process (lsp-scan.ps1 is itself already a
+# one-shot CI process with no warm state to preserve, unlike the rest of this file's
+# daemon-routed per-file loop) -- never routed through PSES, which 000292 measured never
+# requests suppressed records at all and so structurally cannot carry this member.
+
+function Resolve-ScanPssaModulePath {
+    # The vendored PSScriptAnalyzer.psd1 under CLAUDE_PLUGIN_DATA/modules -- the SAME
+    # bootstrap-only acquisition path this file's own header comment names (ensure-pssa.ps1,
+    # dispatch 000046 L2). Returns '' when not found rather than throwing, so a missing vendor
+    # copy degrades this ONE member (logged by the caller) without failing the whole scan.
+    $vendor = Get-PssaModuleDir
+    if (-not (Test-Path -LiteralPath $vendor)) { return '' }
+    $m = Get-ChildItem -LiteralPath $vendor -Recurse -Filter 'PSScriptAnalyzer.psd1' -File -ErrorAction SilentlyContinue |
+        Sort-Object { $_.FullName.Length } | Select-Object -First 1
+    if ($null -eq $m) { return '' }
+    return $m.FullName
+}
+
+function Invoke-ProhibitedSuppressionScan {
+    # Run the restricted -IncludeSuppressed pass over $Files and return findings in the SAME
+    # flat shape every other lsp-scan finding uses (file/ruleId/source/severity/line/col/message
+    # -- New-SarifReport's own documented expectation), so the caller can simply append this
+    # function's return value onto $allFindings with no special-casing downstream. Returns @()
+    # immediately when $ProhibitedRules is empty (the knob-off default) or the vendored module
+    # cannot be resolved -- BOTH degrades are fail-open (a scan that cannot run this ONE member
+    # still reports every other finding) and BOTH are logged by the caller via $WarningOut, never
+    # silently.
+    #
+    # ruleId is the REAL suppressed rule's own name (e.g. PSAvoidUsingPlainTextForPassword), not
+    # a wrapper id -- this is what makes it "true enforcement" rather than a restatement of the
+    # edit-path's Find-ProhibitedSuppression (which deliberately reports the SUPPRESSION under
+    # its OWN id, 'ProhibitedSuppression', because the daemon cannot afford a real second pass).
+    # The two members of R23=D are intentionally NOT the same shape; this is the costlier,
+    # CI-affordable half named "A" in the ruling text, not a second copy of "B".
+    #
+    # Adversarial control: drop the SuppressedRecord type-name filter and an ORDINARY
+    # (non-suppressed) finding of the same restricted rule would double-report; drop
+    # -IncludeRule and the pass re-scans every installed PSSA rule per file instead of the
+    # restricted set the ruling text specifically bounds cost to; use the type's own Severity
+    # enum without Resolve-SeverityName and an unrecognized or future PSSA severity name would
+    # surface as an unranked value instead of being rejected the way every other org-policy
+    # degrade in this codebase rejects an unrecognized severity name.
+    param(
+        [string[]]$Files,
+        [string[]]$ProhibitedRules,
+        [ref]$WarningOut
+    )
+    $prohibited = @($ProhibitedRules | Where-Object { $_ })
+    if ($prohibited.Count -eq 0) { return @() }
+
+    $modPath = Resolve-ScanPssaModulePath
+    if ([string]::IsNullOrWhiteSpace($modPath)) {
+        if ($null -ne $WarningOut) { $WarningOut.Value = 'prohibitedSuppressions (repo/CI path): vendored PSScriptAnalyzer not found; this member was NOT run' }
+        return @()
+    }
+    try {
+        Import-Module -Name $modPath -Force -ErrorAction Stop
+    } catch {
+        if ($null -ne $WarningOut) { $WarningOut.Value = 'prohibitedSuppressions (repo/CI path): PSScriptAnalyzer import failed (' + $_.Exception.Message + '); this member was NOT run' }
+        return @()
+    }
+
+    $findings = New-Object System.Collections.ArrayList
+    foreach ($file in @($Files)) {
+        $records = $null
+        try {
+            $records = @(Invoke-ScriptAnalyzer -Path $file -IncludeRule $prohibited -IncludeSuppressed -ErrorAction Stop)
+        } catch {
+            if ($null -ne $WarningOut) { $WarningOut.Value = 'prohibitedSuppressions (repo/CI path): analysis error on ' + $file + ' (' + $_.Exception.Message + ')' }
+            continue
+        }
+        foreach ($r in $records) {
+            $tn = ''
+            try { $tn = $r.GetType().Name } catch { $tn = '' }
+            if ($tn -ne 'SuppressedRecord') { continue }   # an ordinary finding of a restricted rule: not a suppression
+            $ruleName = ''
+            try { $ruleName = [string]$r.RuleName } catch { $ruleName = '' }
+            if ([string]::IsNullOrWhiteSpace($ruleName)) { continue }
+            $sevRaw = ''
+            try { $sevRaw = [string]$r.Severity } catch { $sevRaw = '' }
+            $sev = Resolve-SeverityName $sevRaw
+            if ($sev -eq '') { $sev = 'Warning' }   # PSSA's own Severity is never 'Hint' (no such PSSA level); default stays conservative
+            $line = 1; $col = 1
+            try { $line = [int]$r.Extent.StartLineNumber } catch { $line = 1 }
+            try { $col = [int]$r.Extent.StartColumnNumber } catch { $col = 1 }
+            $msg = ''
+            try { $msg = [string]$r.Message } catch { $msg = '' }
+            [void]$findings.Add([pscustomobject]@{
+                    file     = $file
+                    ruleId   = $ruleName
+                    source   = 'PSScriptAnalyzer'
+                    severity = $sev
+                    line     = $line
+                    col      = $col
+                    message  = $msg + ' (SUPPRESSED in source; org policy prohibits suppressing ' + $ruleName + ' -- enforced by the repository/CI scan)'
+                })
+        }
+    }
+    return @($findings)
+}

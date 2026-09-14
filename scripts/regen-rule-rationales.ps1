@@ -82,7 +82,8 @@ $script:MaxLength = 180
 # pin 1.25.0: the shortest is 11 chars, the next shortest is 25.
 $script:MinSummary = 24
 
-# --- hand-authored rationales for the 5 plugin-owned finders (dispatch 000121 OQ3; 000124) -------
+# --- hand-authored rationales for the 7 plugin-owned finders (dispatch 000121 OQ3; 000124; count
+# carried to 7 by Find-ProhibitedSuppression, dispatch 000294) -------------------------------------
 # PSScriptAnalyzer is blind to these: they are the plugin's own AST/byte-level finders in
 # scripts/lib/lsp-common.ps1, all emitting source = 'powershell-lsp'. Each entry is keyed by the
 # finder's ACTUAL emitted ruleId/code -- NOT the finder's function name -- because the runtime
@@ -142,6 +143,14 @@ $script:OwnedRationales = @{
     'CommandLinePlaceholder' =
     "Unfilled '<...>' placeholder on a command line: angle brackets are reserved redirection " +
     "operators, so this is a parse error, not text. Insert a real value, or quote the literal."
+
+    # Find-ProhibitedSuppression (P1-5 remainder, R23=D member B, dispatch 000294). Fires on a
+    # SuppressMessageAttribute naming a rule the org-wide policy's ProhibitedSuppressions list
+    # names. It reports the SUPPRESSION, not the underlying finding PSSA never surfaces because of
+    # it -- the rationale says exactly that, never implying the finder re-ran the hidden rule.
+    'ProhibitedSuppression' =
+    "SuppressMessageAttribute names a rule org policy prohibits suppressing: the underlying " +
+    "finding stays hidden, not resolved. Remove the suppression, or resolve the finding it hides."
 }
 
 # --- hand-authored rationale OVERRIDES for the idiom family (dispatch 000125, N1.1 slice 1) -------

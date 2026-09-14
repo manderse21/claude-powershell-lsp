@@ -2537,3 +2537,82 @@ bump, and nothing touched that belongs to another session or another dispatch's 
 remainder stays dispatch 000294's to build). One comment was posted on plugin issue #235 (R23,
 verbatim, per leg A item 6) -- a comment, not a merge or a state change on that issue's own
 dispatch. Both PRs this dispatch opens are held for Mike; neither is merged here.
+
+## P1-5 remainder, built to R23=D -- dispatch 000294, 2026-09-13
+
+**What shipped, and to which ruling.** `requiredRules`, `prohibitedSuppressions` and the
+`severityThreshold` boundary -- the three members 000289's entry above left unbuilt, structural
+reasons and all -- land as ONE slice per the charter's own word, gated entirely on R23 (dispatch
+000295, plugin issue #235, quoted verbatim in that entry above): *D = B on the edit path plus A
+inside `lsp-scan.ps1` for the repository and CI path.* `requiredRules` and the threshold boundary
+needed no separate ruling -- 000292's own phase records had already measured them buildable without
+one, waiting only on the charter's one-slice bundling.
+
+**`prohibitedSuppressions`, B and A as two deliberately different shapes.** B is the edit path:
+`Find-ProhibitedSuppression`, the 7th plugin-owned rule (`docs/assurance-pack.md` updated from six
+to seven, `rulesets/rule-rationales.psd1` regenerated), flags a `SuppressMessageAttribute` naming a
+rule the policy's new `ProhibitedSuppressions` key lists -- matched on the attribute type name's
+LAST dot-segment, so the fully-qualified, conventional, and `using namespace`-bare spellings are
+all caught. It reports the suppression, not the hidden finding -- cheap, as R23 costed it. A is the
+repository/CI path: `lsp-scan.ps1` gains a `-OrgPolicyPath` CLI parameter (not a userConfig knob --
+it is a standalone entry point with no hook context to read one from) and, when set, runs a
+SEPARATE, one-shot `Invoke-ScriptAnalyzer -IncludeSuppressed` pass restricted to the prohibited set,
+re-surfacing a `SuppressedRecord` under the REAL suppressed rule's own id -- true enforcement, at a
+cost R23 declined to impose on the per-edit daemon path and this dispatch paid once per CI run
+instead, exactly the split the ruling names.
+
+**`requiredRules`, 000292's measured cost paid.** `Initialize-PssaSettings`
+(`scripts/pses-daemon.ps1`) gains a `-OrgPolicyPath` parameter threaded from the SAME `orgPolicy`
+knob the client already reads (`session-start.ps1` and the client's own auto-relaunch path both
+forward it); when policy names a non-empty `RequiredRules`, the daemon writes a MERGED PSSA
+settings file (`Merge-RequiredRulesSettings`, pure; `Write-MergedPssaSettingsFile`, the I/O half)
+under the plugin data root and pushes that path to PSES instead of whatever would otherwise have
+resolved. When no repo-local `IncludeRules` exists to merge onto, the merge pins PSES's own
+no-settings default list -- re-derived from the PINNED v4.6.0 source (`AnalysisService.cs`'s
+`s_defaultRules`, fetched and read at the exact tagged commit, 15 names) rather than recalled from
+a predecessor's partial DLL string-heap extraction, which had conflated the list with an unrelated
+constant (`PSProvideCommentHelp`, used only by PSES's comment-help feature) -- alongside the
+required rules, so a settings file is never shipped that silently widens PSSA from PSES's curated
+default to every installed rule. A `$PsesTag` guard refuses to trust that pinned list when the
+daemon's actual tag disagrees and no repo-local `IncludeRules` exists to use instead, degrading to
+NOT merging (one warning) rather than shipping a list that might no longer be PSES's real default.
+**This is the one reversal 000289's entry above named as the cost of forcing a rule ON -- `the
+daemon, its launch, and its session-start threading are structurally untouched`, dispatch 000135 --
+and it is gated end-to-end on `RequiredRules` being non-empty, so an org that sets nothing gets the
+exact pre-000294 daemon, proven byte-identical by a live control daemon in the same test run rather
+than assumed.**
+
+**Precedence, decided and tested, no prior implementation to match.** A rule named in both org
+`RequiredRules` and org `ExcludeRules` is dropped from the merge for that rule -- exclusion stays
+the stronger verb, the same ordering 000289's `severityOverrides` already uses. A rule required by
+org but excluded only by the repo-local settings file is forced on regardless -- the org is the
+outermost voice on the include side exactly as it already is on the exclude side. A three-daemon
+live integration test (control / required / self-contradictory-conflict) proves this against REAL
+PSES, under both PowerShell 5.1 and pwsh 7, not only against the pure function.
+
+**The `severityThreshold` boundary, named and tested for `requiredRules`, not closed.** Exactly the
+discipline 000289's entry above recorded for `severityOverrides`: a required rule's finding, once
+it runs via the merged `IncludeRules`, can still be dropped by the daemon's own threshold filter
+before anything else sees it. Both arms asserted (raised threshold drops it; the shipped default
+does not). Closing the gap -- moving org enforcement ahead of the daemon's own filter -- is still
+the different, costlier slice `ENTERPRISE-PROGRAM-DOCKET.md` already declined to propose; nothing
+here changes that.
+
+**RED controls.** `Find-ProhibitedSuppression` and `Merge-RequiredRulesSettings` are brand-new --
+no prior implementation to undo -- so each control is a NAIVE FIRST-CUT variant reconstructed by
+mutating the shipped source text (never `git show <sha>:<path>`), proven to land, to still parse,
+and to bite narrowly: a plain case stays correct under the mutant and only the guarded case flips.
+The `requiredRules` daemon wiring carries a real regression control beyond that: the untouched
+pre-000294 path, proven live on the same fixture bytes the required case uses, in the same test
+run. Every new and touched test is green under both Windows PowerShell 5.1 and pwsh 7.
+
+**Freeze exposure: zero.** Both new org-policy keys (`RequiredRules`, `ProhibitedSuppressions`)
+live inside the existing `orgPolicy` file, which this docket already ruled is not a Tier 1 surface.
+`lsp-scan.ps1`'s new `-OrgPolicyPath` is a CLI parameter, matching `-Format`/`-FailOn`'s own
+precedent, not a userConfig knob. No diagnostics status token added. `CONTRACT.md` untouched.
+
+### External actions: none
+
+No merge, no promotion to `verified`, no `dispatch f2`, no tag, no workflow trigger of any kind
+including a dry run, no publish, post or submission, no force-push, no branch deleted, no version
+bump. The PR this dispatch opens is held for Mike; it is not merged here.

@@ -62,7 +62,14 @@ param(
     # ran -- including files that COMPLETE, not only the ones marked INCOMPLETE. This is the instrument
     # that measured the true per-file cost on ubuntu-24.04 (see the 000132 outbox); it changes NO budget
     # and is a diagnostic lever, NOT a userConfig knob. Off by default (no extra output).
-    [switch] $DiagnosticTiming
+    [switch] $DiagnosticTiming,
+
+    # prohibitedSuppressions, repo/CI path (P1-5 remainder, R23=D member A, dispatch 000294): the
+    # SAME org policy file the in-agent hook reads via the 'orgPolicy' userConfig knob, but a CLI
+    # PARAMETER here -- deliberately NOT a userConfig knob, matching -Format/-FailOn's own
+    # rationale: a CI invocation names its inputs explicitly. Empty (the default) runs no extra
+    # pass at all, so the scan's output is byte-identical to pre-000294.
+    [string] $OrgPolicyPath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -152,6 +159,29 @@ try {
     }
 } finally {
     Stop-ScanDaemon -ScriptsDir $PSScriptRoot -DataRoot $dataRoot -SessionId $sessionId -HostExe $hostExe -DaemonInfo $daemon
+}
+
+# prohibitedSuppressions, repo/CI path (P1-5 remainder, R23=D member A, dispatch 000294). Reads
+# org policy itself (lsp-scan.ps1 is a standalone CI entry point with no userConfig context --
+# Get-PluginOption would read nothing here), restricted to files this scan already resolved. A
+# degrade (no policy, no ProhibitedSuppressions, vendored PSSA missing) costs nothing and drops
+# no other finding; logged to stderr, never silent.
+if (-not [string]::IsNullOrWhiteSpace($OrgPolicyPath)) {
+    $scanPolWarn = ''
+    $scanPol = Import-OrgPolicy -Path $OrgPolicyPath -WarningOut ([ref]$scanPolWarn)
+    if ($scanPolWarn -ne '') {
+        [Console]::Error.WriteLine('lsp-scan: orgPolicy: ' + $scanPolWarn)
+    }
+    $prohibitedForScan = @($scanPol.ProhibitedSuppressions)
+    if ($prohibitedForScan.Count -gt 0) {
+        $psWarn = ''
+        $suppressionFindings = @(Invoke-ProhibitedSuppressionScan -Files $files -ProhibitedRules $prohibitedForScan -WarningOut ([ref]$psWarn))
+        if ($psWarn -ne '') { [Console]::Error.WriteLine('lsp-scan: ' + $psWarn) }
+        if ($suppressionFindings.Count -gt 0) {
+            [Console]::Error.WriteLine('lsp-scan: prohibitedSuppressions (repo/CI path) found ' + $suppressionFindings.Count + ' finding(s).')
+            foreach ($sf in $suppressionFindings) { [void]$allFindings.Add($sf) }
+        }
+    }
 }
 
 $findings = @(@($allFindings) | Where-Object { $null -ne $_ })

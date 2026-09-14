@@ -902,7 +902,11 @@ function New-EmptyOrgPolicy {
     # The knob-off / no-constraint policy value. Named rather than repeated so that "no org
     # constraint" is ONE value with ONE shape, and a caller can never accidentally construct a
     # half-empty one.
-    return @{ ExcludeRules = @(); SeverityOverrides = @{} }
+    #
+    # RequiredRules / ProhibitedSuppressions (P1-5 remainder, R23=D, dispatch 000294): the two
+    # members added beside ExcludeRules / SeverityOverrides. Both empty by construction, which is
+    # what keeps every knob-off and v1/v2-no-key surface byte-identical to pre-000294.
+    return @{ ExcludeRules = @(); SeverityOverrides = @{}; RequiredRules = @(); ProhibitedSuppressions = @() }
 }
 
 function Test-OrgPolicyIntegrity {
@@ -994,6 +998,8 @@ function Import-OrgPolicy {
     $reason = ''
     $codes = @()
     $sev = @{}
+    $req = @()
+    $prohib = @()
     try {
         if (-not [System.IO.Path]::IsPathRooted($Path)) {
             $reason = 'orgPolicy path is not absolute; no org exclusions applied: ' + $Path
@@ -1052,15 +1058,41 @@ function Import-OrgPolicy {
                         }
                     }
                 }
+                # POLICY v2 REMAINDER (P1-5, R23=D, dispatch 000294): RequiredRules and
+                # ProhibitedSuppressions, read from the SAME parse, behind the SAME integrity
+                # gate, into the SAME single warning -- Hub Rule 18, the identical pattern
+                # SeverityOverrides established beside ExcludeRules. A v1 or v2-pre-000294
+                # policy carries neither key and these two blocks leave $req / $prohib empty,
+                # which is what keeps that policy's behaviour byte-identical to pre-000294.
+                if ($null -ne $data -and $data.ContainsKey('RequiredRules')) {
+                    $seenReq = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+                    foreach ($entry in @($data['RequiredRules'])) {
+                        if ($entry -isnot [string]) { continue }
+                        $c = $entry.Trim()
+                        if ([string]::IsNullOrWhiteSpace($c)) { continue }
+                        if ($seenReq.Add($c)) { $req += $c }
+                    }
+                }
+                if ($null -ne $data -and $data.ContainsKey('ProhibitedSuppressions')) {
+                    $seenProhib = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+                    foreach ($entry in @($data['ProhibitedSuppressions'])) {
+                        if ($entry -isnot [string]) { continue }
+                        $c = $entry.Trim()
+                        if ([string]::IsNullOrWhiteSpace($c)) { continue }
+                        if ($seenProhib.Add($c)) { $prohib += $c }
+                    }
+                }
             }
         }
     } catch {
         $reason = 'orgPolicy could not be read; no org exclusions applied: ' + $_.Exception.Message
         $codes = @()
         $sev = @{}
+        $req = @()
+        $prohib = @()
     }
     if ($reason -ne '' -and $null -ne $WarningOut) { $WarningOut.Value = $reason }
-    return @{ ExcludeRules = @($codes); SeverityOverrides = $sev }
+    return @{ ExcludeRules = @($codes); SeverityOverrides = $sev; RequiredRules = @($req); ProhibitedSuppressions = @($prohib) }
 }
 
 function Import-OrgPolicyExcludes {
@@ -1204,6 +1236,216 @@ function Select-OrgPolicyFiltered {
         $out += $r
     }
     return @($out)
+}
+
+# --- requiredRules (P1-5 remainder, R23=D member, dispatch 000294) ---------
+# The include-side member the settings CHANNEL can carry (000292-PHASE-RECORDS.md): unlike
+# prohibitedSuppressions, PSSA's settings object DOES have an IncludeRules property, so a
+# required rule can be forced on by writing PSES a settings file that names it -- but ONLY if
+# the merged file also preserves every rule PSES would otherwise have run. A settings file with
+# NO IncludeRules key runs every INSTALLED PSSA rule (PSSA's own default), which is a much wider
+# surface than PSES's own curated no-settings default -- so the merge must pin that default
+# explicitly rather than merely appending to whatever IncludeRules already existed.
+
+function Get-PssaDefaultRuleNames {
+    # PSES's OWN no-settings default rule set -- read from the PINNED PSES v4.6.0 source
+    # (AnalysisService.cs, s_defaultRules), never recalled or reconstructed from a DLL string
+    # scan. Verified 2026-09-13 against the exact tagged source at
+    # github.com/PowerShell/PowerShellEditorServices, tag v4.6.0. This is DIFFERENT from
+    # rulesets/base.psd1 (this plugin's OWN opt-in curated ruleset, a much larger list) and from
+    # PSProvideCommentHelp (a SEPARATE hardcoded rule PSES uses only for its comment-help
+    # generation feature, not for diagnostics) -- do not conflate any of the three.
+    #
+    # PINNED, guarded: Get-PssaDefaultRulesVerifiedForPsesTag records the PSES tag this list
+    # was verified against. Merge-RequiredRulesSettings refuses to trust this list (and degrades
+    # to NOT merging) when the caller's current tag does not match, rather than silently shipping
+    # a stale list the day PSES's own default set changes across a version bump.
+    return @(
+        'PSAvoidAssignmentToAutomaticVariable',
+        'PSUseToExportFieldsInManifest',
+        'PSMisleadingBacktick',
+        'PSAvoidUsingCmdletAliases',
+        'PSUseApprovedVerbs',
+        'PSAvoidUsingPlainTextForPassword',
+        'PSReservedCmdletChar',
+        'PSReservedParams',
+        'PSShouldProcess',
+        'PSMissingModuleManifestField',
+        'PSAvoidDefaultValueSwitchParameter',
+        'PSUseDeclaredVarsMoreThanAssignments',
+        'PSPossibleIncorrectComparisonWithNull',
+        'PSAvoidDefaultValueForMandatoryParameter',
+        'PSPossibleIncorrectUsageOfRedirectionOperator'
+    )
+}
+
+function Get-PssaDefaultRulesVerifiedForPsesTag {
+    # The PSES tag Get-PssaDefaultRuleNames's hardcoded list was verified against (a function, not
+    # a top-level script-scoped assignment: dispatch 000156's lib-purity guard forbids any
+    # top-level statement in a dot-sourced shared library, since it executes in the CALLER's
+    # scope on every dot-source, not once). Merge-RequiredRulesSettings compares its caller's
+    # current tag against this value and refuses to trust the pinned list on a mismatch.
+    return 'v4.6.0'
+}
+
+function Merge-RequiredRulesSettings {
+    # Compute the MERGED PSSA settings hashtable that forces $RequiredRules onto PSES's analysis
+    # pass, or $null when nothing should be merged (the caller then takes the untouched
+    # pre-000294 path byte-for-byte). PURE: takes the already-resolved pre-change settings path
+    # (or '' when none resolved) and reads it itself via Import-PowerShellDataFile so the merge
+    # can be unit-tested without a daemon; writing the result to disk is a SEPARATE step
+    # (Write-MergedPssaSettingsFile) so this function has no I/O side effect of its own beyond
+    # the one read.
+    #
+    # Returns $null (meaning: do not merge, take the untouched path) when: $RequiredRules is
+    # empty (the overwhelmingly common case -- org policy unset or names no required rule); OR
+    # $CurrentPsesTag does not match Get-PssaDefaultRulesVerifiedForPsesTag AND no repo-local
+    # IncludeRules exists to merge onto instead (the guard: a stale default-rule list must never
+    # silently ship as PSES's replacement rule set). A repo-local settings file WITH its own
+    # IncludeRules is trusted as-is regardless of the PSES-tag guard, since in that case the
+    # merge never needs PSES's own default list at all.
+    #
+    # PRECEDENCE, decided and tested here (no prior implementation to match -- new mechanism):
+    # a rule named in BOTH $RequiredRules and $OrgExcludeRules (the SAME org policy contradicting
+    # itself) is DROPPED from the merge for that one rule -- "exclusion stays the stronger verb",
+    # the identical ordering SeverityOverrides already uses against ExcludeRules (a rule in both
+    # lists is dropped, not re-stamped). A rule named in $RequiredRules but excluded only by the
+    # REPO-LOCAL settings file's own ExcludeRules is FORCED ON regardless -- the org is the
+    # OUTERMOST, centrally-managed voice (the existing org-policy-layer comment above), and that
+    # voice already overrides repo-local on the exclude side; requiredRules extends the same
+    # precedent to the include side rather than inventing an opposite one.
+    #
+    # Adversarial control: drop the PSES-tag guard and 'a stale default list is not silently
+    # trusted' goes RED; drop the org-exclude-wins branch and 'a self-contradictory org policy
+    # requires the excluded rule anyway' goes RED; drop the repo-local-exclude-loses branch and
+    # 'org required beats repo-local excluded' goes RED; return the repo-local settings verbatim
+    # when $RequiredRules is non-empty and 'a required rule not in the repo file is still added'
+    # goes RED.
+    param(
+        [string]$ResolvedSettingsPath = '',
+        [string[]]$RequiredRules = @(),
+        [string[]]$OrgExcludeRules = @(),
+        [string]$CurrentPsesTag = (Get-PssaDefaultRulesVerifiedForPsesTag)
+    )
+    $required = @($RequiredRules | Where-Object { $_ })
+    if ($required.Count -eq 0) { return $null }
+
+    $orgExcSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($e in @($OrgExcludeRules | Where-Object { $_ })) { [void]$orgExcSet.Add(([string]$e).Trim()) }
+
+    # Load whatever repo-local settings would otherwise apply (or nothing).
+    $baseData = $null
+    if (-not [string]::IsNullOrWhiteSpace($ResolvedSettingsPath)) {
+        try {
+            if (Test-Path -LiteralPath $ResolvedSettingsPath -PathType Leaf) {
+                $baseData = Import-PowerShellDataFile -LiteralPath $ResolvedSettingsPath
+            }
+        } catch { $baseData = $null }
+    }
+
+    $hasRepoInclude = ($null -ne $baseData -and $baseData.ContainsKey('IncludeRules'))
+    if (-not $hasRepoInclude -and $CurrentPsesTag -ne (Get-PssaDefaultRulesVerifiedForPsesTag)) {
+        # No repo-local IncludeRules to merge onto, and the pinned PSES default list is not
+        # verified for the tag actually in use: refuse to guess PSES's real default set. Degrade
+        # to "do not merge" -- the caller logs ONE warning and requiredRules is not enforced this
+        # session, exactly the fail-open-but-never-silent shape every other org-policy degrade in
+        # this file already uses.
+        return $null
+    }
+
+    $include = New-Object System.Collections.ArrayList
+    $seenInclude = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $baseIncludeList = if ($hasRepoInclude) { @($baseData['IncludeRules']) } else { @(Get-PssaDefaultRuleNames) }
+    foreach ($r in $baseIncludeList) {
+        if ($r -isnot [string]) { continue }
+        $rt = $r.Trim()
+        if ([string]::IsNullOrWhiteSpace($rt)) { continue }
+        if ($seenInclude.Add($rt)) { [void]$include.Add($rt) }
+    }
+    foreach ($r in $required) {
+        $rt = $r.Trim()
+        if ([string]::IsNullOrWhiteSpace($rt)) { continue }
+        if ($orgExcSet.Contains($rt)) { continue }   # org excludes it too: exclusion wins, skip
+        if ($seenInclude.Add($rt)) { [void]$include.Add($rt) }
+    }
+
+    $exclude = New-Object System.Collections.ArrayList
+    if ($null -ne $baseData -and $baseData.ContainsKey('ExcludeRules')) {
+        $reqSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($r in $required) { [void]$reqSet.Add(([string]$r).Trim()) }
+        foreach ($r in @($baseData['ExcludeRules'])) {
+            if ($r -isnot [string]) { continue }
+            $rt = $r.Trim()
+            if ([string]::IsNullOrWhiteSpace($rt)) { continue }
+            # A required rule is stripped from the merged ExcludeRules UNLESS org's own
+            # ExcludeRules names it too (the self-contradiction branch above already kept it out
+            # of $include in that case, so leaving it excluded here is consistent, not double
+            # logic: $include and $exclude are asserted never to intersect on a required rule).
+            if ($reqSet.Contains($rt) -and -not $orgExcSet.Contains($rt)) { continue }
+            [void]$exclude.Add($rt)
+        }
+    }
+
+    $merged = @{ IncludeRules = @($include) }
+    if ($exclude.Count -gt 0) { $merged['ExcludeRules'] = @($exclude) }
+    # Preserve every other repo-local field faithfully -- RuleArguments tables and all -- so the
+    # merge changes ONLY which rules run, never how an already-running rule is configured.
+    if ($null -ne $baseData) {
+        foreach ($k in @('Severities', 'CustomRulePath', 'RecurseCustomRulePath', 'IncludeDefaultRules', 'RuleArguments', 'FilePath')) {
+            if ($baseData.ContainsKey($k)) { $merged[$k] = $baseData[$k] }
+        }
+    }
+    return $merged
+}
+
+function Write-MergedPssaSettingsFile {
+    # I/O half of the requiredRules merge: serialize $Settings (Merge-RequiredRulesSettings's
+    # return value) as a .psd1 under $DataRoot and return its absolute path, or '' on any
+    # failure (fail-open -- the caller falls back to the untouched pre-change path exactly as it
+    # would for a $null merge result). NEVER writes into the repo-local settings file itself:
+    # this is always a NEW file under the plugin's own per-session data root, so a live edit can
+    # never corrupt a file the user or the repo owns.
+    param([hashtable]$Settings, [string]$DataRoot)
+    if ($null -eq $Settings -or [string]::IsNullOrWhiteSpace($DataRoot)) { return '' }
+    try {
+        New-ContainedDirectory -Path $DataRoot
+        $path = Join-Path $DataRoot 'orgpolicy-merged-settings.psd1'
+        $sb = New-Object System.Text.StringBuilder
+        [void]$sb.AppendLine('# GENERATED by Write-MergedPssaSettingsFile (dispatch 000294). DO NOT EDIT.')
+        [void]$sb.AppendLine('@{')
+        foreach ($key in @('IncludeRules', 'ExcludeRules', 'Severities', 'CustomRulePath', 'RecurseCustomRulePath', 'IncludeDefaultRules', 'RuleArguments', 'FilePath')) {
+            if (-not $Settings.ContainsKey($key)) { continue }
+            $val = $Settings[$key]
+            [void]$sb.AppendLine('    ' + $key + ' = ' + (ConvertTo-Psd1Literal $val))
+        }
+        [void]$sb.AppendLine('}')
+        [System.IO.File]::WriteAllText($path, $sb.ToString(), (New-Object System.Text.UTF8Encoding($false)))
+        return $path
+    } catch { return '' }
+}
+
+function ConvertTo-Psd1Literal {
+    # A minimal, ROUND-TRIP-SAFE .psd1 literal renderer for exactly the value shapes a PSSA
+    # settings hashtable carries: string, bool, int, an array of strings, or a nested hashtable
+    # (RuleArguments). Not a general-purpose serializer -- an unrecognized shape renders as
+    # $null with a comment marker rather than a guess that could silently change meaning.
+    param($Value)
+    if ($null -eq $Value) { return '$null' }
+    if ($Value -is [bool]) { return $(if ($Value) { '$true' } else { '$false' }) }
+    if ($Value -is [int] -or $Value -is [long]) { return [string]$Value }
+    if ($Value -is [string]) { return "'" + $Value.Replace("'", "''") + "'" }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $parts = New-Object System.Collections.ArrayList
+        foreach ($k in @($Value.Keys)) {
+            [void]$parts.Add('        ' + [string]$k + ' = ' + (ConvertTo-Psd1Literal $Value[$k]))
+        }
+        return "@{`n" + ($parts -join "`n") + "`n    }"
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $items = @($Value | ForEach-Object { ConvertTo-Psd1Literal $_ })
+        return '@(' + ($items -join ', ') + ')'
+    }
+    return '$null'   # unrecognized shape: never guess
 }
 
 
@@ -2572,7 +2814,12 @@ function Start-PsesDaemonDetached {
         # it adds no CONTRACT surface. 0 (the default) means "unset" -- no arg is emitted and the daemon
         # keeps its own 5000 default, so the in-agent launch is byte-identical to pre-000133. Only the scan
         # (Start-ScanDaemon, option B) passes a raised value; in-agent editing is untouched.
-        [int]$MaxWaitMs = 0
+        [int]$MaxWaitMs = 0,
+        # requiredRules forward (P1-5 remainder, dispatch 000294): the SAME 'orgPolicy' userConfig
+        # path lsp-client.ps1 already reads client-side, now ALSO threaded to the daemon so
+        # Initialize-PssaSettings can consult RequiredRules. Empty (the default) emits no arg, so
+        # the daemon takes its exact pre-000294 path -- byte-identical, no new userConfig knob.
+        [string]$OrgPolicyPath = ''
     )
     $scriptsDir = Split-Path -Parent $script:LspCommonDir   # scripts/lib -> scripts
     if ([string]::IsNullOrWhiteSpace($scriptsDir)) { $scriptsDir = Split-Path -Parent $PSScriptRoot }
@@ -2604,6 +2851,7 @@ function Start-PsesDaemonDetached {
     # daemon invocation is byte-identical to pre-000133 (no extra arg). Only the scan raises it (option B,
     # dispatch 000133) -- the in-agent daemon keeps the 5000 settle cap, so edit latency is unchanged.
     if ($MaxWaitMs -gt 0) { $daemonArgs += @('-MaxWaitMs', [string]$MaxWaitMs) }
+    if (-not [string]::IsNullOrWhiteSpace($OrgPolicyPath)) { $daemonArgs += @('-OrgPolicyPath', $OrgPolicyPath) }
     try {
         if (Test-OnWindows) {
             # -WindowStyle Hidden routes through ShellExecute, which STRUCTURALLY does not pass
@@ -3530,6 +3778,99 @@ function Find-CommandLinePlaceholder {
                 "is a parse error, not text -- replace the placeholder with a real value, " +
                 "or quote it if the literal text was intended."
         })
+    }
+    return @($findings)
+}
+
+function Find-ProhibitedSuppression {
+    <#
+    .SYNOPSIS
+        Flag a [SuppressMessageAttribute(...)] that names an org-prohibited PSScriptAnalyzer
+        rule (P1-5 remainder, R23=D member B, dispatch 000294).
+    .DESCRIPTION
+        PURE over the supplied AST and an explicit prohibited-rule-name list. Unlike its
+        siblings (Find-BashIsm etc.), this finder needs org policy data, so it stays pure by
+        taking that data as a parameter rather than reading the policy file itself -- the
+        caller resolves $OrgPolicy.ProhibitedSuppressions ONCE, the same way every other
+        org-aware surface in this file already does. Returns @() when the AST is $null, the
+        prohibited list is empty (the knob-off / no-policy default), or no matching attribute
+        is present.
+
+        Matches an AttributeAst whose type name's LAST dot-separated segment is 'SuppressMessage'
+        or 'SuppressMessageAttribute' case-insensitively -- covering the fully-qualified form
+        (System.Diagnostics.CodeAnalysis.SuppressMessageAttribute), the conventional PSSA form
+        (Diagnostics.CodeAnalysis.SuppressMessageAttribute), and the bare form a `using
+        namespace System.Diagnostics.CodeAnalysis` statement permits. The rule name is read ONLY
+        from a literal string first positional argument (PSScriptAnalyzer's own suppression
+        convention: category/rule name first, then an optional CheckId) -- a non-literal first
+        argument (a variable, an expression) cannot be resolved statically and is never guessed,
+        so it is silently not flagged (fail-open: this finder reports a suppression it can prove,
+        never one it assumes).
+
+        This reports the SUPPRESSION, not the underlying finding PSSA itself hid -- the true
+        re-surfacing half (R23=D member A, a second -IncludeSuppressed analyzer pass) lives in
+        lsp-scan.ps1 for the repository/CI path, per the docket's own cost table: PSES's settings
+        object carries no suppression-aware property, so the daemon cannot re-run the analyzer
+        with -IncludeSuppressed per edit without the cost R23 declined for the edit path.
+        Finding source = 'powershell-lsp', ruleId/code = 'ProhibitedSuppression', severity
+        'Warning' -- the same shape and channel as Find-BashIsm / Find-Ps7OnlySyntax.
+
+        HOST / StrictMode SAFETY: every AST member read is guarded and TypeKind/Kind comparisons
+        are never used here (AttributeAst exposes no enum to compare), so this runs silent under
+        Windows PowerShell 5.1 + StrictMode exactly like the rest of the pre-PSSA pack.
+
+        Adversarial control: require an exact FullName match instead of the last-segment split
+        and a `using namespace`-qualified attribute (bare 'SuppressMessage') goes undetected;
+        drop the StringConstantExpressionAst type check and a computed first argument would need
+        evaluation this finder cannot safely do; use an ordinal-case-sensitive compare for the
+        prohibited-rule set and a differently-cased prohibited name silently stops matching;
+        return on an attribute with zero positional arguments without the explicit Count check
+        and a bare [SuppressMessage()] indexes out of range instead of being skipped.
+    #>
+    param($Ast, [string[]]$ProhibitedRules)
+    if ($null -eq $Ast) { return @() }
+    $prohibited = @($ProhibitedRules | Where-Object { $_ })
+    if ($prohibited.Count -eq 0) { return @() }
+    $set = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($p in $prohibited) { [void]$set.Add(([string]$p).Trim()) }
+
+    $nodes = @()
+    try {
+        $nodes = @($Ast.FindAll({ param($n) $n.GetType().Name -eq 'AttributeAst' }, $true))
+    } catch { return @() }
+
+    $findings = New-Object System.Collections.ArrayList
+    foreach ($node in $nodes) {
+        $typeName = ''
+        try { $typeName = [string]$node.TypeName.FullName } catch { $typeName = '' }
+        if ([string]::IsNullOrWhiteSpace($typeName)) { continue }
+        $segments = $typeName.Split('.')
+        $lastSegment = $segments[$segments.Length - 1]
+        if ($lastSegment -ne 'SuppressMessage' -and $lastSegment -ne 'SuppressMessageAttribute') { continue }
+
+        $posArgs = @()
+        try { $posArgs = @($node.PositionalArguments) } catch { $posArgs = @() }
+        if ($posArgs.Count -eq 0) { continue }
+        $first = $posArgs[0]
+        $ruleName = ''
+        try {
+            if ($first.GetType().Name -eq 'StringConstantExpressionAst') { $ruleName = [string]$first.Value }
+        } catch { $ruleName = '' }
+        $ruleName = $ruleName.Trim()
+        if ([string]::IsNullOrWhiteSpace($ruleName)) { continue }
+        if (-not $set.Contains($ruleName)) { continue }
+
+        $line = 1; $col = 1
+        try { $line = [int]$node.Extent.StartLineNumber } catch { $line = 1 }
+        try { $col = [int]$node.Extent.StartColumnNumber } catch { $col = 1 }
+        [void]$findings.Add([pscustomobject]@{
+                ruleId = 'ProhibitedSuppression'; code = 'ProhibitedSuppression'
+                source = 'powershell-lsp'
+                severity = 'Warning'; line = $line; col = $col
+                message = "SuppressMessageAttribute names '" + $ruleName + "', which org policy " +
+                    'prohibits suppressing. The underlying PSScriptAnalyzer finding is hidden by ' +
+                    'this attribute; remove the suppression or resolve the finding it hides.'
+            })
     }
     return @($findings)
 }

@@ -23,7 +23,7 @@ The knobs, in manifest order:
 - [`ps_host`](#ps_host) -- PSES host executable
 - [`ruleset`](#ruleset) -- live diagnostics ruleset tier
 - [`settingsPath`](#settingspath) -- absolute PSScriptAnalyzerSettings.psd1 override
-- [`orgPolicy`](#orgpolicy) -- org-wide policy path (`ExcludeRules` + `SeverityOverrides`)
+- [`orgPolicy`](#orgpolicy) -- org-wide policy path (`ExcludeRules`, `SeverityOverrides`, `RequiredRules`, `ProhibitedSuppressions`)
 - [`severityThreshold`](#severitythreshold) -- least-severe level surfaced
 - [`ruleInclude`](#ruleinclude) -- exclusive rule-code allowlist
 - [`ruleExclude`](#ruleexclude) -- rule-code suppression list
@@ -206,7 +206,7 @@ the repo-local file:
 
 | Layer | Source | Effect |
 |-------|--------|--------|
-| **org policy** | `orgPolicy` (this knob) | its `ExcludeRules` and `SeverityOverrides` are **enforced** and cannot be undone locally |
+| **org policy** | `orgPolicy` (this knob) | its `ExcludeRules`, `SeverityOverrides`, `RequiredRules` and `ProhibitedSuppressions` are **enforced** and cannot be undone locally |
 | explicit override | `settingsPath` | wins over discovery for everything below |
 | repo-local | nearest `PSScriptAnalyzerSettings.psd1`, walked up from the edited file | wins over the ruleset and the default |
 | plugin base ruleset | shipped `rulesets/base.psd1` when `ruleset` = `base` | wins over the default only |
@@ -221,6 +221,9 @@ code path that re-adds a dropped finding.
 **The include path: repo-local still wins for `IncludeRules`.** The policy's own `IncludeRules` are
 **advisory** and are not read. Forcing extra rules onto a project that has deliberately excluded
 them produces findings nobody acts on, so the *membership* of the rule set stays a local decision.
+This is a statement about the `IncludeRules` key specifically -- see `RequiredRules` below for the
+one org-policy member that **does** force a rule's membership, deliberately named differently so
+the two are never confused.
 
 ### `SeverityOverrides` -- how an organization states a requirement
 
@@ -330,6 +333,81 @@ Example policy on a share:
     )
 }
 ```
+
+### `RequiredRules` -- forcing a rule onto the analysis surface (dispatch 000294)
+
+`ExcludeRules` and `SeverityOverrides` both only ever act on a rule PSES already runs. `RequiredRules`
+is the one org-policy member that can turn on a rule that would not otherwise fire at all -- an
+optional list beside `ExcludeRules`, naming PSScriptAnalyzer rule codes:
+
+```powershell
+@{
+    RequiredRules = @('PSAvoidGlobalVars', 'PSAvoidUsingConvertToSecureStringWithPlainText')
+}
+```
+
+**How it reaches PSES.** PSES's own no-settings default is a fixed 15-rule list, pinned from the
+PowerShellEditorServices source at the tag this build verified it against. When `RequiredRules`
+names anything, the daemon merges those rules into whatever `IncludeRules` would otherwise apply --
+the shipped 15-rule default when no repo-local settings file supplies its own `IncludeRules`, or
+that file's own list when it does -- and writes the merged result to a **new** settings file under
+the plugin's own data root. Nothing in the repository, and no file the user or the project owns, is
+ever edited to do this.
+
+**Guarded against version drift.** The pinned 15-rule default is trusted only when the running
+PSES's own version tag matches what that list was verified against. On a mismatch, and only when no
+repo-local `IncludeRules` exists to merge onto instead, the daemon **declines to merge** rather than
+risk shipping a stale list as PSES's replacement default -- one warning, `RequiredRules` goes
+unenforced for that session, and every other diagnostic is unaffected.
+
+**Exclusion is still the stronger verb.** A rule named in *both* `RequiredRules` and `ExcludeRules`
+is dropped from the merge, not forced on -- the same ordering `SeverityOverrides` above already uses
+against `ExcludeRules`. A rule `RequiredRules` names but only a **repo-local** settings file
+excludes is forced on regardless: the org is the outermost voice on the include side exactly as it
+already is on the exclude side.
+
+**The boundary, stated plainly.** Exactly like `SeverityOverrides` above: a required rule's finding
+still passes through your local `severityThreshold` once it fires. At the shipped default (`Hint`)
+nothing is dropped; a site that raises the threshold can still hide a rule the organization
+required. Closing that gap is the same larger, not-yet-made change named above, and is asserted by a
+test rather than only described.
+
+**Empty is the pre-existing behavior, byte-for-byte, and every other guarantee above still holds.**
+No `RequiredRules` key -- true of every policy written before this feature existed -- takes the
+daemon down its exact prior path. The key is read from the same parse, behind the same integrity
+gate, into the same single warning as `ExcludeRules` and `SeverityOverrides`, so the fail-open,
+no-code-execution and `.sha256` integrity guarantees described above apply to it identically. No new
+`userConfig` knob is added; the key lives inside the same `orgPolicy` file this section already
+describes.
+
+### `ProhibitedSuppressions` -- forbidding a suppression, enforced two ways (dispatch 000294)
+
+An optional list, beside `ExcludeRules`, naming rule codes an organization has decided may never be
+silenced with a `[SuppressMessageAttribute(...)]` in source:
+
+```powershell
+@{
+    ProhibitedSuppressions = @('PSAvoidUsingPlainTextForPassword')
+}
+```
+
+PSScriptAnalyzer's own settings object has no suppression-aware property at all, so this cannot ride
+the same settings-file channel `RequiredRules` uses. It is enforced at **two** different points
+instead, deliberately not the same shape:
+
+- **On the live edit path**, a plugin-owned rule (`ProhibitedSuppression`, listed in
+  [the assurance pack](assurance-pack.md)) flags the `SuppressMessageAttribute` itself -- cheap, and
+  it reports the *suppression*, not the finding hidden underneath it. It fires on the
+  fully-qualified, conventional, and `using namespace`-bare spellings of the attribute alike.
+- **On the repository / CI path**, `lsp-scan.ps1` takes a `-OrgPolicyPath` CLI parameter
+  (deliberately a parameter, not a `userConfig` knob, matching `-Format` / `-FailOn`'s own
+  rationale: a CI invocation names its inputs explicitly). When set, the scan runs one additional,
+  restricted `-IncludeSuppressed` analyzer pass and re-surfaces a hidden finding under its **real**
+  rule id -- true enforcement, paid once per scan rather than once per keystroke.
+
+Empty (the default, and every policy written before this feature existed) runs neither pass, costs
+nothing, and -- like `RequiredRules` above -- inherits the same fail-open and integrity guarantees
+this section already describes, since it is read from the same parse behind the same gate.
 
 ## severityThreshold
 

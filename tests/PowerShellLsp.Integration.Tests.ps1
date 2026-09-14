@@ -777,6 +777,136 @@ Describe 'Integration: opt-in ruleset=base broadens the live surface (dispatch 0
     }
 }
 
+Describe 'Integration: orgPolicy RequiredRules forces a rule PSES would not otherwise run (P1-5 remainder, dispatch 000294)' -Skip:$script:SkipIntegration {
+    # The end-to-end proof of the requiredRules mechanism over the REAL warm daemon, mirroring the
+    # 000087 ruleset-broaden discipline (the closest existing analog -- BOTH are "make PSES run a
+    # rule outside its 15-rule no-settings default", 000087 via a knob, this via org policy).
+    # PSAvoidGlobalVars is OUTSIDE PSES's pinned default set (verified against AnalysisService.cs
+    # s_defaultRules at v4.6.0 -- see Get-PssaDefaultRuleNames), so it firing proves the merge
+    # actually reached PSES, not merely that Merge-RequiredRulesSettings computed a hashtable.
+    #
+    # RED CONTROL: this is a BRAND-NEW mechanism (000135's "daemon untouched" decision held until
+    # this dispatch), so there is no prior implementation to UNDO. The control arm is the REAL,
+    # currently-shipped behavior with no orgPolicy set -- not a weaker substitute but the exact
+    # pre-000294 code path, proven live on the SAME fixture bytes in the SAME test run.
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
+
+        $script:RR294ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:RR294Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $env:PSLS_TEST_DATA_DIR
+        } else {
+            Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data'
+        }
+        New-Item -ItemType Directory -Force -Path $script:RR294Data | Out-Null
+        $env:CLAUDE_PLUGIN_DATA = $script:RR294Data
+        $script:RR294Fixtures = Join-Path $script:RR294Data 'requiredrules-000294'
+        if (Test-Path -LiteralPath $script:RR294Fixtures) { Remove-Item -LiteralPath $script:RR294Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Force -Path $script:RR294Fixtures | Out-Null
+
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:RR294ScriptsDir 'ensure-pses.ps1') 2>&1 | Out-Null
+        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:RR294ScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+
+        # ONE fixture, identical bytes for every daemon: gci -> PSAvoidUsingCmdletAliases (fires
+        # under PSES's OWN default in every scenario -- the warmth/sentinel signal); a global
+        # variable assignment -> PSAvoidGlobalVars (outside the default set -- fires ONLY when
+        # required).
+        $script:RR294Content = @(
+            'function Set-GlobalThing {',
+            '    gci',
+            '    $global:RR294Thing = 1',
+            '}'
+        ) -join "`n"
+
+        function New-Rr294Project([string]$Name) {
+            $dir = Join-Path $script:RR294Fixtures $Name
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $file = Join-Path $dir 'thing.ps1'
+            Set-Content -LiteralPath $file -Value $script:RR294Content -Encoding ascii
+            return @{ Dir = $dir; File = $file }
+        }
+        $script:RR294Control = New-Rr294Project 'proj-control'
+        $script:RR294Required = New-Rr294Project 'proj-required'
+        $script:RR294ExcludeWins = New-Rr294Project 'proj-exclude-wins'
+
+        # Required-only policy.
+        $script:RR294ReqPolicy = Join-Path $script:RR294Fixtures 'required-policy.psd1'
+        Set-Content -LiteralPath $script:RR294ReqPolicy -Value "@{ RequiredRules = @('PSAvoidGlobalVars') }" -Encoding ascii
+        # Self-contradictory policy: required AND excluded -- exclusion must win (the SAME
+        # ordering SeverityOverrides already uses against ExcludeRules).
+        $script:RR294ConflictPolicy = Join-Path $script:RR294Fixtures 'conflict-policy.psd1'
+        Set-Content -LiteralPath $script:RR294ConflictPolicy -Value "@{ RequiredRules = @('PSAvoidGlobalVars'); ExcludeRules = @('PSAvoidGlobalVars') }" -Encoding ascii
+
+        function Start-Rr294Daemon {
+            param([string]$Sid, [string]$OrgPolicyPath)
+            $extraEnv = @{}
+            if (-not [string]::IsNullOrWhiteSpace($OrgPolicyPath)) { $extraEnv['CLAUDE_PLUGIN_OPTION_orgPolicy'] = $OrgPolicyPath }
+            Invoke-PluginHook -ScriptPath (Join-Path $script:RR294ScriptsDir 'session-start.ps1') `
+                -StdinJson (@{ session_id = $Sid } | ConvertTo-Json -Compress) `
+                -ExtraArgs @('-PreferredHost', 'pwsh') -CapMs 60000 -DataRoot $script:RR294Data -ExtraEnv $extraEnv | Out-Null
+        }
+        function Get-Rr294Diag {
+            param([string]$Sid, [string]$File, [string]$Cwd)
+            Invoke-PluginHook -ScriptPath (Join-Path $script:RR294ScriptsDir 'lsp-client.ps1') `
+                -StdinJson (@{ session_id = $Sid; tool_input = @{ file_path = $File }; cwd = $Cwd } | ConvertTo-Json -Compress) `
+                -ExtraArgs @() -CapMs 25000 -DataRoot $script:RR294Data -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_timeoutMs = '18000' }
+        }
+        function Wait-Rr294DiagReady {
+            param(
+                [Parameter(Mandatory = $true)][scriptblock]$GetDiag,
+                [string]$Scenario = 'requiredrules',
+                [Parameter(Mandatory = $true)][string]$ReadyPattern,
+                [int]$TimeoutMs = 90000,
+                [string]$SessionId = ''
+            )
+            Wait-DaemonDiagReady -GetDiag $GetDiag -ReadyPattern $ReadyPattern -Scenario $Scenario `
+                -Kind 'requiredrules' -TimeoutMs $TimeoutMs -SessionId $SessionId
+        }
+
+        $script:RR294ControlSid = 'rr294-ctl-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:RR294RequiredSid = 'rr294-req-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $script:RR294ConflictSid = 'rr294-cfl-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        Start-Rr294Daemon -Sid $script:RR294ControlSid -OrgPolicyPath ''
+        Start-Rr294Daemon -Sid $script:RR294RequiredSid -OrgPolicyPath $script:RR294ReqPolicy
+        Start-Rr294Daemon -Sid $script:RR294ConflictSid -OrgPolicyPath $script:RR294ConflictPolicy
+    }
+
+    AfterAll {
+        foreach ($sid in @($script:RR294ControlSid, $script:RR294RequiredSid, $script:RR294ConflictSid)) {
+            [void](Stop-IntegrationDaemon -SessionId $sid -DataRoot $script:RR294Data)
+            $sf = Join-Path $script:RR294Data ('session/' + $sid + '.json')
+            if (Test-Path -LiteralPath $sf) { Remove-Item -LiteralPath $sf -Force -ErrorAction SilentlyContinue }
+        }
+        if (Test-Path -LiteralPath $script:RR294Fixtures) { Remove-Item -LiteralPath $script:RR294Fixtures -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'CONTROL (RED): no orgPolicy set -- PSAvoidGlobalVars stays OUT, the real pre-000294 path' {
+        $out = Wait-Rr294DiagReady -Scenario 'control' -ReadyPattern 'PSAvoidUsingCmdletAliases' `
+            -SessionId $script:RR294ControlSid `
+            -GetDiag { Get-Rr294Diag -Sid $script:RR294ControlSid -File $script:RR294Control.File -Cwd $script:RR294Control.Dir }
+        $out | Should -Match 'PSAvoidUsingCmdletAliases'
+        $out | Should -Not -Match 'PSAvoidGlobalVars'
+    }
+
+    It 'REQUIRED: RequiredRules forces PSAvoidGlobalVars onto the live PSES surface' {
+        $out = Wait-Rr294DiagReady -Scenario 'required' -ReadyPattern 'PSAvoidGlobalVars' `
+            -SessionId $script:RR294RequiredSid `
+            -GetDiag { Get-Rr294Diag -Sid $script:RR294RequiredSid -File $script:RR294Required.File -Cwd $script:RR294Required.Dir }
+        $out | Should -Match 'PSAvoidGlobalVars'
+        # The pinned default-15 coverage is not lost by the merge (warmth + non-regression).
+        $out | Should -Match 'PSAvoidUsingCmdletAliases'
+    }
+
+    It 'CONFLICT: a rule named in BOTH RequiredRules and ExcludeRules stays OUT -- exclusion wins' {
+        $out = Wait-Rr294DiagReady -Scenario 'conflict' -ReadyPattern 'PSAvoidUsingCmdletAliases' `
+            -SessionId $script:RR294ConflictSid `
+            -GetDiag { Get-Rr294Diag -Sid $script:RR294ConflictSid -File $script:RR294ExcludeWins.File -Cwd $script:RR294ExcludeWins.Dir }
+        $out | Should -Match 'PSAvoidUsingCmdletAliases'
+        $out | Should -Not -Match 'PSAvoidGlobalVars'
+    }
+}
+
 Describe 'Readiness gate budget model is progress-aware and finitely bounded (dispatch 000236)' {
     # DELIBERATELY NOT platform-skipped: these are PURE-LOGIC proofs of the budget model in
     # Wait-DaemonDiagReady (Integration.Common.ps1), driven by stub $GetDiag closures instead of a

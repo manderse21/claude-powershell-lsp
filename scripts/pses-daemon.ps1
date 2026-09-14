@@ -49,6 +49,15 @@ param(
     # (Initialize-PssaSettings); the formatter path keeps its own repo-local/override-only
     # resolution (the base carries no formatter rules).
     [string] $Ruleset = 'pses-default',
+    # requiredRules (P1-5 remainder, R23=D, dispatch 000294): absolute path to the SAME
+    # 'orgPolicy' policy file lsp-client.ps1 already reads client-side for ExcludeRules /
+    # SeverityOverrides. Empty (the default) means "org policy off" for the DAEMON specifically
+    # -- Initialize-PssaSettings then takes its exact pre-000294 path, byte-identical. Reading
+    # this here, rather than leaving org policy purely client-side, is the one reversal of
+    # dispatch 000135's "daemon untouched" decision that forcing a rule ON requires (000292's
+    # measured cost); it is gated end-to-end on RequiredRules actually being non-empty, so the
+    # reversal has zero observable effect for every org that does not set RequiredRules.
+    [string] $OrgPolicyPath = '',
     # Supervised PSES re-spawn (dispatch 000022): bound a mid-session crash recovery so a
     # transient PSES exit recovers but a hard-broken PSES does not thrash. MaxPsesRestarts
     # mirrors the manifest's advertised maxRestarts (3) but on the ACTUAL daemon path; the
@@ -910,11 +919,48 @@ function Initialize-PssaSettings {
     } catch {
         Write-DLog ('PSSA settings resolve error (ignored, default rules): ' + $_.Exception.Message); return
     }
-    if ([string]::IsNullOrWhiteSpace($resolved)) { Write-DLog 'PSSA settings: none resolved (default rules)'; return }
-    $script:settingsPathInUse = $resolved
+
+    # requiredRules (P1-5 remainder, R23=D, dispatch 000294): the ONE place the daemon's
+    # session-start threading is touched, and ONLY when $OrgPolicyPath is set AND org policy
+    # names at least one RequiredRules entry. Computed BEFORE the empty-$resolved check below on
+    # purpose -- the most common real deployment (no repo-local settings file, no override) is
+    # exactly the $resolved = '' path, and a required rule must still be forceable there, per
+    # 000292's measured design (a settings file with no IncludeRules would otherwise flip PSSA
+    # from PSES's curated default to every installed rule, so Merge-RequiredRulesSettings always
+    # pins PSES's own default list alongside the required ones rather than naming ONLY the
+    # required rules). $toSend stays byte-identical to $resolved whenever OrgPolicyPath is unset
+    # or names no required rule -- the overwhelming common case.
+    $toSend = $resolved
+    if (-not [string]::IsNullOrWhiteSpace($OrgPolicyPath)) {
+        try {
+            $polWarn = ''
+            $pol = Import-OrgPolicy -Path $OrgPolicyPath -WarningOut ([ref]$polWarn)
+            if ($polWarn -ne '') { Write-DLog ('orgPolicy (daemon): ' + $polWarn) }
+            $reqRules = @($pol.RequiredRules)
+            if ($reqRules.Count -gt 0) {
+                $merged = Merge-RequiredRulesSettings -ResolvedSettingsPath $resolved -RequiredRules $reqRules -OrgExcludeRules @($pol.ExcludeRules)
+                if ($null -ne $merged) {
+                    $mergedPath = Write-MergedPssaSettingsFile -Settings $merged -DataRoot $DataRoot
+                    if (-not [string]::IsNullOrWhiteSpace($mergedPath)) {
+                        $toSend = $mergedPath
+                        Write-DLog ('PSSA settings: requiredRules merged (' + $reqRules.Count + ' rule(s)) -> ' + $mergedPath)
+                    } else {
+                        Write-DLog 'PSSA settings: requiredRules merge computed but write failed (ignored, falling back to pre-merge path)'
+                    }
+                } else {
+                    Write-DLog 'PSSA settings: requiredRules merge declined (PSES-tag guard, or nothing to merge); falling back to pre-merge path'
+                }
+            }
+        } catch {
+            Write-DLog ('orgPolicy (daemon) read error (ignored, pre-merge path): ' + $_.Exception.Message)
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($toSend)) { Write-DLog 'PSSA settings: none resolved (default rules)'; return }
+    $script:settingsPathInUse = $toSend
     Send-Lsp @{ jsonrpc = '2.0'; method = 'workspace/didChangeConfiguration'
-        params = @{ settings = @{ powershell = @{ scriptAnalysis = (New-ScriptAnalysisSettings $resolved) } } } }
-    Write-DLog ('PSSA settings: honoring ' + $resolved)
+        params = @{ settings = @{ powershell = @{ scriptAnalysis = (New-ScriptAnalysisSettings $toSend) } } } }
+    Write-DLog ('PSSA settings: honoring ' + $toSend)
 }
 
 # --- module surface cache (PL-6, dispatch 000062) ----------------------------

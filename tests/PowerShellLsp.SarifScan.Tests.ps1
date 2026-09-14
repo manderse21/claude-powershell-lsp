@@ -699,6 +699,96 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
     }
 }
 
+Describe 'SARIF scan -- prohibitedSuppressions, repo/CI path (P1-5 remainder, R23=D member A, dispatch 000294)' -Skip:$script:SkipDaemon {
+    # -OrgPolicyPath is a CLI parameter, not a userConfig knob (matches -Format/-FailOn's own
+    # rationale) -- a CI invocation names its inputs explicitly. The baseline (no policy) proves
+    # byte-identical behavior; the policy run proves true re-surfacing UNDER THE REAL SUPPRESSED
+    # RULE'S OWN id, never the edit-path's wrapper id (the two R23=D members are deliberately NOT
+    # the same shape -- see Find-ProhibitedSuppression's own doc comment).
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        $script:Ps294ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:Ps294ScanScript = Join-Path $script:Ps294ScriptsDir 'lsp-scan.ps1'
+        $script:Ps294HostExe = Resolve-PsHost 'pwsh'
+
+        $script:Ps294Data = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $env:PSLS_TEST_DATA_DIR
+        } else {
+            Join-Path ([System.IO.Path]::GetTempPath()) 'psls-sarifscan-test-data'
+        }
+        New-Item -ItemType Directory -Force -Path $script:Ps294Data | Out-Null
+
+        $script:Ps294InputDir = Join-Path $script:Ps294Data ('scan-ps294-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $script:Ps294InputDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:Ps294InputDir 'suppressed.ps1') -Value (
+            "function Test-Suppressed {`n" +
+            "    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]`n" +
+            "    param(`$Password)`n" +
+            "    Write-Output `$Password`n" +
+            "}`n"
+        ) -Encoding ascii
+        $script:Ps294Policy = Join-Path $script:Ps294InputDir 'policy.psd1'
+        Set-Content -LiteralPath $script:Ps294Policy -Value "@{ ProhibitedSuppressions = @('PSAvoidUsingPlainTextForPassword') }" -Encoding ascii
+
+        $script:Ps294BaselineOut = Join-Path $script:Ps294InputDir 'baseline.sarif'
+        $script:Ps294PolicyOut = Join-Path $script:Ps294InputDir 'policy.sarif'
+        $script:Ps294FailOnOut = Join-Path $script:Ps294InputDir 'failon.sarif'
+        $prevData = $env:CLAUDE_PLUGIN_DATA
+        $env:CLAUDE_PLUGIN_DATA = $script:Ps294Data
+        # $ErrorActionPreference neutralized around these native calls: Windows PowerShell 5.1
+        # promotes a native child's redirected stderr line to a TERMINATING error under 'Stop'
+        # (the EAP Pester sets for every It/BeforeAll), even when redirected to $null -- pwsh 7
+        # does not. The two -OrgPolicyPath invocations below deliberately write an informational
+        # stderr line (dispatch 000294's own 'found N finding(s)' notice); see the DiagnosticTiming
+        # test above for the same documented trap and fix.
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & $script:Ps294HostExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:Ps294ScanScript $script:Ps294InputDir `
+                -Format sarif -OutputPath $script:Ps294BaselineOut 2>$null | Out-Null
+            $script:Ps294BaselineExit = $LASTEXITCODE
+            & $script:Ps294HostExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:Ps294ScanScript $script:Ps294InputDir `
+                -Format sarif -OutputPath $script:Ps294PolicyOut -OrgPolicyPath $script:Ps294Policy 2>$null | Out-Null
+            $script:Ps294PolicyExit = $LASTEXITCODE
+            & $script:Ps294HostExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:Ps294ScanScript $script:Ps294InputDir `
+                -Format sarif -OutputPath $script:Ps294FailOnOut -OrgPolicyPath $script:Ps294Policy -FailOn warning 2>$null | Out-Null
+            $script:Ps294FailOnExit = $LASTEXITCODE
+        } finally {
+            $env:CLAUDE_PLUGIN_DATA = $prevData
+            $ErrorActionPreference = $prevEap
+        }
+        $script:Ps294Baseline = ConvertFrom-Json (Get-Content -LiteralPath $script:Ps294BaselineOut -Raw)
+        $script:Ps294Policy_Sarif = ConvertFrom-Json (Get-Content -LiteralPath $script:Ps294PolicyOut -Raw)
+    }
+
+    AfterAll {
+        if ($script:Ps294InputDir -and (Test-Path -LiteralPath $script:Ps294InputDir)) {
+            Remove-Item -LiteralPath $script:Ps294InputDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'BASELINE (no -OrgPolicyPath): the suppressed finding stays hidden -- byte-identical to pre-000294' {
+        $script:Ps294BaselineExit | Should -Be 0
+        @($script:Ps294Baseline.runs[0].results).Count | Should -Be 0
+    }
+
+    It 'WITH -OrgPolicyPath: the suppressed finding re-surfaces under its REAL rule id' {
+        $results = @($script:Ps294Policy_Sarif.runs[0].results)
+        $results.Count | Should -BeGreaterThan 0
+        $match = @($results | Where-Object { [string]$_.ruleId -eq 'PSAvoidUsingPlainTextForPassword' })
+        $match.Count | Should -Be 1
+        [string]$match[0].level | Should -BeExactly 'warning'
+        [string]$match[0].message.text | Should -Match 'SUPPRESSED'
+        [string]$match[0].locations[0].physicalLocation.artifactLocation.uri | Should -Match 'suppressed\.ps1$'
+    }
+
+    It '-FailOn warning WITH the policy gates on the re-surfaced finding (wiring)' {
+        $script:Ps294BaselineExit | Should -Be 0 -Because 'no policy -> nothing to gate on'
+        $script:Ps294FailOnExit | Should -Be 2 -Because 'the policy re-surfaces a Warning-level finding -FailOn warning must gate on'
+    }
+}
+
 Describe 'SARIF scan -- a client-cap kill is never a clean file (dispatch 000132 leg 1)' {
     # LEG 1 (never-silent, 000024): the client per-file cap enforces itself by KILLING the analysis
     # process (Invoke-ScanHook's WaitForExit), which returns '' (empty stdout). Pre-change,

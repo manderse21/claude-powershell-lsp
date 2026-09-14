@@ -26,6 +26,10 @@ param(
     [string] $Ruleset = 'pses-default',
     [string] $ModuleAwareness = 'off',
     [string] $ReferenceSurfacing = 'off',
+    # requiredRules (P1-5 remainder, dispatch 000294): the SAME 'orgPolicy' knob lsp-client.ps1
+    # already reads client-side, now ALSO forwarded to the daemon at launch. Empty default keeps
+    # the launch byte-identical to pre-000294.
+    [string] $OrgPolicyPath = '',
     # Daemon settle cap (ms) -- forwarded to the daemon's MaxWaitMs (dispatch 000133). INTERNAL, NOT a
     # userConfig knob: it is NOT self-sourced from CLAUDE_PLUGIN_OPTION_* below, so it adds no CONTRACT
     # surface. 0 (the default) forwards nothing, so the daemon keeps its own 5000 default and the real
@@ -60,6 +64,7 @@ $IdleTtlMin        = Get-PluginOptionInt 'idleTtlMin'        $IdleTtlMin
 $PerFileCap        = Get-PluginOptionInt 'perFileCap'        $PerFileCap
 $SettingsPath      = Get-PluginOption    'settingsPath'       $SettingsPath
 $Ruleset           = Get-PluginOption    'ruleset'            $Ruleset
+$OrgPolicyPath     = Get-PluginOption    'orgPolicy'          $OrgPolicyPath
 # Canonicalize the moduleAwareness knob here (off|suggest); the daemon receives the canonical value
 # and Start-PsesDaemonDetached passes it ONLY when 'suggest' (byte-identical default launch otherwise).
 $ModuleAwareness   = ConvertTo-ModuleAwarenessMode (Get-PluginOption 'moduleAwareness' $ModuleAwareness)
@@ -278,7 +283,7 @@ try {
         -SeverityThreshold $SeverityThreshold -RuleInclude $RuleInclude -RuleExclude $RuleExclude `
         -DebounceMs $DebounceMs -IdleTtlMin $IdleTtlMin -PerFileCap $PerFileCap -SettingsPath $SettingsPath `
         -Ruleset $Ruleset -ModuleAwareness $ModuleAwareness -ReferenceSurfacing $ReferenceSurfacing `
-        -MaxWaitMs $MaxWaitMs
+        -MaxWaitMs $MaxWaitMs -OrgPolicyPath $OrgPolicyPath
     Write-SLog ('launched daemon (detached) for session ' + $sessionId + ' via ' + $hostExe + ' (ok=' + $launched + ')')
     exit 0
 }
