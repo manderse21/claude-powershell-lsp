@@ -42,12 +42,12 @@ Neither changes what the daemon or hooks run, and neither alters the diagnostics
   the rule id + the normalized offending-line shape, for analysis-time de-duplication), and
   `verdict` -- written **empty**, reserved for you to annotate later with
   `scripts/review-dogfood.ps1` (see [Review](#review) below).
-- **How much it records is administrator-selectable (threat-model finding T6.1, amended).** The
-  fields listed above are the default (`full`). `POWERSHELL_LSP_CAPTURE_MODE` also offers
-  **`metadata`** -- the same row with `snippet` and `message` dropped and `file` reduced to a
-  basename, so no source text and no absolute path is written -- and **`off`**, which writes
-  nothing and creates no log at all. The variable, its values and its invalid-value behaviour are
-  specified once, in
+- **How much it records is administrator-selectable via `POWERSHELL_LSP_CAPTURE_MODE`
+  (threat-model finding T6.1, amended).** **`metadata`** is the default (R25, ruled 2026-09-12):
+  `snippet` and `message` dropped and `file` reduced to a basename, so no source text and no
+  absolute path is written. The fields listed above -- the full row -- are written only in `full`
+  mode, an explicit opt-in, and **`off`** writes nothing and creates no log at all. The variable's
+  values and its invalid-value behaviour are specified once, in
   [configuration.md](configuration.md#powershell_lsp_capture_mode); this page does not restate
   them.
 

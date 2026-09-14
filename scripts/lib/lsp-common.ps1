@@ -1747,25 +1747,31 @@ function Get-DiagnosticCaptureModeInfo {
     #
     # ONE function owns the vocabulary so the writer and the doctor envelope cannot drift
     # (Hub Rule 18). Add-DiagnosticCaptureEntries takes .resolved; doctor.ps1 renders all three,
-    # which is what lets a fleet reader see a TYPO -- an unrecognized value resolves to `full`
+    # which is what lets a fleet reader see a TYPO -- an unrecognized value resolves to `metadata`
     # here and says so there, rather than silently reading as a control that is not active.
     #
-    # INVALID AND EMPTY BOTH FALL BACK TO `full`, and that direction is not a preference:
-    # Get-CaptureLogRotateBytes above sets the precedent in this exact family ("A non-numeric or
-    # non-positive value falls back to the default rather than disabling the bound") and states
-    # the reason -- T6.1 is ACCEPTED-WITH-RECORD, so NOTHING here may become a gate on the
-    # capture channel itself. docs/dogfood.md documents that same fallback for
-    # POWERSHELL_LSP_CAPTURE_ROTATE_BYTES, so this is the capture channel's own written
-    # convention rather than a new one. (docs/configuration.md's admin-env section documents
-    # refuse-and-report for the two BOOTSTRAP artifact-source variables; that path has a banner
-    # surface to refuse ON, and this one is inside a swallow-everything writer that must not
-    # emit -- so the bootstrap policy is not the one that governs here.)
+    # INVALID AND EMPTY BOTH FALL BACK TO `metadata` (R25, ruled 2026-09-12: the default becomes
+    # metadata, `full` becomes an explicit opt-in). The fallback DIRECTION is not a preference
+    # either: a fallback fails toward the safe mode or it is not a fallback. Before R25 the seed
+    # below was 'full', which made an ABSENT value safe but left an UNRECOGNIZED one falling to
+    # the same permissive seed -- a typo in a GPO- or Intune-deployed value would have silently
+    # re-enabled source-text capture on exactly the fleet whose administrator was trying to
+    # configure it. Both paths return through this one seeded $info, so correcting the seed
+    # corrects both at once; there is no separate branch for "unrecognized" left to fall out of
+    # step with "absent" again.
+    #
+    # Get-CaptureLogRotateBytes above still sets the general precedent for this family -- fall
+    # back to THE DEFAULT rather than disabling the bound -- and R25 does not disturb it:
+    # `metadata` is not `off`, so an absent or invalid value still captures, still keys the
+    # dogfood corpus identically to `full` (hash is computed from the offending line in every
+    # mode), and still never becomes a gate on WHETHER capture happens -- only on which fields a
+    # default row carries. T6.1 (THREAT-MODEL.md, amended) is accepted on that same basis.
     #
     # Case- and whitespace-insensitive: a value deployed by GPO, Intune or machine-scope
     # environment is not required to match a spelling exactly to be honoured.
     $raw = $env:POWERSHELL_LSP_CAPTURE_MODE
     if ($null -eq $raw) { $raw = '' }
-    $info = [ordered]@{ resolved = 'full'; raw = [string]$raw; recognized = $false }
+    $info = [ordered]@{ resolved = 'metadata'; raw = [string]$raw; recognized = $false }
     if ([string]::IsNullOrWhiteSpace($raw)) { return $info }
     $norm = ([string]$raw).Trim().ToLowerInvariant()
     if ($norm -eq 'full' -or $norm -eq 'metadata' -or $norm -eq 'off') {

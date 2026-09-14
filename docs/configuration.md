@@ -820,8 +820,10 @@ the kind an organization deploys *to a fleet* by GPO, Intune or machine-scope en
 
 Every diagnostic the plugin surfaces is also appended to a local, append-only capture log --
 `dogfood/diagnostics.jsonl` under `CLAUDE_PLUGIN_DATA` -- which the rule-curation lane derives
-from. Each row records the **absolute path** of the edited file and the **offending source line,
-verbatim**. See [dogfood.md](dogfood.md) for what the channel is and how to review it.
+from. By default each row carries only metadata: no source text and no absolute path. The
+**absolute path** of the edited file and the **offending source line, verbatim** are recorded
+only when `full` capture is explicitly opted into -- see the mode table below. See
+[dogfood.md](dogfood.md) for what the channel is and how to review it.
 
 That is recorded and accepted in [`THREAT-MODEL.md`](roadmap-ii/THREAT-MODEL.md) as **T6.1**, on
 the stated reasoning that the log never leaves the machine and so its exposure is to *a local user
@@ -835,21 +837,25 @@ copies what it reads off the host. This variable exists for those readers.
 
 | Value | What a row carries |
 |---|---|
-| `full` | The shipped behaviour, unchanged: `ts`, `file` (absolute), `line`, `col`, `ruleId`, `source`, `severity`, `message`, `snippet` (the verbatim offending line), `hash`, `verdict` |
+| `full` | Every field this row has always carried in this mode, unchanged: `ts`, `file` (absolute), `line`, `col`, `ruleId`, `source`, `severity`, `message`, `snippet` (the verbatim offending line), `hash`, `verdict` |
 | `metadata` | The same row **without** `snippet` and **without** `message`, and with `file` reduced to a **basename** -- no absolute path, no source text |
 | `off` | Nothing. No row, no log file, and no `dogfood` directory is created |
 
 **Type:** one of `full`, `metadata`, `off` (case- and whitespace-insensitive).
-**Default:** `full` -- with the variable unset, capture behaves exactly as it always has.
+**Default:** `metadata` (R25, ruled 2026-09-12) -- with the variable unset, capture writes no
+`snippet`, no `message`, and a basename rather than an absolute path. `full` -- source text and
+absolute paths, the pre-R25 default -- is now an explicit opt-in.
 
-**An unrecognized value resolves to `full`, and the doctor reports it.** A typo does not disable
-capture and does not fail the edit: nothing about this variable may become a gate on the
-diagnostics surface, which is the same rule
-[`POWERSHELL_LSP_CAPTURE_ROTATE_BYTES`](dogfood.md#capture) follows when given a non-numeric value.
-So that a typo is not merely swallowed, `doctor -Json` carries a `captureMode` field reporting the
-resolved mode, the raw value it read, and whether that value was recognized -- which is how a fleet
-tool confirms the control is actually active on a host without reading the log it is trying not to
-read.
+**An unrecognized value resolves to `metadata`, and the doctor reports it.** A fallback fails
+toward the safe mode or it is not a fallback: a typo in a GPO- or Intune-deployed value must not
+silently re-enable source-text capture on exactly the fleet whose administrator was trying to
+configure it. A typo does not disable capture and does not fail the edit either -- nothing about
+this variable may become a gate on whether the diagnostics surface is captured at all, which is
+the same rule [`POWERSHELL_LSP_CAPTURE_ROTATE_BYTES`](dogfood.md#capture) follows when given a
+non-numeric value. So that a typo is not merely swallowed, `doctor -Json` carries a `captureMode`
+field reporting the resolved mode, the raw value it read, and whether that value was recognized --
+which is how a fleet tool confirms the control is actually active on a host without reading the
+log it is trying not to read.
 
 **What `metadata` costs the analysis it protects: nothing.** The corpus derivation keys on `ruleId`
 and `hash`, and `hash` is computed from the offending line in **every** mode -- `metadata` keeps
@@ -889,12 +895,14 @@ pwsh -File scripts/export-otel.ps1            # print the payload; sends nothing
 pwsh -File scripts/export-otel.ps1 -Send      # print it AND POST it
 ```
 
-**An unrecognized value turns export OFF, which is the opposite of
-[`POWERSHELL_LSP_CAPTURE_MODE`](#powershell_lsp_capture_mode) above.** That variable resolves a
-typo to `full` because nothing may become a gate on the local capture channel. Here the permissive
-direction would be a network POST to a destination nobody named, so a value that does not parse as
-an absolute `http`/`https` URL leaves export off and `-Show` reports it as unrecognized. The two
-fall opposite ways because what sits on the other side of the failure is opposite.
+**An unrecognized value turns export OFF, which lands in a different place than
+[`POWERSHELL_LSP_CAPTURE_MODE`](#powershell_lsp_capture_mode) above, for a reason.** Both
+variables fail toward safety on a typo, but "safe" means something different for each. That
+variable resolves a typo to `metadata` -- source text and the absolute path suppressed, but the
+occurrence still captures -- because nothing may become a gate on whether the local capture
+channel captures at all. Here there is no reduced-information tier: a network POST to a
+destination nobody named would be the unsafe outcome, so a value that does not parse as an
+absolute `http`/`https` URL leaves export off entirely and `-Show` reports it as unrecognized.
 
 ### What the payload contains, and what it cannot contain
 

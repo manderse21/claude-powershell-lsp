@@ -172,9 +172,10 @@ treats this fallback as a legibility hazard and ships a provenance-carrying vari
 appends one JSONL record containing `ts, file, line, col, ruleId, source, severity, message,
 snippet, hash, verdict` (`scripts/lib/lsp-common.ps1:880-891`), where `file` is the absolute path of
 the edited file and `snippet` is **the offending source line, verbatim**
-(`:876-878`). That is the shape in the default `full` mode; since dispatch 000282 the admin env
-variable `POWERSHELL_LSP_CAPTURE_MODE` also offers `metadata` (`file` demoted to a basename,
-`snippet` and `message` not written, everything else including `hash` unchanged) and `off`
+(`:876-878`). That is the shape written in `full` mode; since dispatch 000301 (R25, ruled
+2026-09-12) `full` is an explicit opt-in and the admin env variable `POWERSHELL_LSP_CAPTURE_MODE`
+defaults to `metadata` (`file` demoted to a basename, `snippet` and `message` not written,
+everything else including `hash` unchanged) and also offers `off`
 (nothing written at all) -- see the T6.1 amendment in section 8. It is protected from commit by `.gitignore:7`, which ignores the whole `dogfood/`
 directory, and the capture is fail-safe: any failure is swallowed and nothing reaches stdout
 (`:851-853`, `:898`).
@@ -496,6 +497,19 @@ accumulating snippets of every file with a finding. The relevant knob, `enableSt
 > can deploy by GPO or Intune, which is the reader this control exists for, and it keeps the frozen
 > twenty knobs untouched. The default is unchanged, so no existing install's behaviour moves.
 
+> **Amended again 2026-09-14 (dispatch 000301, R25, ruled 2026-09-12).** The paragraph directly
+> above closed on *"the default is unchanged, so no existing install's behaviour moves."* That
+> sentence is superseded, not restated: R25 flips the default itself. `POWERSHELL_LSP_CAPTURE_MODE`
+> now resolves to `metadata` on an ABSENT value -- and, correcting a gap the 000282 amendment left
+> open, on an UNRECOGNIZED one too, so a typo in a GPO- or Intune-deployed value cannot silently
+> re-enable source-text capture on exactly the fleet whose administrator was trying to configure
+> it. `full`, the row the paragraph above described as unmoved, is now an explicit opt-in; every
+> existing install's behaviour DOES move, from its next session after upgrade. Nothing else about
+> the acceptance changes: the channel stays ungated (an absent or invalid value still captures,
+> under `metadata`, never `off`), the corpus still keys identically across the seam (`hash` is
+> still computed from the offending line in every mode), and the disposition remains, in 000282's
+> own words, **narrowed, not withdrawn** -- narrowed again, on the same axis.
+
 **T6.2 Data-root fallback permissions.** *Measured on all three platforms; fixed on POSIX.* When
 `CLAUDE_PLUGIN_DATA` is unset, logs and session files land under a `powershell-lsp-data`
 subdirectory of the system temp path (`scripts/lib/lsp-common.ps1:17`). The permissions of that
@@ -799,8 +813,13 @@ measurement that had never been taken, and six by an explicit decision to carry 
 | T1.5 | B1 | Blocking the primary fetch without corrupting it steers acquisition to the unpinned fallback | **ACCEPTED WITH RECORD** |
 | T3.2 | B3 | Repo-local settings file is handed to PSES unread; upstream handling of a hostile settings file not derived | **ACCEPTED WITH RECORD** (still unknown) |
 | T4.1 | B4 | Org policy content trusted as delivered; the opt-in `<policy>.sha256` gate pins it only where opted in, and only against an attacker who cannot also rewrite the companion | **ACCEPTED WITH RECORD** (residual) |
+<<<<<<< HEAD
 | T4.2 | B4 | Fail-open by design: making the policy unreachable disables exclusions, signalled only in a log line | **ACCEPTED WITH RECORD**, **AMENDED** 2026-09-13 (000299): the default (`open`) is unchanged; `POWERSHELL_LSP_POLICY_MODE=closed` answers a fleet that wants this loud instead of quiet |
 | T6.1 | B6 | Capture log records absolute paths and verbatim source lines, ungated by any knob | **ACCEPTED WITH RECORD**, **AMENDED** 2026-09-06 (000282): the acceptance stands for the local reader; the management-plane reader set is recorded and answered by `POWERSHELL_LSP_CAPTURE_MODE` |
+=======
+| T4.2 | B4 | Fail-open by design: making the policy unreachable disables exclusions, signalled only in a log line | **ACCEPTED WITH RECORD** |
+| T6.1 | B6 | Capture log records absolute paths and verbatim source lines, ungated by any knob | **ACCEPTED WITH RECORD**, **AMENDED** 2026-09-06 (000282): the acceptance stands for the local reader; the management-plane reader set is recorded and answered by `POWERSHELL_LSP_CAPTURE_MODE`. **AMENDED AGAIN** 2026-09-14 (000301, R25): `metadata` -- no source text, no absolute path -- is now the DEFAULT; `full` is an explicit opt-in |
+>>>>>>> 2d6bb89 (Diagnostic capture defaults to metadata, not full (R25))
 | D1 | -- | Documentation drift: the data-root claim vs the capture log (section 7) | **RESOLVED** by T2.3 |
 | D2-D4 | -- | Documentation drift, section 7 | **OPEN** -- re-derived 2026-08-21, all three stand |
 
@@ -890,8 +909,13 @@ rationale, so a future reader can re-open the decision rather than re-discover t
 | **T1.5** | Steering to the fallback requires an attacker who can already block the primary fetch on the network path, which is a strictly larger capability than the one this finding grants -- and the airgap-bundle path shipped in v1.32.0 gives an estate that cares a pinned, offline alternative. |
 | **T3.2** | The finding is *unknown*, not *exposed*: it names upstream PSES behaviour on a hostile settings file that this project has not derived. Guessing a mitigation for undetermined upstream behaviour would ship a defence against an unmeasured threat. |
 | **T4.1** | The residual is bounded to an attacker who can rewrite **both** the policy and its `.sha256` companion, which is materially harder than rewriting the policy alone -- the opt-in pin closed the gap it was designed to close, and closing the rest needs a trust anchor the org policy mechanism does not have. |
+<<<<<<< HEAD
 | **T4.2** | Fail-open is the deliberate trade: an unreachable policy that disabled the plugin's diagnostics would turn an availability problem into a silent loss of linting, which is the worse failure for a tool whose whole contract is never being silent. **Amended 2026-09-13 (000299):** that trade is unchanged for the DEFAULT, and still holds for a host that never opts out of it. It does not reach a fleet that has decided the opposite trade is the right one for them -- `POWERSHELL_LSP_POLICY_MODE=closed` answers that fleet by converting an unreachable-or-integrity-failed policy into a loud `unavailable` for that edit, rather than a silent, unfiltered one. The acceptance is therefore **narrowed, not withdrawn**, in the same shape as T6.1's 000282 amendment above. |
 | **T6.1** | Gating the capture behind a knob would strangle the dogfood channel the entire rule-curation lane depends on, and the log is local-only, never transmitted, and now both bounded (T6.4) and outside every git tree (T2.3) -- so the exposure it carries is to a local user who already has the source files it quotes. **Amended 2026-09-06 (000282):** that reason is unchanged and still holds for the reader it names. It does not reach a management plane -- EDR, backup, eDiscovery, DLP -- which reads the log without being that local user and carries what it reads off the host. `POWERSHELL_LSP_CAPTURE_MODE` answers those readers without gating the channel: `metadata` drops the absolute path, the snippet and the message while preserving `ruleId` + `hash`, which is what the rule-curation lane actually derives from. The acceptance is therefore **narrowed, not withdrawn**. |
+=======
+| **T4.2** | Fail-open is the deliberate trade: an unreachable policy that disabled the plugin's diagnostics would turn an availability problem into a silent loss of linting, which is the worse failure for a tool whose whole contract is never being silent. |
+| **T6.1** | Gating the capture behind a knob would strangle the dogfood channel the entire rule-curation lane depends on, and the log is local-only, never transmitted, and now both bounded (T6.4) and outside every git tree (T2.3) -- so the exposure it carries is to a local user who already has the source files it quotes. **Amended 2026-09-06 (000282):** that reason is unchanged and still holds for the reader it names. It does not reach a management plane -- EDR, backup, eDiscovery, DLP -- which reads the log without being that local user and carries what it reads off the host. `POWERSHELL_LSP_CAPTURE_MODE` answers those readers without gating the channel: `metadata` drops the absolute path, the snippet and the message while preserving `ruleId` + `hash`, which is what the rule-curation lane actually derives from. The acceptance is therefore **narrowed, not withdrawn**. **Amended again 2026-09-14 (000301, R25, ruled 2026-09-12):** `metadata` is now the DEFAULT and `full` an explicit opt-in, on both the absent-value path and the unrecognized-value path -- a fallback fails toward the safe mode or it is not a fallback. Every existing install's behaviour moves at its next session after upgrade; the acceptance narrows again on the same axis, still not withdrawn. |
+>>>>>>> 2d6bb89 (Diagnostic capture defaults to metadata, not full (R25))
 
 **What is left genuinely open.** D2, D3 and D4 -- all documentation drift, all re-derived and still
 standing, all cheap to fix and none of them fixed here because this dispatch's threat-model scope was
