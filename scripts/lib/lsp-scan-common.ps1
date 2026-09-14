@@ -512,6 +512,12 @@ function Invoke-ScanFileDiagnostics {
     # as a clean file (the project's never-silent rule). The file is analyzed IN PLACE so SARIF
     # carries its real path and the repo's own PSScriptAnalyzerSettings.psd1 is honored, exactly
     # as the in-agent hook honors it (000018).
+    #
+    # `message` on the returned finding is ALWAYS the real diagnostic text, regardless of the
+    # caller's ambient POWERSHELL_LSP_CAPTURE_MODE (dispatch 000301 N6): see the CAPTURE_MODE=full
+    # line inside, which forces it on the throwaway transport this function owns end to end. This
+    # is the ONLY thing scripts/lsp-scan.ps1's SARIF `message.text` renders, so a caller must never
+    # see it degrade to a bare rule id just because nobody set a telemetry-log env var.
     param(
         [string]$ScriptsDir,
         [string]$DataRoot,
@@ -535,8 +541,26 @@ function Invoke-ScanFileDiagnostics {
     # client-side cap is NOT the binding per-file budget -- the daemon's own settle cap (MaxWaitMs,
     # pses-daemon.ps1, default 5000) is; see the 000132 outbox and the 000133 charter. The dogfood log
     # is the SAME structured-finding channel the corpus reads, pointed at a throwaway file (never the repo log).
+    #
+    # CAPTURE_MODE=full is FORCED here, unconditionally, regardless of the CALLER's ambient value
+    # (dispatch 000301 N6 -- a genuine product-surface defect, not a preference). $log above is a
+    # TRANSPORT, not the control surface POWERSHELL_LSP_CAPTURE_MODE governs: it is a brand-new
+    # per-scan temp file under DataRoot/scan-capture/, read back three lines down, then deleted --
+    # never the administrator's real, persistent dogfood/diagnostics.jsonl. Before this line, this
+    # function inherited whatever CAPTURE_MODE the CALLING process happened to have, which is unset
+    # on essentially every real invocation of scripts/lsp-scan.ps1 (nobody runs a CI scanner with an
+    # env var tuned for a fleet telemetry log they've never heard of) -- so R25's metadata default
+    # silently dropped `message` from this throwaway file too, and every SARIF result's message.text
+    # fell back to New-SarifResult's bare-rule-id fallback (scan-correct, but not the diagnostic
+    # text). Forcing `full` here fixes that WITHOUT touching Get-DiagnosticCaptureModeInfo's shipped
+    # default or the real dogfood log's fleet-visible behavior: this is a NEW key on a per-CHILD-
+    # PROCESS env block (ProcessStartInfo.EnvironmentVariables), so it overrides nothing in the
+    # CALLING process's own environment and cannot leak into it, and it changes the CONTENT of a
+    # file that already existed and was already deleted immediately -- never where source text is
+    # written, only what this one ephemeral round-trip carries before it is discarded.
     $extraEnv = @{
         POWERSHELL_LSP_DOGFOOD_LOG       = $log
+        POWERSHELL_LSP_CAPTURE_MODE      = 'full'
         CLAUDE_PLUGIN_OPTION_scopeToEdit = 'false'
         CLAUDE_PLUGIN_OPTION_timeoutMs   = '18000'
     }

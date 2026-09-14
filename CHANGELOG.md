@@ -30,20 +30,60 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
-PATCH: **the corpus derivation now opts into `full` capture explicitly, because R25's default
-reached further than the flip's own documentation claimed.** `docs/dogfood.md` argued that
-`metadata` costs the analysis nothing, since the review tool and the efficacy ledger key on
-`ruleId` and `hash` and `hash` is computed in every mode. That is true of those two readers and
-NOT true of a third: `tests/corpus` derives each snapshot by reading the same capture log, and
-the canonical string it compares includes the human-readable `message`, which `metadata` does
-not write. With `metadata` as the new default, every corpus sample derived a blank message --
-rule id, source, severity, line and column all matching, message empty -- and the whole corpus
-and one-engine SARIF assertion set went red on every CI leg. The fix is one line in
-`tests/corpus/Corpus.Common.ps1`: the derivation sets `POWERSHELL_LSP_CAPTURE_MODE=full` in the
-environment it hands the real hook. A test oracle opting in is exactly what R25's explicit
-opt-in is for, and it leaves the shipped default untouched. `docs/dogfood.md`'s claim is
-corrected in place rather than left standing, since the next person to change a capture field
-would have read it and believed it.
+PATCH: **R25 silently changed what `scripts/lsp-scan.ps1` -- the shipped SARIF CLI that CI and
+enterprise users run -- emits by default, and R25's own CHANGELOG entry did not say so; this
+entry closes it.** `docs/dogfood.md` argued that `metadata` (R25's new default) costs the
+analysis nothing, since the review tool and the efficacy ledger key on `ruleId` and `hash`, and
+`hash` is computed in every mode. That is true of those two readers, and it is NOT true of every
+reader of the capture log's `message` field -- there turned out to be two, not the one
+`docs/dogfood.md` named:
+
+- `tests/corpus` derives each snapshot by reading the same capture log, and the canonical string
+  it compares includes the human-readable `message`, which `metadata` does not write. Every
+  corpus sample derived a blank message -- rule id, source, severity, line and column all
+  matching, message empty -- and the corpus and one-engine SARIF assertion sets went red on every
+  CI leg. This is a TEST-ONLY consumer, fixed in three files by opting the test oracle into
+  `full` explicitly, scoped to exactly the call that needs it and restored afterward, leaving the
+  shipped default untouched: `tests/corpus/Corpus.Common.ps1`'s derivation,
+  `tests/PowerShellLsp.Integration.Tests.ps1`'s two `(000039)` capture tests, and
+  `tests/PowerShellLsp.Unit.Tests.ps1`'s two in-process `Add-DiagnosticCaptureEntries` Contexts. A
+  test oracle opting in is exactly what R25's explicit opt-in is for.
+  `tests/PowerShellLsp.SarifScan.Tests.ps1`'s one-engine identity Describe needed the SAME
+  treatment at first, but no longer opts in at all now that the second bullet's fix lands -- and
+  deliberately proves that by running with `POWERSHELL_LSP_CAPTURE_MODE` explicitly UNSET, not
+  merely unconfigured by coincidence.
+- **`scripts/lsp-scan.ps1` is not a test.** It derives every finding through
+  `Invoke-ScanFileDiagnostics` (`scripts/lib/lsp-scan-common.ps1`), which reads the SAME capture
+  log's `message` field back and never set `POWERSHELL_LSP_CAPTURE_MODE` itself -- so it inherited
+  whatever the CALLING process's ambient value was, unset on essentially every real invocation of
+  the CLI. Under R25's new default that meant an EMPTY message on every finding, which
+  `New-SarifResult`'s pre-existing (and otherwise correct) bare-rule-id fallback then papered over
+  silently: the SARIF stayed well-formed, just wrong -- `message.text` read `"PSUseApprovedVerbs"`
+  instead of `"The cmdlet 'Frobnicate-Thing' uses an unapproved verb."` This is a real,
+  shipped-behavior regression a fleet-privacy default should never have reached, and it shipped
+  invisibly because the only assertion on derived message text went through a test-only path that
+  forced `full` on itself and so could not have caught a regression in the product's own default.
+  **Fixed at the source, not worked around:** `Invoke-ScanFileDiagnostics` now forces
+  `POWERSHELL_LSP_CAPTURE_MODE=full` unconditionally on its own `-ExtraEnv`, regardless of the
+  caller's ambient value. This is sound specifically because the capture log there is a TRANSPORT,
+  not the control surface `POWERSHELL_LSP_CAPTURE_MODE` governs: the function already redirected
+  it to a brand-new per-scan temp file under `DataRoot/scan-capture/`, read back a few lines later
+  and deleted before returning, never the administrator's real, persistent
+  `dogfood/diagnostics.jsonl`. Forcing `full` on a child process's own env block changes the
+  CONTENT of a file that already existed and was already discarded; it does not change the shipped
+  `Get-DiagnosticCaptureModeInfo` default, and it cannot leak into or override the calling
+  process's own environment (a fleet's real, persistent capture log is written by a completely
+  separate code path -- the live edit-hook -- untouched by this). **Guarded going forward:** a new
+  end-to-end `lsp-scan.ps1` subprocess test, with `POWERSHELL_LSP_CAPTURE_MODE` proven unset (not
+  merely absent by luck), asserts `message.text` is the real diagnostic text; a RED control in an
+  isolated child process, dot-sourcing the PRIOR `Invoke-ScanFileDiagnostics` frozen at
+  `tests/fixtures/red-controls/lsp-scan-common.pre-000301.ps1`, measures that same assertion
+  failing against the pre-fix code -- proof the guard would have caught this, not just a claim
+  that it now would.
+
+`docs/dogfood.md`'s claim is corrected in place rather than left standing, since the next person
+to change a capture field would have read it and believed it: it named `tests/corpus` as the one
+reader `metadata` narrows and said nothing about the CLI. Dispatch 000301 N6.
 
 MINOR: **`doctor -Json` gains an `orgPolicy` object: which exact policy was active on this
 device, without a trust root.** `orgPolicy` carries `path`, `sha256` (of the file as read),

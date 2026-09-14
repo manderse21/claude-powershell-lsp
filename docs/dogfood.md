@@ -59,14 +59,30 @@ Neither changes what the daemon or hooks run, and neither alters the diagnostics
   > for those rows, and the source-dimension split reports them as `other-genuine`, which is the
   > classifier's existing answer for a path it cannot place.
   >
-  > **One reader it DOES narrow: the corpus.** `tests/corpus` derives every snapshot by
-  > reading this same capture log, and the canonical string it compares includes `message`
-  > -- which `metadata` does not write. The claim above is about `ruleId` and `hash`, the
+  > **Two readers it DOES narrow, not one.** The claim above is about `ruleId` and `hash`, the
   > keys the review tool and the efficacy ledger derive from, and it holds for those. It does
-  > not extend to a reader that consumes the human-readable message. The corpus harness
-  > therefore sets `POWERSHELL_LSP_CAPTURE_MODE=full` explicitly
-  > (`tests/corpus/Corpus.Common.ps1`) rather than inheriting the default; that is a test
-  > oracle opting in, not a change to what a shipped install does.
+  > not extend to a reader that consumes the human-readable `message` -- and there are two of
+  > those, not the one dispatch 000301's first pass named:
+  >
+  > - `tests/corpus` derives every snapshot by reading this same capture log, and the canonical
+  >   string it compares includes `message`, which `metadata` does not write. This is a TEST
+  >   oracle: it sets `POWERSHELL_LSP_CAPTURE_MODE=full` explicitly
+  >   (`tests/corpus/Corpus.Common.ps1`, and every other test-side consumer enumerated in the
+  >   [Unreleased] CHANGELOG entry) rather than inheriting the default -- an oracle opting in,
+  >   not a change to what a shipped install does.
+  > - **`scripts/lsp-scan.ps1` -- the shipped SARIF scan CLI -- is not a test.** It derives every
+  >   finding through `Invoke-ScanFileDiagnostics` (`scripts/lib/lsp-scan-common.ps1`), which reads
+  >   `message` back from the SAME capture log, redirected to a private, throwaway per-scan file.
+  >   That function now forces `POWERSHELL_LSP_CAPTURE_MODE=full` on that throwaway file
+  >   unconditionally, regardless of the operator's own environment -- because the file is a
+  >   TRANSPORT for the scan's own finding data, created fresh and deleted before the function
+  >   returns, never the administrator's real, persistent `dogfood/diagnostics.jsonl`. Before
+  >   dispatch 000301 N6 this function had no such override and simply inherited the CALLING
+  >   process's ambient `POWERSHELL_LSP_CAPTURE_MODE` -- unset on essentially every real
+  >   invocation of the CLI -- so a default scan silently emitted SARIF `message.text` as the bare
+  >   rule id instead of the real diagnostic text. Fixed; the shipped default and the real,
+  >   fleet-visible dogfood log (written entirely by the separate live edit-hook path) are both
+  >   untouched by this.
 
 - **Invisible side channel:** capture runs *after* the diagnostics are surfaced and is fully
   fail-safe. If the write fails for any reason, the diagnostics you see and the hook's exit code
