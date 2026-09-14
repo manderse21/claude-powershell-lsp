@@ -48,6 +48,20 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **the corpus derivation now opts into `full` capture explicitly, because R25's default
+reached further than the flip's own documentation claimed.** `docs/dogfood.md` argued that
+`metadata` costs the analysis nothing, since the review tool and the efficacy ledger key on
+`ruleId` and `hash` and `hash` is computed in every mode. That is true of those two readers and
+NOT true of a third: `tests/corpus` derives each snapshot by reading the same capture log, and
+the canonical string it compares includes the human-readable `message`, which `metadata` does
+not write. With `metadata` as the new default, every corpus sample derived a blank message --
+rule id, source, severity, line and column all matching, message empty -- and the whole corpus
+and one-engine SARIF assertion set went red on every CI leg. The fix is one line in
+`tests/corpus/Corpus.Common.ps1`: the derivation sets `POWERSHELL_LSP_CAPTURE_MODE=full` in the
+environment it hands the real hook. A test oracle opting in is exactly what R25's explicit
+opt-in is for, and it leaves the shipped default untouched. `docs/dogfood.md`'s claim is
+corrected in place rather than left standing, since the next person to change a capture field
+would have read it and believed it.
 
 MINOR: **`doctor -Json` gains an `orgPolicy` object: which exact policy was active on this
 device, without a trust root.** `orgPolicy` carries `path`, `sha256` (of the file as read),

@@ -58,6 +58,15 @@ Neither changes what the daemon or hooks run, and neither alters the diagnostics
   > metadata row cannot give you is the line itself: `review-dogfood.ps1` renders `(no snippet)`
   > for those rows, and the source-dimension split reports them as `other-genuine`, which is the
   > classifier's existing answer for a path it cannot place.
+  >
+  > **One reader it DOES narrow: the corpus.** `tests/corpus` derives every snapshot by
+  > reading this same capture log, and the canonical string it compares includes `message`
+  > -- which `metadata` does not write. The claim above is about `ruleId` and `hash`, the
+  > keys the review tool and the efficacy ledger derive from, and it holds for those. It does
+  > not extend to a reader that consumes the human-readable message. The corpus harness
+  > therefore sets `POWERSHELL_LSP_CAPTURE_MODE=full` explicitly
+  > (`tests/corpus/Corpus.Common.ps1`) rather than inheriting the default; that is a test
+  > oracle opting in, not a change to what a shipped install does.
 
 - **Invisible side channel:** capture runs *after* the diagnostics are surfaced and is fully
   fail-safe. If the write fails for any reason, the diagnostics you see and the hook's exit code
