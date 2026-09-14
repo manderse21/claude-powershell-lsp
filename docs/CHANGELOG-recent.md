@@ -3,7 +3,7 @@
      Produced by scripts/gen-changelog-recent.ps1 from CHANGELOG.md, which is the release
      artifact and the only file to edit. This companion is a strict PREFIX of that file:
      the header, the versioning policy, [Unreleased], and every entry down to and including
-     the ## [1.32.0] - 2026-08-19 band -- the third-most-recent MINOR line, derived at
+     the ## [1.33.0] - 2026-08-22 band -- the third-most-recent MINOR line, derived at
      generation time rather than pinned. Nothing is rephrased and nothing is dropped from
      the middle; the file stops.
 
@@ -48,6 +48,31 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+
+## [1.35.0] - 2026-09-13
+MINOR: **A first-party semantic query surface, fleet OpenTelemetry export, and an org-policy
+severity override land on the enterprise surface, all at zero 1.x freeze exposure.**
+`scripts/lsp-query.ps1 <op> <file> <line> <col>` asks the warm daemon `definition`, `references`,
+`hover`, `documentSymbol` and `workspaceSymbol` questions directly, with no Claude Code client in
+the path (docket P1-2). `scripts/export-otel.ps1` renders the existing opt-in stats log as OTLP
+metrics for a fleet collector; `doctor -Json` gains an `otelExport` field reporting whether a host
+is configured to send and where; and a sixth metric counts distinct diagnostic shapes without
+publishing them (docket P2-1). An `orgPolicy` file can now carry `SeverityOverrides` beside
+`ExcludeRules`, so an organization can raise a rule's severity instead of only suppressing it
+(docket P1-5, ruling R9). A fifth CI leg, `container-pwsh`, runs the whole suite inside the
+official PowerShell container image (docket P2-3), and an advisory `claude-code-compat` leg proves
+two pinned real Claude Code clients register the plugin, with `docs/SUPPORT-POLICY.md` stating the
+boundary of what that leg does and does not prove (docket P1-3, ruling R14). **No `userConfig`
+knob, diagnostics status token, or line of `CONTRACT.md` moves in this release** -- every item
+above is additive capability, not a changed promise.
+
+The remainder is hardening rather than new capability. `docs/control-map.html`, shipped as a
+release asset, gets its first automated currency guard and is corrected to rev 5. Five separate
+`psls*` temp-root leaks in the test suite are closed behind a new owner-marker-and-janitor system,
+`Invoke-PluginHook` collapses from eleven definitions to one, the doctor no longer misreports
+`pwsh 0.0.0.0` on Linux and macOS, and `audit-release-bodies.ps1` now pins the repository it
+sweeps instead of trusting `gh` to resolve it.
+
 PATCH: **Every test-minted `psls*` temp-root now carries an ownership marker, tears itself down,
 and a janitor can safely reclaim one that does not** (test-only; no shipped behaviour changes).
 Dispatch 000293 surfaced roughly 1,000 leftover `psls*` directories on the dev machine -- isolated
@@ -1134,278 +1159,3 @@ byte-stable across runs.
 
 **Nothing was published externally.** No submission and no announcement -- that is a maintainer
 action and remains one.
-
-## [1.32.0] - 2026-08-19
-MINOR: **the `orgPolicy` file can now be integrity-pinned with a `.sha256` companion**, **the two
-pinned dependencies can be installed from an internal mirror or a pre-staged bundle** so a machine
-with no egress has a first-bootstrap path at all, and **`scripts/sign-plugin.ps1` ships** so an
-`AllSigned` / WDAC estate can sign the plugin's script surface with its own certificate. The project
-is also **relicensed forward to Apache-2.0** -- forward-only, with every previously published release
-keeping the license it shipped under. Two smaller items ride along: an empty dogfood capture log no
-longer reads as one phantom shape, and the README was restructured into per-topic `docs/` pages with
-every heading and anchor preserved. **No new `userConfig` knob, no knob removed, renamed or
-re-defaulted**, and the frozen 1.x knob surface in `CONTRACT.md` is unchanged -- every new capability
-is opt-in, and with neither the companion file nor the offline environment variables set, behavior is
-byte-for-byte what it was.
-
-### Added: OPTIONAL integrity verification for the `orgPolicy` file
-
-**New capability** (dispatch 000259, chartered by dispatch 000257 leg D; threat T4.1).
-**MINOR-class by SemVer**: a new backward-compatible capability. **No new `userConfig` knob**, no
-change to the `.strict()` manifest schema, and no change to `CONTRACT.md`'s frozen surface.
-
-`orgPolicy` is the outermost layer of the settings precedence chain, and its `ExcludeRules` are
-applied as a final subtractive drop that **no local setting can re-add**. It was read with no
-integrity check, so write access to that file was equivalent to control over what the analyzer
-enforces fleet-wide -- a named OPEN item in the threat model.
-
-An organization can now pin the file by dropping a **`<policy>.sha256` companion beside it**. The
-artifact is **discovered from the existing policy path**, never configured, which is what keeps
-this at zero contract exposure -- there is no new knob to add. The companion accepts a bare
-64-character hex digest or the `sha256sum` shape (`<hash> *<name>`).
-
-When the companion is present the policy must hash to it **before any exclusion is lifted**. When
-it is absent, nothing is checked and behavior is **byte-for-byte** what it was before, so the
-feature is purely opt-in and no existing deployment changes.
-
-A failed gate degrades on exactly the road every other `orgPolicy` failure already travels
-(**fail open, but never silently**): no exclusions applied, exactly **one** warning to
-`logs/lsp-client.log`. A companion that is unreadable or carries no digest degrades the same way
-rather than passing -- an expectation that cannot be checked is unmet, not absent, because a gate
-that waves through what it cannot verify is not a gate.
-
-### Fixed: the dogfood reader counted an EMPTY capture log as ONE phantom shape
-
-**Bug fix** (dispatch 000258, found by dispatch 000257 leg F). **PATCH-class by SemVer**: no
-public API change, no schema change, no `userConfig` knob, and no behavior change for any
-non-empty log -- only the empty case stops lying.
-
-`scripts/review-dogfood.ps1 -Summary -Path <NONEXISTENT>` reported `shapes: 1 distinct
-occurrences: 1` for a file that provably did not exist. `Read-DogfoodLog` was honest -- it
-returned `@()` -- but a function that emits nothing returns **AutomationNull**, and binding that
-to a typed `[object[]]` parameter converts it to a real `$null`. Since `@($null)` is a
-**one-element array**, every reader that looped over the bare `@($Param)` ran its body once on a
-null record and fabricated one `(no-hash)` shape. Guards now normalize at all five `[object[]]`
-boundaries in `scripts/lib/dogfood-reader.psm1`: `Get-DogfoodShapes`, `Get-DogfoodPendingShapes`,
-`Get-DogfoodSummary`, `Get-DogfoodSourceSplit`, and `Select-DogfoodCacheVersion`. The last three
-did not miscount but **threw** under `StrictMode` on the phantom null.
-
-**It was host-divergent**, which is why the suite never caught it: the unroll fires under pwsh 7
-and not under Windows PowerShell 5.1, so the 5.1 CI leg structurally could not see it.
-
-**Re-derive any cached accrual figure rather than trusting it.** The reader's empty-log floor was
-1 occurrence under pwsh, so an empty log and a genuine one-row log rendered byte-identically, and
-every affected reading was inflated by exactly one at the low end -- the end that matters. In the
-dispatch 000256 / 000257 leg F accrual survey the `-Source checkout` reading of **1
-`other-genuine` occurrence was entirely phantom**; true checkout-source accrual was **0**. The
-per-version cache totals in that survey (297 occurrences across seven version directories) were
-read per-record and are unaffected.
-
-### README restructured and `DEV_NOTES.md` moved under `docs/` -- documentation RESTRUCTURED, not reduced
-
-**Documentation only** (dispatch 000250). No `.ps1` behavior moved, no knob changed, no test
-changed. **PATCH-class by SemVer**: a docs change with no user-visible contract change.
-
-Seven deep-dive sections left the README for per-topic pages under `docs/`, matching the existing
-`docs/` convention. **Every heading stays where it was**, now carrying a one-line pointer, so every
-anchor written before this change -- in `ARCHITECTURE.md`, `docs/DEV_NOTES.md`, the issue-template
-chooser, and any external post -- still resolves:
-
-| Left the README | Now lives in |
-|---|---|
-| How it works (warm-start daemon) | [`docs/warm-daemon.md`](docs/warm-daemon.md) |
-| Why a hook, not native `.lsp.json` registration | [`docs/native-registration.md`](docs/native-registration.md) |
-| Repository and CI validation | [`docs/repository-scanning.md`](docs/repository-scanning.md) |
-| Performance | [`docs/performance.md`](docs/performance.md) |
-| The preflight doctor deep-dive | [`docs/preflight-doctor.md`](docs/preflight-doctor.md) |
-| Platform support | [`docs/platform-support.md`](docs/platform-support.md) |
-| Pinned versions | [`docs/pinned-versions.md`](docs/pinned-versions.md) |
-
-`DEV_NOTES.md` moved to [`docs/DEV_NOTES.md`](docs/DEV_NOTES.md), leaving a root stub on the
-`ROADMAP-powershell-lsp.md` precedent so old links resolve. `MAINTAINERS.md` **stays at root**: it
-is a GitHub-recognized root convention and `docs/roadmap-ii/GOVERNANCE-SURFACE.md` cites it by line
-range, which a move would silently decay.
-
-A **Where everything lives** link map was added to the README, so every moved deep-dive is one
-click from the top level. Nothing was deleted or summarized down: all 111 relocated README lines
-are present verbatim in their destination pages, and the four README / doc-claims drift guards are
-green with unchanged pass counts.
-
-### Relicensed FORWARD from GPLv3 to Apache-2.0 -- ZERO code or runtime change
-
-**License change only** (dispatch 000247, ruled by Mike Andersen 2026-08-16). No `.ps1` behavior
-moved, no knob changed, no dependency was added. **This is a PATCH-class change by SemVer**, on the
-v1.6.1 precedent: that entry classed the MIT-to-GPLv3 move as "a PATCH by SemVer (no API or behavior
-change) -- the significance is legal, and it is carried in this entry, not in the version digit."
-The same holds here. The `1.32.0` band is already MINOR for the air-gapped bootstrap below;
-the relicense does not raise that class, it rides it.
-
-#### Why
-
-The 2026-08-15 corporate-IT review ranked GPLv3 as the number-one enterprise-adoption blocker after
-the offline path (which dispatch 000244 closed). Three reasons of record:
-
-1. **Enterprise allow-lists are written around Apache-2.0.** Its explicit patent grant (section 3)
-   and NOTICE mechanics (section 4(d)) are what those lists key on, and enterprise adoption is the
-   active demand signal.
-2. **The relicense is uniquely cheap here.** As sole copyright holder, this is a forward-only grant
-   change requiring no CLA archaeology -- exactly the mechanics of the MIT-to-GPLv3 move at v1.6.1.
-3. **Nothing already granted is taken back.** See the forward-only section below.
-
-#### Changed
-
-- **`LICENSE`** is now the verbatim canonical Apache License 2.0 text, fetched from
-  <https://www.apache.org/licenses/LICENSE-2.0.txt> and **byte-verified**: 11,358 bytes, 202 lines,
-  LF, no BOM, ASCII-only, SHA-256
-  `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`. Not hand-typed or
-  paraphrased, and the appendix boilerplate is left **unfilled** so the file stays byte-identical to
-  the canonical source -- the copyright attribution lives in `NOTICE`, which is what Apache-2.0
-  section 4(d) is for.
-- **`NOTICE`** (new) names the project and the copyright holder, **Mike Andersen**, and states the
-  downloader-not-redistributor posture for the two pinned Microsoft dependencies.
-- **SPDX id `Apache-2.0`** is declared across the same authoritative sites the v1.6.1 drift-guard
-  established: `LICENSE`, `.claude-plugin/plugin.json` (`license`), and the README License section.
-  (`marketplace.json` still carries **no** `license` field -- the Claude Code marketplace schema has
-  none -- and its absence is still asserted.) The drift-guard suite moved with the id and gained two
-  assertions: that the outgoing GPLv3 body is **gone** rather than merely joined by the new one, and
-  that `NOTICE` exists and names the project and copyright holder.
-- **`THIRD-PARTY-LICENSES.md`** is unchanged in substance: PSES and PSScriptAnalyzer are still MIT
-  (Microsoft), still **downloaded at install time** rather than bundled, and still not relicensed by
-  this project. Only the compatibility sentence moved (MIT is Apache-2.0-compatible).
-
-#### Forward-only -- prior releases keep the license they shipped under
-
-This license change is **forward-only and does not reach backward**. **Every previously published
-release keeps the license it shipped under, and those grants are irrevocable:** v1.0 through v1.6.0
-remain **MIT**, and v1.6.1 through v1.31.2 remain **`GPL-3.0-or-later`**. Those grants
-are **not** revoked, rescinded, or diminished here -- anyone using one of those releases keeps
-exactly the rights it was published with. From this release forward the project is `Apache-2.0`.
-
-#### What genuinely changes for adopters: copyleft is dropped
-
-Stated plainly rather than only in its favourable direction. Under `GPL-3.0-or-later`, anyone who
-distributed a modified version had to keep it open under the same terms. **Apache-2.0 is permissive
-and does not require that** -- a downstream fork may keep its changes closed. The continuity docs
-described the fork path as a *copyleft-backed* guarantee, so they were corrected rather than merely
-find-and-replaced: the fork path itself survives intact (the grant is irrevocable and no CLA is
-collected), but the obligation for derivatives to come back does not, and now says so. See
-[CONTINUITY.md](CONTINUITY.md#the-fork-path-apache-20) and [TRUST.md](TRUST.md).
-
-#### Not legal advice
-
-This is the standard mechanical way to perform a forward license change, not legal advice. A
-human/legal sanity check on the exact license text and third-party attribution remains advisable.
-
-### Offline / air-gapped bootstrap
-
-MINOR: **offline / air-gapped bootstrap.** The two pinned dependencies can now be resolved from an
-internal HTTPS mirror or a pre-staged local bundle instead of only from their upstream URLs, so a
-machine with no egress has a first-bootstrap path at all. **No `userConfig` knob was added** -- the
-frozen 1.x knob surface in `CONTRACT.md` is unchanged. Both settings are environment variables,
-because they are fleet plumbing an organization deploys by GPO / Intune / machine scope and are read
-during bootstrap, before any diagnostics surface exists.
-
-- **Two new environment variables**, tried in order and then falling through to the existing
-  download: `POWERSHELL_LSP_ARTIFACT_MIRROR_BASE` (an HTTPS base URL) and
-  `POWERSHELL_LSP_ARTIFACT_BUNDLE_DIR` (an absolute path to staged artifacts). See
-  [docs/configuration.md](docs/configuration.md#offline-and-air-gapped-installation).
-- **Sources are transport; pins are trust.** Whichever layer supplies an artifact, it passes the
-  *same* SHA-256 pin check before use, and a mismatch **fails closed and never falls through to
-  another layer** -- falling through would let whoever controls one layer force a downgrade onto
-  the next. The failure banner names the layer that produced the bad bytes. The pins in the
-  `ensure-*` scripts remain the only trust root.
-- **With neither variable set, behavior is byte-for-byte unchanged**: no extra network call and no
-  extra disk read. The existing `POWERSHELL_LSP_PSSA_CACHE` cache keeps its exact 000049 behavior
-  as the innermost layer.
-- **New release asset** `powershell-lsp-airgap-<version>.zip` -- the two pinned dependencies plus a
-  manifest of their pins -- covered by the same SLSA provenance attestation as the source archive.
-  It deliberately does not contain the plugin's own source, which is already its own attested
-  asset; the offline path is two independently verifiable artifacts, each with its own
-  `gh attestation verify`.
-- **`/doctor` gains two checks:** *Artifact source* (which layer produced the installed
-  dependencies, read from what the bootstrap recorded at install time) and *Offline readiness*
-  (whether a staged bundle holds every pinned artifact and each matches its pin). Offline readiness
-  reports an honest `unknown` for a mirror-only setup rather than claiming a verification it did
-  not perform -- proving a mirror would mean downloading it.
-- TRUST.md now also discloses the pre-existing `POWERSHELL_LSP_PSSA_CACHE` layer, which its
-  downloads section had not previously named, and reports the unpinned `Save-Module` fallback
-  distinctly (`gallery-fallback`) rather than as a pinned source.
-
-### Authenticode: the publisher certificate stays declined, the org-signing path ships
-
-MINOR: **`scripts/sign-plugin.ps1`** (dispatch 000248) -- one command for an `AllSigned` / WDAC
-estate to sign the plugin's executable script surface with **its own** code-signing certificate,
-which its policy already trusts. This **records the publisher-Authenticode decline** where
-evaluators look for settled decisions (`ROADMAP.md`, the declines table) rather than reversing it:
-for a git-distributed plugin the trust boundary remains the keyless-signed tag and the commit it
-names.
-
-- **Operator tooling, not a runtime path.** No hook, no bootstrap and no `/doctor` check invokes
-  it; an administrator runs it deliberately, and a test asserts no entry point references it. The
-  frozen 1.x `userConfig` knob surface is unchanged.
-- **The surface is derived live**, never from a list in the script: every `.ps1` and `.psm1` under
-  `scripts/`, which is exactly what the four manifest entry points launch, dot-source or import.
-  A certificate arrives by `-Thumbprint` (store lookup) or `-PfxPath`; `-TimestampServer` is a
-  parameter and `-NoTimestamp` is the air-gapped variant.
-- **The verify sweep is the gate, and it fails closed.** After signing it re-reads every file with
-  `Get-AuthenticodeSignature` and prints that sweep, exiting non-zero unless every file reports
-  `Valid`. That is deliberate: `Set-AuthenticodeSignature` does not raise an error for a file it
-  declines to sign and returns the same status for a real signature as for a silent no-op, so
-  neither its return value nor a `try`/`catch` can be trusted as the proof.
-- **Script signing and artifact pinning stay separate layers.** The downloaded PSES and
-  PSScriptAnalyzer components are not signed by this and never will be -- they remain covered by
-  their pinned SHA-256 hashes. TRUST.md states the boundary, and `docs/troubleshooting.md` gains
-  the `AllSigned` symptoms with their remediation.
-- Windows-only by nature: on any other host it names the reason and exits without reading a file.
-
-### Fixed: diagnostics and docs that named a remedy the reader had already tried
-
-**DX and observability fixes** (dispatch 000265 -- findings D1-D4 and O1-O4 of
-`docs/roadmap-ii/DX-AUDIT.md` section 5, plus a third-party attribution rider). **PATCH-class by
-SemVer**: remedy strings, printed caveats and documentation only -- no runtime behavior, no exit
-code, no ruleset default, no `userConfig` knob, and no change to `CONTRACT.md`'s frozen surface.
-Like the other PATCH-class entries here, it rides the MINOR above without raising it.
-
-The through-line is that several messages were not merely thin but **actively misdirecting** --
-they named a remedy the reader had already tried, or quoted a banner the code does not emit.
-
-- **`scripts/doctor.ps1`'s four `CLAUDE_PLUGIN_DATA`-blind `UNKNOWN` remedies told you to run from
-  inside a session** -- the state you were already in. Claude Code exports that variable to the
-  plugin's own hooks and **not** to tool shells or a directly-invoked script, so re-running changed
-  nothing and the advice read as a defect in the tool. Each now names the missing variable, says why
-  being in a session does not set it, and gives an executable instruction: set it to the data
-  directory holding `session/` and `logs/`, or run `/powershell-lsp:doctor` so the check runs as the
-  plugin. (D3)
-- **The multi-daemon remedy pointed at `CLAUDE_SESSION_ID`**, which the file's own comment says
-  Claude Code never passes to a directly-invoked script. It now points at the `session/` directory,
-  where each live daemon writes `<session-id>.json` carrying its pid, pipe, state and heartbeat --
-  the ids the `-SessionId` parameter actually wants. (O4)
-- **The README quoted a no-pipe banner that ships nowhere.** It now quotes the two banners
-  `scripts/lsp-client.ps1` really emits, verbatim, with the phrase that tells them apart and their
-  opposite remedies -- one says wait, the other says act. (D2)
-- **The out-of-session `/doctor` invocation is relative to the plugin tree**, so a `/plugin` install
-  has no `scripts/` and `pwsh` exits 64. The README and `docs/troubleshooting.md` now say so and
-  give the marketplace cache path. (D1)
-- **`totalMs` is not end-to-end per-edit latency, and now says so where it is read.** Its stopwatch
-  starts inside the already-running client, so it excludes the per-edit `pwsh` spawn, the
-  dot-source of the shared library and the option reads before it -- a **931 ms / 45% median**
-  understatement (`docs/roadmap-ii/SLO-BASELINES.md`, finding 1). Both
-  [docs/configuration.md](docs/configuration.md#enablestats) and `scripts/show-stats.ps1` carry the
-  caveat now, the latter printed beneath the table. An SLO written against the old reading
-  understated the wait by nearly a second. (O1)
-- **The doctor and status version line reports the TREE, not the running daemon**, and now says so;
-  the README explains how to read the live version from `logs/pses-daemon.log`. No new persisted
-  field was added to get there. (O2)
-- **Cold start is bounded honestly** -- no fixed edit count is enforced -- and a new README section
-  separates *starting up* from *stalling* from *broken* using the daemon log line that already
-  distinguishes them. (D4)
-- **The daemon session file is documented in the README**: its fields, and the one case where it
-  matters. It had been a single internal line in `ARCHITECTURE.md`. (O3)
-- **`THIRD-PARTY-LICENSES.md` now covers everything third-party in the tree**, not only what is
-  downloaded. The vendored SARIF 2.1.0 JSON Schema is listed under its OASIS RF-on-RAND terms,
-  cross-referencing `tests/sarif/NOTICE.md`. It is the single item in this repository the project
-  genuinely redistributes, and it is a **test fixture only** -- never loaded, shipped or executed
-  by the plugin runtime.
-
-One unit test pinned the exact D3 string that was removed; its assertion now tracks the corrected
-remedy and adds a regression guard against the old text.

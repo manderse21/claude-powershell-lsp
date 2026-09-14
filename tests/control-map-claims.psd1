@@ -92,6 +92,17 @@
             Note       = 'The header stamp asserts what is released. It is checked against CHANGELOG.md rather than against plugin.json, because plugin.json moves at the version bump -- BEFORE the release exists -- and would bless the claim one commit early.'
         }
 
+        @{
+            Name       = 'the page title and the header stamp name the same revision'
+            Kind       = 'TitleStampRevisionAgree'
+            # Pattern captures the title's "rev N"; Pattern2 captures the stamp's. There is no
+            # external SourcePath/SourcePattern here -- both sides of the comparison are the map's
+            # own text, which is exactly the gap that let them disagree for a whole release.
+            Pattern    = 'Roadmap Control Map -- \d{4}-\d{2}-\d{2} rev(\d+)'
+            Pattern2   = 'rev\s*(\d+)\s*\.\s*\d{4}-\d{2}-\d{2}\s*\.\s*whole-roadmap view'
+            Note       = 'Dispatch 000297''s finding: a whole currency guard existed with thirteen passing claims, and the page <title> (rev 3) still disagreed with its own header stamp (rev 4) for an entire release, because nothing had ever compared the two. RED CONTROL is an in-memory mutation (the rev 2 fixture agrees on its own revision and cannot exercise this failure path), not a second fixture.'
+        }
+
     )
 
     # UNGUARDABLE BY DESIGN, and named rather than guarded weakly. Each of these is a real claim the
