@@ -385,6 +385,19 @@ consequence is the flip side and is recorded plainly -- **an adversary who merel
 unreachable disables the exclusions**, and the only signal is a log line. `scripts/doctor.ps1:486-561`
 surfaces the same condition as a doctor check.
 
+**Amended 2026-09-13 (dispatch 000299, W3-3): the acceptance is NARROWED, not withdrawn.**
+`POWERSHELL_LSP_POLICY_MODE=closed` (`scripts/lib/lsp-common.ps1`
+`Test-PolicyEnforcementFailClosed`; wired at `scripts/lsp-client.ps1`) gives a fleet an OPT-IN
+inversion for exactly the two degrades named above that are *unreachability*, not *tampering*: a
+missing policy file, or one that fails the T4.1 integrity gate. Under `closed`, that edit resolves
+to the existing `unavailable` diagnostics token instead of silently disabling exclusions -- loud
+non-enforcement rather than quiet non-enforcement. The **default stays `open`** (this row's
+original finding, unchanged for every host that sets nothing), and `closed` does not touch the
+residual T4.1 already records: an attacker capable of rewriting *both* the policy and its
+`.sha256` companion in lockstep produces a policy that reads as VALID under either mode, so
+`closed` raises the bar against an unreachable or partially-tampered policy, not against a fully
+consistent forgery. See `docs/configuration.md`, "Managed mode: fail-closed policy enforcement".
+
 **T4.3 Policy cannot compel, only subtract.** *By design, and load-bearing.* Org `IncludeRules` are
 advisory; only `ExcludeRules` are enforced (`scripts/lib/lsp-common.ps1:570-578`). An organization
 cannot force a rule on through this layer. Recorded so a reviewer does not read `orgPolicy` as a
@@ -786,7 +799,7 @@ measurement that had never been taken, and six by an explicit decision to carry 
 | T1.5 | B1 | Blocking the primary fetch without corrupting it steers acquisition to the unpinned fallback | **ACCEPTED WITH RECORD** |
 | T3.2 | B3 | Repo-local settings file is handed to PSES unread; upstream handling of a hostile settings file not derived | **ACCEPTED WITH RECORD** (still unknown) |
 | T4.1 | B4 | Org policy content trusted as delivered; the opt-in `<policy>.sha256` gate pins it only where opted in, and only against an attacker who cannot also rewrite the companion | **ACCEPTED WITH RECORD** (residual) |
-| T4.2 | B4 | Fail-open by design: making the policy unreachable disables exclusions, signalled only in a log line | **ACCEPTED WITH RECORD** |
+| T4.2 | B4 | Fail-open by design: making the policy unreachable disables exclusions, signalled only in a log line | **ACCEPTED WITH RECORD**, **AMENDED** 2026-09-13 (000299): the default (`open`) is unchanged; `POWERSHELL_LSP_POLICY_MODE=closed` answers a fleet that wants this loud instead of quiet |
 | T6.1 | B6 | Capture log records absolute paths and verbatim source lines, ungated by any knob | **ACCEPTED WITH RECORD**, **AMENDED** 2026-09-06 (000282): the acceptance stands for the local reader; the management-plane reader set is recorded and answered by `POWERSHELL_LSP_CAPTURE_MODE` |
 | D1 | -- | Documentation drift: the data-root claim vs the capture log (section 7) | **RESOLVED** by T2.3 |
 | D2-D4 | -- | Documentation drift, section 7 | **OPEN** -- re-derived 2026-08-21, all three stand |
@@ -877,7 +890,7 @@ rationale, so a future reader can re-open the decision rather than re-discover t
 | **T1.5** | Steering to the fallback requires an attacker who can already block the primary fetch on the network path, which is a strictly larger capability than the one this finding grants -- and the airgap-bundle path shipped in v1.32.0 gives an estate that cares a pinned, offline alternative. |
 | **T3.2** | The finding is *unknown*, not *exposed*: it names upstream PSES behaviour on a hostile settings file that this project has not derived. Guessing a mitigation for undetermined upstream behaviour would ship a defence against an unmeasured threat. |
 | **T4.1** | The residual is bounded to an attacker who can rewrite **both** the policy and its `.sha256` companion, which is materially harder than rewriting the policy alone -- the opt-in pin closed the gap it was designed to close, and closing the rest needs a trust anchor the org policy mechanism does not have. |
-| **T4.2** | Fail-open is the deliberate trade: an unreachable policy that disabled the plugin's diagnostics would turn an availability problem into a silent loss of linting, which is the worse failure for a tool whose whole contract is never being silent. |
+| **T4.2** | Fail-open is the deliberate trade: an unreachable policy that disabled the plugin's diagnostics would turn an availability problem into a silent loss of linting, which is the worse failure for a tool whose whole contract is never being silent. **Amended 2026-09-13 (000299):** that trade is unchanged for the DEFAULT, and still holds for a host that never opts out of it. It does not reach a fleet that has decided the opposite trade is the right one for them -- `POWERSHELL_LSP_POLICY_MODE=closed` answers that fleet by converting an unreachable-or-integrity-failed policy into a loud `unavailable` for that edit, rather than a silent, unfiltered one. The acceptance is therefore **narrowed, not withdrawn**, in the same shape as T6.1's 000282 amendment above. |
 | **T6.1** | Gating the capture behind a knob would strangle the dogfood channel the entire rule-curation lane depends on, and the log is local-only, never transmitted, and now both bounded (T6.4) and outside every git tree (T2.3) -- so the exposure it carries is to a local user who already has the source files it quotes. **Amended 2026-09-06 (000282):** that reason is unchanged and still holds for the reader it names. It does not reach a management plane -- EDR, backup, eDiscovery, DLP -- which reads the log without being that local user and carries what it reads off the host. `POWERSHELL_LSP_CAPTURE_MODE` answers those readers without gating the channel: `metadata` drops the absolute path, the snippet and the message while preserving `ruleId` + `hash`, which is what the rule-curation lane actually derives from. The acceptance is therefore **narrowed, not withdrawn**. |
 
 **What is left genuinely open.** D2, D3 and D4 -- all documentation drift, all re-derived and still

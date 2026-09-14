@@ -84,8 +84,9 @@ function Write-CLog([string]$m) {
 # $OrgSeverity stays empty, Set-OrgPolicySeverity is the identity function, and a v1 site's
 # surface is byte-for-byte what it was before v2 existed -- the same guarantee the knob-off path
 # has always carried, extended to the file schema.
+$OrgPolicyKnob = [string](Get-PluginOption 'orgPolicy' '')
 $OrgPolicyWarning = ''
-$OrgPolicy = Import-OrgPolicy -Path (Get-PluginOption 'orgPolicy' '') -WarningOut ([ref]$OrgPolicyWarning)
+$OrgPolicy = Import-OrgPolicy -Path $OrgPolicyKnob -WarningOut ([ref]$OrgPolicyWarning)
 $OrgExcludes = @($OrgPolicy.ExcludeRules)
 $OrgSeverity = $OrgPolicy.SeverityOverrides
 if ($OrgPolicyWarning -ne '') {
@@ -97,6 +98,19 @@ if ($OrgPolicyWarning -ne '') {
     if ($OrgSeverity.Count -gt 0) {
         Write-CLog ('org policy: enforcing ' + $OrgSeverity.Count + ' severity override(s)')
     }
+}
+
+# Managed mode: fail-closed on policy (dispatch 000299, W3-3). $PolicyMode is resolved ONCE
+# here, same as every other knob/env-var this file reads once per hook invocation. `open` (the
+# default -- an installed host that sets nothing) makes Test-PolicyEnforcementFailClosed a
+# constant $false, so the block below is a no-op and this edit is byte-identical to before
+# W3-3 existed. See Test-PolicyEnforcementFailClosed (lib/lsp-common.ps1) for the full decision
+# -- in particular why an UNSET orgPolicy knob is deliberately never a trigger even in `closed`.
+$PolicyMode = (Get-PolicyModeInfo).resolved
+$PolicyFailClosed = Test-PolicyEnforcementFailClosed -Mode $PolicyMode `
+    -KnobSet (-not [string]::IsNullOrWhiteSpace($OrgPolicyKnob)) -Warning $OrgPolicyWarning
+if ($PolicyFailClosed) {
+    Write-CLog ('policy_mode=closed: org policy failed to validate, resolving this edit to unavailable -- ' + $OrgPolicyWarning)
 }
 
 function Write-HookContext([string]$Context) {
@@ -290,6 +304,17 @@ try {
     $ext = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
     if (@('.ps1', '.psm1', '.psd1') -notcontains $ext) { Write-CLog ('skip non-PS file: ' + $path); exit 0 }
     if (-not (Test-Path -LiteralPath $path)) { Write-CLog ('file gone: ' + $path); exit 0 }
+
+    # Managed mode: fail-closed on policy (dispatch 000299, W3-3). Resolved once, above, as
+    # $PolicyFailClosed -- a constant $false under the default `open` mode. This is the earliest
+    # point $path is known, and everything past it (Track C, Track B, the daemon round-trip) is
+    # "checking the file", which 'unavailable' means did NOT happen for this edit -- so this
+    # supersedes all of it rather than racing the parser pre-pass or the daemon for the last word.
+    if ($PolicyFailClosed) {
+        Write-Output (Write-HookContext (Get-DiagnosticsStatusBanner 'unavailable' $path `
+                    -Reason 'the organization policy that governs this host''s diagnostics could not be validated.'))
+        exit 0
+    }
 
     # Track C -- pre-PSSA byte pass (dispatch 000060): scan for non-ASCII
     # smart-punctuation characters (em/en dash, smart quotes, arrow glyphs) that

@@ -311,6 +311,10 @@ There is **no knob for this**: the companion is discovered from the policy path 
 `.sha256` file is present nothing is checked and behavior is byte-for-byte what it was before the
 feature existed, so this is purely opt-in and existing deployments are unaffected.
 
+**A failed integrity check still fails OPEN by default** -- exclusions drop, analysis proceeds. A
+fleet that wants a missing or mismatched policy to block the edit instead can opt into
+[`POWERSHELL_LSP_POLICY_MODE=closed`](#powershell_lsp_policy_mode).
+
 Parse errors are never dropped: an `ExcludeRules` list names PSScriptAnalyzer rules, and a syntax
 error is not a rule. Rule names match **case-insensitively**, as PSScriptAnalyzer's own do. Empty
 (the default) reads no file, applies no filter, and leaves the diagnostics surface byte-for-byte
@@ -872,6 +876,65 @@ what it was.
 **Nothing here is a `userConfig` knob.** This variable is on the admin environment surface, so it
 is deployable by GPO or Intune to the fleet reader it is for, and it adds nothing to the frozen
 1.x contract.
+
+---
+
+## Managed mode: fail-closed policy enforcement
+
+**This is not a `userConfig` knob either, for the same reason as the three above.** It is an
+environment variable, it does not appear in the `/plugin` config panel, and it is not part of the
+frozen 1.x knob surface in [CONTRACT.md](../CONTRACT.md). It is administrator plumbing, deployed
+*to a fleet* by GPO, Intune or machine-scope environment.
+
+### The problem it solves
+
+[`orgPolicy`](#orgpolicy) above is **fail-open by design**: if the policy file cannot be read at
+all -- missing, unreadable, unparseable, or (with the [integrity
+gate](#orgpolicy) opted in) hash-mismatched -- the plugin drops the exclusion layer and keeps
+analyzing, logging exactly one warning. That is deliberate (an unreadable policy must never break
+a user's edit; see [`THREAT-MODEL.md`](roadmap-ii/THREAT-MODEL.md) T4.2) and it is unchanged. But
+it also means an adversary -- or a broken file share -- who merely makes the policy unreachable has
+silently disabled the org's exclusions, with nothing louder than a log line to show for it. A fleet
+that wants "failure to validate policy means analysis is noncompliant" instead of "failure to
+validate policy means quietly unfiltered" needs a way to say so.
+
+### `POWERSHELL_LSP_POLICY_MODE`
+
+**What it does.** Chooses what happens when `orgPolicy` is configured but cannot be validated.
+
+| Value | Behavior when the configured policy is missing or fails its integrity check |
+|---|---|
+| `open` | The shipped, unchanged behavior: exclusions drop, analysis proceeds unfiltered, one warning is logged (T4.2, fail-open) |
+| `closed` | The edit resolves to the existing `unavailable` diagnostics status -- the SAME token an unbootstrapped PSES uses, with a DIFFERENT reason: "the organization policy ... could not be validated." Diagnostics are not shown for that edit; the very next edit re-validates automatically (no session restart is needed, unlike a PSES `unavailable`) |
+
+**Type:** one of `open`, `closed` (case- and whitespace-insensitive).
+**Default:** `open` -- with the variable unset, behavior is byte-for-byte what it has always been.
+Mike's ruling at acceptance: an installed host that sets nothing must behave identically to before
+this variable existed.
+
+**An unrecognized value resolves to `open`, and this is the SAME fallback direction as
+[`POWERSHELL_LSP_CAPTURE_MODE`](#powershell_lsp_capture_mode), not the opposite one
+[`POWERSHELL_LSP_OTEL_ENDPOINT`](#powershell_lsp_otel_endpoint) uses.** A GPO typo landing on
+`closed` by accident would silently stop every edit on the fleet from being checked at all, which
+is a far worse failure than the one this variable exists to close -- so a typo, or the variable
+being merely absent, both fall back to the already-accepted `open` exposure rather than a
+surprise fleet-wide diagnostics outage.
+
+**`closed` reacts only to a policy that WAS configured and could not be validated.** With
+`orgPolicy` itself unset, there is nothing to validate, and `closed` is a no-op -- it does not
+retroactively require a policy to exist. This scopes the variable to exactly the two
+[`REVIEW-II-DOCKET.md`](roadmap-ii/REVIEW-II-DOCKET.md) W3-3 cases: a **missing** orgPolicy file,
+or one that fails the [`<policy>.sha256` integrity gate](#orgpolicy).
+
+**No new diagnostics status token.** `closed` reuses the existing `unavailable` token
+([CONTRACT.md](../CONTRACT.md) Tier 1.2, frozen) with new wording for this specific cause -- the
+banner message prose is not frozen (a PATCH-level refinement), only the token set and the
+clean-empty / non-ok-distinct-visible property are.
+
+**Checking it worked.** `doctor -Json`'s [`orgPolicy` field](#orgpolicy) reports `applied: false`
+whenever the configured policy is not governing a live edit -- whether because `open` silently
+degraded it or `closed` would fail an edit closed over it -- so a fleet health check can confirm
+the intended state without waiting for someone to hit an actual edit.
 
 ---
 
