@@ -1,0 +1,39 @@
+{
+  "provenance": "Recorded for dispatch 000303 on 2026-10-09 from the GitHub REST API, read-only: push-event run 36435564569 (run_number 634) of .github/workflows/powershell-lsp-ci.yml at d5ce581a4c74de3d77ef3e590c9461a434478e16. These are the three responses release Gate 4 reads -- the push runs for the commit, the run it polls, and that run's jobs -- trimmed to the fields the gate reads plus their identifiers, in the order GitHub returned them. tests/PowerShellLsp.Release.Tests.ps1 derives every other scenario from this record by single-field mutation.",
+  "workflowRuns": {
+    "total_count": 1,
+    "workflow_runs": [
+      {
+        "id": 36435564569,
+        "name": "powershell-lsp CI",
+        "run_number": 634,
+        "run_attempt": 1,
+        "event": "push",
+        "status": "completed",
+        "conclusion": "success",
+        "head_sha": "d5ce581a4c74de3d77ef3e590c9461a434478e16"
+      }
+    ]
+  },
+  "run": {
+    "id": 36435564569,
+    "name": "powershell-lsp CI",
+    "run_number": 634,
+    "run_attempt": 1,
+    "event": "push",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "d5ce581a4c74de3d77ef3e590c9461a434478e16"
+  },
+  "jobs": {
+    "total_count": 6,
+    "jobs": [
+      { "id": 108972466079, "name": "container-pwsh", "status": "completed", "conclusion": "success" },
+      { "id": 108972466128, "name": "claude-code-compat", "status": "completed", "conclusion": "success" },
+      { "id": 108972466397, "name": "ubuntu-pwsh", "status": "completed", "conclusion": "success" },
+      { "id": 108972466412, "name": "macos-pwsh", "status": "completed", "conclusion": "success" },
+      { "id": 108972466494, "name": "windows-pwsh", "status": "completed", "conclusion": "success" },
+      { "id": 108972466576, "name": "windows-powershell", "status": "completed", "conclusion": "success" }
+    ]
+  }
+}
