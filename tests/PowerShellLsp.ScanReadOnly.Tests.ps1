@@ -31,8 +31,8 @@
 # measured RED at the A1 head is tagged with its owner and excluded from tests/run-tests.ps1, and
 # tests/assert-expected-red.ps1 proves it still fails with its declared assertion. 'ScanRed-A2' marks
 # what A2's narrow formatter-off containment fixes (formatting must be OFF in every scan child);
-# 'ScanRed-A3' marks what A3's declared scan configuration fixes (ambient analysis knobs must not
-# reach a scan). Already-green cells are controls and run normally.
+# 'ScanRed-A3' marks what A3's declared scan configuration fixes (ambient analysis knobs, and an
+# ambient ps_host, must not reach a scan). Already-green cells are controls and run normally.
 #
 # ASCII-only (PS 5.1 Windows-1252 trap); StrictMode-safe. Run via tests/run-tests.ps1.
 
@@ -144,12 +144,22 @@ Describe 'Scan read-only census of the configuration a scan child receives (disp
                 ' referenceSurfacing=' + [string]$rec.resolved.referenceSurfacing.value) |
                 Should -BeExactly 'ruleset=pses-default moduleAwareness=off referenceSurfacing=off' -Because 'F2 profile: an ambient profile must not change what a scan analyses'
         }
-        It 'the declared severityThreshold, MaxWaitMs and PreferredHost reach the scan session-start over ambient values (control)' {
-            $rec = Measure-RcSessionStart -Tag 'ct' -Ambient @{ severityThreshold = 'Error' }
+        # The scan passes its host as -PreferredHost, but session-start resolves ps_host through
+        # Get-PluginOption with that argument only as the FALLBACK, so an ambient ps_host wins.
+        It 'an ambient ps_host does not override the analysis host the scan declares' -Tag 'ScanRed-A3' {
+            $rec = Measure-RcSessionStart -Tag 'ph' -Ambient @{ ps_host = 'powershell' }
+            [string]$rec.preferredHost | Should -BeExactly 'pwsh' -Because 'F2 ps_host situation: the scan must have declared pwsh, a host other than the ambient one'
+            [string]$rec.resolved.ps_host.value | Should -BeExactly 'pwsh' -Because 'F2 ps_host: an ambient ps_host must not move a scan onto another analysis host'
+        }
+        # MaxWaitMs is not a userConfig knob and session-start does not self-source it (the knob-set
+        # guard below pins that), so the only ambient form it can take is a CLAUDE_PLUGIN_OPTION_
+        # variable of its name: one is staged, and asserted present in the child, so 15000 is earned.
+        It 'the declared severityThreshold and MaxWaitMs reach the scan session-start over hostile ambient values (control)' {
+            $rec = Measure-RcSessionStart -Tag 'ct' -Ambient @{ severityThreshold = 'Error'; maxWaitMs = '1' }
             [string]$rec.resolved.severityThreshold.value | Should -BeExactly 'Hint'
             [string]$rec.resolved.severityThreshold.provenance | Should -BeExactly 'env'
+            [string]$rec.env.CLAUDE_PLUGIN_OPTION_maxWaitMs | Should -BeExactly '1' -Because 'the hostile MaxWaitMs must have reached the scan session-start'
             [int]$rec.maxWaitMs | Should -Be 15000
-            [string]$rec.preferredHost | Should -BeExactly $script:RcHost
         }
     }
 

@@ -28,7 +28,7 @@
 
     Tags     = @{
         'ScanRed-A2' = 'A2 -- typed scan completion receipt (a scan reports a file analyzed only on positive evidence of completion, both child streams drained, a timed-out child terminated) and narrow formatter-off containment (formatting off in every scan child)'
-        'ScanRed-A3' = 'A3 -- declared read-only scan configuration (ambient ruleInclude / ruleExclude / profile values never reach a scan child)'
+        'ScanRed-A3' = 'A3 -- declared read-only scan configuration (ambient ruleInclude / ruleExclude / profile / ps_host values never reach a scan child)'
     }
 
     Expected = @(
@@ -160,7 +160,7 @@
             Path = 'Scan read-only census of the configuration a scan child receives (dispatch 000302 A1).formatOnEdit and profile reach the scan client.formatOnEdit=apply under profile strict -- the scan client resolves formatting off'
             Message = 'because F2 format strict/apply: a scan child must never format, but they were different\..*But was:\s+''apply''' }
 
-        # ---- F2, transport census: ambient analysis knobs must not reach a scan child (A3)
+        # ---- F2, transport census: ambient analysis knobs and the ambient analysis host must not reach a scan child (A3)
         @{ File = 'PowerShellLsp.ScanReadOnly.Tests.ps1'; Tag = 'ScanRed-A3'
             Name = 'an ambient ruleInclude does not reach the scan session-start'
             Path = 'Scan read-only census of the configuration a scan child receives (dispatch 000302 A1).daemon-side knobs reach the scan session-start.an ambient ruleInclude does not reach the scan session-start'
@@ -173,6 +173,10 @@
             Name = 'an ambient profile does not change the analysis defaults the scan session-start resolves'
             Path = 'Scan read-only census of the configuration a scan child receives (dispatch 000302 A1).daemon-side knobs reach the scan session-start.an ambient profile does not change the analysis defaults the scan session-start resolves'
             Message = 'because F2 profile: an ambient profile must not change what a scan analyses, but they were different\..*But was:\s+''ruleset=base moduleAwareness=suggest referenceSurfacing=counts''' }
+        @{ File = 'PowerShellLsp.ScanReadOnly.Tests.ps1'; Tag = 'ScanRed-A3'
+            Name = 'an ambient ps_host does not override the analysis host the scan declares'
+            Path = 'Scan read-only census of the configuration a scan child receives (dispatch 000302 A1).daemon-side knobs reach the scan session-start.an ambient ps_host does not override the analysis host the scan declares'
+            Message = 'because F2 ps_host: an ambient ps_host must not move a scan onto another analysis host, but they were different\..*But was:\s+''powershell''' }
 
         # ---- F2, real daemon + formatter: an apply-mode scan rewrites the source and loses its findings (A2)
         @{ File = 'PowerShellLsp.ScanReadOnly.Tests.ps1'; Tag = 'ScanRed-A2'

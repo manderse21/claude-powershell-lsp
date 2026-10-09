@@ -52,7 +52,9 @@ scan rewrote the source and reported none of its findings, and the shipped CLI d
 end, still reporting a complete scan; `suggest` and `off` never wrote. Ambient `ruleExclude` and
 `ruleInclude` values reached the scan's daemon and emptied its finding set, and an ambient `profile`
 broadened it (`ruleset=base`); an ambient `perFileCap` did not reproduce (the scan's declared cap
-wins). Each measured failure is its own test, tagged with the leg that fixes it (`ScanRed-A2`,
+wins). An ambient `ps_host` overrides the analysis host the scan declares: with `ps_host=powershell`
+in the environment, the scan's session-start resolved `powershell` over the `-PreferredHost pwsh` the
+scan passed it. Each measured failure is its own test, tagged with the leg that fixes it (`ScanRed-A2`,
 `ScanRed-A3`). `tests/run-tests.ps1` excludes those tags by default (new `-ExcludeTag` parameter), so
 CI stays green. `tests/fixtures/scan-verdict/expected-red.psd1` lists every excluded test with the
 assertion it must fail on, and `tests/assert-expected-red.ps1` runs those files in full, requiring
