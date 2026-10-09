@@ -112,6 +112,28 @@ the published 0% rate).
   data-driven `-ForEach` block; re-enumerate inside the `It` if you need the data at run
   time (the corpus test does this).
 
+## Temporary RED exclusions are bounded, not blanket
+
+Some tests are committed **failing on purpose**: they measure a defect that a later leg fixes
+(dispatch 000302 measured the scan-verdict and scan read-only findings this way). Each such `It`
+carries an owner tag (`ScanRed-A2`, `ScanRed-A3`) and `tests/run-tests.ps1` excludes those tags
+by default, so CI stays green while the failures stay recorded. Three things keep that honest:
+
+- **One list.** `tests/fixtures/scan-verdict/expected-red.psd1` names every excluded test, its
+  owner, and the exact assertion message it is expected to fail with.
+- **The oracle.** `tests/assert-expected-red.ps1` runs the listed files in full in a fresh
+  process and passes only if each listed test fails with its declared assertion and every other
+  test in those files passes. A setup crash, zero discovery, an unexpected pass, an unrelated
+  failure, or an extra tagged test is a rejection. Run it under **both** hosts.
+- **The guard.** `PowerShellLsp.ScanVerdict.Tests.ps1` fails if a RED tag sits on a `Describe` or
+  `Context` (that would hide every test inside it), on a test the list does not name, or as a
+  computed value -- or if the runner's default and the list disagree.
+
+When a fix lands, its tests turn green and the oracle rejects them as unexpected passes. That is the
+signal: remove the tag from the `It`, remove the entry from the list, and drop the tag from the
+runner default once it has no entries left. Never widen a declared message to fit a different
+failure.
+
 ## The public contract has teeth
 
 The `userConfig` knob **names** and the status **token set** are drift-guarded in CI
