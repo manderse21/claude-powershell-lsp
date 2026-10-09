@@ -8,7 +8,17 @@ param(
     # Optional Pester FullName filter (Describe/It wildcard). Empty = run everything
     # (default, unchanged). Lets a dispatch custom_check re-run just one feature's tests
     # via the same command shape as the smoke_test, e.g. -FullNameFilter '*dispatch 000022*'.
-    [string] $FullNameFilter = ''
+    [string] $FullNameFilter = '',
+    # TEMPORARY RED EXCLUSIONS (dispatch 000302, A1). Each tag marks ONLY tests that were measured
+    # RED at the A1 head and are owned by the leg that fixes them -- never a block, never a guess:
+    #   ScanRed-A2 -- the A2 leg (typed scan completion receipt + formatter-off containment)
+    #   ScanRed-A3 -- the A3 leg (declared read-only scan configuration)
+    # tests/fixtures/scan-verdict/expected-red.psd1 is the one list of those tests;
+    # tests/assert-expected-red.ps1 proves they still fail exactly as declared, and the guard in
+    # PowerShellLsp.ScanVerdict.Tests.ps1 fails if this default and that list ever disagree. The
+    # owner removes its tag here when its last RED test turns green. Run them anyway with
+    # -ExcludeTag ''.
+    [string[]] $ExcludeTag = @('ScanRed-A2', 'ScanRed-A3')
 )
 $ErrorActionPreference = 'Stop'
 
@@ -30,6 +40,11 @@ $config.Run.Path = $PSScriptRoot
 $config.Run.PassThru = $true
 $config.Output.Verbosity = 'Detailed'
 if (-not [string]::IsNullOrWhiteSpace($FullNameFilter)) { $config.Filter.FullName = $FullNameFilter }
+$excluded = @($ExcludeTag | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+if ($excluded.Count -gt 0) {
+    $config.Filter.ExcludeTag = $excluded
+    Write-Host ('Excluding temporary RED tag(s): ' + ($excluded -join ', ') + ' (see tests/fixtures/scan-verdict/expected-red.psd1)')
+}
 if ($CI) {
     $config.TestResult.Enabled = $true
     $config.TestResult.OutputFormat = 'NUnitXml'
