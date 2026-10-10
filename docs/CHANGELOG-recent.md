@@ -48,6 +48,54 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **Two review findings about `scripts/lsp-scan.ps1` are now measured rather than argued: a
+scan can report a file it never analysed as analysed (F1), and a scan run with `formatOnEdit=apply`
+in its environment rewrites the files it scans (F2)** (test-only; no shipped behaviour changes --
+dispatch 000302, leg A1). The 2026-09-30 enterprise review read both from source and asked for
+deterministic failing tests before any fix. `tests/PowerShellLsp.ScanVerdict.Tests.ps1` drives the
+production `Invoke-ScanFileDiagnostics` through fake clients (`tests/fixtures/scan-verdict/`) in nine
+situations. Measured at the A1 head, seven of them come back "analysed" for a file that was not:
+a silent exit 0, a nonzero exit, a stderr-only error, an unparseable response, a truncated or
+missing record stream, a daemon `ok=false` answer, and a source file that vanished. The shipped
+CLI, copied byte for byte beside the same fakes, exits 0 with `executionSuccessful=true` for each.
+The REAL client reproduces four of them: a vanished source, a client the host cannot load, an
+`ok=false` answer, and a daemon answer of the wrong type, which drives it into its FATAL fail-safe.
+Already green: the deadline kill (dispatch 000132), a truncated daemon answer (the client's own
+`incomplete` banner catches it), and a clean completion. The census also found two process-handling
+faults: an undrained stderr pipe holds a finished child until the cap, and on Windows PowerShell 5.1
+the cap kill (`Process.Kill($true)` exists only on .NET Core) throws an exception that is swallowed,
+leaving the timed-out child running. `tests/PowerShellLsp.ScanReadOnly.Tests.ps1` measured F2 with
+the real daemon and formatter. With `formatOnEdit=apply` in the environment, under every profile, the
+scan rewrote the source and reported none of its findings, and the shipped CLI did the same end to
+end, still reporting a complete scan; `suggest` and `off` never wrote. Ambient `ruleExclude` and
+`ruleInclude` values reached the scan's daemon and emptied its finding set, and an ambient `profile`
+broadened it (`ruleset=base`). An ambient `perFileCap` did not reproduce only under the exact name
+the scan sets for its own cap (`CLAUDE_PLUGIN_OPTION_perFileCap`, which the scan's value replaces).
+The plugin's option resolver accepts any `CLAUDE_PLUGIN_OPTION_*` name that normalizes to a knob
+(underscores stripped, case ignored) and takes the first one it enumerates, in an order that changes
+from one process to the next, while the scan's per-child overrides replace only the names they set.
+So `CLAUDE_PLUGIN_OPTION_PER_FILE_CAP=1` reached the scan's session-start beside the declared 0 in
+every run, and in 6 of 12 real-daemon scans across both hosts the daemon took the 1 and reported one
+finding of two for a file that still read as analysed. The scan's other declared values behave the
+same way: an underscore spelling of `severityThreshold`, `scopeToEdit` or `timeoutMs` reaches the scan
+child beside the declared value and wins in some runs and not others, and underscore spellings of
+`formatOnEdit`, `ruleInclude`, `ruleExclude`, `profile` and `ps_host` reach it as the camelCase ones
+do. Claude Code exports `CLAUDE_PLUGIN_OPTION_<KEY>` with the key upper-cased, which on Linux and
+macOS, where environment names are case-sensitive, is also a different variable from a camelCase
+override. A fix therefore has to keep every spelling out of a scan child, not just override the one
+the scan names; `MaxWaitMs` (an argument) and the capture mode and capture log (read by exact name)
+are not affected. An ambient `ps_host` overrides the analysis host the scan declares: with
+`ps_host=powershell` in the environment, the scan's session-start resolved `powershell` over the
+`-PreferredHost pwsh` the scan passed it. Each measured failure is its own test, tagged with the leg
+that fixes it (`ScanRed-A2`, `ScanRed-A3`); a spelling test asserts the part that is the same in
+every run -- the hostile value reached the scan child -- so it fails identically each time.
+`tests/run-tests.ps1` excludes those tags by default (new `-ExcludeTag` parameter), so CI stays green. `tests/fixtures/scan-verdict/expected-red.psd1` lists every excluded test with the
+assertion it must fail on, and `tests/assert-expected-red.ps1` runs those files in full, requiring
+each listed test to fail exactly as declared and every other test in them to pass; it rejects a
+setup crash, zero discovery, an unexpected pass, an unrelated failure or an undeclared tag.
+`tests/PowerShellLsp.HookInstrumentation.Tests.ps1` now also reads the new harness
+(`tests/ScanHarness.Common.ps1`) and holds its spawner to concurrent stdout/stderr draining.
+
 PATCH: **R25 silently changed what `scripts/lsp-scan.ps1` -- the shipped SARIF CLI that CI and
 enterprise users run -- emits by default, and R25's own CHANGELOG entry did not say so; this
 entry closes it.** `docs/dogfood.md` argued that `metadata` (R25's new default) costs the
