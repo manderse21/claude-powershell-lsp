@@ -20,19 +20,35 @@
 #      file Invoke-Formatter does change: SHA-256 of the source before and after every scan, and the
 #      finding set compared with a clean-environment scan of the same bytes. Then four HOSTILE
 #      daemon-side configurations (ruleExclude, ruleInclude, perFileCap, profile), each under its own
-#      real daemon, and one end-to-end run of the shipped scripts/lsp-scan.ps1 with formatOnEdit=apply
-#      left in its environment.
+#      real daemon and each staged under the camelCase spelling only, and one end-to-end run of the
+#      shipped scripts/lsp-scan.ps1 with formatOnEdit=apply left in its environment.
 #
 # THE MATRIX is every interactive profile (safe / recommended / strict) x every formatOnEdit state
 # (unset / off / suggest / apply) -- Get-SvFormatMatrix in tests/ScanHarness.Common.ps1, which also
 # records the format mode the current client resolves for each cell.
 #
+# THE SPELLING CHANNEL (review RC01, correction round 2). Every knob is read through
+# Get-RawPluginOption (scripts/lib/lsp-common.ps1), which accepts ANY CLAUDE_PLUGIN_OPTION_* name that
+# normalizes to the knob -- underscores stripped, lower-cased -- and returns the first non-blank match
+# in the child's environment enumeration order, which differs from one process to the next. The
+# scanner's per-child overrides (perFileCap / severityThreshold for session-start, scopeToEdit /
+# timeoutMs for the client) replace only the variable they name. So a hostile value staged under that
+# same camelCase spelling is replaced (the same-spelling controls), while the same value under another
+# spelling reaches the child BESIDE the declared one and wins at random. The alias cases stage an
+# underscore spelling (PER_FILE_CAP, ...): a separate variable on every OS, where an upper-cased
+# spelling is the same variable as the camelCase one on Windows only. Each asserts the deterministic
+# half first -- the hostile value reached the child under no spelling -- and only then the resolved
+# value. MaxWaitMs arrives only as an argument, and the capture mode and capture log are read by exact
+# name, so no other spelling reaches a reader of theirs; they stay controls.
+#
 # CLASSIFICATION is as in PowerShellLsp.ScanVerdict.Tests.ps1: one It per contract assertion; an It
 # measured RED at the A1 head is tagged with its owner and excluded from tests/run-tests.ps1, and
 # tests/assert-expected-red.ps1 proves it still fails with its declared assertion. 'ScanRed-A2' marks
-# what A2's narrow formatter-off containment fixes (formatting must be OFF in every scan child);
-# 'ScanRed-A3' marks what A3's declared scan configuration fixes (ambient analysis knobs, and an
-# ambient ps_host, must not reach a scan). Already-green cells are controls and run normally.
+# what A2's narrow formatter-off containment fixes (formatting must be OFF in every scan child, under
+# every spelling of formatOnEdit); 'ScanRed-A3' marks what A3's declared scan configuration fixes
+# (ambient analysis knobs, and an ambient ps_host, must not reach a scan under any spelling). A
+# containment that overrides only the spelling the scan names cannot turn the alias cases green.
+# Already-green cells are controls and run normally.
 #
 # ASCII-only (PS 5.1 Windows-1252 trap); StrictMode-safe. Run via tests/run-tests.ps1.
 
@@ -105,6 +121,23 @@ Describe 'Scan read-only census of the configuration a scan child receives (disp
             if ($null -eq $info) { throw ('the fake session-start never reported ready for ' + $sid) }
             return ([System.IO.File]::ReadAllText((Join-Path $data ('env-session-start-' + $sid + '.json'))) | ConvertFrom-Json)
         }
+
+        function Get-RcSpellingLeak {
+            # The entries of a child's recorded environment that hold $Value under ANY spelling the
+            # production resolver maps to $Key -- Get-RawPluginOption's rule: the CLAUDE_PLUGIN_OPTION_
+            # prefix matched case-insensitively, the rest with underscores stripped and lower-cased --
+            # as sorted 'NAME=value' text. '' means the value reached the child under no spelling.
+            param($Record, [string]$Key, [string]$Value)
+            $prefix = 'CLAUDE_PLUGIN_OPTION_'
+            $target = ($Key -replace '_', '').ToLowerInvariant()
+            $hits = @(@($Record.env.PSObject.Properties) | Where-Object {
+                    $n = [string]$_.Name
+                    $n.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase) -and
+                    (($n.Substring($prefix.Length) -replace '_', '').ToLowerInvariant() -eq $target) -and
+                    ([string]$_.Value -eq $Value)
+                } | ForEach-Object { [string]$_.Name + '=' + [string]$_.Value })
+            return (@($hits | Sort-Object) -join ',')
+        }
     }
 
     AfterAll {
@@ -134,8 +167,11 @@ Describe 'Scan read-only census of the configuration a scan child receives (disp
             $rec = Measure-RcSessionStart -Tag 'rx' -Ambient @{ ruleExclude = 'PSUseApprovedVerbs' }
             [string]$rec.resolved.ruleExclude.value | Should -BeExactly '' -Because 'F2 ruleExclude: an ambient exclude list must not narrow a scan'
         }
-        It 'an ambient perFileCap is overridden by the declared scan cap of 0 (already green)' {
+        # Staged under the scan override's own spelling only. Another spelling is the alias case in the
+        # Context 'other spellings of a knob reach the scan child' below, and is RED.
+        It 'an ambient CLAUDE_PLUGIN_OPTION_perFileCap is replaced by the declared scan cap of 0 (same-spelling control)' {
             $rec = Measure-RcSessionStart -Tag 'pc' -Ambient @{ perFileCap = '1' }
+            (Get-RcSpellingLeak -Record $rec -Key 'perFileCap' -Value '1') | Should -BeExactly '' -Because 'F2 perFileCap: the same-spelled override replaces the ambient value'
             [string]$rec.resolved.perFileCap.value | Should -BeExactly '0' -Because 'F2 perFileCap: the scan declares perFileCap=0'
         }
         It 'an ambient profile does not change the analysis defaults the scan session-start resolves' -Tag 'ScanRed-A3' {
@@ -151,24 +187,43 @@ Describe 'Scan read-only census of the configuration a scan child receives (disp
             [string]$rec.preferredHost | Should -BeExactly 'pwsh' -Because 'F2 ps_host situation: the scan must have declared pwsh, a host other than the ambient one'
             [string]$rec.resolved.ps_host.value | Should -BeExactly 'pwsh' -Because 'F2 ps_host: an ambient ps_host must not move a scan onto another analysis host'
         }
-        # MaxWaitMs is not a userConfig knob and session-start does not self-source it (the knob-set
-        # guard below pins that), so the only ambient form it can take is a CLAUDE_PLUGIN_OPTION_
-        # variable of its name: one is staged, and asserted present in the child, so 15000 is earned.
-        It 'the declared severityThreshold and MaxWaitMs reach the scan session-start over hostile ambient values (control)' {
-            $rec = Measure-RcSessionStart -Tag 'ct' -Ambient @{ severityThreshold = 'Error'; maxWaitMs = '1' }
+        # Staged under the scan override's own spelling only; another spelling is RED (the alias case).
+        It 'an ambient CLAUDE_PLUGIN_OPTION_severityThreshold is replaced by the declared Hint (same-spelling control)' {
+            $rec = Measure-RcSessionStart -Tag 'ct' -Ambient @{ severityThreshold = 'Error' }
+            (Get-RcSpellingLeak -Record $rec -Key 'severityThreshold' -Value 'Error') | Should -BeExactly '' -Because 'F2 severityThreshold: the same-spelled override replaces the ambient value'
             [string]$rec.resolved.severityThreshold.value | Should -BeExactly 'Hint'
             [string]$rec.resolved.severityThreshold.provenance | Should -BeExactly 'env'
-            [string]$rec.env.CLAUDE_PLUGIN_OPTION_maxWaitMs | Should -BeExactly '1' -Because 'the hostile MaxWaitMs must have reached the scan session-start'
+        }
+        # MaxWaitMs is not a userConfig knob and session-start does not self-source it (the knob-set
+        # guard below pins that): it arrives only as the -MaxWaitMs argument, so an ambient
+        # CLAUDE_PLUGIN_OPTION_ variable of its name has no reader under ANY spelling. Two spellings
+        # are staged and asserted present in the child, so 15000 is earned for both.
+        It 'the declared MaxWaitMs reaches the scan session-start over hostile CLAUDE_PLUGIN_OPTION_maxWaitMs and CLAUDE_PLUGIN_OPTION_MAX_WAIT_MS values (control)' {
+            $rec = Measure-RcSessionStart -Tag 'mw' -Ambient @{ maxWaitMs = '1'; MAX_WAIT_MS = '1' }
+            [string]$rec.env.CLAUDE_PLUGIN_OPTION_maxWaitMs | Should -BeExactly '1' -Because 'the hostile maxWaitMs must have reached the scan session-start'
+            [string]$rec.env.CLAUDE_PLUGIN_OPTION_MAX_WAIT_MS | Should -BeExactly '1' -Because 'the hostile MAX_WAIT_MS must have reached the scan session-start'
             [int]$rec.maxWaitMs | Should -Be 15000
         }
     }
 
     Context 'declared client overrides reach the scan client' {
-        It 'scopeToEdit=false, timeoutMs=18000, capture mode full and a private capture log reach the client over hostile ambient values (control)' {
-            $m = Measure-RcClient -Tag 'co' -Ambient @{ scopeToEdit = 'true'; timeoutMs = '1' } `
-                -AmbientRaw @{ POWERSHELL_LSP_CAPTURE_MODE = 'off'; POWERSHELL_LSP_DOGFOOD_LOG = (Join-Path ([System.IO.Path]::GetTempPath()) 'psls-not-the-scan-log.jsonl') }
+        # Staged under the scan overrides' own spellings only; another spelling of either knob is RED
+        # (the alias cases).
+        It 'ambient CLAUDE_PLUGIN_OPTION_scopeToEdit and CLAUDE_PLUGIN_OPTION_timeoutMs are replaced by the declared false and 18000 (same-spelling control)' {
+            $m = Measure-RcClient -Tag 'co' -Ambient @{ scopeToEdit = 'true'; timeoutMs = '1' }
+            (Get-RcSpellingLeak -Record $m.Record -Key 'scopeToEdit' -Value 'true') | Should -BeExactly '' -Because 'F2 scopeToEdit: the same-spelled override replaces the ambient value'
+            (Get-RcSpellingLeak -Record $m.Record -Key 'timeoutMs' -Value '1') | Should -BeExactly '' -Because 'F2 timeoutMs: the same-spelled override replaces the ambient value'
             [string]$m.Record.resolved.scopeToEdit.value | Should -BeExactly 'False'
             [string]$m.Record.resolved.timeoutMs.value | Should -BeExactly '18000'
+        }
+        # The capture mode and the capture log are read by EXACT name ($env:POWERSHELL_LSP_CAPTURE_MODE
+        # and $env:POWERSHELL_LSP_DOGFOOD_LOG, scripts/lib/lsp-common.ps1), never through the
+        # normalizing resolver: on Windows any casing of either name is the one variable the override
+        # replaces, and on Linux/macOS another casing is a separate variable nothing reads. So these two
+        # have no other spelling to stage.
+        It 'ambient POWERSHELL_LSP_CAPTURE_MODE and POWERSHELL_LSP_DOGFOOD_LOG are replaced by capture mode full and a private capture log (control)' {
+            $m = Measure-RcClient -Tag 'cc' -Ambient @{} `
+                -AmbientRaw @{ POWERSHELL_LSP_CAPTURE_MODE = 'off'; POWERSHELL_LSP_DOGFOOD_LOG = (Join-Path ([System.IO.Path]::GetTempPath()) 'psls-not-the-scan-log.jsonl') }
             [string]$m.Record.env.POWERSHELL_LSP_CAPTURE_MODE | Should -BeExactly 'full'
             [string]$m.Record.env.POWERSHELL_LSP_DOGFOOD_LOG | Should -Match 'scan-capture'
         }
@@ -176,6 +231,69 @@ Describe 'Scan read-only census of the configuration a scan child receives (disp
             $m = Measure-RcClient -Tag 'cl' -Ambient @{}
             [string]$m.Record.formatMode | Should -BeExactly 'off'
             [string]$m.Record.resolved.formatOnEdit.provenance | Should -BeExactly 'default'
+        }
+    }
+
+    # THE SPELLING CHANNEL, measured (review RC01; see the file header). Each case stages ONE hostile
+    # value under an underscore spelling the resolver maps to the knob, and nothing else. Its first
+    # assertion is deterministic: the hostile value must reach the child under no spelling at all. The
+    # resolved value is asserted only after it, because at this head it is decided by the child's
+    # environment enumeration order and on its own would pass or fail at random. Where the scan
+    # declares the knob, the case first re-checks that the declared value is in force under its own
+    # spelling (the situation). 'profile' is one word, so its only spelling the resolver accepts that
+    # is a separate variable on every OS is one with an underscore inside it (PRO_FILE).
+    Context 'other spellings of a knob reach the scan child' {
+        It 'an ambient CLAUDE_PLUGIN_OPTION_PER_FILE_CAP does not reach the scan session-start beside the declared cap of 0' -Tag 'ScanRed-A3' {
+            $rec = Measure-RcSessionStart -Tag 'apc' -Ambient @{ PER_FILE_CAP = '1' }
+            [string]$rec.env.CLAUDE_PLUGIN_OPTION_perFileCap | Should -BeExactly '0' -Because 'F2 perFileCap alias situation: the scan must have declared its cap under its own spelling'
+            (Get-RcSpellingLeak -Record $rec -Key 'perFileCap' -Value '1') | Should -BeExactly '' -Because 'F2 perFileCap alias: an ambient cap must not reach a scan child under any spelling'
+            [string]$rec.resolved.perFileCap.value | Should -BeExactly '0' -Because 'F2 perFileCap alias: the scan declares perFileCap=0'
+        }
+        It 'an ambient CLAUDE_PLUGIN_OPTION_SEVERITY_THRESHOLD does not reach the scan session-start beside the declared Hint' -Tag 'ScanRed-A3' {
+            $rec = Measure-RcSessionStart -Tag 'ast' -Ambient @{ SEVERITY_THRESHOLD = 'Error' }
+            [string]$rec.env.CLAUDE_PLUGIN_OPTION_severityThreshold | Should -BeExactly 'Hint' -Because 'F2 severityThreshold alias situation: the scan must have declared Hint under its own spelling'
+            (Get-RcSpellingLeak -Record $rec -Key 'severityThreshold' -Value 'Error') | Should -BeExactly '' -Because 'F2 severityThreshold alias: an ambient threshold must not reach a scan child under any spelling'
+            [string]$rec.resolved.severityThreshold.value | Should -BeExactly 'Hint' -Because 'F2 severityThreshold alias: the scan declares severityThreshold=Hint'
+        }
+        It 'an ambient CLAUDE_PLUGIN_OPTION_RULE_INCLUDE does not reach the scan session-start' -Tag 'ScanRed-A3' {
+            $rec = Measure-RcSessionStart -Tag 'ari' -Ambient @{ RULE_INCLUDE = 'PSAvoidUsingCmdletAliases' }
+            (Get-RcSpellingLeak -Record $rec -Key 'ruleInclude' -Value 'PSAvoidUsingCmdletAliases') | Should -BeExactly '' -Because 'F2 ruleInclude alias: an ambient include list must not reach a scan child under any spelling'
+            [string]$rec.resolved.ruleInclude.value | Should -BeExactly '' -Because 'F2 ruleInclude alias: an ambient include list must not narrow a scan'
+        }
+        It 'an ambient CLAUDE_PLUGIN_OPTION_RULE_EXCLUDE does not reach the scan session-start' -Tag 'ScanRed-A3' {
+            $rec = Measure-RcSessionStart -Tag 'arx' -Ambient @{ RULE_EXCLUDE = 'PSUseApprovedVerbs' }
+            (Get-RcSpellingLeak -Record $rec -Key 'ruleExclude' -Value 'PSUseApprovedVerbs') | Should -BeExactly '' -Because 'F2 ruleExclude alias: an ambient exclude list must not reach a scan child under any spelling'
+            [string]$rec.resolved.ruleExclude.value | Should -BeExactly '' -Because 'F2 ruleExclude alias: an ambient exclude list must not narrow a scan'
+        }
+        It 'an ambient CLAUDE_PLUGIN_OPTION_PRO_FILE does not reach the scan session-start' -Tag 'ScanRed-A3' {
+            $rec = Measure-RcSessionStart -Tag 'apf' -Ambient @{ PRO_FILE = 'strict' }
+            (Get-RcSpellingLeak -Record $rec -Key 'profile' -Value 'strict') | Should -BeExactly '' -Because 'F2 profile alias: an ambient profile must not reach a scan child under any spelling'
+            ('ruleset=' + [string]$rec.resolved.ruleset.value + ' moduleAwareness=' + [string]$rec.resolved.moduleAwareness.value +
+                ' referenceSurfacing=' + [string]$rec.resolved.referenceSurfacing.value) |
+                Should -BeExactly 'ruleset=pses-default moduleAwareness=off referenceSurfacing=off' -Because 'F2 profile alias: an ambient profile must not change what a scan analyses'
+        }
+        It 'an ambient CLAUDE_PLUGIN_OPTION_psHost does not reach the scan session-start' -Tag 'ScanRed-A3' {
+            $rec = Measure-RcSessionStart -Tag 'aph' -Ambient @{ psHost = 'powershell' }
+            [string]$rec.preferredHost | Should -BeExactly 'pwsh' -Because 'F2 ps_host alias situation: the scan must have declared pwsh, a host other than the ambient one'
+            (Get-RcSpellingLeak -Record $rec -Key 'ps_host' -Value 'powershell') | Should -BeExactly '' -Because 'F2 ps_host alias: an ambient analysis host must not reach a scan child under any spelling'
+            [string]$rec.resolved.ps_host.value | Should -BeExactly 'pwsh' -Because 'F2 ps_host alias: an ambient ps_host must not move a scan onto another analysis host'
+        }
+        It 'an ambient CLAUDE_PLUGIN_OPTION_SCOPE_TO_EDIT does not reach the scan client beside the declared false' -Tag 'ScanRed-A3' {
+            $m = Measure-RcClient -Tag 'ase' -Ambient @{ SCOPE_TO_EDIT = 'true' }
+            [string]$m.Record.env.CLAUDE_PLUGIN_OPTION_scopeToEdit | Should -BeExactly 'false' -Because 'F2 scopeToEdit alias situation: the scan must have declared whole-file scoping under its own spelling'
+            (Get-RcSpellingLeak -Record $m.Record -Key 'scopeToEdit' -Value 'true') | Should -BeExactly '' -Because 'F2 scopeToEdit alias: an ambient scoping value must not reach a scan child under any spelling'
+            [string]$m.Record.resolved.scopeToEdit.value | Should -BeExactly 'False' -Because 'F2 scopeToEdit alias: the scan declares scopeToEdit=false'
+        }
+        It 'an ambient CLAUDE_PLUGIN_OPTION_TIMEOUT_MS does not reach the scan client beside the declared 18000' -Tag 'ScanRed-A3' {
+            $m = Measure-RcClient -Tag 'ato' -Ambient @{ TIMEOUT_MS = '1' }
+            [string]$m.Record.env.CLAUDE_PLUGIN_OPTION_timeoutMs | Should -BeExactly '18000' -Because 'F2 timeoutMs alias situation: the scan must have declared its client timeout under its own spelling'
+            (Get-RcSpellingLeak -Record $m.Record -Key 'timeoutMs' -Value '1') | Should -BeExactly '' -Because 'F2 timeoutMs alias: an ambient client timeout must not reach a scan child under any spelling'
+            [string]$m.Record.resolved.timeoutMs.value | Should -BeExactly '18000' -Because 'F2 timeoutMs alias: the scan declares timeoutMs=18000'
+        }
+        It 'an ambient CLAUDE_PLUGIN_OPTION_FORMAT_ON_EDIT does not reach the scan client' -Tag 'ScanRed-A2' {
+            $m = Measure-RcClient -Tag 'afo' -Ambient @{ FORMAT_ON_EDIT = 'apply' }
+            (Get-RcSpellingLeak -Record $m.Record -Key 'formatOnEdit' -Value 'apply') | Should -BeExactly '' -Because 'F2 formatOnEdit alias: an ambient format mode must not reach a scan child under any spelling'
+            [string]$m.Record.formatMode | Should -BeExactly 'off' -Because 'F2 formatOnEdit alias: a scan child must never format'
         }
     }
 
@@ -362,10 +480,18 @@ Describe 'Scan read-only integration with the real daemon and formatter (dispatc
             $h.Analyzed | Should -BeTrue -Because 'F2 hostile ruleInclude situation: the file must have been analysed'
             ($h.Keys -join ',') | Should -BeExactly ($script:RiBase.Keys -join ',') -Because 'F2 hostile ruleInclude: an ambient include list must not narrow a scan'
         }
-        It 'an ambient perFileCap does not change the scan finding set (already green)' {
+        # Staged under the scan override's own spelling only, which the override replaces. The same cap
+        # under another spelling (CLAUDE_PLUGIN_OPTION_PER_FILE_CAP) reaches the real session-start
+        # beside the declared 0 and wins at random: some real daemons then launch with -PerFileCap 1 and
+        # the scan reports one finding of two while the file still reads analysed, others launch with 0.
+        # An outcome that varies from run to run cannot be bounded by the oracle, so that case is not an
+        # It here; its deterministic half is the RED transport case 'an ambient
+        # CLAUDE_PLUGIN_OPTION_PER_FILE_CAP does not reach the scan session-start beside the declared cap
+        # of 0' in the census above, and the real-daemon runs are recorded in the dispatch 000302 outbox.
+        It 'an ambient CLAUDE_PLUGIN_OPTION_perFileCap does not change the scan finding set (same-spelling control)' {
             $h = Measure-RiHostile -Tag 'pc' -Ambient @{ perFileCap = '1' }
             $h.Analyzed | Should -BeTrue -Because 'F2 hostile perFileCap situation: the file must have been analysed'
-            ($h.Keys -join ',') | Should -BeExactly ($script:RiBase.Keys -join ',') -Because 'F2 hostile perFileCap: an ambient cap must not narrow a scan'
+            ($h.Keys -join ',') | Should -BeExactly ($script:RiBase.Keys -join ',') -Because 'F2 hostile perFileCap: an ambient cap of the same spelling as the scan override must not narrow a scan'
         }
         It 'an ambient profile does not change the scan finding set' -Tag 'ScanRed-A3' {
             $h = Measure-RiHostile -Tag 'pf' -Ambient @{ profile = 'strict' }

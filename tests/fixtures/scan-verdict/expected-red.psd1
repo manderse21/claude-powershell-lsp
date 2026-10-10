@@ -18,6 +18,15 @@
 # from Tags and from run-tests.ps1's default. Never add an entry for a test that was not measured
 # RED; never widen a Message to make a different failure fit.
 #
+# THE SPELLING CHANNEL (review RC01, correction round 2). The option resolver accepts any
+# CLAUDE_PLUGIN_OPTION_* spelling that normalizes to a knob and takes the first non-blank one it
+# enumerates; the scan's per-child overrides replace only the spelling they name. The nine entries
+# under that heading below stage a hostile value under another such spelling and fail on the
+# deterministic half -- the value reached the scan child -- so a containment that overrides or
+# clears only the scan's own spelling cannot turn them green. Same-spelling cases are controls.
+#
+# CENSUS at the A1 head after correction round 2: 54 entries -- 39 ScanRed-A2, 15 ScanRed-A3.
+#
 # ASCII-only.
 
 @{
@@ -27,8 +36,8 @@
     )
 
     Tags     = @{
-        'ScanRed-A2' = 'A2 -- typed scan completion receipt (a scan reports a file analyzed only on positive evidence of completion, both child streams drained, a timed-out child terminated) and narrow formatter-off containment (formatting off in every scan child)'
-        'ScanRed-A3' = 'A3 -- declared read-only scan configuration (ambient ruleInclude / ruleExclude / profile / ps_host values never reach a scan child)'
+        'ScanRed-A2' = 'A2 -- typed scan completion receipt (a scan reports a file analyzed only on positive evidence of completion, both child streams drained, a timed-out child terminated) and narrow formatter-off containment (formatting off in every scan child, under every spelling of formatOnEdit the option resolver accepts)'
+        'ScanRed-A3' = 'A3 -- declared read-only scan configuration (ambient ruleInclude / ruleExclude / profile / ps_host values never reach a scan child, and no ambient value reaches one under another spelling the option resolver accepts, whether or not the scan declares that knob -- perFileCap / severityThreshold / scopeToEdit / timeoutMs it does)'
     }
 
     Expected = @(
@@ -177,6 +186,44 @@
             Name = 'an ambient ps_host does not override the analysis host the scan declares'
             Path = 'Scan read-only census of the configuration a scan child receives (dispatch 000302 A1).daemon-side knobs reach the scan session-start.an ambient ps_host does not override the analysis host the scan declares'
             Message = 'because F2 ps_host: an ambient ps_host must not move a scan onto another analysis host, but they were different\..*But was:\s+''powershell''' }
+
+        # ---- F2, the spelling channel: a hostile value under another spelling the resolver accepts reaches the scan child (A3; formatOnEdit A2)
+        @{ File = 'PowerShellLsp.ScanReadOnly.Tests.ps1'; Tag = 'ScanRed-A3'
+            Name = 'an ambient CLAUDE_PLUGIN_OPTION_PER_FILE_CAP does not reach the scan session-start beside the declared cap of 0'
+            Path = 'Scan read-only census of the configuration a scan child receives (dispatch 000302 A1).other spellings of a knob reach the scan child.an ambient CLAUDE_PLUGIN_OPTION_PER_FILE_CAP does not reach the scan session-start beside the declared cap of 0'
+            Message = 'because F2 perFileCap alias: an ambient cap must not reach a scan child under any spelling, but they were different\..*But was:\s+''CLAUDE_PLUGIN_OPTION_PER_FILE_CAP=1''' }
+        @{ File = 'PowerShellLsp.ScanReadOnly.Tests.ps1'; Tag = 'ScanRed-A3'
+            Name = 'an ambient CLAUDE_PLUGIN_OPTION_SEVERITY_THRESHOLD does not reach the scan session-start beside the declared Hint'
+            Path = 'Scan read-only census of the configuration a scan child receives (dispatch 000302 A1).other spellings of a knob reach the scan child.an ambient CLAUDE_PLUGIN_OPTION_SEVERITY_THRESHOLD does not reach the scan session-start beside the declared Hint'
+            Message = 'because F2 severityThreshold alias: an ambient threshold must not reach a scan child under any spelling, but they were different\..*But was:\s+''CLAUDE_PLUGIN_OPTION_SEVERITY_THRESHOLD=Error''' }
+        @{ File = 'PowerShellLsp.ScanReadOnly.Tests.ps1'; Tag = 'ScanRed-A3'
+            Name = 'an ambient CLAUDE_PLUGIN_OPTION_RULE_INCLUDE does not reach the scan session-start'
+            Path = 'Scan read-only census of the configuration a scan child receives (dispatch 000302 A1).other spellings of a knob reach the scan child.an ambient CLAUDE_PLUGIN_OPTION_RULE_INCLUDE does not reach the scan session-start'
+            Message = 'because F2 ruleInclude alias: an ambient include list must not reach a scan child under any spelling, but they were different\..*But was:\s+''CLAUDE_PLUGIN_OPTION_RULE_INCLUDE=PSAvoidUsingCmdletAliases''' }
+        @{ File = 'PowerShellLsp.ScanReadOnly.Tests.ps1'; Tag = 'ScanRed-A3'
+            Name = 'an ambient CLAUDE_PLUGIN_OPTION_RULE_EXCLUDE does not reach the scan session-start'
+            Path = 'Scan read-only census of the configuration a scan child receives (dispatch 000302 A1).other spellings of a knob reach the scan child.an ambient CLAUDE_PLUGIN_OPTION_RULE_EXCLUDE does not reach the scan session-start'
+            Message = 'because F2 ruleExclude alias: an ambient exclude list must not reach a scan child under any spelling, but they were different\..*But was:\s+''CLAUDE_PLUGIN_OPTION_RULE_EXCLUDE=PSUseApprovedVerbs''' }
+        @{ File = 'PowerShellLsp.ScanReadOnly.Tests.ps1'; Tag = 'ScanRed-A3'
+            Name = 'an ambient CLAUDE_PLUGIN_OPTION_PRO_FILE does not reach the scan session-start'
+            Path = 'Scan read-only census of the configuration a scan child receives (dispatch 000302 A1).other spellings of a knob reach the scan child.an ambient CLAUDE_PLUGIN_OPTION_PRO_FILE does not reach the scan session-start'
+            Message = 'because F2 profile alias: an ambient profile must not reach a scan child under any spelling, but they were different\..*But was:\s+''CLAUDE_PLUGIN_OPTION_PRO_FILE=strict''' }
+        @{ File = 'PowerShellLsp.ScanReadOnly.Tests.ps1'; Tag = 'ScanRed-A3'
+            Name = 'an ambient CLAUDE_PLUGIN_OPTION_psHost does not reach the scan session-start'
+            Path = 'Scan read-only census of the configuration a scan child receives (dispatch 000302 A1).other spellings of a knob reach the scan child.an ambient CLAUDE_PLUGIN_OPTION_psHost does not reach the scan session-start'
+            Message = 'because F2 ps_host alias: an ambient analysis host must not reach a scan child under any spelling, but they were different\..*But was:\s+''CLAUDE_PLUGIN_OPTION_psHost=powershell''' }
+        @{ File = 'PowerShellLsp.ScanReadOnly.Tests.ps1'; Tag = 'ScanRed-A3'
+            Name = 'an ambient CLAUDE_PLUGIN_OPTION_SCOPE_TO_EDIT does not reach the scan client beside the declared false'
+            Path = 'Scan read-only census of the configuration a scan child receives (dispatch 000302 A1).other spellings of a knob reach the scan child.an ambient CLAUDE_PLUGIN_OPTION_SCOPE_TO_EDIT does not reach the scan client beside the declared false'
+            Message = 'because F2 scopeToEdit alias: an ambient scoping value must not reach a scan child under any spelling, but they were different\..*But was:\s+''CLAUDE_PLUGIN_OPTION_SCOPE_TO_EDIT=true''' }
+        @{ File = 'PowerShellLsp.ScanReadOnly.Tests.ps1'; Tag = 'ScanRed-A3'
+            Name = 'an ambient CLAUDE_PLUGIN_OPTION_TIMEOUT_MS does not reach the scan client beside the declared 18000'
+            Path = 'Scan read-only census of the configuration a scan child receives (dispatch 000302 A1).other spellings of a knob reach the scan child.an ambient CLAUDE_PLUGIN_OPTION_TIMEOUT_MS does not reach the scan client beside the declared 18000'
+            Message = 'because F2 timeoutMs alias: an ambient client timeout must not reach a scan child under any spelling, but they were different\..*But was:\s+''CLAUDE_PLUGIN_OPTION_TIMEOUT_MS=1''' }
+        @{ File = 'PowerShellLsp.ScanReadOnly.Tests.ps1'; Tag = 'ScanRed-A2'
+            Name = 'an ambient CLAUDE_PLUGIN_OPTION_FORMAT_ON_EDIT does not reach the scan client'
+            Path = 'Scan read-only census of the configuration a scan child receives (dispatch 000302 A1).other spellings of a knob reach the scan child.an ambient CLAUDE_PLUGIN_OPTION_FORMAT_ON_EDIT does not reach the scan client'
+            Message = 'because F2 formatOnEdit alias: an ambient format mode must not reach a scan child under any spelling, but they were different\..*But was:\s+''CLAUDE_PLUGIN_OPTION_FORMAT_ON_EDIT=apply''' }
 
         # ---- F2, real daemon + formatter: an apply-mode scan rewrites the source and loses its findings (A2)
         @{ File = 'PowerShellLsp.ScanReadOnly.Tests.ps1'; Tag = 'ScanRed-A2'
