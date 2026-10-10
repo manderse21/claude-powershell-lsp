@@ -173,7 +173,7 @@ release. The exact steps and the exact checks follow below.
    Whether a re-stamped map still tells the truth about the program is the maintainer's call, which
    is why the gate is human. Introduced by dispatch 000274 with the map's publication.
 
-6. **Open a pull request and merge it.** The PR runs the four-leg CI. Merge to main once it is
+6. **Open a pull request and merge it.** The PR runs the CI workflow. Merge to main once it is
    green and reviewed. **Do not tag here, and do not run the tag commands the bump helper
    prints.** Those are a manual FALLBACK for a broken pipeline (see
    [Manual fallback](#manual-fallback-if-the-pipeline-misbehaves)), never the release path --
@@ -182,12 +182,13 @@ release. The exact steps and the exact checks follow below.
 
 7. **(Optional) Wait for the push CI on main to go green.** After the merge, the
    [`powershell-lsp CI`](../.github/workflows/powershell-lsp-ci.yml) workflow runs on the
-   merge commit on all four legs (`windows-pwsh`, `windows-powershell`, `ubuntu-pwsh`,
-   `macos-pwsh`). You no longer have to hand-time the next step to the window after CI
-   finishes: Gate 4 now **waits** for this run to reach a terminal state (up to a generous
-   timeout) before it judges, so triggering the release while CI is still in progress makes the
-   release job **wait** for CI rather than refuse. Waiting here yourself is therefore optional --
-   it just lets you confirm green before you trigger.
+   merge commit: the five legs Gate 4 requires (`windows-pwsh`, `windows-powershell`,
+   `ubuntu-pwsh`, `macos-pwsh`, `container-pwsh`) and the advisory `claude-code-compat` job.
+   You no longer have to hand-time the next step to the window after CI finishes: Gate 4 now
+   **waits** for this run to reach a terminal state (up to a generous timeout) before it judges,
+   so triggering the release while CI is still in progress makes the release job **wait** for CI
+   rather than refuse. Waiting here yourself is therefore optional -- it just lets you confirm
+   green before you trigger.
 
 8. **Trigger the release workflow** with the version you just merged:
 
@@ -224,11 +225,17 @@ with a clear error and **tags nothing** -- the safe direction is always to refus
   push-event run of the CI workflow for the exact target commit and **waits for that run to
   reach a terminal state** -- it polls the run every 20 seconds until it is `completed`, up to a
   generous 30-minute timeout -- and only THEN judges it: the run must have concluded `success`
-  and every required leg (`windows-pwsh`, `windows-powershell`, `ubuntu-pwsh`, `macos-pwsh`)
-  must have concluded `success`. A still-running run is **waited on, not refused**; but no run
-  found, a non-`success` conclusion, a failed or missing leg, or the timeout elapsing (CI did
-  not conclude within 30 minutes) each still refuses -- the timeout refuses **honestly** (it is
-  reported as a timeout, never as green). This wait removes the old timing race in which
+  and every required leg must have concluded `success`. The required legs are the CI workflow's
+  five non-advisory legs: the four matrix legs `windows-pwsh`, `windows-powershell`,
+  `ubuntu-pwsh` and `macos-pwsh`, and the separately named `container-pwsh` job (required since
+  dispatch 000303; a container job that is missing or skipped leaves the run `success`, so only
+  this per-leg check can refuse it). The `claude-code-compat` job is **advisory** (ruling R-G,
+  `continue-on-error: true`) and is not judged: its failure does not fail the run, and it is not
+  a required leg -- though Gate 4 still waits for the whole run, compat included, to finish. A
+  still-running run is **waited on, not refused**; but no run found, a non-`success` conclusion,
+  a failed or missing leg, or the timeout elapsing (CI did not conclude within 30 minutes) each
+  still refuses -- the timeout refuses **honestly** (it is reported as a timeout, never as
+  green). This wait removes the old timing race in which
   triggering the release before CI had finished refused a run that was about to pass. (The two
   values are set as `CI_WAIT_TIMEOUT_SECONDS` and `CI_WAIT_POLL_SECONDS` in the release
   workflow's Gate 4 step.)
@@ -285,9 +292,17 @@ Because the tag is cut by the pipeline only after all six gates pass -- never by
 hand-typed `git tag` -- a tag on an unmerged, red, wrong-version, wrong-commit,
 behind-the-published-tip, or **unrehearsed** release is structurally impossible.
 
-> **If the CI matrix changes legs,** update the `REQUIRED_LEGS` list in the release workflow
-> to match `powershell-lsp-ci.yml`'s `matrix.label` set. A leg that is required but missing
-> from a run is treated as not-green (refuse).
+> **If the CI workflow changes its jobs,** update the `REQUIRED_LEGS` list in the release
+> workflow to match every non-advisory job in `powershell-lsp-ci.yml`, by the name the job
+> reports: the `matrix.label` set of the `pester` job plus each separately named job, such as
+> `container-pwsh`. Leave advisory jobs (`continue-on-error: true`, such as `claude-code-compat`)
+> out. `tests/PowerShellLsp.Release.Tests.ps1` fails until the two agree. A leg that is required
+> but missing from a run is treated as not-green (refuse).
+>
+> **The release gate's legs are not the branch-protection required checks.** `REQUIRED_LEGS`
+> decides only whether this workflow will tag a commit. The status checks that `main`'s branch
+> protection requires before a PR can merge are a separate GitHub setting; neither one changes
+> the other, and they need not list the same legs.
 
 ## What the pipeline produces
 
@@ -517,7 +532,8 @@ If the pipeline ever fails for an infrastructure reason, a release can still be 
 but the gates must then be checked MANUALLY, in the same order, before tagging:
 
 1. **Confirm merged + green.** On the Actions tab, confirm the target commit is on `main` and
-   its push CI is green on all four legs.
+   its push CI is green on all five required legs (the four matrix legs and `container-pwsh`;
+   the advisory `claude-code-compat` result is not required).
 2. **Confirm version lockstep.** Confirm `plugin.json` and `marketplace.json` both read the
    target version at that commit.
 3. **Tag the validated commit and push it:**

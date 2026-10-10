@@ -70,7 +70,7 @@ require a stored signing key, that is the rejected key-custody path, not this on
 The canonical runbook is [docs/RELEASING.md](./docs/RELEASING.md). Read it end to end once. In
 brief, a release is: bump the version in lockstep, record the CHANGELOG entry, advance the roadmap,
 confirm published release bodies still agree with the CHANGELOG, open and merge a pull request, let
-the four-leg CI go green, then manually trigger the release workflow -- which refuses to tag unless
+the five-leg CI go green, then manually trigger the release workflow -- which refuses to tag unless
 all **six** gates pass (merged to main; tag free; version lockstep; CI green on every leg;
 tree-vs-published parity; and a rehearsal dry run on the same commit within 3 days). Do not re-tag
 by hand; the pipeline cuts the tag on a commit it has already validated. Rehearse first with a dry

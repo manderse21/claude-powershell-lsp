@@ -238,6 +238,30 @@ acceptance: "Real PowerShell analysis after every AI edit -- with proof it ran."
 Hover/go-to-definition/find-references sentence is unchanged, the two files stay consistent with
 each other, and the `powershell-lsp` marketplace slug is untouched.
 
+PATCH: **Release Gate 4 now requires the `container-pwsh` CI leg as well as the four matrix legs**
+(release workflow, tests and docs only; no plugin runtime change -- dispatch 000303, leg D3). The
+CI workflow has five non-advisory legs -- `windows-pwsh`, `windows-powershell`, `ubuntu-pwsh`,
+`macos-pwsh` and, since dispatch 000286, `container-pwsh`, a job of its own -- and one advisory
+job, `claude-code-compat` (`continue-on-error: true`, ruling R-G). Gate 4's per-leg check listed
+only the four matrix legs. A red container job already failed the run, and Gate 4 refused that at
+its run-level check; but a push-CI run whose container job was missing (renamed or removed) or
+skipped still concludes `success`, and Gate 4 passed it. `REQUIRED_LEGS` in
+`.github/workflows/powershell-lsp-release.yml` now lists all five. `claude-code-compat` stays
+unlisted and advisory, and no CI job or job name changed. `tests/PowerShellLsp.Release.Tests.ps1`
+now runs Gate 4's own bash, cut from the workflow file at test time, with `gh` stubbed, against
+the GitHub API record of a real push-CI run (run 36435564569 at `d5ce581`,
+`tests/fixtures/release-gate4/`) and single-field mutations of it. It accepts the all-success
+record, and the record with only compat failed or removed. It refuses the record with
+`container-pwsh` removed, or concluding `failure`, `skipped` or `cancelled` under a `success` run,
+and with each other required leg removed. As a control, the old four-leg list accepts the missing-
+and failed-container records; run against the old workflow, 9 of the 18 new or changed tests
+fail. A consistency test holds `REQUIRED_LEGS` equal to the CI workflow's non-advisory
+jobs, so adding, renaming or reclassifying a job without updating the gate fails CI. The execution
+tests need `bash` and `jq`, and skip, saying why, where either is missing (the container image has
+no `jq`). `docs/RELEASING.md` and `docs/SUPPORT-POLICY.md` now give five required release legs and
+say that the release gate's list is separate from the branch-protection required checks on
+`main`, which this change does not touch.
+
 
 ## [1.35.0] - 2026-09-13
 MINOR: **A first-party semantic query surface, fleet OpenTelemetry export, and an org-policy

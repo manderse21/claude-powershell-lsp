@@ -20,9 +20,9 @@ run-name: >-
 # Mike runs, choosing the version. It then makes a BAD TAG STRUCTURALLY IMPOSSIBLE:
 # it refuses to tag unless the target commit is (1) merged to main, (2) has a free
 # tag, (3) is version-matched (plugin.json == marketplace.json == the requested
-# version), (4) is GREEN on every push-CI leg, (5) is not behind the version the
-# marketplace actually publishes, and (6) has already been REHEARSED by a successful
-# dry run of this workflow on this same commit -- and only then cuts and pushes the
+# version), (4) is GREEN on every non-advisory push-CI leg, (5) is not behind the
+# version the marketplace actually publishes, and (6) has already been REHEARSED by a
+# successful dry run of this workflow on this same commit -- and only then cuts and pushes the
 # tag ITSELF, on that exact validated commit, and creates the GitHub Release. A tag can
 # never land on an unmerged, red, wrong-version, wrong, behind-the-published-tip, or
 # unrehearsed commit, because no hand-typed `git tag` is in the loop. Mike keeps the
@@ -158,10 +158,18 @@ jobs:
           set -euo pipefail
           TARGET="${{ steps.resolve.outputs.target }}"
           CI_WORKFLOW="powershell-lsp-ci.yml"
-          # The required matrix legs MIRROR powershell-lsp-ci.yml's matrix.label set. A
-          # missing leg is treated as NOT green (refuse) -- the safe failure direction. If
-          # the CI matrix gains/loses a leg, update this list (documented in RELEASING.md).
-          REQUIRED_LEGS=("windows-pwsh" "windows-powershell" "ubuntu-pwsh" "macos-pwsh")
+          # The required legs are EVERY NON-ADVISORY job of powershell-lsp-ci.yml, by the name the
+          # jobs API reports for it: the four `pester` matrix legs (named from matrix.label) plus
+          # the separately named container-pwsh job (dispatch 000286). Dispatch 000303 added
+          # container-pwsh: it is non-advisory, yet a run whose container job is missing or
+          # skipped still concludes `success`, so only this per-leg check can refuse it.
+          # claude-code-compat is ADVISORY by ruling R-G (continue-on-error: true) and is
+          # deliberately NOT listed. A missing leg is treated as NOT green (refuse) -- the safe
+          # failure direction. If the CI workflow gains, loses, renames or reclassifies a job,
+          # update this list (docs/RELEASING.md); tests/PowerShellLsp.Release.Tests.ps1 fails
+          # until the two agree. This list gates the RELEASE only: it is not, and does not
+          # change, the branch-protection required status checks on main, set in GitHub.
+          REQUIRED_LEGS=("windows-pwsh" "windows-powershell" "ubuntu-pwsh" "macos-pwsh" "container-pwsh")
 
           RUNS="$(gh api -X GET "repos/${{ github.repository }}/actions/workflows/$CI_WORKFLOW/runs" \
                     -f head_sha="$TARGET" -f event=push --jq '.workflow_runs')"
@@ -175,8 +183,10 @@ jobs:
           # never snapshot-and-refuse. A run still in_progress (not failed, just unfinished)
           # is the common case right after a merge; reading status ONCE there refuses a run
           # about to pass (the proven 28033459348 race). Poll the resolved run by id until it
-          # is completed, bounded by a generous timeout sized off the four-leg matrix wall-clock
-          # (the windows legs are the long pole); a timeout refuses HONESTLY (never a false green).
+          # is completed, bounded by a generous timeout sized off the CI run's wall-clock (the
+          # windows legs are the long pole). It is the whole RUN that is waited on, every job in
+          # it, so which legs are required does not change the wait. A timeout refuses HONESTLY
+          # (never a false green).
           CI_WAIT_TIMEOUT_SECONDS=1800   # 30 min: generous headroom over the matrix wall-clock
           CI_WAIT_POLL_SECONDS=20        # re-query the run every 20s until it reaches a terminal state
           DEADLINE=$(( SECONDS + CI_WAIT_TIMEOUT_SECONDS ))

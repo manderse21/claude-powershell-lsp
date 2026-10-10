@@ -18,8 +18,9 @@ Support means **CI-verified on every release**: the four legs below are required
 [docs/RELEASING.md](./RELEASING.md#what-the-pipeline-validates-the-gates)).
 
 Two further CI legs exist and are **not** in this table on purpose, because neither carries a
-support promise: `container-pwsh` runs the suite in the official PowerShell container, and
-`claude-code-compat` is **advisory** and is described under
+support promise: `container-pwsh` runs the suite in the official PowerShell container (Gate 4
+requires it to pass too, since dispatch 000303 -- a release precondition, not a supported host),
+and `claude-code-compat` is **advisory** and is described under
 [Claude Code versions](#claude-code-versions) below. A supported host is one this table names.
 
 | CI leg | Runner image | Interpreter |

@@ -192,6 +192,11 @@ jobs:
   # NON-ROOT is the posture being proven, and `--user $(id -u):$(id -g)` is what makes it both
   # non-root AND able to write the workspace it was handed: the runner user owns the checkout, so
   # borrowing a hard-coded uid would fail on permissions rather than on anything meaningful.
+  #
+  # RELEASE GATE 4 REQUIRES THIS JOB BY NAME (dispatch 000303): a push run in which it is missing,
+  # skipped or red cannot be released. Renaming it or making it advisory means updating
+  # REQUIRED_LEGS in powershell-lsp-release.yml; tests/PowerShellLsp.Release.Tests.ps1 fails until
+  # the two agree. That is the release gate only, not a branch-protection required check.
   container-pwsh:
     name: container-pwsh
     runs-on: ubuntu-24.04

@@ -7,7 +7,8 @@
 # release. The parts that only prove out on a live release (the merged/green/tag-cut
 # gates running on a GitHub runner) are documented in docs/RELEASING.md, not faked here.
 #
-# No network, no daemon: fast and cross-platform. Runs on all four CI legs.
+# No network, no daemon: fast and cross-platform. Runs on every CI leg. The Gate 4 execution
+# tests (dispatch 000303) also need bash and jq, and skip, saying why, where either is absent.
 
 BeforeAll {
     $script:PluginRoot = Split-Path -Parent $PSScriptRoot
@@ -163,7 +164,9 @@ Describe 'Release workflow Gate-4 -- WAITS for CI to conclude, then judges (disp
     # workflow_dispatch-only trigger, and the untouched REQUIRED_LEGS. The full parse-and-execute
     # proof is GitHub's own -- the YAML is parsed by Actions and the embedded ${{ ... }} only
     # resolves on a runner -- demonstrated by a dry_run against a real merged+green commit
-    # (docs/RELEASING.md), not re-implemented here.
+    # (docs/RELEASING.md), not re-implemented here. (Dispatch 000303 later added a Describe
+    # below that EXECUTES this step's own bash against recorded API data; these text
+    # assertions stay as the dependency-free guard.)
     BeforeAll {
         $script:ReleaseWf = Join-Path $script:PluginRoot '.github/workflows/powershell-lsp-release.yml'
         $script:WfText    = [System.IO.File]::ReadAllText($script:ReleaseWf)
@@ -211,14 +214,397 @@ Describe 'Release workflow Gate-4 -- WAITS for CI to conclude, then judges (disp
         $script:WfText | Should -Match 'all required CI legs are green'
     }
 
-    It 'REQUIRED_LEGS is unchanged -- the four CI matrix legs, byte-for-byte' {
-        $script:WfText | Should -Match 'REQUIRED_LEGS=\("windows-pwsh" "windows-powershell" "ubuntu-pwsh" "macos-pwsh"\)'
+    It 'REQUIRED_LEGS is the five non-advisory CI legs, byte-for-byte (000063 froze four; 000303 added container-pwsh)' {
+        # 000063 forbade touching this list and pinned the four matrix legs. Dispatch 000303 changes
+        # it on purpose -- container-pwsh is the fifth non-advisory leg -- so the pin moves with it.
+        # The Describe for 000303 below proves the list against the CI workflow and runs it.
+        $script:WfText | Should -Match 'REQUIRED_LEGS=\("windows-pwsh" "windows-powershell" "ubuntu-pwsh" "macos-pwsh" "container-pwsh"\)'
+        @([regex]::Matches($script:WfText, 'REQUIRED_LEGS=\(')).Count | Should -Be 1
     }
 
     It 'all four gates remain present (none removed by this change)' {
         foreach ($g in 1..4) {
             $script:WfText | Should -Match ('Gate {0} --' -f $g)
         }
+    }
+}
+
+Describe 'Release workflow Gate 4 -- the five non-advisory CI legs are required, compat is not (dispatch 000303)' {
+    # WHAT THIS GUARDS. Gate 4's per-leg check named only the four `pester` matrix legs. The CI
+    # workflow has a fifth non-advisory leg, container-pwsh, a job of its own since dispatch 000286.
+    # A container job that FAILED already failed the run, and Gate 4's run-level check refused
+    # that. A container job that is MISSING (renamed or removed) or SKIPPED leaves the run's
+    # conclusion `success`, and only the per-leg list can see it. 000303 adds container-pwsh to
+    # that list; claude-code-compat stays out, advisory by ruling R-G.
+    #
+    # HOW: BY RUNNING THE GATE. The Describe above reads the workflow TEXT. This one cuts Gate 4's
+    # `run:` block out of the workflow file at test time -- never a copy kept here -- and executes
+    # it with bash the way Actions runs a `shell: bash` step (bash --noprofile --norc -eo pipefail)
+    # against GitHub API data with `gh` stubbed: the record of a real push-CI run
+    # (tests/fixtures/release-gate4/) and single-field mutations of it. So every verdict below is
+    # the verdict of the code the release runs. Two expressions are substituted the way the runner
+    # would evaluate them (steps.resolve.outputs.target, github.repository); any other expression
+    # left in the step fails the harness rather than running unevaluated.
+    #
+    # IT NEEDS bash AND jq, AND SKIPS -- SAYING WHY -- WITHOUT EITHER. The gate pipes through jq
+    # itself, so stubbing jq would test the stub. Both ship on the windows-2025, ubuntu-24.04 and
+    # macos-15 runner images; the container leg's image has no jq, so these skip there. On Windows
+    # the bash is Git Bash, found from git's own install root, never whatever `bash` resolves to
+    # (the hosted image enables WSL). jq gets --binary on Windows only: a native jq.exe writes
+    # CRLF, and --binary makes it write the LF that the ubuntu runner's jq writes.
+    BeforeAll {
+        $script:G4WfText = [System.IO.File]::ReadAllText((Join-Path $script:PluginRoot '.github/workflows/powershell-lsp-release.yml'))
+        $script:G4CiText = [System.IO.File]::ReadAllText((Join-Path $script:PluginRoot '.github/workflows/powershell-lsp-ci.yml'))
+        $script:G4RecordPath = Join-Path $PSScriptRoot 'fixtures/release-gate4/ci-run-36435564569.json'
+        $script:G4Repo = 'manderse21/claude-powershell-lsp'
+        $script:G4FourLegLine = 'REQUIRED_LEGS=("windows-pwsh" "windows-powershell" "ubuntu-pwsh" "macos-pwsh")'
+        $script:G4OnWindows = if (Test-Path 'Variable:\IsWindows') { [bool]$IsWindows } else { $true }
+
+        function script:New-G4Record {
+            # The recorded run, or a single-field mutation of it. Every call parses the file afresh,
+            # so no scenario's mutation can leak into the next.
+            param([string] $WithoutJob = '', [hashtable] $JobConclusion = @{}, [string] $RunConclusion = '')
+            $rec = [System.IO.File]::ReadAllText($script:G4RecordPath) | ConvertFrom-Json
+            if ($WithoutJob) {
+                $kept = @($rec.jobs.jobs | Where-Object { $_.name -ne $WithoutJob })
+                if ($kept.Count -ne (@($rec.jobs.jobs).Count - 1)) { throw ('the record has no single job named ' + $WithoutJob) }
+                $rec.jobs.jobs = $kept
+                $rec.jobs.total_count = $kept.Count
+            }
+            foreach ($leg in @($JobConclusion.Keys)) {
+                $hit = @($rec.jobs.jobs | Where-Object { $_.name -eq $leg })
+                if ($hit.Count -ne 1) { throw ('the record has no single job named ' + $leg) }
+                $hit[0].conclusion = $JobConclusion[$leg]
+            }
+            if ($RunConclusion) {
+                $rec.run.conclusion = $RunConclusion
+                foreach ($run in @($rec.workflowRuns.workflow_runs)) { $run.conclusion = $RunConclusion }
+            }
+            return $rec
+        }
+
+        function script:Get-G4RequiredLegs {
+            param([string] $Text)
+            $m = [regex]::Matches($Text, '(?m)^\s*REQUIRED_LEGS=\(([^)]*)\)')
+            if ($m.Count -ne 1) { throw ('expected exactly one REQUIRED_LEGS assignment, found ' + $m.Count) }
+            return @([regex]::Matches($m[0].Groups[1].Value, '"([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+        }
+
+        function script:Get-G4CiLegs {
+            # The CI workflow's legs, read from its TEXT: every job under `jobs:`, by the name the
+            # jobs API reports for it (a job named from matrix.label contributes one leg per label),
+            # and whether `continue-on-error: true` makes it advisory.
+            param([string] $Text)
+            $jobs = @(); $cur = $null; $inJobs = $false
+            foreach ($l in ($Text -split "\r?\n")) {
+                if ($l -match '^jobs:\s*$') { $inJobs = $true; continue }
+                if (-not $inJobs) { continue }
+                if ($l -match '^[^\s#]') { break }
+                if ($l -match '^  ([A-Za-z0-9_-]+):\s*$') {
+                    $cur = [pscustomobject]@{ Job = $Matches[1]; Name = $null; Advisory = $false; Labels = @() }
+                    $jobs += $cur
+                    continue
+                }
+                if ($null -eq $cur) { continue }
+                if ($l -match '^    name:\s*(.+?)\s*$') { $cur.Name = $Matches[1]; continue }
+                if ($l -match '^    continue-on-error:\s*(\S+)') { $cur.Advisory = ($Matches[1] -eq 'true'); continue }
+                if ($l -match '^\s+- label:\s*(\S+)\s*$') { $cur.Labels += $Matches[1] }
+            }
+            $legs = @()
+            foreach ($j in $jobs) {
+                $names = if ($j.Name -eq '${{ matrix.label }}') { @($j.Labels) } elseif ($j.Name) { @($j.Name) } else { @($j.Job) }
+                foreach ($n in $names) { $legs += [pscustomobject]@{ Leg = $n; Job = $j.Job; Advisory = $j.Advisory } }
+            }
+            return $legs
+        }
+
+        function script:Get-G4StepScript {
+            # Gate 4's `run: |` block, read from the workflow TEXT the way YAML reads a literal block:
+            # the lines indented deeper than the `run:` key, dedented by the first one's indentation,
+            # trailing blank lines dropped. Any other shape throws; it never returns a guess.
+            param([string] $Text)
+            $lines = $Text -split "\r?\n"
+            $starts = @(for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\s*- name: "Gate 4 -- ') { $i } })
+            if ($starts.Count -ne 1) { throw ('expected one Gate 4 step, found ' + $starts.Count) }
+            $runAt = -1; $keyIndent = 0; $isBash = $false
+            for ($i = $starts[0] + 1; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '^\s*- name:') { break }
+                if ($lines[$i] -match '^\s*shell:\s*bash\s*$') { $isBash = $true }
+                if ($lines[$i] -match '^(\s*)run:\s*\|\s*$') { $runAt = $i; $keyIndent = $Matches[1].Length; break }
+            }
+            if ($runAt -lt 0) { throw 'the Gate 4 step has no run: | block' }
+            if (-not $isBash) { throw 'the Gate 4 step is not shell: bash, so running it under bash would not be faithful' }
+            $body = New-Object System.Collections.Generic.List[string]
+            for ($i = $runAt + 1; $i -lt $lines.Count; $i++) {
+                $l = $lines[$i]
+                if ($l.Trim().Length -eq 0) { $body.Add(''); continue }
+                if (($l.Length - $l.TrimStart(' ').Length) -le $keyIndent) { break }
+                $body.Add($l)
+            }
+            while ($body.Count -gt 0 -and $body[$body.Count - 1] -eq '') { $body.RemoveAt($body.Count - 1) }
+            $nonBlank = @($body | Where-Object { $_ -ne '' })
+            if ($nonBlank.Count -eq 0) { throw 'the Gate 4 run: block is empty' }
+            $indent = $nonBlank[0].Length - $nonBlank[0].TrimStart(' ').Length
+            $out = foreach ($l in $body) {
+                if ($l -eq '') { '' }
+                elseif (($l.Length - $l.TrimStart(' ').Length) -lt $indent) { throw 'a Gate 4 line is indented less than its block' }
+                else { $l.Substring($indent) }
+            }
+            return ((@($out) -join "`n") + "`n")
+        }
+
+        function script:ConvertTo-G4BashPath {
+            # Git Bash and native Windows programs both open C:/x/y, so a Windows path only needs its
+            # separators turned around; a POSIX path is already right.
+            param([string] $Path)
+            if ($script:G4OnWindows) { return $Path.Replace('\', '/') }
+            return $Path
+        }
+
+        function script:ConvertTo-G4BashLiteral {
+            param([string] $Value)
+            return ("'" + $Value.Replace("'", "'\''") + "'")
+        }
+
+        function script:New-G4Script {
+            # The harness prologue, then the step. The prologue only stands in for the runner: `gh`
+            # serves the record's three responses (applying any --jq filter with the real jq, as gh
+            # does) and logs every call; `jq` is pinned to the jq found above; `sleep` fails fast,
+            # because every fixture run is already `completed` and a sleeping gate is a broken one.
+            param([string] $Step, [string] $FixtureDir, [string] $CallLog)
+            $s = $Step.Replace('${{ steps.resolve.outputs.target }}', $script:G4Target).Replace('${{ github.repository }}', $script:G4Repo)
+            if ($s.Contains('${{')) { throw 'the Gate 4 step carries an expression this harness does not evaluate; teach the harness rather than run it unevaluated' }
+            $jqFlag = if ($script:G4OnWindows) { ' --binary' } else { '' }
+            $prologue = @(
+                '# harness prologue -- tests/PowerShellLsp.Release.Tests.ps1 (dispatch 000303)'
+                ('G4_FIXTURES=' + (ConvertTo-G4BashLiteral $FixtureDir))
+                ('G4_CALLS=' + (ConvertTo-G4BashLiteral $CallLog))
+                ('jq() { ' + (ConvertTo-G4BashLiteral (ConvertTo-G4BashPath $script:G4Jq)) + $jqFlag + ' "$@"; }')
+                'gh() {'
+                '  printf ''%s\n'' "$*" >> "$G4_CALLS"'
+                '  local endpoint="" filter="" file=""'
+                '  while [ $# -gt 0 ]; do'
+                '    case "$1" in'
+                '      --jq) filter="$2"; shift 2 ;;'
+                '      repos/*) endpoint="$1"; shift ;;'
+                '      *) shift ;;'
+                '    esac'
+                '  done'
+                '  case "$endpoint" in'
+                '    */actions/workflows/*/runs) file="$G4_FIXTURES/workflow-runs.json" ;;'
+                '    */actions/runs/*/jobs) file="$G4_FIXTURES/jobs.json" ;;'
+                '    */actions/runs/*) file="$G4_FIXTURES/run.json" ;;'
+                '    *) echo "gh stub: no fixture for endpoint [$endpoint]" >&2; return 97 ;;'
+                '  esac'
+                '  if [ -n "$filter" ]; then jq -c "$filter" "$file"; else cat "$file"; fi'
+                '}'
+                'sleep() { echo "harness: Gate 4 tried to sleep, but every fixture run is already completed" >&2; return 98; }'
+                '# Gate 4, verbatim from .github/workflows/powershell-lsp-release.yml'
+            )
+            return (($prologue -join "`n") + "`n" + $s)
+        }
+
+        function script:Invoke-G4 {
+            param([object] $Record, [string] $Step = $script:G4Step, [string] $Name = 'case')
+            $dir = Join-Path $TestDrive ('g4-' + $Name + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            $fx = Join-Path $dir 'fx'
+            $null = New-Item -ItemType Directory -Path $fx -Force
+            [System.IO.File]::WriteAllText((Join-Path $fx 'workflow-runs.json'), ($Record.workflowRuns | ConvertTo-Json -Depth 10 -Compress))
+            [System.IO.File]::WriteAllText((Join-Path $fx 'run.json'), ($Record.run | ConvertTo-Json -Depth 10 -Compress))
+            [System.IO.File]::WriteAllText((Join-Path $fx 'jobs.json'), ($Record.jobs | ConvertTo-Json -Depth 10 -Compress))
+            $calls = Join-Path $dir 'calls.log'
+            [System.IO.File]::WriteAllText($calls, '')
+            $sh = Join-Path $dir 'gate4.sh'
+            [System.IO.File]::WriteAllText($sh, (New-G4Script -Step $Step -FixtureDir (ConvertTo-G4BashPath $fx) -CallLog (ConvertTo-G4BashPath $calls)))
+            $so = Join-Path $dir 'stdout.txt'
+            $se = Join-Path $dir 'stderr.txt'
+            # Redirected FILES, not `2>&1`: on Windows PowerShell 5.1 a native stderr line under 'Stop'
+            # throws (see Invoke-Assert in PowerShellLsp.ClaudeCodeRegistration.Tests.ps1). No -Wait:
+            # a bounded wait, so a gate that hangs fails this test instead of stalling the suite.
+            $p = Start-Process -FilePath $script:G4Bash -PassThru -NoNewWindow `
+                -ArgumentList ('--noprofile --norc -eo pipefail "' + (ConvertTo-G4BashPath $sh) + '"') `
+                -RedirectStandardOutput $so -RedirectStandardError $se
+            $null = $p.Handle   # held open now, or ExitCode can read null once the process is gone
+            if (-not $p.WaitForExit(120000)) {
+                try { $p.Kill() } catch { $null = $_ }
+                throw ('Gate 4 harness: bash did not exit within 120 s (' + $Name + ')')
+            }
+            $p.WaitForExit()
+            $out = if (Test-Path -LiteralPath $so) { [System.IO.File]::ReadAllText($so) } else { '' }
+            $err = if (Test-Path -LiteralPath $se) { [System.IO.File]::ReadAllText($se) } else { '' }
+            return [pscustomobject]@{
+                ExitCode = $p.ExitCode
+                Out      = $out
+                Text     = ('exit ' + $p.ExitCode + "`n" + $out + "`n" + $err)
+                Calls    = @([System.IO.File]::ReadAllLines($calls))
+            }
+        }
+
+        $script:G4Required = @(Get-G4RequiredLegs -Text $script:G4WfText)
+        $script:G4Step = Get-G4StepScript -Text $script:G4WfText
+        $script:G4RequiredLine = [regex]::Match($script:G4Step, '(?m)^REQUIRED_LEGS=\(.*\)$').Value
+        $record = New-G4Record
+        $script:G4Target = [string]$record.run.head_sha
+        $script:G4RunId = [string]$record.run.id
+
+        $script:G4Bash = $null
+        if ($script:G4OnWindows) {
+            $cands = @()
+            $git = @(Get-Command git -CommandType Application -ErrorAction SilentlyContinue)
+            if ($git.Count -gt 0) { $cands += (Join-Path (Split-Path -Parent (Split-Path -Parent $git[0].Source)) 'bin\bash.exe') }
+            if ($env:ProgramFiles) { $cands += (Join-Path $env:ProgramFiles 'Git\bin\bash.exe') }
+            $script:G4Bash = @($cands | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }) | Select-Object -First 1
+        } else {
+            $script:G4Bash = @(Get-Command bash -CommandType Application -ErrorAction SilentlyContinue) |
+                Select-Object -First 1 | ForEach-Object { $_.Source }
+        }
+        $script:G4Jq = @(Get-Command jq -CommandType Application -ErrorAction SilentlyContinue) |
+            Select-Object -First 1 | ForEach-Object { $_.Source }
+        $script:G4SkipReason = $null
+        if (-not $script:G4Bash) {
+            $script:G4SkipReason = 'no bash on this host (on Windows, no Git Bash beside git); Gate 4 is a bash step and is run under nothing else'
+        } elseif (-not $script:G4Jq) {
+            $script:G4SkipReason = 'no jq on PATH; Gate 4 pipes through jq itself, so it cannot run without it (the container image has none)'
+        }
+        Write-Host ('Gate 4 harness: bash=' + $script:G4Bash + ' jq=' + $script:G4Jq + ' skip=' + $script:G4SkipReason)
+    }
+
+    It 'REQUIRED_LEGS equals the CI workflow''s non-advisory job set, and leaves the advisory compat job out' {
+        $legs = @(Get-G4CiLegs -Text $script:G4CiText)
+        $legs.Count | Should -BeGreaterOrEqual 6 -Because 'four matrix legs, container-pwsh and claude-code-compat; fewer means the CI parse came back short'
+        $nonAdvisory = @($legs | Where-Object { -not $_.Advisory } | ForEach-Object { $_.Leg } | Sort-Object)
+        $advisory = @($legs | Where-Object { $_.Advisory } | ForEach-Object { $_.Leg })
+        $nonAdvisory.Count | Should -BeGreaterOrEqual 5
+        (@($script:G4Required | Sort-Object) -join ',') | Should -BeExactly ($nonAdvisory -join ',')
+        @($script:G4Required | Sort-Object -Unique).Count | Should -Be $script:G4Required.Count -Because 'a leg listed twice would be checked twice'
+        $advisory | Should -Contain 'claude-code-compat'
+        foreach ($a in $advisory) { $script:G4Required | Should -Not -Contain $a }
+    }
+
+    It 'the leg identities and the advisory posture are unchanged: four matrix legs, container-pwsh non-advisory, claude-code-compat advisory' {
+        $byLeg = @{}
+        foreach ($l in @(Get-G4CiLegs -Text $script:G4CiText)) { $byLeg[$l.Leg] = $l }
+        foreach ($leg in @('windows-pwsh', 'windows-powershell', 'ubuntu-pwsh', 'macos-pwsh')) {
+            $byLeg.ContainsKey($leg) | Should -BeTrue -Because ($leg + ' must still be a pester matrix label')
+            $byLeg[$leg].Job | Should -BeExactly 'pester'
+            $byLeg[$leg].Advisory | Should -BeFalse
+        }
+        $byLeg.ContainsKey('container-pwsh') | Should -BeTrue
+        $byLeg['container-pwsh'].Job | Should -BeExactly 'container-pwsh'
+        $byLeg['container-pwsh'].Advisory | Should -BeFalse
+        $byLeg.ContainsKey('claude-code-compat') | Should -BeTrue
+        $byLeg['claude-code-compat'].Job | Should -BeExactly 'claude-code-compat'
+        $byLeg['claude-code-compat'].Advisory | Should -BeTrue -Because 'ruling R-G: Claude Code Current-1 is Advisory, not Required'
+    }
+
+    It 'docs/RELEASING.md''s Gate 4 bullet names the same required legs and calls compat advisory' {
+        $doc = [System.IO.File]::ReadAllText((Join-Path $script:PluginRoot 'docs/RELEASING.md'))
+        $m = [regex]::Match($doc, '(?s)- \*\*Gate 4 --.*?(?=- \*\*Gate 5 --)')
+        $m.Success | Should -BeTrue -Because 'the Gate 4 bullet must be findable to be checked'
+        $bullet = [regex]::Replace($m.Value, '\s+', ' ')
+        foreach ($leg in $script:G4Required) { $bullet | Should -Match ([regex]::Escape('`' + $leg + '`')) }
+        $bullet | Should -Match ([regex]::Escape('`claude-code-compat`'))
+        $bullet | Should -Match 'advisory'
+    }
+
+    It 'the harness runs the REAL Gate 4 step: cut from the workflow file, list and per-leg loop included' {
+        $script:G4Step | Should -Match '^set -euo pipefail'
+        $script:G4RequiredLine | Should -BeExactly 'REQUIRED_LEGS=("windows-pwsh" "windows-powershell" "ubuntu-pwsh" "macos-pwsh" "container-pwsh")'
+        $script:G4Step | Should -Match ([regex]::Escape('for leg in "${REQUIRED_LEGS[@]}"; do'))
+        $script:G4Step | Should -Match ([regex]::Escape('echo "OK: all required CI legs are green for $TARGET."'))
+        $script:G4Step | Should -Not -Match 'Test-PublishedParity' -Because 'nothing past the end of the step may leak in'
+        $script:G4Target | Should -Match '^[0-9a-f]{40}$'
+    }
+
+    It 'ACCEPTS the recorded all-success run: all five required legs checked green, compat not judged' {
+        if ($script:G4SkipReason) { Set-ItResult -Skipped -Because $script:G4SkipReason; return }
+        $r = Invoke-G4 -Record (New-G4Record) -Name 'all-five'
+        $r.ExitCode | Should -Be 0 -Because $r.Text
+        foreach ($leg in $script:G4Required) { $r.Out | Should -Match ([regex]::Escape('OK leg: ' + $leg + ' = success')) }
+        @([regex]::Matches($r.Out, 'OK leg: ')).Count | Should -Be 5
+        $r.Out | Should -Not -Match 'OK leg: claude-code-compat'
+        $r.Out | Should -Match ([regex]::Escape('OK: all required CI legs are green for ' + $script:G4Target))
+        # The stub served the three reads Gate 4 makes, for THIS commit: the harness is wired.
+        $calls = $r.Calls -join "`n"
+        $calls | Should -Match ([regex]::Escape('repos/' + $script:G4Repo + '/actions/workflows/powershell-lsp-ci.yml/runs'))
+        $calls | Should -Match ([regex]::Escape('head_sha=' + $script:G4Target))
+        $calls | Should -Match 'event=push'
+        $calls | Should -Match ('(?m)/actions/runs/' + $script:G4RunId + '$')
+        $calls | Should -Match ([regex]::Escape('/actions/runs/' + $script:G4RunId + '/jobs'))
+    }
+
+    It 'ACCEPTS a run where only the advisory claude-code-compat job failed' {
+        if ($script:G4SkipReason) { Set-ItResult -Skipped -Because $script:G4SkipReason; return }
+        # continue-on-error leaves the run `success` when compat fails, which is this record's shape.
+        $r = Invoke-G4 -Record (New-G4Record -JobConclusion @{ 'claude-code-compat' = 'failure' }) -Name 'compat-failed'
+        $r.ExitCode | Should -Be 0 -Because $r.Text
+        $r.Out | Should -Match 'OK: all required CI legs are green'
+    }
+
+    It 'ACCEPTS a run with no claude-code-compat job at all -- an advisory job is never required' {
+        if ($script:G4SkipReason) { Set-ItResult -Skipped -Because $script:G4SkipReason; return }
+        $r = Invoke-G4 -Record (New-G4Record -WithoutJob 'claude-code-compat') -Name 'compat-missing'
+        $r.ExitCode | Should -Be 0 -Because $r.Text
+        $r.Out | Should -Match 'OK: all required CI legs are green'
+    }
+
+    It 'REFUSES a run whose container-pwsh job is MISSING, though the run itself reads success' {
+        if ($script:G4SkipReason) { Set-ItResult -Skipped -Because $script:G4SkipReason; return }
+        $r = Invoke-G4 -Record (New-G4Record -WithoutJob 'container-pwsh') -Name 'container-missing'
+        $r.ExitCode | Should -Be 1 -Because $r.Text
+        $r.Out | Should -Match ([regex]::Escape("required CI leg 'container-pwsh' did not succeed (got 'MISSING')"))
+        $r.Out | Should -Not -Match 'all required CI legs are green'
+        # It passed the run-level check and the four matrix legs, and refused on THIS leg.
+        foreach ($leg in @('windows-pwsh', 'windows-powershell', 'ubuntu-pwsh', 'macos-pwsh')) {
+            $r.Out | Should -Match ([regex]::Escape('OK leg: ' + $leg + ' = success'))
+        }
+    }
+
+    It 'REFUSES container-pwsh concluding <Conclusion> while the run itself reads success' -ForEach @(
+        @{ Conclusion = 'failure' }
+        @{ Conclusion = 'skipped' }
+        @{ Conclusion = 'cancelled' }
+    ) {
+        if ($script:G4SkipReason) { Set-ItResult -Skipped -Because $script:G4SkipReason; return }
+        $r = Invoke-G4 -Record (New-G4Record -JobConclusion @{ 'container-pwsh' = $Conclusion }) -Name ('container-' + $Conclusion)
+        $r.ExitCode | Should -Be 1 -Because $r.Text
+        $r.Out | Should -Match ([regex]::Escape("required CI leg 'container-pwsh' did not succeed (got '" + $Conclusion + "')"))
+    }
+
+    It 'REFUSES a container-pwsh failure that failed the run with it -- the shape GitHub produces -- at the run-level check' {
+        if ($script:G4SkipReason) { Set-ItResult -Skipped -Because $script:G4SkipReason; return }
+        $r = Invoke-G4 -Record (New-G4Record -JobConclusion @{ 'container-pwsh' = 'failure' } -RunConclusion 'failure') -Name 'container-failed-run-failed'
+        $r.ExitCode | Should -Be 1 -Because $r.Text
+        $r.Out | Should -Match ([regex]::Escape('is not completed+success (status=completed conclusion=failure)'))
+        @($r.Calls | Where-Object { $_ -match '/jobs' }).Count | Should -Be 0 -Because 'the run-level check refuses before any job is read'
+    }
+
+    It 'REFUSES a run missing the required <Leg> leg, naming it' -ForEach @(
+        @{ Leg = 'windows-pwsh' }
+        @{ Leg = 'windows-powershell' }
+        @{ Leg = 'ubuntu-pwsh' }
+        @{ Leg = 'macos-pwsh' }
+    ) {
+        if ($script:G4SkipReason) { Set-ItResult -Skipped -Because $script:G4SkipReason; return }
+        $r = Invoke-G4 -Record (New-G4Record -WithoutJob $Leg) -Name ('missing-' + $Leg)
+        $r.ExitCode | Should -Be 1 -Because $r.Text
+        $r.Out | Should -Match ([regex]::Escape("required CI leg '" + $Leg + "' did not succeed (got 'MISSING')"))
+    }
+
+    It 'CONTROL: the pre-000303 four-leg list ACCEPTS the missing- and failed-container records the gate now refuses' {
+        # The discriminator: same harness, same records, only REQUIRED_LEGS put back to the four
+        # matrix legs. The old gate passes both, so the refusals above are the list change's doing
+        # and not the harness's.
+        ([regex]::Matches($script:G4Step, [regex]::Escape($script:G4RequiredLine))).Count | Should -Be 1
+        $old = $script:G4Step.Replace($script:G4RequiredLine, $script:G4FourLegLine)
+        $old | Should -Not -BeExactly $script:G4Step
+        if ($script:G4SkipReason) { Set-ItResult -Skipped -Because $script:G4SkipReason; return }
+        $missing = Invoke-G4 -Record (New-G4Record -WithoutJob 'container-pwsh') -Step $old -Name 'control-missing'
+        $missing.ExitCode | Should -Be 0 -Because $missing.Text
+        $missing.Out | Should -Match 'OK: all required CI legs are green'
+        $failed = Invoke-G4 -Record (New-G4Record -JobConclusion @{ 'container-pwsh' = 'failure' }) -Step $old -Name 'control-failed'
+        $failed.ExitCode | Should -Be 0 -Because $failed.Text
+        $failed.Out | Should -Match 'OK: all required CI legs are green'
     }
 }
 
