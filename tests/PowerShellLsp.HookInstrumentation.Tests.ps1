@@ -350,6 +350,37 @@ Describe 'Flake instrumentation: EVERY process-spawning hook in the suite record
         $script:HiSupportCollapsers = @($script:HiSupportSpawners | Where-Object { $_.Extent.Text -match "return\s*''" })
         $script:HiAllCollapsers = @($script:HiCollapsers) + @($script:HiSupportCollapsers)
         $script:HiExcluded = @($script:HiExcluded) + @($script:HiSupportSpawners | Where-Object { $_.Extent.Text -notmatch "return\s*''" })
+
+        # THE SCAN HARNESS IS IN SCOPE TOO (dispatch 000302). tests/ScanHarness.Common.ps1 holds the
+        # spawner the scan-verdict and scan read-only suites run their own children through. A helper
+        # does not get out from under this guard by living in a file the guard did not used to read:
+        # the file is named here, its spawners join the same collapse / exclusion accounting as the
+        # two files above, and the concurrent-drain It below holds them to the stricter shape their
+        # header promises. No Describe ownership applies: a support-file function belongs to none.
+        $script:HiScanHarnessFile = Join-Path $PSScriptRoot 'ScanHarness.Common.ps1'
+        $tokens = $null; $errors = $null
+        $hast = [System.Management.Automation.Language.Parser]::ParseFile($script:HiScanHarnessFile, [ref]$tokens, [ref]$errors)
+        $script:HiParseErrors = @($script:HiParseErrors) + @($errors)
+        $hfuncs = @($hast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
+        $script:HiHarnessSpawners = @($hfuncs | Where-Object { $_.Extent.Text -match '\$p\.WaitForExit\(' })
+        $script:HiAllCollapsers = @($script:HiAllCollapsers) + @($script:HiHarnessSpawners | Where-Object { $_.Extent.Text -match "return\s*''" })
+        $script:HiExcluded = @($script:HiExcluded) + @($script:HiHarnessSpawners | Where-Object { $_.Extent.Text -notmatch "return\s*''" })
+
+        function script:Get-HiConcurrentDrainViolations {
+            # ONE definition of the concurrent-drain rule, so the assertion and its injection cannot
+            # drift apart. Returns violation strings; EMPTY means the spawner body is well formed.
+            param([string]$Name, [string]$Body)
+            $v = @()
+            $wait = $Body.IndexOf('$p.WaitForExit(')
+            $out = $Body.IndexOf('$p.StandardOutput.ReadToEndAsync()')
+            $err = $Body.IndexOf('$p.StandardError.ReadToEndAsync()')
+            if ($wait -lt 0) { $v += ($Name + ' has no WaitForExit -- not a spawner this rule can judge') }
+            if ($out -lt 0) { $v += ($Name + ' must drain stdout') }
+            if ($err -lt 0) { $v += ($Name + ' must drain stderr') }
+            if ($out -ge 0 -and $wait -ge 0 -and $out -gt $wait) { $v += ($Name + ' must start the stdout drain before it waits') }
+            if ($err -ge 0 -and $wait -ge 0 -and $err -gt $wait) { $v += ($Name + ' must start the stderr drain before it waits') }
+            return $v
+        }
     }
 
     It 'the integration suite parses clean (the scan is over real code, not a broken parse)' {
@@ -386,16 +417,43 @@ Describe 'Flake instrumentation: EVERY process-spawning hook in the suite record
     It 'the EXCLUSIONS are narrow and earned: every uninstrumented spawner already discriminates' {
         # Excluding by fiat would let a genuine instance hide behind the exclusion. So name the
         # excluded set exactly and prove each member carries its own distinct cap-path signal.
-        # Both are the capture helpers, which return a hashtable rather than a bare string and
-        # therefore never had the collapse: ExitCode = -999 with Err = 'timeout' on the cap path
-        # is already distinguishable from a clean exit carrying a real code and empty output.
+        # The first two are the capture helpers, which return a hashtable rather than a bare string
+        # and therefore never had the collapse: ExitCode = -999 with Err = 'timeout' on the cap path
+        # is already distinguishable from a clean exit carrying a real code and empty output. The
+        # third is the scan harness spawner (dispatch 000302), built to the same record shape.
         $names = @($script:HiExcluded | ForEach-Object { $_.Name } | Sort-Object -Unique)
-        ($names -join ',') | Should -BeExactly 'Invoke-CaptureC,Invoke-CaptureU'
+        ($names -join ',') | Should -BeExactly 'Invoke-CaptureC,Invoke-CaptureU,Invoke-SvChildProcess'
         foreach ($f in $script:HiExcluded) {
             $f.Extent.Text | Should -Match '-999'        # distinct exit code on the cap path
             $f.Extent.Text | Should -Match "'timeout'"   # and a distinct Err string
             $f.Extent.Text | Should -Match 'return @\{'  # returns a record, never a bare string
         }
+    }
+
+    It 'the scan harness spawners drain stdout AND stderr concurrently, both reads started before the wait (dispatch 000302)' {
+        # The production Invoke-ScanHook redirects stderr and never reads it; the S3b census case
+        # (PowerShellLsp.ScanVerdict.Tests.ps1) measures the hold that causes. The harness that
+        # measures it must not share the defect, so each of its spawners must START both reads
+        # before its first WaitForExit -- a drain begun after the wait is the deadlock, not the cure.
+        @($script:HiHarnessSpawners).Count | Should -BeGreaterThan 0 -Because 'the census must reach the harness spawner'
+        $v = @()
+        foreach ($f in $script:HiHarnessSpawners) { $v += @(Get-HiConcurrentDrainViolations -Name $f.Name -Body $f.Extent.Text) }
+        ($v -join '; ') | Should -BeExactly ''
+    }
+
+    It 'INJECTION: a spawner that starts its stderr drain only AFTER the wait is REJECTED' {
+        # The same rule the assertion above applies, fed the deadlock shape: both reads exist, so a
+        # presence-only check would pass it; only the ordering catches it.
+        $late = @(
+            '$p = [System.Diagnostics.Process]::Start($psi)'
+            '$stdoutTask = $p.StandardOutput.ReadToEndAsync()'
+            'if (-not $p.WaitForExit($CapMs)) { return @{ ExitCode = -999 } }'
+            '$stderrTask = $p.StandardError.ReadToEndAsync()'
+        ) -join "`n"
+        $v = @(Get-HiConcurrentDrainViolations -Name 'Forged-LateDrain' -Body $late)
+        ($v -join '; ') | Should -Match 'must start the stderr drain before it waits'
+        @(Get-HiConcurrentDrainViolations -Name 'Forged-NoStderr' -Body ($late -replace '\$stderrTask = .*', '')) -join '; ' |
+            Should -Match 'must drain stderr'
     }
 
     It 'every Describe carrying an instrumented hook DOT-SOURCES the helper it now calls' {
