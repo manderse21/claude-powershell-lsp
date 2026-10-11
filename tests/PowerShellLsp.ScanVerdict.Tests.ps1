@@ -735,21 +735,25 @@ Describe 'Scan verdict at the CLI boundary with the shipped lsp-scan AND the shi
         if ($null -eq $script:CrHost) { throw 'no PowerShell host (pwsh / powershell) to run the relocated CLI' }
         $script:CrRoots = New-Object System.Collections.ArrayList
         $script:CrClean = '{"ok":true,"action":"diagnostics","file":"","cached":false,"count":0,"omitted":0,"diagnostics":[],"scopeApplied":false,"scopeTotal":0,"scopeSurfaced":0,"path":"analyze","analysisMs":1,"codeActionMs":0,"recordCount":0,"correctionCount":0}'
+        # A file that does not parse: the param block is missing its ')'.
+        $script:CrBroken = "function Get-CrBroken {`n    param([string]`$Name`n    Write-Output `$Name`n}`n"
 
         function Invoke-CrCase {
             # One end-to-end run of the RELOCATED shipped CLI with the RELOCATED shipped client. The
             # session-start fake serves the scan's own session pipe from the fake pipe daemon, answering
             # $Response bound per $Binding; -Vanish has it delete the target after the CLI enumerated it.
-            param([string]$Id, [string]$Response, [string]$Binding = 'valid', [switch]$Vanish)
+            # -TargetText replaces the clean target, -FailOn passes the CLI's threshold, and -Format text
+            # returns the text report as Report instead of a SARIF log (owner ruling A2-Q01, dispatch 000304).
+            param([string]$Id, [string]$Response, [string]$Binding = 'valid', [switch]$Vanish,
+                [string]$TargetText = "function Get-CrTarget {`n    [CmdletBinding()]`n    param([string]`$Name)`n    Write-Output `$Name`n}`n",
+                [string]$FailOn = 'none', [ValidateSet('sarif', 'text')][string]$Format = 'sarif')
             $root = New-SvTempRoot -Tag ('cr' + $Id) -MintingFile 'tests/PowerShellLsp.ScanVerdict.Tests.ps1'
             [void]$script:CrRoots.Add($root)
             $tree = New-SvCliTree -Root $root -RealClient -SessionStartFixture 'fake-session-start-pipe.ps1'
             $src = Join-Path $root 'src'
             New-Item -ItemType Directory -Force -Path $src | Out-Null
             $target = Join-Path $src ('target-' + $Id + '.ps1')
-            [System.IO.File]::WriteAllText($target,
-                "function Get-CrTarget {`n    [CmdletBinding()]`n    param([string]`$Name)`n    Write-Output `$Name`n}`n",
-                (New-Object System.Text.UTF8Encoding($false)))
+            [System.IO.File]::WriteAllText($target, $TargetText, (New-Object System.Text.UTF8Encoding($false)))
             $data = Join-Path $root 'data'
             New-Item -ItemType Directory -Force -Path $data | Out-Null
             $cfg = [ordered]@{
@@ -759,11 +763,12 @@ Describe 'Scan verdict at the CLI boundary with the shipped lsp-scan AND the shi
                 vanish       = $(if ($Vanish) { $target } else { '' })
             }
             [System.IO.File]::WriteAllText((Join-Path $data 'cr-daemon.json'), ($cfg | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
-            $sarifPath = Join-Path $root 'out.sarif'
+            $outPath = Join-Path $root ('out.' + $Format)
+            $cliArgs = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $tree.ScanScript, $src,
+                '-Format', $Format, '-OutputPath', $outPath, '-PsHost', $script:CrHost)
+            if ($FailOn -ne 'none') { $cliArgs += @('-FailOn', $FailOn) }
             try {
-                $run = Invoke-SvChildProcess -HostExe $script:CrHost -CapMs 180000 `
-                    -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $tree.ScanScript, $src,
-                        '-Format', 'sarif', '-OutputPath', $sarifPath, '-PsHost', $script:CrHost) `
+                $run = Invoke-SvChildProcess -HostExe $script:CrHost -CapMs 180000 -ArgumentList $cliArgs `
                     -ExtraEnv @{ CLAUDE_PLUGIN_DATA = $data } -RemoveEnvPrefix @('CLAUDE_PLUGIN_OPTION_', 'POWERSHELL_LSP_')
             } finally {
                 # The CLI's own Stop-ScanDaemon kills the fake daemon by the pid its session file
@@ -772,9 +777,9 @@ Describe 'Scan verdict at the CLI boundary with the shipped lsp-scan AND the shi
                     [void](Stop-SvChildFromPidFile -PidFile $rf.FullName)
                 }
             }
-            $sarifText = Read-SvTextFile -Path $sarifPath
+            $outText = Read-SvTextFile -Path $outPath
             $sarif = $null
-            if (-not [string]::IsNullOrWhiteSpace($sarifText)) { $sarif = $sarifText | ConvertFrom-Json }
+            if ($Format -eq 'sarif' -and -not [string]::IsNullOrWhiteSpace($outText)) { $sarif = $outText | ConvertFrom-Json }
             $es = if ($null -ne $sarif) { [string][bool]$sarif.runs[0].invocations[0].executionSuccessful } else { 'no-sarif' }
             $requests = @(Get-ChildItem -LiteralPath $data -Recurse -File -Filter 'requests.log' -ErrorAction SilentlyContinue | ForEach-Object { Read-SvTextFile -Path $_.FullName }) -join "`n"
             return @{
@@ -782,6 +787,7 @@ Describe 'Scan verdict at the CLI boundary with the shipped lsp-scan AND the shi
                 Run      = $run
                 Tree     = $tree
                 Sarif    = $sarif
+                Report   = $(if ($Format -eq 'text') { $outText } else { '' })
                 Verdict  = ('exit=' + [int]$run.ExitCode + ' executionSuccessful=' + $es)
                 Requests = $requests
                 Log      = (Read-SvTextFile -Path (Join-Path $data 'logs/lsp-client.log'))
@@ -855,6 +861,25 @@ Describe 'Scan verdict at the CLI boundary with the shipped lsp-scan AND the shi
         Assert-CrSituation -Case $c
         $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False'
         [string]$c.Run.Err | Should -Match 'pssa-unavailable'
+    }
+    It 'C-R15 -- a file that does not parse keeps its parser finding but makes the CLI exit 4, also under -FailOn error, where it used to exit 2 (owner ruling A2-Q01)' {
+        # Kept by the owner: parser-only analysis is PARTIAL, and an incomplete scan (exit 4) outranks the
+        # -FailOn threshold (exit 2) -- the CHANGELOG states the 2 -> 4 effect.
+        $c = Invoke-CrCase -Id 'R15' -Response $script:CrClean -Binding 'valid' -TargetText $script:CrBroken -FailOn 'error'
+        Assert-CrSituation -Case $c
+        $c.Log | Should -Match 'scan receipt written: partial' -Because 'the shipped client wrote a VALID receipt for its parser short-circuit'
+        $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False'
+        @(@($c.Sarif.runs[0].results) | Where-Object { [string]$_.level -eq 'error' }).Count | Should -BeGreaterThan 0 -Because 'the parser finding is still reported'
+        @($c.Sarif.runs[0].invocations[0].toolExecutionNotifications[0].properties.reasons) | Should -Contain 'parse-errors'
+    }
+    It 'C-R15t -- the text report calls that file''s receipt valid but PARTIAL, never missing (owner ruling A2-Q01)' {
+        $c = Invoke-CrCase -Id 'R15t' -Response $script:CrClean -Binding 'valid' -TargetText $script:CrBroken -FailOn 'error' -Format 'text'
+        $c.Run.TimedOut | Should -BeFalse
+        $c.Log | Should -Match 'scan receipt written: partial'
+        [int]$c.Run.ExitCode | Should -Be 4
+        $c.Report | Should -Match '\[Error\] line \d+, col \d+ -- ' -Because 'the parser finding is in the report'
+        $c.Report | Should -Match 'could NOT be analyzed \(no COMPLETE completion receipt -- not a clean result\)'
+        $c.Report | Should -Match '(?m)^  target-R15t\.ps1 \(valid receipt, PARTIAL analysis; reasons: [^)]*parse-errors[^)]*\)\r?$'
     }
 }
 

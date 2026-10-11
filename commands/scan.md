@@ -52,7 +52,7 @@ Read the exit code and say what it means -- do not report a scan as clean withou
 - `2` -- the `-FailOn` threshold was met. Findings exist at or above that level.
 - `3` -- usage error: no PowerShell host, or the path does not exist.
 - `4` -- **scan incomplete**: at least one file has no complete analysis to show for itself (no
-  valid completion receipt). This is the important one. An unanalyzed file is never reported as a
+  complete completion receipt). This is the important one. An unanalyzed file is never reported as a
   clean one, so do NOT tell the user their code is clean on a `4` -- say the scan could not
   complete, name the files and the reason codes it printed (for example `parse-errors` for a file
   that does not parse, or `daemon-unreachable`), and suggest `/powershell-lsp:doctor` when the

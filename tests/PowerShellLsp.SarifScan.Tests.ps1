@@ -413,9 +413,21 @@ Describe 'SARIF scan -- pure helpers (no daemon)' {
         It 'text mode prints each unanalyzed file with its reasons, and says it is not a clean result (dispatch 000304)' {
             $txt = Format-ScanTextReport -Findings @() -Root $TestDrive -Skipped 0 -FilesScanned 2 `
                 -NotAnalyzed @([pscustomobject]@{ Path = (Join-Path $TestDrive 'sub/x.ps1'); ElapsedMs = 9; Reasons = @('parse-errors') }, (Join-Path $TestDrive 'y.ps1'))
-            $txt | Should -Match 'could NOT be analyzed \(no valid completion receipt -- not a clean result\)'
+            $txt | Should -Match 'could NOT be analyzed \(no COMPLETE completion receipt -- not a clean result\)'
             $txt | Should -Match 'sub/x\.ps1 \(reasons: parse-errors\)'
             $txt | Should -Match '(?m)^  y\.ps1$'
+        }
+
+        It 'text mode tells a VALID PARTIAL receipt apart from a missing one (owner ruling A2-Q01, dispatch 000304)' {
+            # A file that does not parse has a valid receipt whose analysis is partial; the warning must not
+            # call that receipt missing or invalid -- and a file with no receipt keeps its own reasons.
+            $txt = Format-ScanTextReport -Findings @() -Root $TestDrive -Skipped 0 -FilesScanned 2 -NotAnalyzed @(
+                [pscustomobject]@{ Path = (Join-Path $TestDrive 'broken.ps1'); ElapsedMs = 9; Reasons = @('parse-errors'); Completeness = 'partial' },
+                [pscustomobject]@{ Path = (Join-Path $TestDrive 'silent.ps1'); ElapsedMs = 7; Reasons = @('child-silent-exit', 'receipt-missing'); Completeness = 'failed' })
+            $txt | Should -Match 'could NOT be analyzed \(no COMPLETE completion receipt -- not a clean result\)'
+            $txt | Should -Not -Match 'no valid completion receipt' -Because 'a partial receipt is a valid one'
+            $txt | Should -Match '(?m)^  broken\.ps1 \(valid receipt, PARTIAL analysis; reasons: parse-errors\)\r?$'
+            $txt | Should -Match '(?m)^  silent\.ps1 \(reasons: child-silent-exit, receipt-missing\)\r?$'
         }
     }
 }

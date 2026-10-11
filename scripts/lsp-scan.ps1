@@ -152,9 +152,10 @@ try {
         foreach ($f in @($r.Findings)) { [void]$allFindings.Add($f) }
         # Carry each unanalyzed file's elapsed ms (dispatch 000132 leg 2) so the INCOMPLETE surfaces
         # can report how long it ran before the budget cut it, not merely that it ran out -- and its
-        # receipt reason codes (dispatch 000304), so they say WHY it is not analyzed.
+        # receipt reason codes (dispatch 000304), so they say WHY it is not analyzed, and its
+        # completeness, so the text report tells a valid PARTIAL receipt from a missing one (A2-Q01).
         if (-not $r.Analyzed) {
-            [void]$notAnalyzed.Add([pscustomobject]@{ Path = [string]$r.File; ElapsedMs = [int]$r.ElapsedMs; Reasons = @($r.Reasons) })
+            [void]$notAnalyzed.Add([pscustomobject]@{ Path = [string]$r.File; ElapsedMs = [int]$r.ElapsedMs; Reasons = @($r.Reasons); Completeness = [string]$r.Completeness })
         }
         # DIAGNOSTIC timing (dispatch 000132 leg 3): with -DiagnosticTiming, record EVERY file's true
         # elapsed -- including files that COMPLETE when given room -- so a measurement run learns the

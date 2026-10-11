@@ -375,8 +375,10 @@ function Format-ScanTextReport {
     # The human-readable text mode: one line per finding grouped by file, then a summary.
     # Mirrors the in-agent hook's rendering idiom ([Level] line N, col C -- message (label))
     # so a finding reads the same in-CI as in-agent. Returns a single multi-line string.
-    # -NotAnalyzed takes bare paths or the lsp-scan.ps1 records (.Path/.ElapsedMs/.Reasons, dispatch
-    # 000304); a record's reason codes are printed beside its name.
+    # -NotAnalyzed takes bare paths or the lsp-scan.ps1 records (.Path/.ElapsedMs/.Reasons/.Completeness,
+    # dispatch 000304); a record's reason codes are printed beside its name. A record whose completeness
+    # is 'partial' had a VALID receipt for a partial analysis (a file that does not parse, say), and
+    # says so, so it is never mistaken for a file with no receipt (owner ruling A2-Q01, 2026-10-11).
     param(
         [object[]]$Findings,
         [string]$Root,
@@ -414,14 +416,19 @@ function Format-ScanTextReport {
         $FilesScanned + ' PowerShell file(s) scanned, ' + $Skipped + ' non-PowerShell file(s) skipped.')
     $na = @(@($NotAnalyzed) | Where-Object { $null -ne $_ -and -not ($_ -is [string] -and [string]::IsNullOrWhiteSpace($_)) })
     if ($na.Count -gt 0) {
-        [void]$sb.AppendLine('WARNING: ' + $na.Count + ' file(s) could NOT be analyzed (no valid completion receipt -- not a clean result):')
+        [void]$sb.AppendLine('WARNING: ' + $na.Count + ' file(s) could NOT be analyzed (no COMPLETE completion receipt -- not a clean result):')
         foreach ($entry in $na) {
             if ($entry -is [string]) { [void]$sb.AppendLine('  ' + (Get-ScanRelativeUri -FilePath $entry -Root $Root)); continue }
             $p = [string](Get-Prop $entry 'Path')
             if ([string]::IsNullOrWhiteSpace($p)) { $p = [string](Get-Prop $entry 'File') }
             $why = @(@(Get-Prop $entry 'Reasons') | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+            $partial = ([string](Get-Prop $entry 'Completeness') -eq 'partial')
             $line = '  ' + (Get-ScanRelativeUri -FilePath $p -Root $Root)
-            if ($why.Count -gt 0) { $line = $line + ' (reasons: ' + ($why -join ', ') + ')' }
+            if ($partial) {
+                $line = $line + ' (valid receipt, PARTIAL analysis'
+                if ($why.Count -gt 0) { $line = $line + '; reasons: ' + ($why -join ', ') }
+                $line = $line + ')'
+            } elseif ($why.Count -gt 0) { $line = $line + ' (reasons: ' + ($why -join ', ') + ')' }
             [void]$sb.AppendLine($line)
         }
     }
