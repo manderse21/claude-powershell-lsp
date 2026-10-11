@@ -17,6 +17,15 @@
 # CI, not a silent defect. No second PSScriptAnalyzer acquisition path and no pinned-hash
 # change: the daemon vendors PSSA via the existing ensure-pssa.ps1 (000046 L2), unchanged.
 #
+# THE VERDICT IS A RECEIPT (dispatch 000304, A2). Whether a file was analyzed is no longer
+# inferred from what the child did NOT say: the client writes a typed completion receipt in scan
+# mode (scripts/lib/lsp-scan-receipt.ps1), and Invoke-ScanFileDiagnostics reports a file analyzed
+# only when that receipt validates as COMPLETE for this request, this file and these bytes. The
+# findings still come from the capture transport above; the receipt binds their count and digest.
+# REQUIRES scripts/lib/lsp-scan-receipt.ps1 to be dot-sourced by the caller (scripts/lsp-scan.ps1
+# does): a library may not dot-source at top level (tests/PowerShellLsp.LibPurity.Tests.ps1), and
+# Invoke-ScanFileDiagnostics refuses to run without the validator rather than guess.
+#
 # Author: Mike Andersen / powershell-lsp plugin.
 
 $script:LspScanCommonDir = $PSScriptRoot
@@ -200,10 +209,12 @@ function Get-ScanNotAnalyzedNames {
     # Map a set of not-analyzed files to sorted, root-relative names (bounded to $Cap), each with the
     # elapsed ms it ran before the budget cut it (dispatch 000132 leg 2). ONE source so the SARIF
     # notifications and the incomplete-scan stderr line bound, order, and time the names identically.
-    # Accepts EITHER bare path strings (elapsed unknown -> $null) OR objects carrying .Path (or .File)
-    # and .ElapsedMs. Returns @{
+    # Accepts EITHER bare path strings (elapsed unknown -> $null) OR objects carrying .Path (or .File),
+    # .ElapsedMs and, since dispatch 000304, .Reasons (the receipt reason codes; absent -> none).
+    # Returns @{
     #   Names    = <string[]> (<= Cap, sorted, forward-slash relative) -- the unchanged 000131 surface;
-    #   Items    = <object[]> of @{ Name = <rel>; ElapsedMs = <int|$null> }, in the same order as Names;
+    #   Items    = <object[]> of @{ Name = <rel>; ElapsedMs = <int|$null>; Reasons = <string[]> }, in the
+    #              same order as Names;
     #   Total    = <int>; Overflow = <int> }.
     # $Cap <= 0 means no cap (enumerate all). Blank/null entries are dropped; never throws on empty.
     param(
@@ -216,6 +227,7 @@ function Get-ScanNotAnalyzedNames {
         if ($null -eq $entry) { continue }
         $path = ''
         $elapsed = $null
+        $why = @()
         if ($entry -is [string]) {
             $path = [string]$entry
         } else {
@@ -223,9 +235,10 @@ function Get-ScanNotAnalyzedNames {
             if ([string]::IsNullOrWhiteSpace($path)) { $path = [string](Get-Prop $entry 'File') }
             $ev = Get-Prop $entry 'ElapsedMs'
             if ($null -ne $ev -and "$ev" -ne '') { $elapsed = [int]$ev }
+            $why = @(@(Get-Prop $entry 'Reasons') | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
         }
         if ([string]::IsNullOrWhiteSpace($path)) { continue }
-        [void]$items.Add([pscustomobject]@{ Name = (Get-ScanRelativeUri -FilePath $path -Root $Root); ElapsedMs = $elapsed })
+        [void]$items.Add([pscustomobject]@{ Name = (Get-ScanRelativeUri -FilePath $path -Root $Root); ElapsedMs = $elapsed; Reasons = $why })
     }
     $sorted = @(@($items) | Sort-Object -Property Name)
     $total = $sorted.Count
@@ -307,12 +320,17 @@ function New-SarifReport {
         foreach ($it in $na.Items) {
             $rel = [string]$it.Name
             $elapsed = $it.ElapsedMs
+            $why = @($it.Reasons)
+            # The receipt reason codes (dispatch 000304) ride IN the text, so the workflow annotation
+            # that echoes message.text names the cause, and in a property bag, so a reader can parse
+            # them. A bare-path entry carries none, and its text is byte-identical to before.
+            $tail = if ($why.Count -gt 0) { ' (scan INCOMPLETE for this file; reasons: ' + ($why -join ', ') + ').' } else { ' (scan INCOMPLETE for this file).' }
             $text = if ($null -ne $elapsed) {
-                'powershell-lsp: could not analyze ' + $rel + ' after ' + [int]$elapsed + 'ms (scan INCOMPLETE for this file).'
+                'powershell-lsp: could not analyze ' + $rel + ' after ' + [int]$elapsed + 'ms' + $tail
             } else {
-                'powershell-lsp: could not analyze ' + $rel + ' (scan INCOMPLETE for this file).'
+                'powershell-lsp: could not analyze ' + $rel + $tail
             }
-            [void]$notifs.Add([ordered]@{
+            $notif = [ordered]@{
                 level     = 'error'
                 message   = [ordered]@{ text = $text }
                 locations = @(
@@ -322,7 +340,9 @@ function New-SarifReport {
                         }
                     }
                 )
-            })
+            }
+            if ($why.Count -gt 0) { $notif['properties'] = [ordered]@{ reasons = @($why) } }
+            [void]$notifs.Add($notif)
         }
         if ($na.Overflow -gt 0) {
             [void]$notifs.Add([ordered]@{
@@ -355,12 +375,14 @@ function Format-ScanTextReport {
     # The human-readable text mode: one line per finding grouped by file, then a summary.
     # Mirrors the in-agent hook's rendering idiom ([Level] line N, col C -- message (label))
     # so a finding reads the same in-CI as in-agent. Returns a single multi-line string.
+    # -NotAnalyzed takes bare paths or the lsp-scan.ps1 records (.Path/.ElapsedMs/.Reasons, dispatch
+    # 000304); a record's reason codes are printed beside its name.
     param(
         [object[]]$Findings,
         [string]$Root,
         [int]$Skipped = 0,
         [int]$FilesScanned = 0,
-        [string[]]$NotAnalyzed = @()
+        [object[]]$NotAnalyzed = @()
     )
     $items = @(@($Findings) | Where-Object { $null -ne $_ })
     $sb = New-Object System.Text.StringBuilder
@@ -390,10 +412,18 @@ function Format-ScanTextReport {
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine($items.Count.ToString() + ' finding(s) in ' + $fileCount + ' file(s); ' +
         $FilesScanned + ' PowerShell file(s) scanned, ' + $Skipped + ' non-PowerShell file(s) skipped.')
-    $na = @(@($NotAnalyzed) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $na = @(@($NotAnalyzed) | Where-Object { $null -ne $_ -and -not ($_ -is [string] -and [string]::IsNullOrWhiteSpace($_)) })
     if ($na.Count -gt 0) {
-        [void]$sb.AppendLine('WARNING: ' + $na.Count + ' file(s) could NOT be analyzed (the analyzer was not reachable for them):')
-        foreach ($p in $na) { [void]$sb.AppendLine('  ' + (Get-ScanRelativeUri -FilePath $p -Root $Root)) }
+        [void]$sb.AppendLine('WARNING: ' + $na.Count + ' file(s) could NOT be analyzed (no valid completion receipt -- not a clean result):')
+        foreach ($entry in $na) {
+            if ($entry -is [string]) { [void]$sb.AppendLine('  ' + (Get-ScanRelativeUri -FilePath $entry -Root $Root)); continue }
+            $p = [string](Get-Prop $entry 'Path')
+            if ([string]::IsNullOrWhiteSpace($p)) { $p = [string](Get-Prop $entry 'File') }
+            $why = @(@(Get-Prop $entry 'Reasons') | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+            $line = '  ' + (Get-ScanRelativeUri -FilePath $p -Root $Root)
+            if ($why.Count -gt 0) { $line = $line + ' (reasons: ' + ($why -join ', ') + ')' }
+            [void]$sb.AppendLine($line)
+        }
     }
     return $sb.ToString().TrimEnd()
 }
@@ -404,11 +434,141 @@ function Format-ScanTextReport {
 # They mirror tests/corpus/Corpus.Common.ps1 (the corpus's proven derivation) but are the
 # production path; the SARIF-scan test cross-checks them against the committed corpus snapshots.
 
+function Set-ScanChildFormatterOff {
+    # FORMATTER-OFF CONTAINMENT for a scan child (dispatch 000304, A2 -- the narrow slice moved here
+    # from A3; A3 still owns the complete declared environment). formatOnEdit=apply makes the client
+    # ask the daemon to REWRITE the analyzed file and then drop the pre-rewrite findings, so a scan
+    # that inherited it rewrote what it scanned and reported nothing (A1 measured it). Overriding the
+    # one spelling the scan names is not enough: the option resolver (Get-RawPluginOption) accepts
+    # ANY CLAUDE_PLUGIN_OPTION_* name that normalizes to the knob -- underscores stripped, case
+    # ignored -- and takes the first non-blank one it enumerates, so FORMAT_ON_EDIT (or, on Linux and
+    # macOS, Claude Code's own upper-cased export) would still win some runs. So EVERY spelling is
+    # removed from the child's block, and exactly one is set, to off. Explicit beats a profile
+    # mapping, so a profile that maps formatOnEdit=suggest resolves off as well. Edits the child's
+    # ProcessStartInfo only -- never this process's environment.
+    param([Parameter(Mandatory = $true)][System.Diagnostics.ProcessStartInfo]$StartInfo)
+    $prefix = 'CLAUDE_PLUGIN_OPTION_'
+    foreach ($name in @($StartInfo.EnvironmentVariables.Keys)) {
+        $n = [string]$name
+        if (-not $n.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        if (($n.Substring($prefix.Length) -replace '_', '').ToLowerInvariant() -eq 'formatonedit') {
+            $StartInfo.EnvironmentVariables.Remove($n)
+        }
+    }
+    $StartInfo.EnvironmentVariables['CLAUDE_PLUGIN_OPTION_formatOnEdit'] = 'off'
+}
+
+function Stop-ScanProcessTree {
+    # Kill a timed-out scan child AND its descendants, on both Windows hosts. Process.Kill($true) --
+    # the tree kill -- exists only on .NET Core 3.0+; under Windows PowerShell 5.1 the call throws a
+    # MethodException, and the old `try { $p.Kill($true) } catch { }` swallowed it and killed NOTHING
+    # (dispatch 000302 measured the child alive after the "kill": S7b). So: the tree kill where it
+    # exists, else `taskkill /T /F` on Windows (the error preference relaxed, because 5.1 turns a
+    # native command's stderr into a terminating error under Stop), and a plain Kill() last.
+    param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)
+    $treeKilled = $false
+    try { $Process.Kill($true); $treeKilled = $true } catch { $treeKilled = $false }
+    if (-not $treeKilled -and (Test-OnWindows)) {
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { & taskkill.exe /PID $Process.Id /T /F *> $null } catch { } finally { $ErrorActionPreference = $prevEap }
+    }
+    try { if (-not $Process.HasExited) { $Process.Kill() } } catch { }
+}
+
+function Invoke-ScanChildProcess {
+    # THE scan spawner (dispatch 000304, A2): every scan child -- session-start, the client per file,
+    # session-end -- runs through here. It returns a TYPED record, never a bare string:
+    #   ExitCode        the child's exit code; $null when a killed child never reported one
+    #   StdOut, StdErr  everything each stream carried (each drained to EOF, or '' if a drain did not end)
+    #   Killed          the cap expired and the tree was killed
+    #   Exited          the process is gone (after the kill, if any) -- $false is a kill that failed
+    #   ElapsedMs       wall-clock from start to exit (or to the kill)
+    #   StdOutComplete, StdErrComplete  whether each drain reached EOF
+    #   StdinError      why the payload could not be written ('' when it was)
+    # BOTH streams are drained CONCURRENTLY: each ReadToEndAsync starts before stdin is written and
+    # before any wait, so a child that fills one pipe can never be held to the cap by the other (the
+    # old spawner redirected stderr and never read it: dispatch 000302's S3b held a finished child to
+    # the cap). The process is disposed on every path. No verdict is taken from any of this: whether a
+    # file was analyzed is the receipt's to say (Test-ScanReceipt); this record is the evidence about
+    # how the child ended. The analysis host is ALWAYS a real PowerShell (pwsh preferred), so findings
+    # are host-consistent regardless of who launched the scan.
+    param(
+        [Parameter(Mandatory = $true)][string]$HostExe,
+        [Parameter(Mandatory = $true)][string]$ScriptPath,
+        [string]$StdinJson = '',
+        [int]$CapMs = 25000,
+        [string]$DataRoot = '',
+        [string[]]$ExtraArgs = @(),
+        [hashtable]$ExtraEnv
+    )
+    # NO CreateNoWindow, on purpose: the child must INHERIT this process's console so it decodes stdin
+    # with the code page the payload was written for. A new (hidden) console starts at the OEM code
+    # page (437 on en-US). Measured: under a PowerShell 7 parent a non-ASCII path arrived mangled, and
+    # under a Windows PowerShell 5.1 parent -- whose StandardInput writer prepends a UTF-8 BOM -- the
+    # BOM decoded as three OEM characters that Get-StdinText cannot strip, so no payload parsed at all.
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $HostExe; $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+    Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
+    if (-not [string]::IsNullOrWhiteSpace($DataRoot)) { $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot }
+    if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+    Set-ScanChildFormatterOff -StartInfo $psi
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $p = [System.Diagnostics.Process]::Start($psi)
+    try {
+        $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+        $stderrTask = $p.StandardError.ReadToEndAsync()
+        $stdinError = ''
+        try {
+            if (-not [string]::IsNullOrEmpty($StdinJson)) {
+                $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($StdinJson)   # no BOM
+                $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+                $p.StandardInput.BaseStream.Flush()
+            }
+        } catch { $stdinError = $_.Exception.Message }
+        try { $p.StandardInput.Close() } catch { if ($stdinError -eq '') { $stdinError = $_.Exception.Message } }
+        $killed = $false
+        if (-not $p.WaitForExit($CapMs)) {
+            $killed = $true
+            Stop-ScanProcessTree -Process $p
+            try { [void]$p.WaitForExit(5000) } catch { }
+        }
+        $elapsed = [int]$sw.ElapsedMilliseconds
+        # Both drains end at EOF once the child (and anything holding its handles) is gone. Bounded,
+        # so a grandchild that inherited a handle costs a wait, never a hang.
+        $drainMs = [Math]::Max(1500, [Math]::Min($CapMs, 5000))
+        try { [void]$stdoutTask.Wait($drainMs) } catch { }
+        try { [void]$stderrTask.Wait($drainMs) } catch { }
+        $outDone = ($stdoutTask.IsCompleted -and -not $stdoutTask.IsFaulted)
+        $errDone = ($stderrTask.IsCompleted -and -not $stderrTask.IsFaulted)
+        $exited = $false
+        try { $exited = $p.HasExited } catch { $exited = $false }
+        $exitCode = $null
+        if ($exited) { try { $exitCode = [int]$p.ExitCode } catch { $exitCode = $null } }
+        return [pscustomobject]@{
+            ExitCode       = $exitCode
+            StdOut         = $(if ($outDone) { [string]$stdoutTask.Result } else { '' })
+            StdErr         = $(if ($errDone) { [string]$stderrTask.Result } else { '' })
+            Killed         = $killed
+            Exited         = $exited
+            ElapsedMs      = $elapsed
+            StdOutComplete = $outDone
+            StdErrComplete = $errDone
+            StdinError     = $stdinError
+        }
+    } finally {
+        try { $p.Dispose() } catch { }
+    }
+}
+
 function Invoke-ScanHook {
-    # Spawn a plugin hook (session-start.ps1 / session-end.ps1 / lsp-client.ps1) under the
-    # resolved PowerShell host with the given stdin + env; return its stdout. The analysis host
-    # is ALWAYS a real PowerShell (pwsh preferred) so findings are host-consistent regardless of
-    # who launched the scan -- the same rule the corpus/integration harnesses follow.
+    # COMPATIBILITY WRAPPER over Invoke-ScanChildProcess, for callers that want only a hook's stdout:
+    # Start-ScanDaemon / Stop-ScanDaemon below, and the frozen pre-000301 Invoke-ScanFileDiagnostics
+    # in tests/fixtures/red-controls/, which must keep running verbatim. Same parameters and return as
+    # before dispatch 000304 -- the stdout text, '' on a cap kill -- so every existing caller is
+    # preserved; what changed underneath is that stderr is now drained, the kill reaches the tree on
+    # Windows PowerShell 5.1 too, and formatOnEdit is contained off in every child it starts.
     param(
         [string]$HostExe,
         [string]$ScriptPath,
@@ -424,23 +584,13 @@ function Invoke-ScanHook {
         # not a clean file). The stdout return is unchanged ('' on a kill).
         $Killed = $null
     )
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $HostExe; $psi.UseShellExecute = $false
-    $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-    Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
-    $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot
-    if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
-    $p = [System.Diagnostics.Process]::Start($psi)
-    $stdoutTask = $p.StandardOutput.ReadToEndAsync()
-    if ($StdinJson) {
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes($StdinJson)   # no BOM
-        $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
-        $p.StandardInput.BaseStream.Flush()
+    $r = Invoke-ScanChildProcess -HostExe $HostExe -ScriptPath $ScriptPath -StdinJson $StdinJson -CapMs $CapMs `
+        -DataRoot $DataRoot -ExtraArgs $ExtraArgs -ExtraEnv $ExtraEnv
+    if ($r.Killed) {
+        if ($null -ne $Killed) { $Killed.Value = $true }
+        return ''
     }
-    $p.StandardInput.Close()
-    if (-not $p.WaitForExit($CapMs)) { try { $p.Kill($true) } catch { }; if ($null -ne $Killed) { $Killed.Value = $true }; return '' }
-    [void]$stdoutTask.Wait(1500)
-    if ($stdoutTask.IsCompleted) { return $stdoutTask.Result } else { return '' }
+    return [string]$r.StdOut
 }
 
 function Start-ScanDaemon {
@@ -503,21 +653,31 @@ function Invoke-ScanFileDiagnostics {
     # it (the same engine the in-agent edit path uses), with the dogfood capture log redirected
     # to a hermetic throwaway file and whole-file scoping (scopeToEdit=false -- a scan has no
     # edit range). Reads back the structured records the tool teed and returns:
-    #   @{ File; Findings = @({ file; ruleId; source; severity; line; col; message }); Analyzed; ElapsedMs }
+    #   @{ File; Findings = @({ file; ruleId; source; severity; line; col; message }); Analyzed; ElapsedMs;
+    #      Completeness; Status; Pass; Reasons; Certification; Child }
     # ElapsedMs (dispatch 000132 leg 2) is the wall-clock the per-file hook round-trip took -- for a
     # timed-out or cap-killed file this is ~the budget it hit, the "how long did it run" a bare count
     # lacked, so an INCOMPLETE can name the file AND how long it ran before the budget cut it.
-    # Analyzed=$false when the hook output signals the analyzer was not reachable for this file
-    # (a 'NOT checked' banner) -- surfaced by the caller so a degraded analysis is never reported
-    # as a clean file (the project's never-silent rule). The file is analyzed IN PLACE so SARIF
-    # carries its real path and the repo's own PSScriptAnalyzerSettings.psd1 is honored, exactly
-    # as the in-agent hook honors it (000018).
+    # The file is analyzed IN PLACE so SARIF carries its real path and the repo's own
+    # PSScriptAnalyzerSettings.psd1 is honored, exactly as the in-agent hook honors it (000018).
+    #
+    # ANALYZED COMES FROM A VALIDATED RECEIPT, NOTHING ELSE (dispatch 000304, A2). The scan used to
+    # start from Analyzed=$true and flip it only on a cap kill or a 'NOT checked' banner, so seven
+    # ways a child can end without analyzing anything read as a clean file (dispatch 000302). Now the
+    # child is asked -- in its hook payload, under a fresh request id -- to write a completion receipt,
+    # and the file is analyzed only when Test-ScanReceipt finds it COMPLETE: the right request, the
+    # right file, the bytes the daemon consumed equal to the bytes on disk before and after the child,
+    # the settled PSScriptAnalyzer pass, and the receipt's finding count and digest equal to the
+    # records read back here. A missing, truncated, malformed, mismatched or merely partial receipt is
+    # NOT analyzed, with machine reasons (Reasons) the caller names in its INCOMPLETE report. Neither
+    # the hook's stdout banner nor the capture telemetry decides the verdict; they are evidence only.
     #
     # `message` on the returned finding is ALWAYS the real diagnostic text, regardless of the
     # caller's ambient POWERSHELL_LSP_CAPTURE_MODE (dispatch 000301 N6): see the CAPTURE_MODE=full
     # line inside, which forces it on the throwaway transport this function owns end to end. This
     # is the ONLY thing scripts/lsp-scan.ps1's SARIF `message.text` renders, so a caller must never
-    # see it degrade to a bare rule id just because nobody set a telemetry-log env var.
+    # see it degrade to a bare rule id just because nobody set a telemetry-log env var. (A degraded
+    # transport could not pass anyway now: the receipt's digest covers each message.)
     param(
         [string]$ScriptsDir,
         [string]$DataRoot,
@@ -528,6 +688,10 @@ function Invoke-ScanFileDiagnostics {
         [int]$CapMs = 25000,
         [string]$CaptureDir = ''
     )
+    if ($null -eq (Get-Command -Name 'Test-ScanReceipt' -CommandType Function -ErrorAction SilentlyContinue)) {
+        # Never guess a verdict without the validator: dot-source scripts/lib/lsp-scan-receipt.ps1.
+        throw 'Invoke-ScanFileDiagnostics: scripts/lib/lsp-scan-receipt.ps1 is not loaded (dot-source it after lsp-scan-common.ps1)'
+    }
     $full = $FilePath
     try { $full = [System.IO.Path]::GetFullPath($FilePath) } catch { $full = $FilePath }
     if ([string]::IsNullOrWhiteSpace($Cwd)) { $Cwd = [System.IO.Path]::GetDirectoryName($full) }
@@ -535,7 +699,21 @@ function Invoke-ScanFileDiagnostics {
     if (-not (Test-Path -LiteralPath $CaptureDir)) { New-ContainedDirectory -Path $CaptureDir }
     $log = Join-Path $CaptureDir ('scan-' + [guid]::NewGuid().ToString('N').Substring(0, 12) + '.jsonl')
 
-    $stdin = (@{ session_id = $SessionId; tool_input = @{ file_path = $full }; cwd = $Cwd } | ConvertTo-Json -Compress)
+    # The completion receipt this request asks for (dispatch 000304): a fresh request id and a fresh
+    # path in an owner-only directory, carried in the hook payload. The path must not pre-exist (the
+    # producer never overwrites), so a stale file can never be mistaken for this request's receipt.
+    $receiptDir = Join-Path $DataRoot 'scan-receipts'
+    if (-not (Test-Path -LiteralPath $receiptDir)) { New-ContainedDirectory -Path $receiptDir }
+    $requestId = New-ScanRequestId
+    $receiptPath = Join-Path $receiptDir ($requestId + '.json')
+    if (Test-Path -LiteralPath $receiptPath) { Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue }
+
+    $stdin = ([ordered]@{
+            session_id          = $SessionId
+            tool_input          = @{ file_path = $full }
+            cwd                 = $Cwd
+            powershell_lsp_scan = (New-ScanRequestField -RequestId $requestId -ReceiptPath $receiptPath)
+        } | ConvertTo-Json -Compress -Depth 4)
     # scopeToEdit=false => whole-file (a scan carries no edit patch); timeoutMs raised so a first
     # cold analysis on a slow leg still settles inside the client cap. NOTE (dispatch 000132): this
     # client-side cap is NOT the binding per-file budget -- the daemon's own settle cap (MaxWaitMs,
@@ -564,12 +742,15 @@ function Invoke-ScanFileDiagnostics {
         CLAUDE_PLUGIN_OPTION_scopeToEdit = 'false'
         CLAUDE_PLUGIN_OPTION_timeoutMs   = '18000'
     }
-    $killed = $false
+    # The bytes on disk BEFORE and AFTER the child: the receipt's daemon-consumed SHA-256 must equal
+    # both, so a file that changed or vanished while it was being scanned can never be certified.
+    $pre = Read-ScanSourceSnapshot -Path $full -NoText
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $stdout = Invoke-ScanHook -HostExe $HostExe -ScriptPath (Join-Path $ScriptsDir 'lsp-client.ps1') `
-        -StdinJson $stdin -CapMs $CapMs -DataRoot $DataRoot -ExtraEnv $extraEnv -Killed ([ref]$killed)
+    $child = Invoke-ScanChildProcess -HostExe $HostExe -ScriptPath (Join-Path $ScriptsDir 'lsp-client.ps1') `
+        -StdinJson $stdin -CapMs $CapMs -DataRoot $DataRoot -ExtraEnv $extraEnv
     $sw.Stop()
     $elapsedMs = [int]$sw.Elapsed.TotalMilliseconds
+    $post = Read-ScanSourceSnapshot -Path $full -NoText
 
     $findings = New-Object System.Collections.ArrayList
     if (Test-Path -LiteralPath $log) {
@@ -590,23 +771,32 @@ function Invoke-ScanFileDiagnostics {
         }
         try { Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue } catch { }
     }
-    # Never-silent: a file is "analyzed" only with POSITIVE evidence the analysis reached a verdict.
-    # It did NOT in two cases: (1) the client cap KILLED the process (dispatch 000132 leg 1) -- an
-    # empty stdout that must not read as clean; or (2) a 'NOT checked' banner (the daemon per-file
-    # budget was exhausted). Either way the file is NOT analyzed, so the caller drops it into
-    # $notAnalyzed -- it is NAMED by 000131 and the scan exits 4 -- never reporting a killed or
-    # degraded file as a clean one.
-    $analyzed = $true
-    if ($killed) {
-        $analyzed = $false
-    } elseif (-not [string]::IsNullOrWhiteSpace($stdout) -and $stdout -match 'NOT checked') {
-        $analyzed = $false
-    }
+    $findingList = @(@($findings) | Where-Object { $null -ne $_ })
+    # Never-silent: a file is "analyzed" only with POSITIVE evidence the analysis reached a verdict --
+    # a receipt Test-ScanReceipt validates as COMPLETE (dispatch 000304). A cap kill (dispatch 000132
+    # leg 1), a degraded or unsettled pass, a refusal, a crash, a vanished or changed source, and a
+    # child that simply said nothing all land here as NOT analyzed, each with its reason codes, so the
+    # caller names the file and the scan exits 4 -- never reporting any of them as a clean file.
+    $verdict = Test-ScanReceipt -Path $receiptPath -RequestId $requestId -FilePath $full `
+        -PreSnapshot $pre -PostSnapshot $post -Child $child -Records $findingList
+    try { if (Test-Path -LiteralPath $receiptPath) { Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue } } catch { }
     return [pscustomobject]@{
-        File      = $full
-        Findings  = @(@($findings) | Where-Object { $null -ne $_ })
-        Analyzed  = $analyzed
-        ElapsedMs = $elapsedMs
+        File          = $full
+        Findings      = $findingList
+        Analyzed      = ([string]$verdict.Completeness -eq 'complete')
+        ElapsedMs     = $elapsedMs
+        Completeness  = [string]$verdict.Completeness
+        Status        = [string]$verdict.Status
+        Pass          = [string]$verdict.Pass
+        Reasons       = @($verdict.Reasons)
+        Certification = $verdict.Certification
+        Child         = [pscustomobject]@{
+            ExitCode   = $child.ExitCode
+            Killed     = [bool]$child.Killed
+            Exited     = [bool]$child.Exited
+            StdErr     = [string]$child.StdErr
+            StdinError = [string]$child.StdinError
+        }
     }
 }
 

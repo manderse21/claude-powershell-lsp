@@ -43,12 +43,17 @@
 #
 # CLASSIFICATION is as in PowerShellLsp.ScanVerdict.Tests.ps1: one It per contract assertion; an It
 # measured RED at the A1 head is tagged with its owner and excluded from tests/run-tests.ps1, and
-# tests/assert-expected-red.ps1 proves it still fails with its declared assertion. 'ScanRed-A2' marks
-# what A2's narrow formatter-off containment fixes (formatting must be OFF in every scan child, under
-# every spelling of formatOnEdit); 'ScanRed-A3' marks what A3's declared scan configuration fixes
-# (ambient analysis knobs, and an ambient ps_host, must not reach a scan under any spelling). A
-# containment that overrides only the spelling the scan names cannot turn the alias cases green.
-# Already-green cells are controls and run normally.
+# tests/assert-expected-red.ps1 proves it still fails with its declared assertion. 'ScanRed-A3' marks
+# what A3's declared scan configuration fixes (ambient analysis knobs, and an ambient ps_host, must
+# not reach a scan under any spelling). Already-green cells are controls and run normally.
+#
+# A2 (dispatch 000304) LANDED the narrow formatter-off containment the former 'ScanRed-A2' tag marked
+# here: Set-ScanChildFormatterOff strips EVERY spelling of formatOnEdit from every scan child's
+# environment and sets exactly one, to off -- so all twelve matrix cells, the alias spelling, the
+# real-formatter apply cells and the CLI apply run below resolve formatting off, leave the source
+# bytes alone and report the clean-environment findings. Those tests lost their tag in the same
+# change and run in the normal suite. A containment that overrides only the spelling the scan names
+# could not have turned the alias case green; this one strips the spelling class.
 #
 # ASCII-only (PS 5.1 Windows-1252 trap); StrictMode-safe. Run via tests/run-tests.ps1.
 
@@ -70,6 +75,7 @@ Describe 'Scan read-only census of the configuration a scan child receives (disp
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-receipt.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
         . (Join-Path $PSScriptRoot 'ScanHarness.Common.ps1')
         $script:RcHost = Resolve-PsHost 'pwsh'
@@ -151,7 +157,7 @@ Describe 'Scan read-only census of the configuration a scan child receives (disp
                 -Ambient (@{ profile = $ProfileName } + $(if ($Mode -eq 'unset') { @{} } else { @{ formatOnEdit = $Mode } }))
             [string]$m.Record.formatMode | Should -BeExactly 'off' -Because ('F2 format ' + $Name + ': a scan child must never format')
         }
-        It 'formatOnEdit=<Mode> under profile <ProfileName> -- the scan client resolves formatting off' -Tag 'ScanRed-A2' -ForEach $script:SrCellsResolveOn {
+        It 'formatOnEdit=<Mode> under profile <ProfileName> -- the scan client resolves formatting off' -ForEach $script:SrCellsResolveOn {
             $m = Measure-RcClient -Tag ('fm' + $ProfileName.Substring(0, 2) + $Mode.Substring(0, 2)) `
                 -Ambient (@{ profile = $ProfileName } + $(if ($Mode -eq 'unset') { @{} } else { @{ formatOnEdit = $Mode } }))
             [string]$m.Record.formatMode | Should -BeExactly 'off' -Because ('F2 format ' + $Name + ': a scan child must never format')
@@ -227,10 +233,20 @@ Describe 'Scan read-only census of the configuration a scan child receives (disp
             [string]$m.Record.env.POWERSHELL_LSP_CAPTURE_MODE | Should -BeExactly 'full'
             [string]$m.Record.env.POWERSHELL_LSP_DOGFOOD_LOG | Should -Match 'scan-capture'
         }
-        It 'with no ambient configuration at all, the scan client resolves formatting off (control)' {
+        It 'with no ambient configuration at all, the scan client resolves formatting off -- by the scan''s own declaration (control)' {
+            # A1 recorded provenance 'default' here: nothing set the knob. Since dispatch 000304 the scan
+            # DECLARES formatOnEdit=off in every child (Set-ScanChildFormatterOff), so the same 'off' now
+            # arrives with provenance 'env' -- exactly one spelling, holding off.
             $m = Measure-RcClient -Tag 'cl' -Ambient @{}
             [string]$m.Record.formatMode | Should -BeExactly 'off'
-            [string]$m.Record.resolved.formatOnEdit.provenance | Should -BeExactly 'default'
+            [string]$m.Record.resolved.formatOnEdit.value | Should -BeExactly 'off'
+            [string]$m.Record.resolved.formatOnEdit.provenance | Should -BeExactly 'env'
+            $spellings = @(@($m.Record.env.PSObject.Properties) | Where-Object {
+                    $n = [string]$_.Name
+                    $n.StartsWith('CLAUDE_PLUGIN_OPTION_', [System.StringComparison]::OrdinalIgnoreCase) -and
+                    (($n.Substring(21) -replace '_', '').ToLowerInvariant() -eq 'formatonedit')
+                } | ForEach-Object { [string]$_.Name + '=' + [string]$_.Value })
+            ($spellings -join ',') | Should -BeExactly 'CLAUDE_PLUGIN_OPTION_formatOnEdit=off'
         }
     }
 
@@ -290,7 +306,7 @@ Describe 'Scan read-only census of the configuration a scan child receives (disp
             (Get-RcSpellingLeak -Record $m.Record -Key 'timeoutMs' -Value '1') | Should -BeExactly '' -Because 'F2 timeoutMs alias: an ambient client timeout must not reach a scan child under any spelling'
             [string]$m.Record.resolved.timeoutMs.value | Should -BeExactly '18000' -Because 'F2 timeoutMs alias: the scan declares timeoutMs=18000'
         }
-        It 'an ambient CLAUDE_PLUGIN_OPTION_FORMAT_ON_EDIT does not reach the scan client' -Tag 'ScanRed-A2' {
+        It 'an ambient CLAUDE_PLUGIN_OPTION_FORMAT_ON_EDIT does not reach the scan client' {
             $m = Measure-RcClient -Tag 'afo' -Ambient @{ FORMAT_ON_EDIT = 'apply' }
             (Get-RcSpellingLeak -Record $m.Record -Key 'formatOnEdit' -Value 'apply') | Should -BeExactly '' -Because 'F2 formatOnEdit alias: an ambient format mode must not reach a scan child under any spelling'
             [string]$m.Record.formatMode | Should -BeExactly 'off' -Because 'F2 formatOnEdit alias: a scan child must never format'
@@ -332,6 +348,7 @@ Describe 'Scan read-only integration with the real daemon and formatter (dispatc
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-receipt.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
         . (Join-Path $PSScriptRoot 'ScanHarness.Common.ps1')
         $script:RiHost = Resolve-PsHost 'pwsh'
@@ -432,7 +449,7 @@ Describe 'Scan read-only integration with the real daemon and formatter (dispatc
         $c.Analyzed | Should -BeTrue -Because ('F2 bytes ' + $Name + ' situation: the cell must have been analysed')
         $c.After | Should -BeExactly $c.Before -Because ('F2 bytes ' + $Name + ': a scan must never write a source file')
     }
-    It 'formatOnEdit=<Mode> under profile <ProfileName> -- the scan leaves the source bytes unchanged' -Tag 'ScanRed-A2' -ForEach $script:SrCellsApply {
+    It 'formatOnEdit=<Mode> under profile <ProfileName> -- the scan leaves the source bytes unchanged' -ForEach $script:SrCellsApply {
         $c = $script:RiCells[$Name]
         $c.Analyzed | Should -BeTrue -Because ('F2 bytes ' + $Name + ' situation: the cell must have been analysed')
         $c.After | Should -BeExactly $c.Before -Because ('F2 bytes ' + $Name + ': a scan must never write a source file')
@@ -443,7 +460,7 @@ Describe 'Scan read-only integration with the real daemon and formatter (dispatc
         $c.Analyzed | Should -BeTrue -Because ('F2 findings ' + $Name + ' situation: the cell must have been analysed')
         ($c.Keys -join ',') | Should -BeExactly ($script:RiBase.Keys -join ',') -Because ('F2 findings ' + $Name + ': equivalent declared inputs must give the same findings')
     }
-    It 'formatOnEdit=<Mode> under profile <ProfileName> -- the scan reports the clean-environment finding set' -Tag 'ScanRed-A2' -ForEach $script:SrCellsApply {
+    It 'formatOnEdit=<Mode> under profile <ProfileName> -- the scan reports the clean-environment finding set' -ForEach $script:SrCellsApply {
         $c = $script:RiCells[$Name]
         $c.Analyzed | Should -BeTrue -Because ('F2 findings ' + $Name + ' situation: the cell must have been analysed')
         ($c.Keys -join ',') | Should -BeExactly ($script:RiBase.Keys -join ',') -Because ('F2 findings ' + $Name + ': equivalent declared inputs must give the same findings')
@@ -519,15 +536,15 @@ Describe 'Scan read-only integration with the real daemon and formatter (dispatc
             $es = if ($null -ne $script:RiCliSarif) { [string][bool]$script:RiCliSarif.runs[0].invocations[0].executionSuccessful } else { 'no-sarif' }
             $script:RiCliReport = '(the CLI reported exit=' + [int]$script:RiCliRun.ExitCode + ' executionSuccessful=' + $es + ')'
         }
-        # No standalone situation It here on purpose: the CLI run exists only for these two RED cases,
-        # so keeping every It in this Context tagged keeps the run out of the normal suite. Each case
-        # re-checks the situation first.
-        It 'the CLI scan leaves the source bytes unchanged with formatOnEdit=apply in its environment' -Tag 'ScanRed-A2' {
+        # These two were RED at the A1 head and are green since dispatch 000304's formatter-off
+        # containment, so this real CLI run now executes in the normal suite. Each case re-checks the
+        # situation first.
+        It 'the CLI scan leaves the source bytes unchanged with formatOnEdit=apply in its environment' {
             $script:RiCliRun.TimedOut | Should -BeFalse -Because 'F2 CLI situation: the CLI must finish'
             $script:RiCliSarif | Should -Not -BeNullOrEmpty -Because ('F2 CLI situation: the CLI must have written its SARIF log; stderr: ' + $script:RiCliRun.Err)
             $script:RiCliAfter | Should -BeExactly $script:RiCliBefore -Because ('F2 CLI bytes: a scan must never write a source file ' + $script:RiCliReport)
         }
-        It 'the CLI scan reports the clean-environment finding set with formatOnEdit=apply in its environment' -Tag 'ScanRed-A2' {
+        It 'the CLI scan reports the clean-environment finding set with formatOnEdit=apply in its environment' {
             $script:RiCliRun.TimedOut | Should -BeFalse -Because 'F2 CLI situation: the CLI must finish'
             $script:RiCliSarif | Should -Not -BeNullOrEmpty -Because ('F2 CLI situation: the CLI must have written its SARIF log; stderr: ' + $script:RiCliRun.Err)
             ($script:RiCliKeys -join ',') | Should -BeExactly ($script:RiBase.Keys -join ',') -Because ('F2 CLI findings: an ambient formatOnEdit must not change what a scan reports ' + $script:RiCliReport)

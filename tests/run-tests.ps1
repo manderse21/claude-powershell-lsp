@@ -11,14 +11,15 @@ param(
     [string] $FullNameFilter = '',
     # TEMPORARY RED EXCLUSIONS (dispatch 000302, A1). Each tag marks ONLY tests that were measured
     # RED at the A1 head and are owned by the leg that fixes them -- never a block, never a guess:
-    #   ScanRed-A2 -- the A2 leg (typed scan completion receipt + formatter-off containment)
     #   ScanRed-A3 -- the A3 leg (declared read-only scan configuration)
+    # (ScanRed-A2 -- the typed scan completion receipt and formatter-off containment -- was retired
+    # by dispatch 000304 when its last RED test turned green.)
     # tests/fixtures/scan-verdict/expected-red.psd1 is the one list of those tests;
     # tests/assert-expected-red.ps1 proves they still fail exactly as declared, and the guard in
     # PowerShellLsp.ScanVerdict.Tests.ps1 fails if this default and that list ever disagree. The
     # owner removes its tag here when its last RED test turns green. Run them anyway with
     # -ExcludeTag ''.
-    [string[]] $ExcludeTag = @('ScanRed-A2', 'ScanRed-A3')
+    [string[]] $ExcludeTag = @('ScanRed-A3')
 )
 $ErrorActionPreference = 'Stop'
 

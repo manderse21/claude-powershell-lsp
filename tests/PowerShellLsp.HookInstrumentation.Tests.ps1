@@ -441,6 +441,23 @@ Describe 'Flake instrumentation: EVERY process-spawning hook in the suite record
         ($v -join '; ') | Should -BeExactly ''
     }
 
+    It 'the PRODUCTION scan spawner drains stdout AND stderr concurrently, both reads started before the wait (dispatch 000304)' {
+        # The defect S3b measured lived in the production Invoke-ScanHook, not only in harnesses: it
+        # redirected stderr and never read it. Dispatch 000304 moved every scan child onto
+        # Invoke-ScanChildProcess (scripts/lib/lsp-scan-common.ps1); the same rule the harness spawners
+        # meet is applied to it here, by name, so the production cure cannot quietly regress.
+        $prodFile = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1'
+        $tokens = $null; $errors = $null
+        $past = [System.Management.Automation.Language.Parser]::ParseFile($prodFile, [ref]$tokens, [ref]$errors)
+        @($errors).Count | Should -Be 0
+        $prodSpawners = @($past.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) |
+                Where-Object { $_.Extent.Text -match '\$p\.WaitForExit\(' })
+        (@($prodSpawners | ForEach-Object { $_.Name }) -join ',') | Should -BeExactly 'Invoke-ScanChildProcess' -Because 'every scan child is spawned through the one typed spawner'
+        $v = @()
+        foreach ($f in $prodSpawners) { $v += @(Get-HiConcurrentDrainViolations -Name $f.Name -Body $f.Extent.Text) }
+        ($v -join '; ') | Should -BeExactly ''
+    }
+
     It 'INJECTION: a spawner that starts its stderr drain only AFTER the wait is REJECTED' {
         # The same rule the assertion above applies, fed the deadlock shape: both reads exist, so a
         # presence-only check would pass it; only the ordering catches it.

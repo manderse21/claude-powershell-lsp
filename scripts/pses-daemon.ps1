@@ -102,6 +102,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
+# Scan completion receipt (dispatch 000304, A2): the daemon half of the binding -- the source snapshot
+# reader, the engine identity and the binding a scan-mode diagnostics answer carries.
+. (Join-Path $PSScriptRoot 'lib/lsp-scan-receipt.ps1')
 
 # Pin the data root explicitly (a detached launch may not inherit the env var).
 if (-not [string]::IsNullOrWhiteSpace($DataRoot)) { $env:CLAUDE_PLUGIN_DATA = $DataRoot }
@@ -187,6 +190,12 @@ $script:pssaAvailable = $true
 $script:psesState     = 'initializing'
 $script:initSentAt    = [DateTime]::MinValue
 $script:warmDone      = $false
+# Scan completion receipt (dispatch 000304, A2). The host PSES was launched under, and the engine
+# identity a scan-mode answer reports -- read lazily, on the first request that asks for a binding,
+# and cached once PSES has a host (the manifests do not change under a running daemon). Nothing
+# here runs for an interactive request.
+$script:psesHostExe        = ''
+$script:scanEngineIdentity = $null
 # Module surface cache (PL-6, dispatch 000062): the module surface is parsed ONCE per
 # session and cached in the daemon (the only per-session-persistent component). Per-edit
 # is then a cache lookup + cheap cross-reference, never a re-parse. Invalidation: the
@@ -382,6 +391,7 @@ function Start-PsesProcess {
     $hostExe = Resolve-PsHost $PsHost
     if ($null -eq $hostExe) { Write-DLog 'no PowerShell host found (pwsh/powershell)'; return $false }
     if ($hostExe -ne $PsHost) { Write-DLog ('requested host ' + $PsHost + ' unavailable; using ' + $hostExe) }
+    $script:psesHostExe = [string]$hostExe
 
     $stamp = [DateTime]::Now.ToString('yyyyMMdd-HHmmss-fff')
     $pseLog = Join-Path $logDir ('pses-server-' + $stamp + '.log')
@@ -1389,24 +1399,36 @@ function Get-Diagnostics([string]$filePath, [string]$cwd = '') {
     # mid-session exit the idle loop will re-spawn). The two banners are deliberately distinct:
     # 'unavailable' says "won't lint this session, fix + restart"; 'incomplete' says "not checked
     # this time, the next edit will be."
+    # analyzedPath / snapshot / settled on every return below are for the scan completion receipt
+    # (dispatch 000304, A2): the request loop copies them into a binding ONLY for a scan-mode request,
+    # so an interactive payload never carries them. snapshot is $null when no bytes were consumed.
     if ($script:serveUnavailable) {
         Write-DLog ('diagnostics request while unavailable (permanent): ' + $uri)
         return @{ ok = $true; status = 'unavailable'; cached = $false; records = @()
             path = 'daemon-unavailable'; analysisMs = 0; codeActionMs = 0
-            recordCount = 0; correctionCount = 0 }
+            recordCount = 0; correctionCount = 0
+            analyzedPath = $full; snapshot = $null; settled = $false }
     }
     if ($script:psesState -ne 'ready' -or -not (Test-PsesAlive)) {
         Write-DLog ('diagnostics request while not ready (state=' + $script:psesState + '): ' + $uri)
         return @{ ok = $true; status = 'incomplete'; cached = $false; records = @()
             path = 'daemon-incomplete'; analysisMs = 0; codeActionMs = 0
-            recordCount = 0; correctionCount = 0 }
+            recordCount = 0; correctionCount = 0
+            analyzedPath = $full; snapshot = $null; settled = $false }
     }
 
     # 000018: resolve + push the settings path once, before the first didOpen, bounded
     # at the client-forwarded project root (cwd). Gated -- a no-op after the first file.
     Initialize-PssaSettings -FilePath $full -ProjectRoot $cwd
 
-    $text = [System.IO.File]::ReadAllText($full)
+    # Read the bytes ONCE and decode the analyzed text from those same bytes (dispatch 000304, A2), so
+    # the SHA-256 a scan receipt binds is the identity of exactly what PSES receives. The decoder is
+    # the one ReadAllText uses (UTF-8 default, BOM detected), so the text -- and the analysis -- is
+    # what it was. A read that fails still throws, as ReadAllText did: the request handler logs it
+    # and the client renders its honest no-answer banner.
+    $snap = Read-ScanSourceSnapshot -Path $full
+    if (-not $snap.Exists) { throw ('could not read ' + $full + ': ' + $snap.Error) }
+    $text = $snap.Text
     $hash = Get-ContentHash $text
 
     # Coalesce: identical content already analyzed -> return cached set.
@@ -1415,15 +1437,21 @@ function Get-Diagnostics([string]$filePath, [string]$cwd = '') {
         $cachedRecs = @($script:diag[$key].records)
         return @{ ok = $true; cached = $true; records = $cachedRecs
             path = 'cache-hit'; analysisMs = 0; codeActionMs = 0
-            recordCount = $cachedRecs.Count; correctionCount = (Measure-CorrectionCount $cachedRecs) }
+            recordCount = $cachedRecs.Count; correctionCount = (Measure-CorrectionCount $cachedRecs)
+            analyzedPath = $full; snapshot = $snap; settled = $true }
     }
 
     # Debounce: let edits landing within the window fold into one pass, then
-    # re-read so we analyze the freshest content exactly once.
+    # re-read so we analyze the freshest content exactly once. The re-read REPLACES the snapshot
+    # (dispatch 000304): what PSES receives is always the latest read's text, so the identity a scan
+    # receipt binds is that read's bytes. The comparison is case-SENSITIVE (-cne), so a case-only edit
+    # inside the window is analyzed rather than coalesced away as unchanged.
     if ($DebounceMs -gt 0) {
         Invoke-LspPump -Until { $false } -MaxMs $DebounceMs | Out-Null
-        $text2 = [System.IO.File]::ReadAllText($full)
-        if ($text2 -ne $text) { $text = $text2; $hash = Get-ContentHash $text }
+        $snap2 = Read-ScanSourceSnapshot -Path $full
+        if (-not $snap2.Exists) { throw ('could not re-read ' + $full + ': ' + $snap2.Error) }
+        $snap = $snap2
+        if ($snap.Text -cne $text) { $text = $snap.Text; $hash = Get-ContentHash $text }
     }
 
     # Clear the prior publish for this uri so the settle waits for a NEW one.
@@ -1494,9 +1522,37 @@ function Get-Diagnostics([string]$filePath, [string]$cwd = '') {
     $status = Resolve-AnalysisStatus -Settled $settled -PssaAvailable $script:pssaAvailable
     $result = @{ ok = $true; cached = $false; records = $recs
         path = 'daemon-analyze'; analysisMs = [int]$swAnalysis.ElapsedMilliseconds; codeActionMs = $caMs
-        recordCount = $recs.Count; correctionCount = (Measure-CorrectionCount $recs) }
+        recordCount = $recs.Count; correctionCount = (Measure-CorrectionCount $recs)
+        analyzedPath = $full; snapshot = $snap; settled = $settled }
     if ($status -ne 'ok') { $result['status'] = $status }
     return $result
+}
+
+function Get-ScanAnalysisBindingFor {
+    # The binding a SCAN-MODE diagnostics answer carries (dispatch 000304, A2): what this daemon
+    # actually analyzed, for the request id it was asked under. $Res is Get-Diagnostics' result.
+    # config is what this daemon was LAUNCHED with -- observed, not certified: binding the declared
+    # scan environment is A3's leg, and the receipt reports it as unbound.
+    param([string]$RequestId, $Res)
+    $engine = $script:scanEngineIdentity
+    if ($null -eq $engine) {
+        try { $engine = Get-ScanEngineIdentity -PsesHost $script:psesHostExe } catch { $engine = $null }
+        if (-not [string]::IsNullOrWhiteSpace($script:psesHostExe)) { $script:scanEngineIdentity = $engine }
+    }
+    $config = [ordered]@{
+        settingsPath       = [string]$script:settingsPathInUse
+        ruleset            = [string]$Ruleset
+        severityThreshold  = [string]$SeverityThreshold
+        ruleInclude        = [string]$RuleInclude
+        ruleExclude        = [string]$RuleExclude
+        perFileCap         = [int]$PerFileCap
+        moduleAwareness    = [string]$script:moduleAwarenessMode
+        referenceSurfacing = [string]$script:referenceSurfacingMode
+        orgPolicy          = [string]$OrgPolicyPath
+    }
+    return (New-ScanAnalysisBinding -RequestId $RequestId -AnalyzedPath ([string]$Res.analyzedPath) -Snapshot $Res.snapshot `
+            -Settled ([bool]$Res.settled) -PssaAvailable ([bool]$script:pssaAvailable) -Cached ([bool]$Res.cached) `
+            -Engine $engine -Config $config)
 }
 
 # --- format-on-edit: suggest, never rewrite (dispatch 000059, PL-8) ----------
@@ -1529,11 +1585,14 @@ function Get-DaemonCapabilities {
     # request fields the loop really reads (Get-Prop 'touchedRanges', Get-Prop 'apply'). The unit
     # suite asserts `actions` against the switch labels read from this file's AST, so a new action
     # added to the loop without being advertised here fails CI rather than shipping a lie.
+    # diagnosticsAnalysisBinding (dispatch 000304, A2): a diagnostics request carrying a requestId is
+    # answered with that id echoed and the binding of what was analyzed (Get-Prop $req 'requestId').
     return [ordered]@{
-        actions                  = @('diagnostics', 'format', 'query', 'ping', 'shutdown')
-        diagnosticsTouchedRanges = $true
-        formatApply              = $true
-        queryOps                 = @(Get-QueryOps)
+        actions                    = @('diagnostics', 'format', 'query', 'ping', 'shutdown')
+        diagnosticsTouchedRanges   = $true
+        formatApply                = $true
+        queryOps                   = @(Get-QueryOps)
+        diagnosticsAnalysisBinding = $true
     }
 }
 
@@ -1861,6 +1920,9 @@ try {
                         # The full marker range lives daemon-side, so the filter runs here
                         # -- BEFORE the per-file cap (scope-then-cap), via Get-ScopedCappedResult.
                         $touched = Get-Prop $req 'touchedRanges'
+                        # Scan completion receipt (dispatch 000304, A2): only a scan-mode request carries a
+                        # requestId; an interactive edit never does, so its answer gains nothing below.
+                        $scanRequestId = [string](Get-Prop $req 'requestId')
                         $res = Get-Diagnostics $file $reqCwd
                         if ($res.ok) {
                             # Module awareness (dispatch 000101): merge daemon-side ModuleNotInstalled
@@ -1937,6 +1999,20 @@ try {
                                 Add-LifecycleSignal -Payload $payload -FilePath $file -Res $res -Surfaced @($sc.shown) -ScopeApplied ([bool]$sc.scopeApplied)
                             } catch {
                                 Write-DLog ('lifecycle signal error (ignored, additive): ' + $_.Exception.Message)
+                            }
+                            # The scan-mode binding (dispatch 000304, A2): the request id echoed back, and what
+                            # was analyzed -- the normalized path, the SHA-256 of the bytes PSES received, whether
+                            # the pass settled, PSScriptAnalyzer availability, the observed engine and launch
+                            # configuration. Additive, and present ONLY when the request asked for it, so an
+                            # interactive payload is byte-identical. A failure here drops the binding, never the
+                            # answer: the receipt then reads source-unbound and the file is not certified.
+                            if (-not [string]::IsNullOrWhiteSpace($scanRequestId)) {
+                                $payload['requestId'] = $scanRequestId
+                                try {
+                                    $payload['analysis'] = Get-ScanAnalysisBindingFor -RequestId $scanRequestId -Res $res
+                                } catch {
+                                    Write-DLog ('scan analysis binding error (binding dropped): ' + $_.Exception.Message)
+                                }
                             }
                         } else {
                             $payload = [ordered]@{ ok = $false; action = 'diagnostics'; error = $res.error }

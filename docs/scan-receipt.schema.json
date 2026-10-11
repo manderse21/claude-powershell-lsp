@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/manderse21/claude-powershell-lsp/blob/main/docs/scan-receipt.schema.json",
+  "title": "powershell-lsp scan completion receipt, schema version 1",
+  "description": "Written by scripts/lsp-client.ps1 in scan mode only (dispatch 000304, A2) and validated by scripts/lib/lsp-scan-common.ps1 before a scanned file is reported analyzed. The vocabulary and the structural check live in scripts/lib/lsp-scan-receipt.ps1 (Get-ScanReceiptShapeProblems); tests/PowerShellLsp.ScanReceipt.Tests.ps1 holds this schema and that function together. A receipt that is VALID against this schema certifies nothing on its own: the scanner also re-derives completeness from the receipt's facts and checks the request id, the file, the bytes on disk before and after the analysis and the finding digest.",
+  "type": "object",
+  "required": [
+    "schema", "schemaVersion", "requestId", "file", "status", "completeness", "pass", "reasons",
+    "source", "daemon", "engine", "config", "policy", "diagnostics", "formatMode", "elapsedMs"
+  ],
+  "properties": {
+    "schema": { "const": "powershell-lsp/scan-receipt" },
+    "schemaVersion": { "const": 1 },
+    "requestId": {
+      "description": "The request id the scanner minted for this file and sent in the hook payload (powershell_lsp_scan.request_id).",
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "file": {
+      "description": "The normalized full path the client analyzed. The scanner requires it to equal the path it asked about.",
+      "type": "string"
+    },
+    "status": {
+      "description": "One of the four PUBLIC status tokens frozen by CONTRACT.md Tier 1.2. A receipt adds an axis, never a token.",
+      "enum": ["ok", "incomplete", "degraded", "unavailable"]
+    },
+    "completeness": {
+      "description": "Additive and scan-only. complete: the configured PSScriptAnalyzer pass settled over bytes the scanner can identify. partial: real findings, but that pass did not fully run. failed: nothing about the analysis can be relied on. Only complete is reported analyzed.",
+      "enum": ["complete", "partial", "failed"]
+    },
+    "pass": {
+      "description": "Which analysis produced the findings: the daemon's PSScriptAnalyzer pass, the client's parser or byte-check short-circuit, or none.",
+      "enum": ["pssa", "parser", "pre-pssa", "none"]
+    },
+    "reasons": {
+      "description": "Machine reason codes (Get-ScanReceiptReasonTable). Every reason carries a completeness ceiling; the receipt's completeness is the lowest ceiling among its reasons.",
+      "type": "array",
+      "items": {
+        "enum": [
+          "child-silent-exit", "child-nonzero-exit", "child-stderr-only", "deadline-kill", "kill-unverified",
+          "receipt-missing", "receipt-truncated", "receipt-malformed", "receipt-inconsistent",
+          "correlation-mismatch", "correlation-missing", "path-mismatch", "diagnostics-mismatch",
+          "source-vanished", "source-changed", "source-mismatch", "source-unbound",
+          "request-invalid", "not-powershell", "daemon-unreachable", "daemon-no-answer", "daemon-refused",
+          "client-fatal", "policy-fail-closed", "analysis-not-run", "formatter-active",
+          "parse-errors", "pre-pssa-short-circuit",
+          "analysis-not-settled", "engine-unavailable", "pssa-unavailable",
+          "diagnostics-capped", "diagnostics-scoped", "cache-hit"
+        ]
+      }
+    },
+    "source": {
+      "description": "The identity of the analyzed bytes: SHA-256 (lower-case hex) of the exact bytes the daemon read and handed to PSES (boundary daemon), or that the client read for a short-circuit (boundary client), or none.",
+      "type": "object",
+      "required": ["boundary", "sha256", "length"],
+      "properties": {
+        "boundary": { "enum": ["daemon", "client", "none"] },
+        "sha256": { "type": "string", "pattern": "^([0-9a-f]{64})?$" },
+        "length": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "daemon": {
+      "description": "What the daemon's scan-mode answer said about the pass it ran, or null when no daemon answered.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["requestId", "path", "settled", "pssaAvailable", "cached", "omitted", "scopeApplied", "analysisMs"],
+          "properties": {
+            "requestId": { "type": "string" },
+            "path": { "type": "string" },
+            "settled": { "type": "boolean" },
+            "pssaAvailable": { "type": "boolean" },
+            "cached": { "type": "boolean" },
+            "omitted": { "type": "integer", "minimum": 0 },
+            "scopeApplied": { "type": "boolean" },
+            "analysisMs": { "type": "integer", "minimum": 0 }
+          }
+        }
+      ]
+    },
+    "engine": {
+      "description": "Engine versions the daemon OBSERVED in the module manifests on disk, or 'unknown'. Never a pinned value standing in for an observation, and never a certification.",
+      "type": "object",
+      "required": ["pses", "pssa", "daemonPlugin", "daemonHost"],
+      "properties": {
+        "pses": { "type": "string", "minLength": 1 },
+        "pssa": { "type": "string", "minLength": 1 },
+        "source": { "type": "string" },
+        "daemonPlugin": { "type": "string", "minLength": 1 },
+        "daemonHost": { "type": "string", "minLength": 1 },
+        "psesHost": { "type": "string" }
+      }
+    },
+    "config": {
+      "description": "The configuration the daemon was LAUNCHED with, as observed. Unbound in schema version 1: binding the declared scan environment is a later leg (A3).",
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": { "const": "unbound" },
+        "observed": { "type": ["object", "null"] }
+      }
+    },
+    "policy": {
+      "description": "Managed-policy identity. Unbound in schema version 1: no receipt certifies a policy (B1).",
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": { "const": "unbound" }
+      }
+    },
+    "diagnostics": {
+      "description": "The binding over the findings the receipt vouches for: their count, and a SHA-256 over one canonical line per finding (line, col, ruleId, source, severity, message), sorted ordinally.",
+      "type": "object",
+      "required": ["count", "digest"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "formatMode": {
+      "description": "The format-on-edit mode the client ran with. A scan child is always 'off'; anything else is formatter-active.",
+      "type": "string"
+    },
+    "elapsedMs": { "type": "integer", "minimum": 0 },
+    "detail": { "type": "string" },
+    "producedAt": { "type": "string" },
+    "producer": { "type": "object" }
+  }
+}

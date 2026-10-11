@@ -146,6 +146,10 @@ Describe 'Get-DaemonCapabilities advertises what the daemon actually serves' {
         $src | Should -Match "Get-Prop \`$req 'touchedRanges'"
         $caps.formatApply | Should -Be $true
         $src | Should -Match "Get-Prop \`$req 'apply'"
+        # diagnosticsAnalysisBinding (dispatch 000304): a diagnostics request carrying a requestId is
+        # answered with the scan-mode binding -- the loop reads exactly that field.
+        $caps.diagnosticsAnalysisBinding | Should -Be $true
+        $src | Should -Match "Get-Prop \`$req 'requestId'"
         # queryOps (000287): the advertised op set must BE the vocabulary the planner validates
         # against, not a copy of it. Both read Get-QueryOps, and this asserts they agree by
         # calling the shipped function rather than by comparing two literals.

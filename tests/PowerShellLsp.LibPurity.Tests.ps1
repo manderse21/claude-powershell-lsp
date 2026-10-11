@@ -259,6 +259,9 @@ Describe 'G1 -- AST purity of every dot-sourced shared library (dispatch 000156)
         # efficacy ledger from doctor.ps1 to reach the provenance floor -- is the exact thing the
         # invariant below refuses, and it refused it live.
         $names | Should -Contain 'lifecycle-provenance.ps1'
+        # dispatch 000304. The scan completion receipt is dot-sourced by the client (lazily, in scan mode),
+        # the daemon and the scan CLI; it must stay load-silent -- the client loads it on a hook path.
+        $names | Should -Contain 'lsp-scan-receipt.ps1'
     }
 
     It 'NO covered library carries a top-level param() block' {
