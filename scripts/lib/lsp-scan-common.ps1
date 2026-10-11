@@ -476,6 +476,29 @@ function Stop-ScanProcessTree {
     try { if (-not $Process.HasExited) { $Process.Kill() } } catch { }
 }
 
+function ConvertTo-ScanAsciiJson {
+    # A scan child's stdin payload, made independent of the console code page (dispatch 000304, review
+    # A2-F01). The child decodes stdin with the input code page of the console it is attached to
+    # (Get-StdinText reads [Console]::In), and that console is the scanner's -- on a stock Windows
+    # console the OEM code page (437 on en-US), not UTF-8. So a non-ASCII character in a payload path
+    # arrived mangled: a receipt path under a non-ASCII data root (the default one is under the user
+    # profile) named a directory that does not exist, and every file read receipt-missing. Here every
+    # character above 0x7F is written as a JSON escape -- a backslash, 'u' and four hex digits; a
+    # character outside the BMP becomes its two UTF-16 surrogates, as JSON specifies -- so the payload
+    # is pure ASCII, which every console code page decodes alike, and ConvertFrom-Json turns each escape
+    # back into the same character. JSON text only: outside its string literals JSON is ASCII already,
+    # so only the spelling of string contents changes. One pass on both hosts (Windows PowerShell 5.1
+    # has no ConvertTo-Json -EscapeHandling), so a child receives the same bytes from either parent.
+    param([string]$Json)
+    if ([string]::IsNullOrEmpty($Json)) { return $Json }
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($ch in $Json.ToCharArray()) {
+        $code = [int]$ch
+        if ($code -gt 0x7F) { [void]$sb.Append('\u').Append($code.ToString('x4')) } else { [void]$sb.Append($ch) }
+    }
+    return $sb.ToString()
+}
+
 function Invoke-ScanChildProcess {
     # THE scan spawner (dispatch 000304, A2): every scan child -- session-start, the client per file,
     # session-end -- runs through here. It returns a TYPED record, never a bare string:
@@ -502,11 +525,14 @@ function Invoke-ScanChildProcess {
         [string[]]$ExtraArgs = @(),
         [hashtable]$ExtraEnv
     )
-    # NO CreateNoWindow, on purpose: the child must INHERIT this process's console so it decodes stdin
-    # with the code page the payload was written for. A new (hidden) console starts at the OEM code
-    # page (437 on en-US). Measured: under a PowerShell 7 parent a non-ASCII path arrived mangled, and
-    # under a Windows PowerShell 5.1 parent -- whose StandardInput writer prepends a UTF-8 BOM -- the
-    # BOM decoded as three OEM characters that Get-StdinText cannot strip, so no payload parsed at all.
+    # THE PAYLOAD IS ASCII (ConvertTo-ScanAsciiJson, below): the child decodes stdin with the code page
+    # of the console it inherits, which is this process's -- often an OEM code page, not UTF-8 -- so
+    # only an ASCII payload reaches it intact whatever that code page is (dispatch 000304, A2-F01).
+    # NO CreateNoWindow either, for a different reason: a Windows PowerShell 5.1 parent's StandardInput
+    # writer uses the console's input encoding, so on a UTF-8 console it writes a UTF-8 BOM ahead of
+    # the payload (measured: EF BB BF first, although the payload itself goes to the raw stream). A
+    # child sharing that console decodes it as UTF-8 and Get-StdinText strips the U+FEFF; a child given
+    # a NEW console (437 on en-US) reads three characters nothing strips, and no payload parses.
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $HostExe; $psi.UseShellExecute = $false
     $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
@@ -522,7 +548,10 @@ function Invoke-ScanChildProcess {
         $stdinError = ''
         try {
             if (-not [string]::IsNullOrEmpty($StdinJson)) {
-                $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($StdinJson)   # no BOM
+                # Every non-ASCII character escaped, so the child's console code page cannot change
+                # what it parses; written to the raw stream, so this side adds no BOM of its own.
+                $payload = ConvertTo-ScanAsciiJson -Json $StdinJson
+                $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($payload)   # no BOM
                 $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
                 $p.StandardInput.BaseStream.Flush()
             }

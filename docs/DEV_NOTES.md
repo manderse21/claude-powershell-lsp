@@ -160,11 +160,19 @@ equal to the records read back. Things that bite when you change this path:
   waits, kills the tree on both Windows hosts (`Kill($true)` does not exist on 5.1; it falls back to
   `taskkill /T`) and contains `formatOnEdit` off under every spelling. The HookInstrumentation guard
   holds it to that by name.
-- **Do not set `CreateNoWindow` on a scan child.** The child must inherit the scanner's console:
-  a new one starts at the OEM code page (437 on en-US), so a non-ASCII path in the payload arrives
-  mangled, and under a Windows PowerShell 5.1 parent -- whose StandardInput writer prepends a UTF-8
-  BOM -- the BOM decodes as three OEM characters `Get-StdinText` cannot strip and nothing parses.
-  `tests/PowerShellLsp.ScanReceipt.Tests.ps1` round-trips a non-ASCII path on whichever host runs it.
+- **A scan child's stdin payload is pure ASCII.** The child decodes stdin with the code page of the
+  console it is attached to, and inheriting the scanner's console does not make that UTF-8: a stock
+  Windows console sits at the OEM code page (437 on en-US). So `Invoke-ScanChildProcess` writes every
+  payload through `ConvertTo-ScanAsciiJson`, which turns each non-ASCII character into a JSON `\uXXXX`
+  escape; without it a non-ASCII file path or data root (the default data root is under the user
+  profile) arrives mangled and every file reads receipt-missing (dispatch 000304, review A2-F01).
+- **Do not set `CreateNoWindow` on a scan child either** -- for the BOM, not the code page. A Windows
+  PowerShell 5.1 parent on a UTF-8 console writes a UTF-8 BOM ahead of the payload; a child sharing that
+  console strips it (`Get-StdinText`), but a child on a new console (OEM again) reads three characters
+  nothing strips, and nothing parses. `tests/PowerShellLsp.ScanReceipt.Tests.ps1` pins a console of its
+  own to code page 437 and round-trips a non-ASCII path and data root under it on whichever host runs
+  it, beside a raw-UTF-8 control that must arrive mangled -- so the test cannot pass on a UTF-8 console
+  alone, which is how the guard it replaced did.
 
 ## The public contract has teeth
 

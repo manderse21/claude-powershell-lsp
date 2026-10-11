@@ -209,20 +209,27 @@ function Invoke-SvChildProcess {
     # stderr).
     # -RemoveEnvPrefix strips inherited variables (by prefix) from the child's environment block
     # only; this process's own environment is untouched.
+    # -OwnConsole (dispatch 000304, review A2-F02) starts the child on a console of its OWN
+    # (CreateNoWindow), so a test can pin that console's code page without touching the one this
+    # runner shares with everything else -- the stand-in scanner of the pinned-console round trip.
     param(
         [Parameter(Mandatory = $true)][string]$HostExe,
         [Parameter(Mandatory = $true)][string[]]$ArgumentList,
         [string]$StdinText = '',
         [int]$CapMs = 120000,
         [hashtable]$ExtraEnv,
-        [string[]]$RemoveEnvPrefix = @()
+        [string[]]$RemoveEnvPrefix = @(),
+        [switch]$OwnConsole
     )
-    # No CreateNoWindow (dispatch 000304): the child inherits this console, as the production scan
-    # spawner's children do, so a JSON payload on stdin decodes as it was written. A new console
-    # starts at the OEM code page, and under a Windows PowerShell 5.1 parent the BOM its
-    # StandardInput writer prepends then decodes as three characters Get-StdinText cannot strip.
+    # By default no CreateNoWindow (dispatch 000304): the child inherits this console, as the
+    # production scan spawner's children do. That keeps a Windows PowerShell 5.1 parent's stdin BOM
+    # decodable -- on a UTF-8 console its StandardInput writer puts one ahead of the payload, which a
+    # child on a new (OEM) console reads as three characters Get-StdinText cannot strip. It does not
+    # make a non-ASCII payload code-page independent: this harness's payloads are ASCII, and the
+    # production spawner escapes every non-ASCII character (ConvertTo-ScanAsciiJson).
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $HostExe; $psi.UseShellExecute = $false
+    if ($OwnConsole) { $psi.CreateNoWindow = $true }
     $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
     Add-ProcessArguments $psi $ArgumentList
     foreach ($prefix in @($RemoveEnvPrefix | Where-Object { $_ })) {

@@ -16,12 +16,15 @@
 #   3. docs/scan-receipt.schema.json and the in-code shape check are the same contract;
 #   4. the source identity is of raw bytes, and the diagnostics digest is order-free, duplicate- and
 #      message-sensitive;
-#   5. the typed scan spawner: exit code, both streams drained, the payload decoded as it was written
-#      (a non-ASCII path, under either Windows host), a stderr flood that does not hold a finished
-#      child, a cap kill that terminates the whole tree on BOTH Windows hosts, formatter-off
-#      containment of every spelling, and the compatibility wrapper every existing caller still uses;
-#   6. the REAL daemon binds the bytes it consumed, and an interactive request is answered unchanged;
-#   7. the shipped CLI with the capture mode full / metadata / off: the same complete SARIF with the
+#   5. the typed scan spawner: exit code, both streams drained, a payload made pure ASCII (each
+#      non-ASCII character a JSON escape), a stderr flood that does not hold a finished child, a cap
+#      kill that terminates the whole tree on BOTH Windows hosts, formatter-off containment of every
+#      spelling, and the compatibility wrapper every existing caller still uses;
+#   6. the scan payload does not depend on the console code page (review A2-F01 / A2-F02): under a
+#      console pinned to code page 437, a non-ASCII file path and data root reach the scan child
+#      intact, the same payload as raw UTF-8 does not (the control), and the shipped CLI completes;
+#   7. the REAL daemon binds the bytes it consumed, and an interactive request is answered unchanged;
+#   8. the shipped CLI with the capture mode full / metadata / off: the same complete SARIF with the
 #      real message text, the persistent dogfood log untouched, the privacy default unchanged.
 #
 # ASCII-only (PS 5.1 Windows-1252 trap); StrictMode-safe. Run via tests/run-tests.ps1.
@@ -515,16 +518,6 @@ Describe 'The typed scan spawner (dispatch 000304 A2)' -Skip:$script:RtUnsupport
             '$names = @([System.Environment]::GetEnvironmentVariables().GetEnumerator() | Where-Object { ([string]$_.Key).StartsWith(''CLAUDE_PLUGIN_OPTION_'', [System.StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { [string]$_.Key + ''='' + [string]$_.Value } | Sort-Object)'
             '[Console]::Out.Write(($names -join '';''))'
             'exit 0')
-        # Reads the payload exactly as the real hooks do (Get-StdinText, then ConvertFrom-Json) and says
-        # whether the file path survived; the expected path travels in the environment block, which is
-        # UTF-16 on Windows and needs no code page.
-        $script:RtPath = New-RtKid -Name 'path.ps1' -Lines @(
-            '. (Join-Path $env:RT_LIB ''lsp-common.ps1'')'
-            '$raw = Get-StdinText'
-            '$verdict = ''PARSE-FAIL'''
-            'try { $got = [string](($raw | ConvertFrom-Json -ErrorAction Stop).tool_input.file_path); $verdict = $(if ($got -ceq $env:RT_WANT) { ''PATH-OK'' } else { ''PATH-MANGLED'' }) } catch { $verdict = ''PARSE-FAIL'' }'
-            '[Console]::Out.Write($verdict)'
-            'exit 0')
 
         function Wait-RtPidGone {
             param([int]$TargetPid, [int]$TimeoutMs = 10000)
@@ -550,17 +543,21 @@ Describe 'The typed scan spawner (dispatch 000304 A2)' -Skip:$script:RtUnsupport
         [string]$r.StdinError | Should -BeExactly ''
     }
 
-    It 'the payload reaches the child as written on this host (<Edition>): a non-ASCII path survives Get-StdinText and ConvertFrom-Json' -TestCases @(@{ Edition = [string]$PSVersionTable.PSEdition }) -Skip:(-not $script:RtOnWindows) {
-        # Windows only: the defect is a Windows console code page. A scan child that does not inherit the
-        # parent's console gets a new one at the OEM code page, and then (measured) a PowerShell 7 parent's
-        # payload reads PATH-MANGLED and a Windows PowerShell 5.1 parent's -- BOM first -- reads PARSE-FAIL.
-        param($Edition)
-        $want = 'C:\scan\caf' + [char]0x00E9 + '-' + [char]0x65E5 + [char]0x672C + '.ps1'
-        $json = [ordered]@{ session_id = 'rt-path'; tool_input = @{ file_path = $want }; cwd = 'C:\scan' } | ConvertTo-Json -Compress -Depth 4
-        $r = Invoke-ScanChildProcess -HostExe $script:RtHost -ScriptPath $script:RtPath -StdinJson $json -CapMs 60000 `
-            -ExtraEnv @{ RT_LIB = (Join-Path $script:RtRepo 'scripts/lib'); RT_WANT = $want }
-        [string]$r.StdErr | Should -BeExactly ''
-        [string]$r.StdOut | Should -BeExactly 'PATH-OK' -Because ('a scan child on a ' + $Edition + ' parent must decode the payload as it was written')
+    It 'the payload is pure ASCII: each non-ASCII character is a JSON escape that parses back to the same character (review A2-F01)' {
+        # The pure half of the code-page fix; the console half is the pinned-console Describe below.
+        $e = [string][char]0x00E9
+        $cjk = [string][char]0x65E5 + [string][char]0x672C
+        $astral = [string][char]0xD83D + [string][char]0xDE00   # one character outside the BMP: a surrogate pair
+        $want = 'C:\scan\caf' + $e + '-' + $cjk + $astral + '.ps1'
+        $json = [ordered]@{ session_id = 'rt-ascii'; tool_input = @{ file_path = $want }; n = 1 } | ConvertTo-Json -Compress -Depth 4
+        @([regex]::Matches($json, '[^\x00-\x7F]')).Count | Should -BeGreaterThan 0 -Because 'the input must carry non-ASCII, or this proves nothing'
+        $ascii = ConvertTo-ScanAsciiJson -Json $json
+        @([regex]::Matches($ascii, '[^\x00-\x7F]')).Count | Should -Be 0
+        $bs = [string][char]0x5C
+        $ascii | Should -Match ([regex]::Escape('caf' + $bs + 'u00e9-' + $bs + 'u65e5' + $bs + 'u672c' + $bs + 'ud83d' + $bs + 'ude00.ps1'))
+        [string]($ascii | ConvertFrom-Json).tool_input.file_path | Should -BeExactly $want
+        (ConvertTo-ScanAsciiJson -Json '{"x":"plain"}') | Should -BeExactly '{"x":"plain"}' -Because 'an ASCII payload passes byte for byte'
+        (ConvertTo-ScanAsciiJson -Json '') | Should -BeExactly ''
     }
 
     It 'a child that floods 2 MiB of stderr and exits is not held to the cap' {
@@ -645,9 +642,152 @@ Describe 'The typed scan spawner (dispatch 000304 A2)' -Skip:$script:RtUnsupport
         $out | Should -BeLessThan $wait
         $err | Should -BeLessThan $wait
         $body | Should -Match 'finally\s*\{\s*try\s*\{\s*\$p\.Dispose\(\)'
-        $body | Should -Not -Match '\$psi\.CreateNoWindow' -Because 'a scan child must inherit the console, or it decodes its payload with the OEM code page'
+        $body | Should -Not -Match '\$psi\.CreateNoWindow' -Because 'a scan child shares the scanner''s console: a Windows PowerShell 5.1 parent on a UTF-8 console writes a BOM that a child on a new console cannot strip'
+        $esc = $body.IndexOf('$payload = ConvertTo-ScanAsciiJson -Json $StdinJson')
+        $esc | Should -BeGreaterThan 0 -Because 'the payload is made pure ASCII before it is written (review A2-F01)'
+        $esc | Should -BeLessThan $body.IndexOf('$p.StandardInput.BaseStream.Write(')
+        $body | Should -Match 'GetBytes\(\$payload\)'
+        $body | Should -Not -Match 'GetBytes\(\$StdinJson\)' -Because 'the unescaped text must never reach the stream'
         $kill = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Stop-ScanProcessTree' }, $true)
         $kill.Extent.Text | Should -Match 'taskkill\.exe /PID \$Process\.Id /T /F'
+    }
+}
+
+Describe 'The scan payload does not depend on the console code page (dispatch 000304 A2, review A2-F01 / A2-F02)' -Skip:(-not $script:RtOnWindows) {
+    # Windows only: a console code page is a Windows notion. THE DEFECT (A2-F01, measured by the
+    # review): a scan child decodes its stdin payload with the code page of the console it inherits,
+    # which is the scanner's -- on a stock console the OEM code page (437 on en-US), not UTF-8 -- so a
+    # non-ASCII path in the payload arrived mangled, a receipt path under a non-ASCII data root named a
+    # directory that does not exist, and every file read receipt-missing (exit 4, where the base exited
+    # 0). The guard this replaces (A2-F02) passed only where the runner's own console was UTF-8. Here a
+    # stand-in scanner starts on a console of its OWN, pins it to code page 437 whatever the machine's
+    # locale, and runs three things there: the production spawner's round trip; the same payload as raw
+    # UTF-8 -- what the spawner wrote before the fix, the control that proves the pin bites; and the
+    # shipped CLI with the shipped client over a file whose name and data root are non-ASCII. The
+    # stand-in runs on THIS host, so the Windows PowerShell 5.1 run tests a 5.1 parent.
+
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
+        . (Join-Path $PSScriptRoot 'ScanHarness.Common.ps1')
+        $script:CpKidHost = Resolve-PsHost 'pwsh'
+        $script:CpRoot = New-SvTempRoot -Tag 'cpin' -MintingFile 'tests/PowerShellLsp.ScanReceipt.Tests.ps1'
+        $e = [string][char]0x00E9
+        $cjk = [string][char]0x65E5 + [string][char]0x672C
+        # Non-ASCII where an account name puts it -- the data root, whose default is under the user
+        # profile -- and in the scanned file's own name.
+        $script:CpData = Join-Path $script:CpRoot ('dat' + $e + '-' + $cjk)
+        New-Item -ItemType Directory -Force -Path $script:CpData | Out-Null
+        $src = Join-Path $script:CpRoot 'src'
+        New-Item -ItemType Directory -Force -Path $src | Out-Null
+        $script:CpFile = Join-Path $src ('caf' + $e + '-' + $cjk + '.ps1')
+        [System.IO.File]::WriteAllText($script:CpFile, "function Get-CpTarget {`n    [CmdletBinding()]`n    param([string]`$Name)`n    Write-Output `$Name`n}`n",
+            (New-Object System.Text.UTF8Encoding($false)))
+        $kids = Join-Path $script:CpRoot 'kids'
+        New-Item -ItemType Directory -Force -Path $kids | Out-Null
+        # Reads the payload exactly as the real hooks do (Get-StdinText, then ConvertFrom-Json) and reports
+        # the code page it decoded with and whether both paths survived. The expected paths travel in the
+        # environment block, which is UTF-16 and needs no code page.
+        $script:CpProbe = Join-Path $kids 'probe.ps1'
+        Set-Content -LiteralPath $script:CpProbe -Encoding ascii -Value @(
+            '. (Join-Path $env:CP_LIB ''lsp-common.ps1'')'
+            '$cp = [Console]::InputEncoding.CodePage'
+            '$raw = Get-StdinText'
+            '$verdict = ''PARSE-FAIL'''
+            'try {'
+            '    $o = $raw | ConvertFrom-Json -ErrorAction Stop'
+            '    $okFile = ([string]$o.tool_input.file_path -ceq $env:CP_WANT_FILE)'
+            '    $okRcpt = ([string]$o.powershell_lsp_scan.receipt_path -ceq $env:CP_WANT_RCPT)'
+            '    $verdict = $(if ($okFile -and $okRcpt) { ''PATH-OK'' } else { ''PATH-MANGLED'' })'
+            '} catch { $verdict = ''PARSE-FAIL'' }'
+            '[Console]::Out.Write(''cp='' + $cp + '';'' + $verdict)'
+            'exit 0')
+        # The stand-in SCANNER. Started on a console of its own (the harness spawner's -OwnConsole), it
+        # pins that console's code page, then does what the scanner does: spawns children that inherit it.
+        $script:CpScanner = Join-Path $kids 'pinned-scanner.ps1'
+        Set-Content -LiteralPath $script:CpScanner -Encoding ascii -Value @(
+            'param([int]$CodePage, [string]$Lib, [string]$KidHost, [string]$Probe, [string]$Scan, [string]$Out)'
+            '$enc = [System.Text.Encoding]::GetEncoding($CodePage)'
+            '[Console]::InputEncoding = $enc'
+            '[Console]::OutputEncoding = $enc'
+            '. (Join-Path $Lib ''lsp-common.ps1'')'
+            '. (Join-Path $Lib ''lsp-scan-common.ps1'')'
+            '. (Join-Path $Lib ''lsp-scan-receipt.ps1'')'
+            '$res = [ordered]@{ pin = [int][Console]::InputEncoding.CodePage }'
+            '$req = New-ScanRequestField -RequestId (''a'' * 32) -ReceiptPath $env:CP_WANT_RCPT'
+            '$json = [ordered]@{ session_id = ''cp-pin''; tool_input = @{ file_path = $env:CP_WANT_FILE }; cwd = $env:CP_DATA; powershell_lsp_scan = $req } | ConvertTo-Json -Compress -Depth 4'
+            '$fixed = Invoke-ScanChildProcess -HostExe $KidHost -ScriptPath $Probe -StdinJson $json -CapMs 60000 -ExtraEnv @{ CP_LIB = $Lib }'
+            '$res[''fixed''] = [string]$fixed.StdOut'
+            '$res[''fixedErr''] = [string]$fixed.StdErr'
+            '$psi = New-Object System.Diagnostics.ProcessStartInfo'
+            '$psi.FileName = $KidHost; $psi.UseShellExecute = $false; $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true'
+            'Add-ProcessArguments $psi @(''-NoLogo'', ''-NoProfile'', ''-ExecutionPolicy'', ''Bypass'', ''-File'', $Probe)'
+            '$psi.EnvironmentVariables[''CP_LIB''] = $Lib'
+            '$c = [System.Diagnostics.Process]::Start($psi)'
+            '$raw = (New-Object System.Text.UTF8Encoding($false)).GetBytes($json)'
+            '$c.StandardInput.BaseStream.Write($raw, 0, $raw.Length); $c.StandardInput.BaseStream.Flush(); $c.StandardInput.Close()'
+            '$res[''control''] = $c.StandardOutput.ReadToEnd()'
+            'if (-not $c.WaitForExit(60000)) { try { $c.Kill() } catch { } }'
+            '$c.Dispose()'
+            '& $Scan $env:CP_WANT_FILE -Format sarif -OutputPath $Out -PsHost $KidHost | Out-Null'
+            '$res[''cliExit''] = [int]$LASTEXITCODE'
+            '[Console]::Out.Write(''CP-RESULT:'' + ($res | ConvertTo-Json -Compress))'
+            'exit 0')
+        # The shipped CLI, its libraries and the shipped client, byte copies, beside a session-start fake
+        # that serves the scan's pipe from the fake daemon (a bound clean answer), as C-R9 does.
+        $tree = New-SvCliTree -Root (Join-Path $script:CpRoot 'cli') -RealClient -SessionStartFixture 'fake-session-start-pipe.ps1'
+        $clean = '{"ok":true,"action":"diagnostics","file":"","cached":false,"count":0,"omitted":0,"diagnostics":[],"scopeApplied":false,"scopeTotal":0,"scopeSurfaced":0,"path":"analyze","analysisMs":1,"codeActionMs":0,"recordCount":0,"correctionCount":0}'
+        $cfg = [ordered]@{ daemonScript = (Get-SvFixturePath 'fake-pipe-daemon.ps1'); response = $clean; binding = 'valid'; vanish = '' }
+        [System.IO.File]::WriteAllText((Join-Path $script:CpData 'cr-daemon.json'), ($cfg | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
+        $script:CpSarif = Join-Path $script:CpRoot 'out.sarif'
+        $wantRcpt = Join-Path (Join-Path $script:CpData 'scan-receipts') (('a' * 32) + '.json')
+        try {
+            $script:CpRun = Invoke-SvChildProcess -HostExe ((Get-Process -Id $PID).Path) -OwnConsole -CapMs 240000 `
+                -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:CpScanner, '-CodePage', '437',
+                    '-Lib', (Join-Path $script:RtRepo 'scripts/lib'), '-KidHost', $script:CpKidHost, '-Probe', $script:CpProbe,
+                    '-Scan', $tree.ScanScript, '-Out', $script:CpSarif) `
+                -ExtraEnv @{ CLAUDE_PLUGIN_DATA = $script:CpData; CP_DATA = $script:CpData; CP_WANT_FILE = $script:CpFile; CP_WANT_RCPT = $wantRcpt } `
+                -RemoveEnvPrefix @('CLAUDE_PLUGIN_OPTION_', 'POWERSHELL_LSP_')
+        } finally {
+            # The CLI's own Stop-ScanDaemon kills the fake daemon by its recorded pid; this is the backstop.
+            foreach ($rf in @(Get-ChildItem -LiteralPath $script:CpData -Recurse -File -Filter 'ready.pid' -ErrorAction SilentlyContinue)) {
+                [void](Stop-SvChildFromPidFile -PidFile $rf.FullName)
+            }
+        }
+        $m = [regex]::Match([string]$script:CpRun.Out, 'CP-RESULT:(\{.*\})')
+        $script:CpResult = $(if ($m.Success) { $m.Groups[1].Value | ConvertFrom-Json } else { $null })
+        $sarifText = Read-SvTextFile -Path $script:CpSarif
+        $script:CpSarifObj = $(if (-not [string]::IsNullOrWhiteSpace($sarifText)) { $sarifText | ConvertFrom-Json } else { $null })
+        $script:CpClientLog = Read-SvTextFile -Path (Join-Path $script:CpData 'logs/lsp-client.log')
+    }
+
+    AfterAll {
+        if ($script:CpRoot) { Remove-SvTempRoot -Path $script:CpRoot }
+    }
+
+    It 'the stand-in scanner ran on a <Edition> parent with its own console pinned to code page 437' -TestCases @(@{ Edition = [string]$PSVersionTable.PSEdition }) {
+        param($Edition)
+        $script:CpRun.TimedOut | Should -BeFalse
+        $script:CpResult | Should -Not -BeNullOrEmpty -Because ('the stand-in must report; stdout: ' + [string]$script:CpRun.Out + ' stderr: ' + [string]$script:CpRun.Err)
+        [int]$script:CpResult.pin | Should -Be 437
+    }
+
+    It 'THE CONTROL: on that console a payload sent as raw UTF-8 -- what the spawner wrote before the fix -- arrives mangled (<Edition> parent)' -TestCases @(@{ Edition = [string]$PSVersionTable.PSEdition }) {
+        param($Edition)
+        [string]$script:CpResult.control | Should -BeExactly 'cp=437;PATH-MANGLED' -Because 'the child must decode at 437, or the pin does not bite and the round trip below proves nothing'
+    }
+
+    It 'the production spawner delivers a non-ASCII file path and a receipt path under a non-ASCII data root intact to a child on that console (<Edition> parent)' -TestCases @(@{ Edition = [string]$PSVersionTable.PSEdition }) {
+        param($Edition)
+        [string]$script:CpResult.fixed | Should -BeExactly 'cp=437;PATH-OK' -Because ('the child decodes at 437 and still reads both paths as written; its stderr: ' + [string]$script:CpResult.fixedErr)
+    }
+
+    It 'on that console the shipped CLI and client analyze a file whose name and data root are non-ASCII: exit 0, a complete receipt, executionSuccessful=true (<Edition> parent)' -TestCases @(@{ Edition = [string]$PSVersionTable.PSEdition }) {
+        param($Edition)
+        [int]$script:CpResult.cliExit | Should -Be 0 -Because ('a clean file with a complete receipt; stand-in stderr: ' + [string]$script:CpRun.Err)
+        $script:CpClientLog | Should -Match 'scan mode: request [0-9a-f]{32}' -Because 'the shipped client ran in scan mode, under the non-ASCII data root'
+        $script:CpClientLog | Should -Match 'scan receipt written: complete' -Because 'the client wrote its receipt where the payload said, under the non-ASCII data root'
+        $script:CpSarifObj | Should -Not -BeNullOrEmpty
+        [bool]$script:CpSarifObj.runs[0].invocations[0].executionSuccessful | Should -BeTrue
     }
 }
 
