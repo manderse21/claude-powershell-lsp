@@ -205,7 +205,8 @@ function Invoke-SvChildProcess {
     # exit a child can make on its own. Both redirected streams are drained CONCURRENTLY: each
     # ReadToEndAsync starts before stdin is written and before any wait, so a child that fills
     # one pipe while the parent waits on the other can never deadlock (the stderr-flood case,
-    # S3b, is that deadlock reproduced against the production spawner, which never reads stderr).
+    # S3b, reproduced that deadlock against the pre-000304 production spawner, which never read
+    # stderr).
     # -RemoveEnvPrefix strips inherited variables (by prefix) from the child's environment block
     # only; this process's own environment is untouched.
     param(
@@ -216,8 +217,12 @@ function Invoke-SvChildProcess {
         [hashtable]$ExtraEnv,
         [string[]]$RemoveEnvPrefix = @()
     )
+    # No CreateNoWindow (dispatch 000304): the child inherits this console, as the production scan
+    # spawner's children do, so a JSON payload on stdin decodes as it was written. A new console
+    # starts at the OEM code page, and under a Windows PowerShell 5.1 parent the BOM its
+    # StandardInput writer prepends then decodes as three characters Get-StdinText cannot strip.
     $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $HostExe; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+    $psi.FileName = $HostExe; $psi.UseShellExecute = $false
     $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
     Add-ProcessArguments $psi $ArgumentList
     foreach ($prefix in @($RemoveEnvPrefix | Where-Object { $_ })) {
