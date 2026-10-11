@@ -84,6 +84,12 @@ code page -- the OEM code page on a stock Windows console, not UTF-8 -- so a non
 root (the default data root is under the user profile) reaches the client intact under any code page.
 Before, on such a console, a file whose path held a non-ASCII character reached the client mangled and
 was silently not analyzed: the scan exited `0` without that file's findings.
+**A Windows PowerShell 5.1 scan reads its findings back as UTF-8.** The client writes them as UTF-8
+without a BOM, and a 5.1 scanner read them with the ANSI code page, so a finding whose message holds a
+non-ASCII character -- PSScriptAnalyzer quotes function, variable, parameter and alias names into its
+messages -- printed garbled in the text report and in SARIF `message.text`. Now that the receipt's digest
+covers every message, the same misread would also have reported the fully analyzed file as not analyzed
+(`diagnostics-mismatch`, exit `4`).
 Underneath: every scan child now runs through one typed spawner
 (`Invoke-ScanChildProcess`: exit code, stdout, stderr, killed, elapsed), which starts both stream drains
 before it waits (a child that floods stderr is no longer held to the cap), kills the whole process tree
