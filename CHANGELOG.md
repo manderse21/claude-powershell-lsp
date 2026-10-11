@@ -64,6 +64,8 @@ with no receipt. Exit codes are otherwise as before: `0` complete, `2` `-FailOn`
 child reads on stdin is written as a `\uXXXX` escape, because the child decodes stdin with its console's
 code page -- the OEM code page on a stock Windows console, not UTF-8 -- so a non-ASCII file path or data
 root (the default data root is under the user profile) reaches the client intact under any code page.
+Before, on such a console, a file whose path held a non-ASCII character reached the client mangled and
+was silently not analyzed: the scan exited `0` without that file's findings.
 Underneath: every scan child now runs through one typed spawner
 (`Invoke-ScanChildProcess`: exit code, stdout, stderr, killed, elapsed), which starts both stream drains
 before it waits (a child that floods stderr is no longer held to the cap), kills the whole process tree
