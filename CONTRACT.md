@@ -410,6 +410,21 @@ cold. None is a contract change; each is banked here deliberately.
     rather than duplicated (the survey's budget constraint). `moduleAwareness` and `referenceSurfacing` are
     **independent knobs on independent axes** (machine install-state vs workspace reference shape) and do
     not interact; there is no precedence between them.
+- **Scan completion receipt (NOT a Tier-1 frozen surface) -- dispatch 000304.** `scripts/lsp-scan.ps1`
+  now reports a file analyzed only on a validated completion receipt the client writes in scan mode
+  (`scripts/lib/lsp-scan-receipt.ps1`, schema `docs/scan-receipt.schema.json`). Everything this adds is
+  **additive and outside the frozen surface**: a hook-payload field Claude Code never sends
+  (`powershell_lsp_scan`), an optional `requestId` on the daemon's diagnostics request answered with that
+  id and an `analysis` binding (advertised as the `diagnosticsAnalysisBinding` capability), a scan-only
+  `completeness` axis (`complete` / `partial` / `failed`), machine reason codes, and a `properties.reasons`
+  bag on SARIF not-analyzed notifications. **No knob is added and no status token is added**: a receipt's
+  `status` is one of the four tokens of 1.2, unchanged in meaning, and completeness is a different axis
+  from analyzer health. The interactive request and its answer are byte-identical. The scan's documented
+  exit codes are unchanged (0 / 2 / 3 / 4); which files count toward exit 4 is now decided by the receipt,
+  and a file that does not parse or that the byte pre-pass stops is reported with its findings but counted
+  incomplete -- a deliberate behavior change recorded in the CHANGELOG. A receipt records configuration
+  as observed and **unbound** and policy as **unbound**; neither is certified by this schema version.
+  Recorded here as a **note, not an amendment**.
 
 ---
 
