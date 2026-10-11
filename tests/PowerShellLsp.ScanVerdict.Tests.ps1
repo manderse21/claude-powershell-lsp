@@ -507,6 +507,38 @@ Describe 'Scan verdict reachability through the real client (dispatch 000302 A1)
         }
     }
 
+    Context 'R9n the real client gets a bound answer whose finding message is non-ASCII (review A2-F03)' {
+        BeforeAll {
+            # Review A2-F03. The real client writes each finding into the scan's capture log as BOM-less
+            # UTF-8, and Invoke-ScanFileDiagnostics -- running in THIS Pester host -- reads the log back and
+            # holds every message to the receipt's digest. A bare Get-Content on Windows PowerShell 5.1
+            # decodes a BOM-less file with the ANSI code page, so a non-ASCII message came back garbled, no
+            # longer matched the digest the client computed over the true text, and a fully analyzed file
+            # read diagnostics-mismatch. PSScriptAnalyzer quotes identifiers into its messages, so a
+            # non-ASCII function name is enough. Every hop before the read-back carries the message as
+            # UTF-8 (the canned answer's file, the fake daemon, the pipe, the client), so the read-back is
+            # the hop under test. It bites on the windows-powershell leg, whose Pester host -- the scanner
+            # here -- is 5.1; on PowerShell 7 the log reads back intact either way.
+            $script:R9nMessage = 'The cmdlet ''Frobnicate-Gr' + [string][char]0x00F6 + [string][char]0x00DF + 'e'' uses an unapproved verb.'
+            $finding = [ordered]@{ severity = 'Warning'; line = 1; col = 10; source = 'PSScriptAnalyzer'; code = 'PSUseApprovedVerbs'; message = $script:R9nMessage } |
+                ConvertTo-Json -Compress
+            $response = $script:RvClean.Replace('"count":0', '"count":1').Replace('"diagnostics":[]', ('"diagnostics":[' + $finding + ']'))
+            $script:R9n = Invoke-RvDaemonCase -Tag 'r9n' -Response $response -Binding 'valid'
+        }
+        It 'R9n situation -- the fake daemon was asked under a request id, and the real client surfaced its one finding' {
+            $script:R9n.Requests | Should -Match '"requestId":"[0-9a-f]{32}"' -Because 'a scan-mode request carries its request id'
+            $script:R9n.ClientLog | Should -Match 'emitted 1 diagnostic\(s\)'
+        }
+        It 'R9n verdict -- on a <Edition> scanner a finding whose message is non-ASCII reads back intact, and the file IS reported analyzed' -TestCases @(@{ Edition = [string]$PSVersionTable.PSEdition }) {
+            $script:R9n.ClientLog | Should -Match 'emitted 1 diagnostic\(s\)' -Because 'R9n situation: the real client must have surfaced the finding'
+            $script:R9n.Result.Analyzed | Should -BeTrue -Because ('R9n verdict: a bound answer whose finding the client captured and vouched for is a completed analysis (reasons: ' + (@($script:R9n.Result.Reasons) -join ',') + ')')
+            [string]$script:R9n.Result.Completeness | Should -BeExactly 'complete'
+            @($script:R9n.Result.Findings).Count | Should -Be 1
+            [string](@($script:R9n.Result.Findings)[0].ruleId) | Should -BeExactly 'PSUseApprovedVerbs'
+            [string](@($script:R9n.Result.Findings)[0].message) | Should -BeExactly $script:R9nMessage -Because 'the message must read back as the client wrote it, not through the ANSI code page'
+        }
+    }
+
     Context 'the real client refuses a binding that does not match (dispatch 000304 A2)' {
         It 'a daemon answer echoing another request id is NOT reported analyzed (correlation-mismatch)' {
             $c = Invoke-RvDaemonCase -Tag 'rwr' -Response $script:RvClean -Binding 'wrong-request'

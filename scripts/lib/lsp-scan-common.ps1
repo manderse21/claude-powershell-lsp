@@ -790,7 +790,12 @@ function Invoke-ScanFileDiagnostics {
 
     $findings = New-Object System.Collections.ArrayList
     if (Test-Path -LiteralPath $log) {
-        foreach ($entry in @(Get-Content -LiteralPath $log)) {
+        # Read the log as UTF-8 on BOTH hosts (dispatch 000304, review A2-F03). The client writes it as
+        # BOM-less UTF-8 (Add-DiagnosticCaptureEntries), and a bare Get-Content on Windows PowerShell 5.1
+        # decodes a BOM-less file with the ANSI code page. PSScriptAnalyzer quotes identifiers into its
+        # messages, so a non-ASCII one came back garbled -- in the SARIF and text output, and against the
+        # receipt's digest, which covers every message: a fully analyzed file read diagnostics-mismatch.
+        foreach ($entry in @(Get-Content -LiteralPath $log -Encoding UTF8)) {
             if ([string]::IsNullOrWhiteSpace($entry)) { continue }
             $o = $null
             try { $o = $entry | ConvertFrom-Json } catch { $o = $null }
