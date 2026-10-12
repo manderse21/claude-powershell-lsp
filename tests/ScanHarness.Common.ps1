@@ -117,6 +117,9 @@ function New-SvFakeScriptsDir {
     #   <Root>/scripts/session-end.ps1   <- fake-session-end.ps1
     #   <Root>/scripts/lib/lsp-common.ps1 <- the REAL library, so a fake that needs a production
     #                                        helper dot-sources it exactly as the real client does.
+    #   <Root>/scripts/lib/lsp-scan-receipt.ps1 <- the REAL receipt library (dispatch 000304): a fake
+    #                                        that emits a completion receipt does it by CALLING the
+    #                                        production producer, never by spelling a row by hand.
     # Returns the scripts directory. -ClientFixture '' leaves lsp-client.ps1 ABSENT on purpose
     # (the missing-client case).
     param([Parameter(Mandatory = $true)][string]$Root, [string]$ClientFixture = '')
@@ -124,6 +127,7 @@ function New-SvFakeScriptsDir {
     New-Item -ItemType Directory -Force -Path (Join-Path $scripts 'lib') | Out-Null
     $repo = Get-SvRepoRoot
     Copy-Item -LiteralPath (Join-Path $repo 'scripts/lib/lsp-common.ps1') -Destination (Join-Path $scripts 'lib/lsp-common.ps1') -Force
+    Copy-Item -LiteralPath (Join-Path $repo 'scripts/lib/lsp-scan-receipt.ps1') -Destination (Join-Path $scripts 'lib/lsp-scan-receipt.ps1') -Force
     Copy-Item -LiteralPath (Get-SvFixturePath 'fake-session-start.ps1') -Destination (Join-Path $scripts 'session-start.ps1') -Force
     Copy-Item -LiteralPath (Get-SvFixturePath 'fake-session-end.ps1') -Destination (Join-Path $scripts 'session-end.ps1') -Force
     if (-not [string]::IsNullOrWhiteSpace($ClientFixture)) {
@@ -135,22 +139,37 @@ function New-SvFakeScriptsDir {
 function New-SvCliTree {
     # A RELOCATED COPY of the scan CLI with fake hooks beside it:
     #   <Root>/scripts/lsp-scan.ps1, <Root>/scripts/lib/lsp-common.ps1,
-    #   <Root>/scripts/lib/lsp-scan-common.ps1 and <Root>/.claude-plugin/plugin.json are BYTE COPIES
-    #   of the shipped files -- each one's SHA-256 is compared with its source and the build throws
-    #   on any difference, so the code under test is provably the shipped code;
+    #   <Root>/scripts/lib/lsp-scan-common.ps1, <Root>/scripts/lib/lsp-scan-receipt.ps1 (dispatch
+    #   000304) and <Root>/.claude-plugin/plugin.json are BYTE COPIES of the shipped files -- each
+    #   one's SHA-256 is compared with its source and the build throws on any difference, so the code
+    #   under test is provably the shipped code;
     #   session-start.ps1 / session-end.ps1 / lsp-client.ps1 are the fakes (New-SvFakeScriptsDir).
-    # lsp-scan.ps1 resolves every hook from its OWN directory ($PSScriptRoot), so the copy runs the
-    # shipped exit-code + SARIF logic against the fakes. Returns @{ Root; ScanScript; ScriptsDir; Copies }.
-    param([Parameter(Mandatory = $true)][string]$Root, [Parameter(Mandatory = $true)][string]$ClientFixture)
+    # -RealClient (dispatch 000304) puts a BYTE COPY of the shipped scripts/lsp-client.ps1 in place of
+    # the fake client, so the shipped CLI drives the REAL client -- the "full real-hook CLI check" A1
+    # carried to A2; -SessionStartFixture swaps the session-start fake (the real-client layer uses one
+    # that starts a fake pipe daemon). lsp-scan.ps1 resolves every hook from its OWN directory
+    # ($PSScriptRoot), so the copy runs the shipped exit-code + SARIF logic against them.
+    # Returns @{ Root; ScanScript; ScriptsDir; Copies }.
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [string]$ClientFixture = '',
+        [switch]$RealClient,
+        [string]$SessionStartFixture = ''
+    )
     $scripts = New-SvFakeScriptsDir -Root $Root -ClientFixture $ClientFixture
+    if (-not [string]::IsNullOrWhiteSpace($SessionStartFixture)) {
+        Copy-Item -LiteralPath (Get-SvFixturePath $SessionStartFixture) -Destination (Join-Path $scripts 'session-start.ps1') -Force
+    }
     $repo = Get-SvRepoRoot
     New-Item -ItemType Directory -Force -Path (Join-Path $Root '.claude-plugin') | Out-Null
     $pairs = @(
         @{ Rel = 'scripts/lsp-scan.ps1' }
         @{ Rel = 'scripts/lib/lsp-common.ps1' }
         @{ Rel = 'scripts/lib/lsp-scan-common.ps1' }
+        @{ Rel = 'scripts/lib/lsp-scan-receipt.ps1' }
         @{ Rel = '.claude-plugin/plugin.json' }
     )
+    if ($RealClient) { $pairs += @{ Rel = 'scripts/lsp-client.ps1' } }
     $copies = New-Object System.Collections.ArrayList
     foreach ($pair in $pairs) {
         $src = Join-Path $repo $pair.Rel
@@ -186,19 +205,31 @@ function Invoke-SvChildProcess {
     # exit a child can make on its own. Both redirected streams are drained CONCURRENTLY: each
     # ReadToEndAsync starts before stdin is written and before any wait, so a child that fills
     # one pipe while the parent waits on the other can never deadlock (the stderr-flood case,
-    # S3b, is that deadlock reproduced against the production spawner, which never reads stderr).
+    # S3b, reproduced that deadlock against the pre-000304 production spawner, which never read
+    # stderr).
     # -RemoveEnvPrefix strips inherited variables (by prefix) from the child's environment block
     # only; this process's own environment is untouched.
+    # -OwnConsole (dispatch 000304, review A2-F02) starts the child on a console of its OWN
+    # (CreateNoWindow), so a test can pin that console's code page without touching the one this
+    # runner shares with everything else -- the stand-in scanner of the pinned-console round trip.
     param(
         [Parameter(Mandatory = $true)][string]$HostExe,
         [Parameter(Mandatory = $true)][string[]]$ArgumentList,
         [string]$StdinText = '',
         [int]$CapMs = 120000,
         [hashtable]$ExtraEnv,
-        [string[]]$RemoveEnvPrefix = @()
+        [string[]]$RemoveEnvPrefix = @(),
+        [switch]$OwnConsole
     )
+    # By default no CreateNoWindow (dispatch 000304): the child inherits this console, as the
+    # production scan spawner's children do. That keeps a Windows PowerShell 5.1 parent's stdin BOM
+    # decodable -- on a UTF-8 console its StandardInput writer puts one ahead of the payload, which a
+    # child on a new (OEM) console reads as three characters Get-StdinText cannot strip. It does not
+    # make a non-ASCII payload code-page independent: this harness's payloads are ASCII, and the
+    # production spawner escapes every non-ASCII character (ConvertTo-ScanAsciiJson).
     $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $HostExe; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+    $psi.FileName = $HostExe; $psi.UseShellExecute = $false
+    if ($OwnConsole) { $psi.CreateNoWindow = $true }
     $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
     Add-ProcessArguments $psi $ArgumentList
     foreach ($prefix in @($RemoveEnvPrefix | Where-Object { $_ })) {
@@ -281,11 +312,16 @@ function Start-SvFakePipeDaemon {
     # probe the real client asks). Its stdout/stderr go to files (OS-level redirection), so it can
     # never hold this process's standard handles. Returns @{ Pid; PipeName; RequestLog; ErrFile }.
     # Throws when it does not come up -- a reachability case without its daemon measures nothing.
+    # -Binding (dispatch 000304) selects how the fake binds a scan-mode answer -- built with the
+    # PRODUCTION daemon-side helper, New-ScanAnalysisBinding, exactly as pses-daemon.ps1 builds it:
+    # 'none' (a pre-000304 answer, no binding), 'valid', or one deliberate fault ('wrong-request',
+    # 'wrong-path', 'wrong-source', 'mutate-source'); see the fixture's header.
     param(
         [Parameter(Mandatory = $true)][string]$HostExe,
         [Parameter(Mandatory = $true)][string]$SessionId,
         [Parameter(Mandatory = $true)][string]$WorkDir,
         [Parameter(Mandatory = $true)][string]$Response,
+        [ValidateSet('none', 'valid', 'wrong-request', 'wrong-path', 'wrong-source', 'mutate-source')][string]$Binding = 'none',
         [int]$LifetimeMs = 120000,
         [int]$ReadyTimeoutMs = 30000
     )
@@ -297,11 +333,13 @@ function Start-SvFakePipeDaemon {
     $errFile = Join-Path $WorkDir 'daemon.err'
     [System.IO.File]::WriteAllText($responseFile, $Response + "`n", (New-Object System.Text.UTF8Encoding($false)))
     $lib = Join-Path (Get-SvRepoRoot) 'scripts/lib/lsp-common.ps1'
+    $receiptLib = Join-Path (Get-SvRepoRoot) 'scripts/lib/lsp-scan-receipt.ps1'
     $proc = Start-Process -FilePath $HostExe -PassThru -NoNewWindow `
         -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
         -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Get-SvFixturePath 'fake-pipe-daemon.ps1'),
             '-SessionId', $SessionId, '-ResponseFile', $responseFile, '-ReadyFile', $readyFile,
-            '-RequestLog', $requestLog, '-LibPath', $lib, '-LifetimeMs', [string]$LifetimeMs)
+            '-RequestLog', $requestLog, '-LibPath', $lib, '-ReceiptLibPath', $receiptLib, '-Binding', $Binding,
+            '-LifetimeMs', [string]$LifetimeMs)
     $pipeName = Get-DaemonPipeName -SessionId $SessionId
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     while ($sw.ElapsedMilliseconds -lt $ReadyTimeoutMs) {
@@ -399,11 +437,17 @@ function Invoke-SvScanCase {
         [string]$TargetContent = "function Get-SvTarget {`n    [CmdletBinding()]`n    param([string]`$Name)`n    Write-Output `$Name`n}`n",
         [switch]$RemoveTarget,
         [int]$CapMs = 25000,
-        [string]$Root = ''
+        [string]$Root = '',
+        # name -> text, written into the data root before the run (dispatch 000304: the receipt
+        # variant a fake should produce travels this way, never through the environment).
+        [hashtable]$DataFiles = @{}
     )
     if ([string]::IsNullOrWhiteSpace($Root)) { $Root = New-SvTempRoot -Tag $Tag }
     $dataRoot = Join-Path $Root 'data'
     New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
+    foreach ($k in @($DataFiles.Keys)) {
+        [System.IO.File]::WriteAllText((Join-Path $dataRoot ([string]$k)), [string]$DataFiles[$k], (New-Object System.Text.UTF8Encoding($false)))
+    }
     if ([string]::IsNullOrWhiteSpace($ScriptsDir)) { $ScriptsDir = New-SvFakeScriptsDir -Root $Root -ClientFixture $ClientFixture }
     if ([string]::IsNullOrWhiteSpace($SessionId)) { $SessionId = 'sv-' + [guid]::NewGuid().ToString('N').Substring(0, 8) }
     $srcDir = Join-Path $Root 'src'

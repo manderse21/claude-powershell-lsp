@@ -132,7 +132,47 @@ by default, so CI stays green while the failures stay recorded. Three things kee
 When a fix lands, its tests turn green and the oracle rejects them as unexpected passes. That is the
 signal: remove the tag from the `It`, remove the entry from the list, and drop the tag from the
 runner default once it has no entries left. Never widen a declared message to fit a different
-failure.
+failure. Dispatch 000304 (A2) did exactly that for all 39 `ScanRed-A2` tests and retired the tag;
+only `ScanRed-A3` remains.
+
+## A scanned file is analyzed only on a COMPLETE receipt
+
+`scripts/lsp-scan.ps1` does not infer "analyzed" from silence -- a clean pass is silent by design, so
+silence cannot tell a clean file from a child that never analyzed it (dispatch 000302 measured seven
+ways that went wrong). In scan mode the client writes a typed completion receipt
+(`scripts/lib/lsp-scan-receipt.ps1`), and `Invoke-ScanFileDiagnostics` reports a file analyzed only
+when `Test-ScanReceipt` finds it complete: right request id, right file, the daemon-consumed SHA-256
+equal to the bytes on disk before and after, a settled PSScriptAnalyzer pass, and the finding digest
+equal to the records read back. Things that bite when you change this path:
+
+- **Scan mode rides the hook PAYLOAD, never the environment** (`powershell_lsp_scan`). An ambient
+  variable must never be able to turn an interactive edit into a scan; the client loads the receipt
+  library only for a scan-mode payload, so the edit path does not even parse it.
+- **The receipt is written in the client's `finally`**, so every exit -- including the fail-safe ones
+  -- leaves exactly one receipt. Add a new early exit? Record its reason with `Add-ScanOutcomeReason`
+  first, or the scan will read it as a generic `analysis-not-run`.
+- **Do not wrap a receipt field read in `@(...)`.** `Get-ScanReceiptField` returns an array as ONE
+  object (the comma operator, so a one-element array is not unrolled); `@(Get-ScanReceiptField ...)`
+  nests it and a multi-reason list stringifies into one element. Assign first, then wrap.
+- **A new reason code is a schema change**: add it to the reason table AND to
+  `docs/scan-receipt.schema.json`; `tests/PowerShellLsp.ScanReceipt.Tests.ps1` fails until both agree.
+- **Every scan child goes through `Invoke-ScanChildProcess`**, which drains both streams before it
+  waits, kills the tree on both Windows hosts (`Kill($true)` does not exist on 5.1; it falls back to
+  `taskkill /T`) and contains `formatOnEdit` off under every spelling. The HookInstrumentation guard
+  holds it to that by name.
+- **A scan child's stdin payload is pure ASCII.** The child decodes stdin with the code page of the
+  console it is attached to, and inheriting the scanner's console does not make that UTF-8: a stock
+  Windows console sits at the OEM code page (437 on en-US). So `Invoke-ScanChildProcess` writes every
+  payload through `ConvertTo-ScanAsciiJson`, which turns each non-ASCII character into a JSON `\uXXXX`
+  escape; without it a non-ASCII file path or data root (the default data root is under the user
+  profile) arrives mangled and every file reads receipt-missing (dispatch 000304, review A2-F01).
+- **Do not set `CreateNoWindow` on a scan child either** -- for the BOM, not the code page. A Windows
+  PowerShell 5.1 parent on a UTF-8 console writes a UTF-8 BOM ahead of the payload; a child sharing that
+  console strips it (`Get-StdinText`), but a child on a new console (OEM again) reads three characters
+  nothing strips, and nothing parses. `tests/PowerShellLsp.ScanReceipt.Tests.ps1` pins a console of its
+  own to code page 437 and round-trips a non-ASCII path and data root under it on whichever host runs
+  it, beside a raw-UTF-8 control that must arrive mangled -- so the test cannot pass on a UTF-8 console
+  alone, which is how the guard it replaced did.
 
 ## The public contract has teeth
 

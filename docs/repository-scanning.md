@@ -32,6 +32,62 @@ to the top level). Severity maps honestly to SARIF's four levels (Error -> `erro
 `warning` so a finding is never silently dropped). Exit codes: `0` completed, `2` `-FailOn`
 threshold met, `3` usage error, `4` scan incomplete (an unanalyzed file is never reported clean).
 
+## Completion receipts: when a file counts as analyzed
+
+A file counts as analyzed **only** when the scan holds positive evidence that its analysis
+completed. Silence is not evidence: a healthy clean pass is silent on the edit path by design, so
+"the child said nothing" cannot tell a clean file from a child that never ran the analysis.
+
+For each file the scan mints a fresh request id and asks the client, in its hook payload, to write
+a **completion receipt** (`scripts/lib/lsp-scan-receipt.ps1`; schema in
+[`scan-receipt.schema.json`](scan-receipt.schema.json)). The daemon answers that request with the id
+echoed and a binding of what it actually analyzed: the normalized path, the SHA-256 of the exact bytes
+it read and handed to PSES, whether the pass settled and whether PSScriptAnalyzer was available. The
+scan then validates the receipt:
+
+- the request id and the file are the ones it asked about;
+- the bytes the daemon consumed are the file's bytes on disk, read by the scan just before and just
+  after the analysis (a file that changed or vanished meanwhile is not certified);
+- the receipt's own facts support what it claims (a well-formed receipt that says `degraded` and
+  `complete` is refused -- a valid envelope proves nothing on its own);
+- the finding records read back match the receipt's count and digest (the digest covers each
+  message, so a transport that dropped messages cannot pass);
+- the child exited on its own with exit code 0.
+
+A receipt carries two separate fields. **status** is one of the four public tokens
+([CONTRACT.md](../CONTRACT.md) 1.2) and means what it means on the edit path. **completeness** is an
+additive, scan-only field:
+
+| status | what ran | completeness | counted as analyzed |
+|---|---|---|---|
+| `ok` | settled PSScriptAnalyzer pass over bound bytes | `complete` | yes |
+| `ok` | the file does not parse (parser short-circuit) | `partial` (`parse-errors`) | no -- findings reported, exit 4 |
+| `ok` | the byte pre-pass stopped the analysis (smart punctuation) | `partial` (`pre-pssa-short-circuit`) | no -- findings reported, exit 4 |
+| `ok` | a per-file cap or an edit-range scope applied | `partial` | no |
+| `degraded` | parser-only pass, PSScriptAnalyzer absent | `partial` (`pssa-unavailable`) | no |
+| `incomplete` | the pass did not settle | `failed` (`analysis-not-settled`) | no |
+| `unavailable` | PSES could not start, or managed policy refused | `failed` | no |
+| (none) | no receipt, an unreadable one, or one for another request, file or bytes | `failed` | no |
+
+Every file that is not complete is named in the INCOMPLETE report with machine reason codes -- on
+stderr, in text mode, and in the SARIF `invocations[].toolExecutionNotifications[]` entry for the
+file (in the message text and in a `properties.reasons` array). The full code list, with what each
+means, is the reason table in `scripts/lib/lsp-scan-receipt.ps1`. Findings from a file that is not
+complete are still reported; they are simply never presented as a complete result.
+
+**What a receipt does not certify.** The configuration the daemon was launched with is recorded as
+*observed* and the receipt marks it **unbound**; the policy identity is **unbound**. Binding a
+declared scan environment and certifying a managed policy are separate, later work, and a receipt
+never implies either. Engine versions are the ones the daemon reads from the PSES and
+PSScriptAnalyzer module manifests it launches with, or `unknown` -- never a pinned value standing in
+for an observation; the version PSES loaded in-process is not queried. A scan child's output is held
+in memory while it is drained, so a pathological child that writes without limit costs memory up to
+the per-file cap.
+
+**A scan never formats.** Every scan child gets `formatOnEdit=off` under exactly one spelling --
+every other spelling the option resolver accepts is removed from its environment first -- so a
+`formatOnEdit=apply` inherited from the caller cannot rewrite the files being scanned.
+
 **This repository scans itself.** `.github/workflows/powershell-lsp-code-scanning.yml` uploads
 SARIF to GitHub code scanning on every push to `main`, weekly, and on demand -- a separate
 workflow from the CI legs, so it can never turn a merge gate red. Copy it as a starting point;

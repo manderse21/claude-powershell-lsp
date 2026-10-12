@@ -22,7 +22,9 @@
 #   2  scan completed; findings met or exceeded the -FailOn severity threshold (a CI gate fail).
 #   3  usage error (no PowerShell host found, or the path does not exist).
 #   4  scan incomplete: the analyzer daemon never became ready, or one+ files could not be
-#      analyzed (never-silent -- an unanalyzed file must never read as a clean one).
+#      analyzed (never-silent -- an unanalyzed file must never read as a clean one). Since dispatch
+#      000304 a file counts as analyzed ONLY on a validated COMPLETE completion receipt
+#      (scripts/lib/lsp-scan-receipt.ps1); every other file is named, with its reason codes.
 #
 # ASCII-only (PS 5.1 em-dash trap); StrictMode-safe.
 #
@@ -77,6 +79,8 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'lib/lsp-common.ps1')
 . (Join-Path $PSScriptRoot 'lib/lsp-scan-common.ps1')
+# The completion-receipt validator Invoke-ScanFileDiagnostics requires (dispatch 000304, A2).
+. (Join-Path $PSScriptRoot 'lib/lsp-scan-receipt.ps1')
 
 function Write-ScanOutput {
     param([string]$Text, [string]$OutFile)
@@ -147,14 +151,18 @@ try {
             -HostExe $hostExe -FilePath $file -Cwd $root -CapMs $TimeoutMs
         foreach ($f in @($r.Findings)) { [void]$allFindings.Add($f) }
         # Carry each unanalyzed file's elapsed ms (dispatch 000132 leg 2) so the INCOMPLETE surfaces
-        # can report how long it ran before the budget cut it, not merely that it ran out.
-        if (-not $r.Analyzed) { [void]$notAnalyzed.Add([pscustomobject]@{ Path = [string]$r.File; ElapsedMs = [int]$r.ElapsedMs }) }
+        # can report how long it ran before the budget cut it, not merely that it ran out -- and its
+        # receipt reason codes (dispatch 000304), so they say WHY it is not analyzed, and its
+        # completeness, so the text report tells a valid PARTIAL receipt from a missing one (A2-Q01).
+        if (-not $r.Analyzed) {
+            [void]$notAnalyzed.Add([pscustomobject]@{ Path = [string]$r.File; ElapsedMs = [int]$r.ElapsedMs; Reasons = @($r.Reasons); Completeness = [string]$r.Completeness })
+        }
         # DIAGNOSTIC timing (dispatch 000132 leg 3): with -DiagnosticTiming, record EVERY file's true
         # elapsed -- including files that COMPLETE when given room -- so a measurement run learns the
         # real per-file cost, not only of the timed-out files the INCOMPLETE surfaces already name.
         if ($DiagnosticTiming) {
             [Console]::Error.WriteLine('lsp-scan diag: ' + (Get-ScanRelativeUri -FilePath ([string]$r.File) -Root $root) +
-                ' analyzed=' + $r.Analyzed + ' elapsed=' + [int]$r.ElapsedMs + 'ms')
+                ' analyzed=' + $r.Analyzed + ' elapsed=' + [int]$r.ElapsedMs + 'ms completeness=' + [string]$r.Completeness)
         }
     }
 } finally {
@@ -193,7 +201,7 @@ if ($Format -eq 'sarif') {
     Write-ScanOutput -Text ($report | ConvertTo-Json -Depth 16) -OutFile $OutputPath
 } else {
     Write-ScanOutput -Text (Format-ScanTextReport -Findings $findings -Root $root -Skipped $skipped `
-            -FilesScanned $files.Count -NotAnalyzed @(@($notAnalyzed) | ForEach-Object { [string]$_.Path })) -OutFile $OutputPath
+            -FilesScanned $files.Count -NotAnalyzed @($notAnalyzed)) -OutFile $OutputPath
 }
 
 # --- exit ------------------------------------------------------------------
@@ -206,7 +214,10 @@ if (@($notAnalyzed).Count -gt 0) {
     [Console]::Error.WriteLine('lsp-scan: ' + $na.Total + ' file(s) could NOT be analyzed -- scan is INCOMPLETE (executionSuccessful=false):')
     foreach ($it in $na.Items) {
         $line = '  ' + [string]$it.Name
-        if ($null -ne $it.ElapsedMs) { $line = $line + ' (' + [int]$it.ElapsedMs + 'ms)' }
+        $bits = @()
+        if ($null -ne $it.ElapsedMs) { $bits += ([string][int]$it.ElapsedMs + 'ms') }
+        if (@($it.Reasons).Count -gt 0) { $bits += ('reasons: ' + (@($it.Reasons) -join ', ')) }
+        if ($bits.Count -gt 0) { $line = $line + ' (' + ($bits -join '; ') + ')' }
         [Console]::Error.WriteLine($line)
     }
     if ($na.Overflow -gt 0) { [Console]::Error.WriteLine('  ... and ' + $na.Overflow + ' more (' + $na.Total + ' total).') }

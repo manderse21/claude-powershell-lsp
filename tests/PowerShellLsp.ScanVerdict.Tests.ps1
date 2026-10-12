@@ -1,44 +1,50 @@
 #Requires -Version 5.1
 
-# Scan VERDICT census -- review finding F1, measured (dispatch 000302, A1). Tests and fixtures only;
-# nothing under scripts/ changes.
+# Scan VERDICT census -- review finding F1, measured (dispatch 000302, A1) and fixed (dispatch 000304,
+# A2).
 #
 # THE FINDING. The 2026-09-30 enterprise review (F1) read Invoke-ScanFileDiagnostics statically:
-# `Analyzed` starts $true and flips only on a cap kill or a 'NOT checked' banner, so a child that
-# ends any other way without a usable verdict can still be reported analyzed. A healthy zero-finding
+# `Analyzed` started $true and flipped only on a cap kill or a 'NOT checked' banner, so a child that
+# ended any other way without a usable verdict could still be reported analyzed. A healthy zero-finding
 # hook is SILENT by contract, so "silent" cannot simply be made to mean "failed" -- the scanner needs
-# positive evidence of completion, which no current protocol carries. This file turns that reading
-# into measurements.
+# positive evidence of completion. A1 turned that reading into the measurements below; A2 added the
+# evidence: a typed completion receipt (scripts/lib/lsp-scan-receipt.ps1) the client writes in scan
+# mode, which Invoke-ScanFileDiagnostics validates before it reports a file analyzed.
 #
-# FOUR LAYERS, each a separate Describe:
+# LAYERS, each a separate Describe:
 #   1. CENSUS AT THE HELPER BOUNDARY. Nine situations (S1-S9, plus S3b and S5m, the volume and
 #      missing halves of S3 and S5), each a fake child from tests/fixtures/scan-verdict/ driven by
-#      the PRODUCTION Invoke-ScanFileDiagnostics -> Invoke-ScanHook exactly as the real client is.
+#      the PRODUCTION Invoke-ScanFileDiagnostics exactly as the real client is. Since A2 each also
+#      asserts the machine reason the verdict carries, and the RECEIPT VARIANTS
+#      (rx-receipt-variant.ps1) prove the validator: a receipt built by the PRODUCTION producer and
+#      then perturbed in exactly one way -- most with a perfectly valid envelope -- is never certified.
 #   2. REACHABILITY THROUGH THE REAL CLIENT. The real scripts/lsp-client.ps1, driven into the same
 #      child behaviours: a vanished source file (no daemon needed), a client script the host cannot
-#      run, and four canned answers from a fake pipe daemon (ok=false, wrong-typed, truncated,
-#      clean). This is what makes the fakes trustworthy -- the real client really ends this way.
-#   3. THE CLI BOUNDARY. The shipped scripts/lsp-scan.ps1 and its two libraries, copied byte for
-#      byte (SHA-256 verified) beside fake hooks, run end to end: exit code + SARIF
-#      executionSuccessful per situation. LIMITATION, stated: lsp-scan.ps1 resolves its hooks from
-#      its own directory and has no other seam, so this layer proves the shipped CLI's verdict
-#      logic against FAKE children only. The full real-hook CLI check belongs to A2.
-#   4. THE ORACLE AND THE EXCLUSION GUARD. tests/assert-expected-red.ps1 is proven to accept the
+#      run, and canned answers from a fake pipe daemon. Since A2 the fake daemon can BIND a scan-mode
+#      answer with the production daemon-side helper, so the real client is proven to certify a bound
+#      clean answer and to refuse an unbound, mis-correlated, mis-pathed, wrong-bytes, raced, degraded,
+#      unsettled, unavailable or capped one -- and to stay silent and receipt-less on an interactive
+#      payload.
+#   3. THE CLI BOUNDARY. The shipped scripts/lsp-scan.ps1 and its libraries, copied byte for byte
+#      (SHA-256 verified) beside fake hooks, run end to end: exit code + SARIF executionSuccessful per
+#      situation.
+#   4. THE CLI WITH THE REAL CLIENT (A2). The same relocated CLI plus a byte copy of the shipped
+#      lsp-client.ps1, with a session-start fake that serves the scan's session pipe from the fake
+#      pipe daemon: the "full real-hook CLI check for the F1 situations" A1 carried to A2. (Real
+#      session-start and a real daemon behind the real CLI are exercised in
+#      PowerShellLsp.SarifScan.Tests.ps1 and PowerShellLsp.ScanReadOnly.Tests.ps1.)
+#   5. THE ORACLE AND THE EXCLUSION GUARD. tests/assert-expected-red.ps1 is proven to accept the
 #      declared failures and nothing else, and the RED tags are proven to sit exactly on the tests
 #      tests/fixtures/scan-verdict/expected-red.psd1 declares.
 #
-# CLASSIFICATION. Every contract assertion is its own It, measured at the dispatch head. An It that
-# FAILS today carries the tag 'ScanRed-A2' (A2 owns the typed completion receipt that fixes it) and
-# is EXCLUDED from tests/run-tests.ps1 by default; tests/assert-expected-red.ps1 re-runs exactly
-# those tests in a fresh process and passes only if each fails with its declared assertion. An It
-# that PASSES today is an ALREADY-GREEN control and runs in the normal suite. Each RED It re-checks
-# its situation first, so it can only fail with its declared message if the situation was really
-# reached -- the oracle's message match depends on that.
+# CLASSIFICATION. A1 committed every F1 verdict that failed at its head as a RED test tagged
+# 'ScanRed-A2', excluded by default. A2 turned all of them green and REMOVED the tag and the manifest
+# entries in the same change (the manifest's rule): every test in this file now runs in the normal
+# suite. The ScanRed-A3 tests that remain live in PowerShellLsp.ScanReadOnly.Tests.ps1.
 #
-# THE S1/S9 PAIR is the heart of the census: the two children produce byte-identical output at the
-# scanner boundary (see s9-clean-complete.ps1), S1 is expected NOT analyzed and S9 analyzed. Absence
-# of finding records is not evidence of completion; the pair can only both pass once a completion
-# receipt exists and S9 emits it through A2's production producer.
+# THE S1/S9 PAIR is the heart of the census: under the pre-A2 protocol the two children produced
+# byte-identical output at the scanner boundary. S1 is still receipt-less and is NOT analyzed; S9 now
+# emits a receipt through A2's production producer and IS analyzed.
 #
 # The existing deadline-kill regression (PowerShellLsp.SarifScan.Tests.ps1, dispatch 000132) is
 # untouched; S7 is its census twin.
@@ -52,11 +58,37 @@ $script:SvOnLinux = (Test-Path 'Variable:\IsLinux') -and [bool]$IsLinux
 $script:SvOnMacOS = (Test-Path 'Variable:\IsMacOS') -and [bool]$IsMacOS
 $script:SvUnsupported = -not ($script:SvOnWindows -or $script:SvOnLinux -or $script:SvOnMacOS)
 
+# The receipt variants (tests/fixtures/scan-verdict/rx-receipt-variant.ps1) and the verdict each must
+# get. Reason is one code the verdict must carry; '' for the certified controls.
+$script:SvReceiptVariants = @(
+    @{ Variant = 'valid'; Analyzed = $true; Completeness = 'complete'; Reason = ''; Engine = 'observed'; Findings = 0 }
+    @{ Variant = 'valid-with-finding'; Analyzed = $true; Completeness = 'complete'; Reason = ''; Engine = 'observed'; Findings = 1 }
+    @{ Variant = 'unknown-engine'; Analyzed = $true; Completeness = 'complete'; Reason = ''; Engine = 'unknown'; Findings = 0 }
+    @{ Variant = 'stderr-with-receipt'; Analyzed = $true; Completeness = 'complete'; Reason = ''; Engine = 'observed'; Findings = 0 }
+    @{ Variant = 'degraded'; Analyzed = $false; Completeness = 'partial'; Reason = 'pssa-unavailable'; Engine = 'observed'; Findings = 0 }
+    @{ Variant = 'incomplete'; Analyzed = $false; Completeness = 'failed'; Reason = 'analysis-not-settled'; Engine = 'observed'; Findings = 0 }
+    @{ Variant = 'unavailable'; Analyzed = $false; Completeness = 'failed'; Reason = 'engine-unavailable'; Engine = 'observed'; Findings = 0 }
+    @{ Variant = 'capped'; Analyzed = $false; Completeness = 'partial'; Reason = 'diagnostics-capped'; Engine = 'observed'; Findings = 0 }
+    @{ Variant = 'forged-complete'; Analyzed = $false; Completeness = 'failed'; Reason = 'receipt-inconsistent'; Engine = 'observed'; Findings = 0 }
+    @{ Variant = 'wrong-request'; Analyzed = $false; Completeness = 'failed'; Reason = 'correlation-mismatch'; Engine = 'observed'; Findings = 0 }
+    @{ Variant = 'daemon-wrong-request'; Analyzed = $false; Completeness = 'failed'; Reason = 'correlation-mismatch'; Engine = 'observed'; Findings = 0 }
+    @{ Variant = 'wrong-path'; Analyzed = $false; Completeness = 'failed'; Reason = 'path-mismatch'; Engine = 'observed'; Findings = 0 }
+    @{ Variant = 'wrong-source'; Analyzed = $false; Completeness = 'failed'; Reason = 'source-mismatch'; Engine = 'observed'; Findings = 0 }
+    @{ Variant = 'source-changed'; Analyzed = $false; Completeness = 'failed'; Reason = 'source-changed'; Engine = 'observed'; Findings = 0 }
+    @{ Variant = 'diagnostics-mismatch'; Analyzed = $false; Completeness = 'failed'; Reason = 'diagnostics-mismatch'; Engine = 'observed'; Findings = 0 }
+    @{ Variant = 'truncated'; Analyzed = $false; Completeness = 'failed'; Reason = 'receipt-truncated'; Engine = 'unknown'; Findings = 0 }
+    @{ Variant = 'malformed'; Analyzed = $false; Completeness = 'failed'; Reason = 'receipt-malformed'; Engine = 'unknown'; Findings = 0 }
+    @{ Variant = 'policy-certified'; Analyzed = $false; Completeness = 'failed'; Reason = 'receipt-malformed'; Engine = 'unknown'; Findings = 0 }
+    @{ Variant = 'config-bound'; Analyzed = $false; Completeness = 'failed'; Reason = 'receipt-malformed'; Engine = 'unknown'; Findings = 0 }
+    @{ Variant = 'nonzero-after-receipt'; Analyzed = $false; Completeness = 'failed'; Reason = 'child-nonzero-exit'; Engine = 'observed'; Findings = 0 }
+)
+
 Describe 'Scan verdict census at the helper boundary (dispatch 000302 A1)' -Skip:$script:SvUnsupported {
 
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-receipt.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
         . (Join-Path $PSScriptRoot 'ScanHarness.Common.ps1')
         $script:SvHost = Resolve-PsHost 'pwsh'
@@ -87,9 +119,11 @@ Describe 'Scan verdict census at the helper boundary (dispatch 000302 A1)' -Skip
             Assert-SvSituation -Case $script:S1 -Id 'S1'
             @($script:S1.Result.Findings).Count | Should -Be 0
         }
-        It 'S1 verdict -- a child that ends silently is NOT reported analyzed' -Tag 'ScanRed-A2' {
+        It 'S1 verdict -- a child that ends silently is NOT reported analyzed' {
             Assert-SvSituation -Case $script:S1 -Id 'S1'
             $script:S1.Result.Analyzed | Should -BeFalse -Because 'S1 verdict: a silent exit 0 is not evidence that analysis completed'
+            @($script:S1.Result.Reasons) | Should -Contain 'receipt-missing'
+            @($script:S1.Result.Reasons) | Should -Contain 'child-silent-exit'
         }
     }
 
@@ -101,9 +135,11 @@ Describe 'Scan verdict census at the helper boundary (dispatch 000302 A1)' -Skip
         It 'S2 situation -- the child ran and exited on its own' {
             Assert-SvSituation -Case $script:S2 -Id 'S2'
         }
-        It 'S2 verdict -- a child that exits nonzero is NOT reported analyzed' -Tag 'ScanRed-A2' {
+        It 'S2 verdict -- a child that exits nonzero is NOT reported analyzed' {
             Assert-SvSituation -Case $script:S2 -Id 'S2'
             $script:S2.Result.Analyzed | Should -BeFalse -Because 'S2 verdict: a nonzero exit means the analysis host failed'
+            @($script:S2.Result.Reasons) | Should -Contain 'child-nonzero-exit'
+            [int]$script:S2.Result.Child.ExitCode | Should -Be 1 -Because 'the typed child result carries the exit code'
         }
     }
 
@@ -115,9 +151,11 @@ Describe 'Scan verdict census at the helper boundary (dispatch 000302 A1)' -Skip
         It 'S3 situation -- the child ran and exited on its own' {
             Assert-SvSituation -Case $script:S3 -Id 'S3'
         }
-        It 'S3 verdict -- a child that reports a failure only on stderr is NOT reported analyzed' -Tag 'ScanRed-A2' {
+        It 'S3 verdict -- a child that reports a failure only on stderr is NOT reported analyzed' {
             Assert-SvSituation -Case $script:S3 -Id 'S3'
             $script:S3.Result.Analyzed | Should -BeFalse -Because 'S3 verdict: the failure the child reported on stderr was discarded'
+            @($script:S3.Result.Reasons) | Should -Contain 'child-stderr-only'
+            [string]$script:S3.Result.Child.StdErr | Should -Match 'simulated stderr-only error' -Because 'the typed child result keeps what stderr said'
         }
     }
 
@@ -134,9 +172,11 @@ Describe 'Scan verdict census at the helper boundary (dispatch 000302 A1)' -Skip
         It 'S3b situation -- the flooding child started (its pid marker exists)' {
             $script:S3bPidSeen | Should -BeTrue -Because 'S3b situation: the child must have started writing'
         }
-        It 'S3b verdict -- a child that floods stderr and exits is not held to the cap by an undrained pipe' -Tag 'ScanRed-A2' {
+        It 'S3b verdict -- a child that floods stderr and exits is not held to the cap by an undrained pipe' {
             $script:S3bPidSeen | Should -BeTrue -Because 'S3b situation: the child must have started writing'
             [int]$script:S3b.Result.ElapsedMs | Should -BeLessThan $script:S3bCapMs -Because 'S3b verdict: stderr must be drained concurrently so a finished child can exit'
+            [bool]$script:S3b.Result.Child.Killed | Should -BeFalse -Because 'the flooding child finished on its own'
+            ([string]$script:S3b.Result.Child.StdErr).Length | Should -BeGreaterThan 1000000 -Because 'the whole 1 MiB was drained, not dropped'
         }
     }
 
@@ -149,9 +189,10 @@ Describe 'Scan verdict census at the helper boundary (dispatch 000302 A1)' -Skip
             Assert-SvSituation -Case $script:S4 -Id 'S4'
             @($script:S4.Result.Findings).Count | Should -Be 0
         }
-        It 'S4 verdict -- a child whose response cannot be parsed is NOT reported analyzed' -Tag 'ScanRed-A2' {
+        It 'S4 verdict -- a child whose response cannot be parsed is NOT reported analyzed' {
             Assert-SvSituation -Case $script:S4 -Id 'S4'
             $script:S4.Result.Analyzed | Should -BeFalse -Because 'S4 verdict: an unparseable response is not a verdict'
+            @($script:S4.Result.Reasons) | Should -Contain 'receipt-missing'
         }
     }
 
@@ -165,9 +206,10 @@ Describe 'Scan verdict census at the helper boundary (dispatch 000302 A1)' -Skip
             @($script:S5.Result.Findings).Count | Should -Be 1
             [string]@($script:S5.Result.Findings)[0].ruleId | Should -BeExactly 'PSUseApprovedVerbs'
         }
-        It 'S5 verdict -- a truncated record stream is NOT reported analyzed' -Tag 'ScanRed-A2' {
+        It 'S5 verdict -- a truncated record stream is NOT reported analyzed' {
             Assert-SvSituation -Case $script:S5 -Id 'S5'
             $script:S5.Result.Analyzed | Should -BeFalse -Because 'S5 verdict: a partial finding set must not read as a complete one'
+            @($script:S5.Result.Reasons) | Should -Contain 'receipt-missing'
         }
     }
 
@@ -180,9 +222,10 @@ Describe 'Scan verdict census at the helper boundary (dispatch 000302 A1)' -Skip
             Assert-SvSituation -Case $script:S5m -Id 'S5m'
             @($script:S5m.Result.Findings).Count | Should -Be 0
         }
-        It 'S5m verdict -- findings announced but never recorded are NOT reported analyzed' -Tag 'ScanRed-A2' {
+        It 'S5m verdict -- findings announced but never recorded are NOT reported analyzed' {
             Assert-SvSituation -Case $script:S5m -Id 'S5m'
             $script:S5m.Result.Analyzed | Should -BeFalse -Because 'S5m verdict: a missing record stream must not read as zero findings'
+            @($script:S5m.Result.Reasons) | Should -Contain 'receipt-missing'
         }
     }
 
@@ -195,9 +238,10 @@ Describe 'Scan verdict census at the helper boundary (dispatch 000302 A1)' -Skip
             Assert-SvSituation -Case $script:S6 -Id 'S6'
             $script:S6.ClientLog | Should -Match 'daemon error: file not found'
         }
-        It 'S6 verdict -- a daemon ok=false answer is NOT reported analyzed' -Tag 'ScanRed-A2' {
+        It 'S6 verdict -- a daemon ok=false answer is NOT reported analyzed' {
             Assert-SvSituation -Case $script:S6 -Id 'S6'
             $script:S6.Result.Analyzed | Should -BeFalse -Because 'S6 verdict: the daemon refused the analysis'
+            @($script:S6.Result.Reasons) | Should -Contain 'receipt-missing'
         }
     }
 
@@ -216,17 +260,21 @@ Describe 'Scan verdict census at the helper boundary (dispatch 000302 A1)' -Skip
         }
         It 'S7 verdict -- a child killed at the deadline is NOT reported analyzed (already green, dispatch 000132)' {
             $script:S7.Result.Analyzed | Should -BeFalse -Because 'S7 verdict: a killed analysis is not a clean one'
+            @($script:S7.Result.Reasons) | Should -Contain 'deadline-kill'
+            [bool]$script:S7.Result.Child.Killed | Should -BeTrue
         }
-        It 'S7b on a Windows PowerShell 5.1 parent -- the cap kill terminates the timed-out child' -Tag 'ScanRed-A2' -Skip:(-not $script:SvDesktop) {
-            # Invoke-ScanHook calls $p.Kill($true), the TREE kill, which exists only on .NET Core 3.0+.
-            # On .NET Framework the call throws a MethodException that the empty catch swallows, so a
-            # scan run by Windows PowerShell 5.1 leaves every timed-out child running.
+        It 'S7b on a Windows PowerShell 5.1 parent -- the cap kill terminates the timed-out child' -Skip:(-not $script:SvDesktop) {
+            # Invoke-ScanHook used to call $p.Kill($true), the TREE kill, which exists only on .NET
+            # Core 3.0+: on .NET Framework the MethodException was swallowed and the child kept running.
+            # Stop-ScanProcessTree (dispatch 000304) falls back to taskkill /T, then Kill().
             $script:S7PidSeen | Should -BeTrue -Because 'S7b situation: the child must have started'
             $script:S7AliveAfterKill | Should -BeFalse -Because 'S7b verdict: a timed-out child must not outlive the cap kill'
+            [bool]$script:S7.Result.Child.Exited | Should -BeTrue -Because 'the typed child result must record the kill as effective'
         }
         It 'S7b on a PowerShell 7 parent -- the cap kill terminates the timed-out child' -Skip:$script:SvDesktop {
             $script:S7PidSeen | Should -BeTrue -Because 'S7b situation: the child must have started'
             $script:S7AliveAfterKill | Should -BeFalse -Because 'S7b verdict: a timed-out child must not outlive the cap kill'
+            [bool]$script:S7.Result.Child.Exited | Should -BeTrue -Because 'the typed child result must record the kill as effective'
         }
     }
 
@@ -240,9 +288,10 @@ Describe 'Scan verdict census at the helper boundary (dispatch 000302 A1)' -Skip
             (Test-Path -LiteralPath $script:S8.Target) | Should -BeFalse
             $script:S8.ClientLog | Should -Match ([regex]::Escape('file gone: ' + $script:S8.Target))
         }
-        It 'S8 verdict -- a source that disappeared before analysis is NOT reported analyzed' -Tag 'ScanRed-A2' {
+        It 'S8 verdict -- a source that disappeared before analysis is NOT reported analyzed' {
             Assert-SvSituation -Case $script:S8 -Id 'S8'
             $script:S8.Result.Analyzed | Should -BeFalse -Because 'S8 verdict: a file that was never read was never analyzed'
+            @($script:S8.Result.Reasons) | Should -Contain 'source-vanished'
         }
     }
 
@@ -258,6 +307,36 @@ Describe 'Scan verdict census at the helper boundary (dispatch 000302 A1)' -Skip
             Assert-SvSituation -Case $script:S9 -Id 'S9'
             $script:S9.Result.Analyzed | Should -BeTrue -Because 'S9 verdict: a completed clean analysis must still read as analyzed'
             @($script:S9.Result.Findings).Count | Should -Be 0
+            [string]$script:S9.Result.Completeness | Should -BeExactly 'complete'
+            ($script:S9.Result.Reasons -join ',') | Should -BeExactly ''
+        }
+        It 'S9 certification -- the source is bound, and configuration and policy are reported unbound, never certified' {
+            [string]$script:S9.Result.Certification.Source | Should -BeExactly 'bound'
+            [string]$script:S9.Result.Certification.Config | Should -BeExactly 'unbound'
+            [string]$script:S9.Result.Certification.Policy | Should -BeExactly 'unbound'
+        }
+    }
+
+    Context 'receipt variants -- the production producer, then exactly one fault (dispatch 000304 A2)' {
+        It 'receipt variant <Variant> -- analyzed=<Analyzed>, completeness <Completeness>' -ForEach $script:SvReceiptVariants {
+            $case = Invoke-SvScanCase -HostExe $script:SvHost -Tag ('rx' + ($Variant -replace '[^a-z]', '').Substring(0, [Math]::Min(6, ($Variant -replace '[^a-z]', '').Length))) `
+                -ClientFixture 'rx-receipt-variant.ps1' -DataFiles @{ 'rx-variant.txt' = $Variant }
+            [void]$script:SvRoots.Add($case.Root)
+            (Read-SvTextFile -Path (Join-Path $case.DataRoot 'fake-ran.txt')) | Should -BeExactly ('RX:' + $Variant) -Because 'the variant fake must have run'
+            $r = $case.Result
+            $r.Analyzed | Should -Be $Analyzed -Because ('variant ' + $Variant + ' (reasons: ' + (@($r.Reasons) -join ',') + ')')
+            [string]$r.Completeness | Should -BeExactly $Completeness
+            if ($Reason -ne '') { @($r.Reasons) | Should -Contain $Reason }
+            else { (@($r.Reasons | Where-Object { $_ -ne 'cache-hit' }) -join ',') | Should -BeExactly '' }
+            if ($Variant -ne 'forged-complete') {
+                @($r.Reasons) | Should -Not -Contain 'receipt-inconsistent' -Because 'only the forgery claims more than its facts'
+            }
+            foreach ($x in @($r.Reasons)) { [string]$x | Should -Not -Match '\s' -Because 'a reason code is one token' }
+            @($r.Findings).Count | Should -Be $Findings
+            [string]$r.Certification.Engine | Should -BeExactly $Engine
+            [string]$r.Certification.Config | Should -BeExactly 'unbound' -Because 'no configuration is certified by A2'
+            [string]$r.Certification.Policy | Should -BeExactly 'unbound' -Because 'no policy is certified by A2'
+            if ($Variant -eq 'stderr-with-receipt') { [string]$r.Child.StdErr | Should -Match 'a warning on stderr' }
         }
     }
 }
@@ -267,6 +346,7 @@ Describe 'Scan verdict reachability through the real client (dispatch 000302 A1)
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-receipt.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
         . (Join-Path $PSScriptRoot 'ScanHarness.Common.ps1')
         $script:RvHost = Resolve-PsHost 'pwsh'
@@ -275,16 +355,18 @@ Describe 'Scan verdict reachability through the real client (dispatch 000302 A1)
         $script:RvRoots = New-Object System.Collections.ArrayList
         $script:RvDaemons = New-Object System.Collections.ArrayList
         $script:RvScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
+        $script:RvClean = '{"ok":true,"action":"diagnostics","file":"","cached":false,"count":0,"omitted":0,"diagnostics":[],"scopeApplied":false,"scopeTotal":0,"scopeSurfaced":0,"path":"analyze","analysisMs":1,"codeActionMs":0,"recordCount":0,"correctionCount":0}'
 
         function Invoke-RvDaemonCase {
-            # The REAL client against a fake daemon that answers $Response. The relaunch cooldown is
-            # stamped first, so the real client can never start a real daemon from here.
-            param([string]$Tag, [string]$Response)
+            # The REAL client against a fake daemon that answers $Response, binding a scan-mode answer
+            # per -Binding. The relaunch cooldown is stamped first, so the real client can never start a
+            # real daemon from here.
+            param([string]$Tag, [string]$Response, [string]$Binding = 'none')
             $root = New-SvTempRoot -Tag $Tag -MintingFile 'tests/PowerShellLsp.ScanVerdict.Tests.ps1'
             [void]$script:RvRoots.Add($root)
             $sid = 'rv' + $Tag + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
             Set-SvRelaunchCooldown -DataRoot (Join-Path $root 'data') -SessionId $sid
-            $daemon = Start-SvFakePipeDaemon -HostExe $script:RvHost -SessionId $sid -WorkDir (Join-Path $root 'daemon') -Response $Response
+            $daemon = Start-SvFakePipeDaemon -HostExe $script:RvHost -SessionId $sid -WorkDir (Join-Path $root 'daemon') -Response $Response -Binding $Binding
             [void]$script:RvDaemons.Add($daemon)
             $case = Invoke-SvScanCase -HostExe $script:RvHost -Tag $Tag -ScriptsDir $script:RvScriptsDir -SessionId $sid -Root $root
             $case['Requests'] = Read-SvTextFile -Path $daemon.RequestLog
@@ -306,9 +388,12 @@ Describe 'Scan verdict reachability through the real client (dispatch 000302 A1)
         It 'R8 situation -- the real client logged file gone and exited without analysing' {
             $script:R8.ClientLog | Should -Match ([regex]::Escape('file gone: ' + $script:R8.Target))
         }
-        It 'R8 verdict -- the real client on a vanished source is NOT reported analyzed' -Tag 'ScanRed-A2' {
+        It 'R8 verdict -- the real client on a vanished source is NOT reported analyzed' {
             $script:R8.ClientLog | Should -Match ([regex]::Escape('file gone: ' + $script:R8.Target)) -Because 'R8 situation: the real client must have taken its file-gone exit'
             $script:R8.Result.Analyzed | Should -BeFalse -Because 'R8 verdict: the real client analysed nothing and said so only in its own log'
+            @($script:R8.Result.Reasons) | Should -Contain 'source-vanished'
+            @($script:R8.Result.Reasons) | Should -Not -Contain 'receipt-inconsistent' -Because 'the real client produced this receipt honestly'
+            $script:R8.ClientLog | Should -Match 'scan receipt written: failed' -Because 'the real client wrote a FAILED receipt on its fail-safe exit, not nothing'
         }
     }
 
@@ -319,7 +404,7 @@ Describe 'Scan verdict reachability through the real client (dispatch 000302 A1)
             $missingDir = New-SvFakeScriptsDir -Root $root -ClientFixture ''
             $script:R2Client = Join-Path $missingDir 'lsp-client.ps1'
             # What the host itself does with a client it cannot load -- recorded with the harness's
-            # own spawner, because Invoke-ScanHook keeps neither the exit code nor stderr.
+            # own spawner, so the situation does not lean on the spawner under test.
             $script:R2Host = Invoke-SvChildProcess -HostExe $script:RvHost -CapMs 60000 `
                 -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:R2Client) `
                 -RemoveEnvPrefix @('CLAUDE_PLUGIN_OPTION_', 'POWERSHELL_LSP_')
@@ -331,9 +416,11 @@ Describe 'Scan verdict reachability through the real client (dispatch 000302 A1)
             [int]$script:R2Host.ExitCode | Should -Not -Be 0
             [string]$script:R2Host.Err | Should -Not -BeNullOrEmpty
         }
-        It 'R2 verdict -- a client the host could not even load is NOT reported analyzed' -Tag 'ScanRed-A2' {
+        It 'R2 verdict -- a client the host could not even load is NOT reported analyzed' {
             [int]$script:R2Host.ExitCode | Should -Not -Be 0 -Because 'R2 situation: the host must have failed to run the client'
             $script:R2.Result.Analyzed | Should -BeFalse -Because 'R2 verdict: the analysis host failed before the client ran'
+            @($script:R2.Result.Reasons) | Should -Contain 'child-nonzero-exit'
+            @($script:R2.Result.Reasons) | Should -Contain 'receipt-missing'
         }
     }
 
@@ -345,9 +432,11 @@ Describe 'Scan verdict reachability through the real client (dispatch 000302 A1)
             $script:R6.Requests | Should -Match '"action":"diagnostics"'
             $script:R6.ClientLog | Should -Match 'daemon error: file not found'
         }
-        It 'R6 verdict -- the real client on a daemon ok=false answer is NOT reported analyzed' -Tag 'ScanRed-A2' {
+        It 'R6 verdict -- the real client on a daemon ok=false answer is NOT reported analyzed' {
             $script:R6.ClientLog | Should -Match 'daemon error: file not found' -Because 'R6 situation: the real client must have taken its daemon-error exit'
             $script:R6.Result.Analyzed | Should -BeFalse -Because 'R6 verdict: the daemon refused the analysis'
+            @($script:R6.Result.Reasons) | Should -Contain 'daemon-refused'
+            @($script:R6.Result.Reasons) | Should -Not -Contain 'receipt-inconsistent' -Because 'the real client produced this receipt honestly'
         }
     }
 
@@ -361,16 +450,18 @@ Describe 'Scan verdict reachability through the real client (dispatch 000302 A1)
             $script:R4.Requests | Should -Match '"action":"diagnostics"'
             $script:R4.ClientLog | Should -Match ([regex]::Escape('FATAL (fail-safe, exit 0)'))
         }
-        It 'R4 verdict -- the real client on a malformed daemon answer is NOT reported analyzed' -Tag 'ScanRed-A2' {
+        It 'R4 verdict -- the real client on a malformed daemon answer is NOT reported analyzed' {
             $script:R4.ClientLog | Should -Match ([regex]::Escape('FATAL (fail-safe, exit 0)')) -Because 'R4 situation: the real client must have taken its FATAL exit'
             $script:R4.Result.Analyzed | Should -BeFalse -Because 'R4 verdict: the client crashed before rendering any verdict'
+            @($script:R4.Result.Reasons) | Should -Contain 'client-fatal'
+            @($script:R4.Result.Reasons) | Should -Not -Contain 'receipt-inconsistent' -Because 'the real client produced this receipt honestly'
         }
     }
 
     Context 'R5 the real client gets a truncated daemon answer' {
         BeforeAll {
             # Cut mid-object: the client's own JSON parse fails, it reads that as no answer, finds the
-            # pipe PRESENT, and renders its honest 'incomplete' banner -- which the scanner does read.
+            # pipe PRESENT, and renders its honest 'incomplete' banner.
             $script:R5 = Invoke-RvDaemonCase -Tag 'r5' -Response '{"ok":true,"action":"diagnos'
         }
         It 'R5 situation -- the real client failed to parse the answer and rendered its incomplete banner' {
@@ -379,21 +470,159 @@ Describe 'Scan verdict reachability through the real client (dispatch 000302 A1)
             $script:R5.ClientLog | Should -Match 'emitted honest incomplete banner'
         }
         It 'R5 verdict -- the real client on a truncated daemon answer is NOT reported analyzed (already green)' {
-            $script:R5.Result.Analyzed | Should -BeFalse -Because 'R5 verdict: the incomplete banner says NOT checked'
+            $script:R5.Result.Analyzed | Should -BeFalse -Because 'R5 verdict: the analysis did not complete'
+            @($script:R5.Result.Reasons) | Should -Contain 'daemon-no-answer'
+            @($script:R5.Result.Reasons) | Should -Not -Contain 'receipt-inconsistent' -Because 'the real client produced this receipt honestly'
         }
     }
 
-    Context 'R9 the real client gets a clean daemon answer' {
+    Context 'R9 the real client gets a clean daemon answer that binds the analysis' {
         BeforeAll {
-            $script:R9 = Invoke-RvDaemonCase -Tag 'r9' -Response '{"ok":true,"action":"diagnostics","file":"","cached":false,"count":0,"omitted":0,"diagnostics":[],"scopeApplied":false,"scopeTotal":0,"scopeSurfaced":0,"path":"analyze","analysisMs":1,"codeActionMs":0,"recordCount":0,"correctionCount":0}'
+            # A2 migration: a clean answer is a completed analysis only when it BINDS what was analyzed
+            # (request id, path, consumed bytes). The fake daemon binds it with the production helper, as
+            # pses-daemon.ps1 does.
+            $script:R9 = Invoke-RvDaemonCase -Tag 'r9' -Response $script:RvClean -Binding 'valid'
         }
-        It 'R9 situation -- the fake daemon was asked, and the real client rendered nothing' {
+        It 'R9 situation -- the fake daemon was asked under a request id, and the real client rendered nothing' {
             $script:R9.Requests | Should -Match '"action":"diagnostics"'
+            $script:R9.Requests | Should -Match '"requestId":"[0-9a-f]{32}"' -Because 'a scan-mode request carries its request id'
             $script:R9.ClientLog | Should -Match 'no diagnostics'
         }
-        It 'R9 verdict -- the real client on a clean daemon answer IS reported analyzed with zero findings (the control)' {
-            $script:R9.Result.Analyzed | Should -BeTrue -Because 'R9 verdict: a clean answer is a completed analysis'
+        It 'R9 verdict -- the real client on a bound clean answer IS reported analyzed with zero findings (the control)' {
+            $script:R9.Result.Analyzed | Should -BeTrue -Because ('R9 verdict: a bound clean answer is a completed analysis (reasons: ' + (@($script:R9.Result.Reasons) -join ',') + ')')
             @($script:R9.Result.Findings).Count | Should -Be 0
+            [string]$script:R9.Result.Certification.Source | Should -BeExactly 'bound'
+        }
+    }
+
+    Context 'R9u the real client gets a clean answer that binds nothing (a pre-A2 daemon)' {
+        BeforeAll {
+            $script:R9u = Invoke-RvDaemonCase -Tag 'r9u' -Response $script:RvClean -Binding 'none'
+        }
+        It 'R9u verdict -- an unbound clean answer is NOT reported analyzed: which bytes were analyzed is unprovable' {
+            $script:R9u.ClientLog | Should -Match 'no diagnostics' -Because 'R9u situation: the client took the clean path'
+            $script:R9u.Result.Analyzed | Should -BeFalse
+            @($script:R9u.Result.Reasons) | Should -Contain 'correlation-missing'
+            @($script:R9u.Result.Reasons) | Should -Contain 'source-unbound'
+        }
+    }
+
+    Context 'R9n the real client gets a bound answer whose finding message is non-ASCII (review A2-F03)' {
+        BeforeAll {
+            # Review A2-F03. The real client writes each finding into the scan's capture log as BOM-less
+            # UTF-8, and Invoke-ScanFileDiagnostics -- running in THIS Pester host -- reads the log back and
+            # holds every message to the receipt's digest. A bare Get-Content on Windows PowerShell 5.1
+            # decodes a BOM-less file with the ANSI code page, so a non-ASCII message came back garbled, no
+            # longer matched the digest the client computed over the true text, and a fully analyzed file
+            # read diagnostics-mismatch. PSScriptAnalyzer quotes identifiers into its messages, so a
+            # non-ASCII function name is enough. Every hop before the read-back carries the message as
+            # UTF-8 (the canned answer's file, the fake daemon, the pipe, the client), so the read-back is
+            # the hop under test. It bites on the windows-powershell leg, whose Pester host -- the scanner
+            # here -- is 5.1; on PowerShell 7 the log reads back intact either way.
+            $script:R9nMessage = 'The cmdlet ''Frobnicate-Gr' + [string][char]0x00F6 + [string][char]0x00DF + 'e'' uses an unapproved verb.'
+            $finding = [ordered]@{ severity = 'Warning'; line = 1; col = 10; source = 'PSScriptAnalyzer'; code = 'PSUseApprovedVerbs'; message = $script:R9nMessage } |
+                ConvertTo-Json -Compress
+            $response = $script:RvClean.Replace('"count":0', '"count":1').Replace('"diagnostics":[]', ('"diagnostics":[' + $finding + ']'))
+            $script:R9n = Invoke-RvDaemonCase -Tag 'r9n' -Response $response -Binding 'valid'
+        }
+        It 'R9n situation -- the fake daemon was asked under a request id, and the real client surfaced its one finding' {
+            $script:R9n.Requests | Should -Match '"requestId":"[0-9a-f]{32}"' -Because 'a scan-mode request carries its request id'
+            $script:R9n.ClientLog | Should -Match 'emitted 1 diagnostic\(s\)'
+        }
+        It 'R9n verdict -- on a <Edition> scanner a finding whose message is non-ASCII reads back intact, and the file IS reported analyzed' -TestCases @(@{ Edition = [string]$PSVersionTable.PSEdition }) {
+            $script:R9n.ClientLog | Should -Match 'emitted 1 diagnostic\(s\)' -Because 'R9n situation: the real client must have surfaced the finding'
+            $script:R9n.Result.Analyzed | Should -BeTrue -Because ('R9n verdict: a bound answer whose finding the client captured and vouched for is a completed analysis (reasons: ' + (@($script:R9n.Result.Reasons) -join ',') + ')')
+            [string]$script:R9n.Result.Completeness | Should -BeExactly 'complete'
+            @($script:R9n.Result.Findings).Count | Should -Be 1
+            [string](@($script:R9n.Result.Findings)[0].ruleId) | Should -BeExactly 'PSUseApprovedVerbs'
+            [string](@($script:R9n.Result.Findings)[0].message) | Should -BeExactly $script:R9nMessage -Because 'the message must read back as the client wrote it, not through the ANSI code page'
+        }
+    }
+
+    Context 'the real client refuses a binding that does not match (dispatch 000304 A2)' {
+        It 'a daemon answer echoing another request id is NOT reported analyzed (correlation-mismatch)' {
+            $c = Invoke-RvDaemonCase -Tag 'rwr' -Response $script:RvClean -Binding 'wrong-request'
+            $c.Result.Analyzed | Should -BeFalse
+            @($c.Result.Reasons) | Should -Contain 'correlation-mismatch'
+        }
+        It 'a daemon answer naming another file is NOT reported analyzed (path-mismatch)' {
+            $c = Invoke-RvDaemonCase -Tag 'rwp' -Response $script:RvClean -Binding 'wrong-path'
+            $c.Result.Analyzed | Should -BeFalse
+            @($c.Result.Reasons) | Should -Contain 'path-mismatch'
+        }
+        It 'a daemon that consumed other bytes is NOT reported analyzed (source-mismatch)' {
+            $c = Invoke-RvDaemonCase -Tag 'rws' -Response $script:RvClean -Binding 'wrong-source'
+            $c.Result.Analyzed | Should -BeFalse
+            @($c.Result.Reasons) | Should -Contain 'source-mismatch'
+        }
+        It 'a source changed after the daemon read it is NOT reported analyzed (source-changed)' {
+            $c = Invoke-RvDaemonCase -Tag 'rms' -Response $script:RvClean -Binding 'mutate-source'
+            $c.Result.Analyzed | Should -BeFalse
+            @($c.Result.Reasons) | Should -Contain 'source-changed'
+        }
+        It 'a bound degraded (parser-only) answer is NOT reported analyzed, and is partial' {
+            $c = Invoke-RvDaemonCase -Tag 'rdg' -Response ($script:RvClean.TrimEnd('}') + ',"status":"degraded"}') -Binding 'valid'
+            $c.Result.Analyzed | Should -BeFalse
+            [string]$c.Result.Completeness | Should -BeExactly 'partial'
+            [string]$c.Result.Status | Should -BeExactly 'degraded'
+            @($c.Result.Reasons) | Should -Contain 'pssa-unavailable'
+        }
+        It 'a bound incomplete (unsettled) answer is NOT reported analyzed, and is failed' {
+            $c = Invoke-RvDaemonCase -Tag 'ric' -Response ($script:RvClean.TrimEnd('}') + ',"status":"incomplete"}') -Binding 'valid'
+            $c.Result.Analyzed | Should -BeFalse
+            [string]$c.Result.Completeness | Should -BeExactly 'failed'
+            @($c.Result.Reasons) | Should -Contain 'analysis-not-settled'
+        }
+        It 'a bound unavailable answer is NOT reported analyzed, and is failed' {
+            $c = Invoke-RvDaemonCase -Tag 'run' -Response ($script:RvClean.TrimEnd('}') + ',"status":"unavailable"}') -Binding 'valid'
+            $c.Result.Analyzed | Should -BeFalse
+            [string]$c.Result.Completeness | Should -BeExactly 'failed'
+            @($c.Result.Reasons) | Should -Contain 'engine-unavailable'
+        }
+        It 'a bound answer that omitted findings under a per-file cap is NOT reported analyzed, and is partial' {
+            $c = Invoke-RvDaemonCase -Tag 'rcp' -Response ($script:RvClean -replace '"omitted":0', '"omitted":1') -Binding 'valid'
+            $c.Result.Analyzed | Should -BeFalse
+            [string]$c.Result.Completeness | Should -BeExactly 'partial'
+            @($c.Result.Reasons) | Should -Contain 'diagnostics-capped'
+        }
+    }
+
+    Context 'the real client on an interactive payload stays silent and writes no receipt (dispatch 000304 A2)' {
+        BeforeAll {
+            # The interactive half of the contract: a payload WITHOUT powershell_lsp_scan, the shape
+            # Claude Code sends. Same real client, same fake daemon (which binds only a request that
+            # carries a request id), same clean answer as R9.
+            $root = New-SvTempRoot -Tag 'rint' -MintingFile 'tests/PowerShellLsp.ScanVerdict.Tests.ps1'
+            [void]$script:RvRoots.Add($root)
+            $data = Join-Path $root 'data'
+            New-Item -ItemType Directory -Force -Path $data | Out-Null
+            $sid = 'rvint-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+            Set-SvRelaunchCooldown -DataRoot $data -SessionId $sid
+            $daemon = Start-SvFakePipeDaemon -HostExe $script:RvHost -SessionId $sid -WorkDir (Join-Path $root 'daemon') -Response $script:RvClean -Binding 'valid'
+            [void]$script:RvDaemons.Add($daemon)
+            $target = Join-Path $root 'target-int.ps1'
+            [System.IO.File]::WriteAllText($target, "function Get-SvTarget {`n    [CmdletBinding()]`n    param([string]`$Name)`n    Write-Output `$Name`n}`n", (New-Object System.Text.UTF8Encoding($false)))
+            $stdin = (@{ session_id = $sid; tool_input = @{ file_path = $target }; cwd = $root } | ConvertTo-Json -Compress)
+            $script:RInt = Invoke-SvChildProcess -HostExe $script:RvHost -CapMs 60000 -StdinText $stdin `
+                -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $script:RvScriptsDir 'lsp-client.ps1')) `
+                -ExtraEnv @{ CLAUDE_PLUGIN_DATA = $data } -RemoveEnvPrefix @('CLAUDE_PLUGIN_OPTION_', 'POWERSHELL_LSP_')
+            $script:RIntLog = Read-SvTextFile -Path (Join-Path $data 'logs/lsp-client.log')
+            $script:RIntRequests = Read-SvTextFile -Path $daemon.RequestLog
+            $script:RIntJson = @(Get-ChildItem -LiteralPath $data -Recurse -File -Filter '*.json' | Where-Object { $_.FullName -notmatch '[\\/]session[\\/]' })
+        }
+        It 'the clean interactive edit is silent: exit 0, nothing on stdout or stderr' {
+            $script:RInt.TimedOut | Should -BeFalse
+            [int]$script:RInt.ExitCode | Should -Be 0
+            [string]$script:RInt.Out | Should -BeExactly ''
+            [string]$script:RInt.Err | Should -BeExactly ''
+            $script:RIntLog | Should -Match 'no diagnostics' -Because 'the client took the clean path'
+        }
+        It 'no scan mode, no request id on the wire, and no receipt anywhere' {
+            $script:RIntLog | Should -Not -Match 'scan mode'
+            $script:RIntLog | Should -Not -Match 'scan receipt'
+            $script:RIntRequests | Should -Match '"action":"diagnostics"'
+            $script:RIntRequests | Should -Not -Match 'requestId'
+            ($script:RIntJson | ForEach-Object { $_.Name }) -join ',' | Should -BeExactly ''
         }
     }
 }
@@ -403,6 +632,7 @@ Describe 'Scan verdict at the CLI boundary with the shipped lsp-scan relocated b
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-receipt.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
         . (Join-Path $PSScriptRoot 'ScanHarness.Common.ps1')
         $script:CvHost = Resolve-PsHost 'pwsh'
@@ -462,7 +692,7 @@ Describe 'Scan verdict at the CLI boundary with the shipped lsp-scan relocated b
         $root = New-SvTempRoot -Tag 'cvident' -MintingFile 'tests/PowerShellLsp.ScanVerdict.Tests.ps1'
         [void]$script:CvRoots.Add($root)
         $tree = New-SvCliTree -Root $root -ClientFixture 's9-clean-complete.ps1'
-        @($tree.Copies).Count | Should -Be 4
+        @($tree.Copies).Count | Should -Be 5 -Because 'lsp-scan.ps1, its three libraries (the receipt library since dispatch 000304) and plugin.json'
         foreach ($copy in @($tree.Copies)) {
             $shipped = Get-SvSha256 -Path (Join-Path $repo $copy.Rel)
             $shipped | Should -Match '^[0-9A-F]{64}$'
@@ -471,37 +701,40 @@ Describe 'Scan verdict at the CLI boundary with the shipped lsp-scan relocated b
         }
     }
 
-    It 'C-S1 verdict -- a silent child makes the CLI exit 4 with executionSuccessful=false' -Tag 'ScanRed-A2' {
+    It 'C-S1 verdict -- a silent child makes the CLI exit 4 with executionSuccessful=false' {
         $c = Invoke-CvCase -Id 'S1' -Fixture 's1-silent-exit-zero.ps1'
         Assert-CvSituation -Case $c
         $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False' -Because 'C-S1 verdict: an unanalyzed file must make the scan INCOMPLETE'
+        [string]$c.Sarif.runs[0].invocations[0].toolExecutionNotifications[0].message.text | Should -Match 'reasons: .*receipt-missing'
+        @($c.Sarif.runs[0].invocations[0].toolExecutionNotifications[0].properties.reasons) | Should -Contain 'child-silent-exit'
+        [string]$c.Run.Err | Should -Match 'reasons: .*child-silent-exit' -Because 'the CI step log names why, not only which'
     }
-    It 'C-S2 verdict -- a nonzero child makes the CLI exit 4 with executionSuccessful=false' -Tag 'ScanRed-A2' {
+    It 'C-S2 verdict -- a nonzero child makes the CLI exit 4 with executionSuccessful=false' {
         $c = Invoke-CvCase -Id 'S2' -Fixture 's2-nonzero-exit.ps1'
         Assert-CvSituation -Case $c
         $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False' -Because 'C-S2 verdict: an unanalyzed file must make the scan INCOMPLETE'
     }
-    It 'C-S3 verdict -- a stderr-only child makes the CLI exit 4 with executionSuccessful=false' -Tag 'ScanRed-A2' {
+    It 'C-S3 verdict -- a stderr-only child makes the CLI exit 4 with executionSuccessful=false' {
         $c = Invoke-CvCase -Id 'S3' -Fixture 's3-stderr-only.ps1'
         Assert-CvSituation -Case $c
         $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False' -Because 'C-S3 verdict: an unanalyzed file must make the scan INCOMPLETE'
     }
-    It 'C-S4 verdict -- a malformed child response makes the CLI exit 4 with executionSuccessful=false' -Tag 'ScanRed-A2' {
+    It 'C-S4 verdict -- a malformed child response makes the CLI exit 4 with executionSuccessful=false' {
         $c = Invoke-CvCase -Id 'S4' -Fixture 's4-malformed-response.ps1'
         Assert-CvSituation -Case $c
         $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False' -Because 'C-S4 verdict: an unanalyzed file must make the scan INCOMPLETE'
     }
-    It 'C-S5 verdict -- a truncated record stream makes the CLI exit 4 with executionSuccessful=false' -Tag 'ScanRed-A2' {
+    It 'C-S5 verdict -- a truncated record stream makes the CLI exit 4 with executionSuccessful=false' {
         $c = Invoke-CvCase -Id 'S5' -Fixture 's5-truncated-record.ps1'
         Assert-CvSituation -Case $c
         $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False' -Because 'C-S5 verdict: an unanalyzed file must make the scan INCOMPLETE'
     }
-    It 'C-S5m verdict -- missing records make the CLI exit 4 with executionSuccessful=false' -Tag 'ScanRed-A2' {
+    It 'C-S5m verdict -- missing records make the CLI exit 4 with executionSuccessful=false' {
         $c = Invoke-CvCase -Id 'S5m' -Fixture 's5m-missing-record.ps1'
         Assert-CvSituation -Case $c
         $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False' -Because 'C-S5m verdict: an unanalyzed file must make the scan INCOMPLETE'
     }
-    It 'C-S6 verdict -- a daemon ok=false child makes the CLI exit 4 with executionSuccessful=false' -Tag 'ScanRed-A2' {
+    It 'C-S6 verdict -- a daemon ok=false child makes the CLI exit 4 with executionSuccessful=false' {
         $c = Invoke-CvCase -Id 'S6' -Fixture 's6-daemon-error.ps1'
         Assert-CvSituation -Case $c
         $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False' -Because 'C-S6 verdict: an unanalyzed file must make the scan INCOMPLETE'
@@ -511,7 +744,7 @@ Describe 'Scan verdict at the CLI boundary with the shipped lsp-scan relocated b
         Assert-CvSituation -Case $c
         $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False' -Because 'C-S7 verdict: an unanalyzed file must make the scan INCOMPLETE'
     }
-    It 'C-S8 verdict -- a vanished source makes the CLI exit 4 with executionSuccessful=false' -Tag 'ScanRed-A2' {
+    It 'C-S8 verdict -- a vanished source makes the CLI exit 4 with executionSuccessful=false' {
         $c = Invoke-CvCase -Id 'S8' -Fixture 's8-source-gone.ps1'
         Assert-CvSituation -Case $c
         $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False' -Because 'C-S8 verdict: an unanalyzed file must make the scan INCOMPLETE'
@@ -521,6 +754,164 @@ Describe 'Scan verdict at the CLI boundary with the shipped lsp-scan relocated b
         Assert-CvSituation -Case $c
         $c.Verdict | Should -BeExactly 'exit=0 executionSuccessful=True' -Because 'C-S9 verdict: a clean completed scan passes'
         @($c.Sarif.runs[0].results).Count | Should -Be 0
+    }
+}
+
+Describe 'Scan verdict at the CLI boundary with the shipped lsp-scan AND the shipped client relocated beside a fake pipe daemon (dispatch 000304 A2)' -Skip:$script:SvUnsupported {
+
+    BeforeAll {
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
+        . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
+        . (Join-Path $PSScriptRoot 'ScanHarness.Common.ps1')
+        $script:CrHost = Resolve-PsHost 'pwsh'
+        if ($null -eq $script:CrHost) { throw 'no PowerShell host (pwsh / powershell) to run the relocated CLI' }
+        $script:CrRoots = New-Object System.Collections.ArrayList
+        $script:CrClean = '{"ok":true,"action":"diagnostics","file":"","cached":false,"count":0,"omitted":0,"diagnostics":[],"scopeApplied":false,"scopeTotal":0,"scopeSurfaced":0,"path":"analyze","analysisMs":1,"codeActionMs":0,"recordCount":0,"correctionCount":0}'
+        # A file that does not parse: the param block is missing its ')'.
+        $script:CrBroken = "function Get-CrBroken {`n    param([string]`$Name`n    Write-Output `$Name`n}`n"
+
+        function Invoke-CrCase {
+            # One end-to-end run of the RELOCATED shipped CLI with the RELOCATED shipped client. The
+            # session-start fake serves the scan's own session pipe from the fake pipe daemon, answering
+            # $Response bound per $Binding; -Vanish has it delete the target after the CLI enumerated it.
+            # -TargetText replaces the clean target, -FailOn passes the CLI's threshold, and -Format text
+            # returns the text report as Report instead of a SARIF log (owner ruling A2-Q01, dispatch 000304).
+            param([string]$Id, [string]$Response, [string]$Binding = 'valid', [switch]$Vanish,
+                [string]$TargetText = "function Get-CrTarget {`n    [CmdletBinding()]`n    param([string]`$Name)`n    Write-Output `$Name`n}`n",
+                [string]$FailOn = 'none', [ValidateSet('sarif', 'text')][string]$Format = 'sarif')
+            $root = New-SvTempRoot -Tag ('cr' + $Id) -MintingFile 'tests/PowerShellLsp.ScanVerdict.Tests.ps1'
+            [void]$script:CrRoots.Add($root)
+            $tree = New-SvCliTree -Root $root -RealClient -SessionStartFixture 'fake-session-start-pipe.ps1'
+            $src = Join-Path $root 'src'
+            New-Item -ItemType Directory -Force -Path $src | Out-Null
+            $target = Join-Path $src ('target-' + $Id + '.ps1')
+            [System.IO.File]::WriteAllText($target, $TargetText, (New-Object System.Text.UTF8Encoding($false)))
+            $data = Join-Path $root 'data'
+            New-Item -ItemType Directory -Force -Path $data | Out-Null
+            $cfg = [ordered]@{
+                daemonScript = (Get-SvFixturePath 'fake-pipe-daemon.ps1')
+                response     = $Response
+                binding      = $Binding
+                vanish       = $(if ($Vanish) { $target } else { '' })
+            }
+            [System.IO.File]::WriteAllText((Join-Path $data 'cr-daemon.json'), ($cfg | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
+            $outPath = Join-Path $root ('out.' + $Format)
+            $cliArgs = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $tree.ScanScript, $src,
+                '-Format', $Format, '-OutputPath', $outPath, '-PsHost', $script:CrHost)
+            if ($FailOn -ne 'none') { $cliArgs += @('-FailOn', $FailOn) }
+            try {
+                $run = Invoke-SvChildProcess -HostExe $script:CrHost -CapMs 180000 -ArgumentList $cliArgs `
+                    -ExtraEnv @{ CLAUDE_PLUGIN_DATA = $data } -RemoveEnvPrefix @('CLAUDE_PLUGIN_OPTION_', 'POWERSHELL_LSP_')
+            } finally {
+                # The CLI's own Stop-ScanDaemon kills the fake daemon by the pid its session file
+                # records; this is the backstop if the CLI never got that far.
+                foreach ($rf in @(Get-ChildItem -LiteralPath $data -Recurse -File -Filter 'ready.pid' -ErrorAction SilentlyContinue)) {
+                    [void](Stop-SvChildFromPidFile -PidFile $rf.FullName)
+                }
+            }
+            $outText = Read-SvTextFile -Path $outPath
+            $sarif = $null
+            if ($Format -eq 'sarif' -and -not [string]::IsNullOrWhiteSpace($outText)) { $sarif = $outText | ConvertFrom-Json }
+            $es = if ($null -ne $sarif) { [string][bool]$sarif.runs[0].invocations[0].executionSuccessful } else { 'no-sarif' }
+            $requests = @(Get-ChildItem -LiteralPath $data -Recurse -File -Filter 'requests.log' -ErrorAction SilentlyContinue | ForEach-Object { Read-SvTextFile -Path $_.FullName }) -join "`n"
+            return @{
+                Id       = $Id
+                Run      = $run
+                Tree     = $tree
+                Sarif    = $sarif
+                Report   = $(if ($Format -eq 'text') { $outText } else { '' })
+                Verdict  = ('exit=' + [int]$run.ExitCode + ' executionSuccessful=' + $es)
+                Requests = $requests
+                Log      = (Read-SvTextFile -Path (Join-Path $data 'logs/lsp-client.log'))
+            }
+        }
+
+        function Assert-CrSituation {
+            # The CLI finished, wrote its SARIF, and the REAL client ran (its own log says so).
+            param($Case)
+            $Case.Run.TimedOut | Should -BeFalse -Because ($Case.Id + ' situation: the CLI must finish')
+            $Case.Sarif | Should -Not -BeNullOrEmpty -Because ($Case.Id + ' situation: the CLI must have written its SARIF log; stderr: ' + $Case.Run.Err)
+            $Case.Log | Should -Match ('scan mode: request [0-9a-f]{32}') -Because ($Case.Id + ' situation: the shipped client must have run in scan mode')
+        }
+    }
+
+    AfterAll {
+        foreach ($r in @($script:CrRoots)) { Remove-SvTempRoot -Path $r }
+    }
+
+    It 'the relocated tree carries a byte copy of the shipped client beside the CLI and its libraries' {
+        $repo = Split-Path -Parent $PSScriptRoot
+        $root = New-SvTempRoot -Tag 'crident' -MintingFile 'tests/PowerShellLsp.ScanVerdict.Tests.ps1'
+        [void]$script:CrRoots.Add($root)
+        $tree = New-SvCliTree -Root $root -RealClient -SessionStartFixture 'fake-session-start-pipe.ps1'
+        @($tree.Copies | ForEach-Object { $_.Rel }) | Should -Contain 'scripts/lsp-client.ps1'
+        @($tree.Copies).Count | Should -Be 6
+        foreach ($copy in @($tree.Copies)) {
+            (Get-SvSha256 -Path (Join-Path $tree.Root $copy.Rel)) | Should -BeExactly (Get-SvSha256 -Path (Join-Path $repo $copy.Rel))
+        }
+    }
+
+    It 'C-R9 -- the shipped client on a bound clean answer makes the CLI exit 0 with executionSuccessful=true (the control)' {
+        $c = Invoke-CrCase -Id 'R9' -Response $script:CrClean -Binding 'valid'
+        Assert-CrSituation -Case $c
+        $c.Verdict | Should -BeExactly 'exit=0 executionSuccessful=True' -Because ('C-R9: a bound clean answer is a completed scan; stderr: ' + $c.Run.Err)
+        $c.Requests | Should -Match '"requestId":"[0-9a-f]{32}"'
+    }
+    It 'C-R9u -- the shipped client on an unbound clean answer makes the CLI exit 4' {
+        $c = Invoke-CrCase -Id 'R9u' -Response $script:CrClean -Binding 'none'
+        Assert-CrSituation -Case $c
+        $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False' -Because 'C-R9u: which bytes were analyzed is unprovable'
+        [string]$c.Run.Err | Should -Match 'source-unbound'
+    }
+    It 'C-R6 -- the shipped client on a daemon ok=false answer makes the CLI exit 4' {
+        $c = Invoke-CrCase -Id 'R6' -Response '{"ok":false,"action":"diagnostics","error":"file not found"}' -Binding 'valid'
+        Assert-CrSituation -Case $c
+        $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False'
+        [string]$c.Run.Err | Should -Match 'daemon-refused'
+    }
+    It 'C-R4 -- the shipped client on a wrong-typed daemon answer makes the CLI exit 4' {
+        $c = Invoke-CrCase -Id 'R4' -Response '{"ok":true,"action":"diagnostics","count":0,"omitted":"not-a-number","diagnostics":[]}' -Binding 'valid'
+        Assert-CrSituation -Case $c
+        $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False'
+        [string]$c.Run.Err | Should -Match 'client-fatal'
+    }
+    It 'C-R8 -- a source that vanished after enumeration makes the CLI exit 4 through the shipped client' {
+        $c = Invoke-CrCase -Id 'R8' -Response $script:CrClean -Binding 'valid' -Vanish
+        Assert-CrSituation -Case $c
+        $c.Log | Should -Match 'file gone: ' -Because 'C-R8 situation: the shipped client took its file-gone exit'
+        $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False'
+        [string]$c.Run.Err | Should -Match 'source-vanished'
+    }
+    It 'C-R10 -- a mis-correlated answer makes the CLI exit 4 through the shipped client' {
+        $c = Invoke-CrCase -Id 'R10' -Response $script:CrClean -Binding 'wrong-request'
+        Assert-CrSituation -Case $c
+        $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False'
+        [string]$c.Run.Err | Should -Match 'correlation-mismatch'
+    }
+    It 'C-R14 -- a degraded (parser-only) answer makes the CLI exit 4 through the shipped client' {
+        $c = Invoke-CrCase -Id 'R14' -Response ($script:CrClean.TrimEnd('}') + ',"status":"degraded"}') -Binding 'valid'
+        Assert-CrSituation -Case $c
+        $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False'
+        [string]$c.Run.Err | Should -Match 'pssa-unavailable'
+    }
+    It 'C-R15 -- a file that does not parse keeps its parser finding but makes the CLI exit 4, also under -FailOn error, where it used to exit 2 (owner ruling A2-Q01)' {
+        # Kept by the owner: parser-only analysis is PARTIAL, and an incomplete scan (exit 4) outranks the
+        # -FailOn threshold (exit 2) -- the CHANGELOG states the 2 -> 4 effect.
+        $c = Invoke-CrCase -Id 'R15' -Response $script:CrClean -Binding 'valid' -TargetText $script:CrBroken -FailOn 'error'
+        Assert-CrSituation -Case $c
+        $c.Log | Should -Match 'scan receipt written: partial' -Because 'the shipped client wrote a VALID receipt for its parser short-circuit'
+        $c.Verdict | Should -BeExactly 'exit=4 executionSuccessful=False'
+        @(@($c.Sarif.runs[0].results) | Where-Object { [string]$_.level -eq 'error' }).Count | Should -BeGreaterThan 0 -Because 'the parser finding is still reported'
+        @($c.Sarif.runs[0].invocations[0].toolExecutionNotifications[0].properties.reasons) | Should -Contain 'parse-errors'
+    }
+    It 'C-R15t -- the text report calls that file''s receipt valid but PARTIAL, never missing (owner ruling A2-Q01)' {
+        $c = Invoke-CrCase -Id 'R15t' -Response $script:CrClean -Binding 'valid' -TargetText $script:CrBroken -FailOn 'error' -Format 'text'
+        $c.Run.TimedOut | Should -BeFalse
+        $c.Log | Should -Match 'scan receipt written: partial'
+        [int]$c.Run.ExitCode | Should -Be 4
+        $c.Report | Should -Match '\[Error\] line \d+, col \d+ -- ' -Because 'the parser finding is in the report'
+        $c.Report | Should -Match 'could NOT be analyzed \(no COMPLETE completion receipt -- not a clean result\)'
+        $c.Report | Should -Match '(?m)^  target-R15t\.ps1 \(valid receipt, PARTIAL analysis; reasons: [^)]*parse-errors[^)]*\)\r?$'
     }
 }
 
@@ -684,10 +1075,13 @@ Describe 'Temporary RED exclusions are exactly the manifest (dispatch 000302 A1)
         }
     }
 
-    It 'the manifest declares the two owner tags and a non-empty expected set' {
-        ($script:ExTags -join ',') | Should -BeExactly 'ScanRed-A2,ScanRed-A3'
+    It 'the manifest declares the one remaining owner tag (ScanRed-A3) and a non-empty expected set' {
+        # ScanRed-A2 was retired by dispatch 000304 together with its last entry, as the manifest's
+        # own rule requires; a tag with no entries may not linger in the manifest or the runner.
+        ($script:ExTags -join ',') | Should -BeExactly 'ScanRed-A3'
         @($script:ExManifest.Expected).Count | Should -BeGreaterThan 0
         foreach ($t in $script:ExTags) { [string]$script:ExManifest.Tags[$t] | Should -Match '^A[23] -- ' }
+        @($script:ExManifest.Expected | Where-Object { [string]$_.Tag -eq 'ScanRed-A2' }).Count | Should -Be 0
     }
 
     It 'every test file parses (the census reads real code)' {
@@ -706,6 +1100,13 @@ Describe 'Temporary RED exclusions are exactly the manifest (dispatch 000302 A1)
                 $_.Kind -ne 'It' -and @($u.Tags | Where-Object { $script:ExTags -contains $_ }).Count -gt 0
             } | ForEach-Object { $_.File + ':' + $_.Line + ' ' + $_.Kind })
         ($bad -join '; ') | Should -BeExactly ''
+    }
+
+    It 'no retired RED tag survives anywhere in the suite' {
+        # A ScanRed-A2 tag left on an It would no longer be excluded by the runner (its default no
+        # longer names it) -- harmless at run time, but a lie about ownership. Fail on any.
+        $stale = @($script:ExUses | Where-Object { @($_.Tags) -contains 'ScanRed-A2' } | ForEach-Object { $_.File + ':' + $_.Line })
+        ($stale -join '; ') | Should -BeExactly ''
     }
 
     It 'every RED-tagged It is declared in the manifest, and every declared It exists with its tag' {

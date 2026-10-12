@@ -28,6 +28,7 @@
 
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-receipt.ps1')
 . (Join-Path $PSScriptRoot 'corpus/Corpus.Common.ps1')
 
 # Discovery-time platform gate (StrictMode-safe; PS 5.1 has no $IsWindows/$IsLinux).
@@ -44,6 +45,7 @@ Describe 'SARIF scan -- pure helpers (no daemon)' {
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-receipt.ps1')
         . (Join-Path $PSScriptRoot 'Sarif.Common.ps1')   # Save-EmittedSarif (dispatch 000159 leg 1b)
         $script:SchemaPath = Join-Path $PSScriptRoot 'sarif/sarif-2.1.0.json'
 
@@ -380,6 +382,52 @@ Describe 'SARIF scan -- pure helpers (no daemon)' {
             $rep = New-SarifReport -Findings @() -Root $TestDrive -ToolVersion '9.9.9' -ExecutionSuccessful $false -NotAnalyzed @((Join-Path $TestDrive 'only.ps1'))
             $txt = [string]$rep.runs[0].invocations[0].toolExecutionNotifications[0].message.text
             $txt | Should -Match 'could not analyze only\.ps1 \(scan INCOMPLETE'
+            ($rep.runs[0].invocations[0].toolExecutionNotifications[0].Contains('properties')) | Should -BeFalse -Because 'a bare path carries no reasons, so its notification is unchanged'
+        }
+
+        # Dispatch 000304: each not-analyzed file carries its completion-receipt reason codes, in the
+        # notification text (which the workflow annotation echoes) and in a SARIF property bag (which a
+        # reader can parse), so an INCOMPLETE says WHY, not only which file.
+        It 'names each unanalyzed file WITH its receipt reason codes, in the text and in a property bag (dispatch 000304)' {
+            $withWhy = @(
+                [pscustomobject]@{ Path = (Join-Path $TestDrive 'zeta.ps1'); ElapsedMs = 812; Reasons = @('child-silent-exit', 'receipt-missing') },
+                [pscustomobject]@{ Path = (Join-Path $TestDrive 'mid.psm1'); ElapsedMs = 25001; Reasons = @('deadline-kill', 'receipt-missing') }
+            )
+            $rep = New-SarifReport -Findings @() -Root $TestDrive -ToolVersion '9.9.9' -ExecutionSuccessful $false -NotAnalyzed $withWhy
+            $json = $rep | ConvertTo-Json -Depth 16
+            $notifs = @(($json | ConvertFrom-Json).runs[0].invocations[0].toolExecutionNotifications)
+            $joined = (@($notifs | ForEach-Object { [string]$_.message.text }) -join "`n")
+            $joined | Should -Match 'zeta\.ps1 after 812ms \(scan INCOMPLETE for this file; reasons: child-silent-exit, receipt-missing\)'
+            $joined | Should -Match 'mid\.psm1 after 25001ms \(scan INCOMPLETE for this file; reasons: deadline-kill, receipt-missing\)'
+            $zeta = @($notifs | Where-Object { [string]$_.locations[0].physicalLocation.artifactLocation.uri -eq 'zeta.ps1' })
+            (@($zeta[0].properties.reasons) -join ',') | Should -BeExactly 'child-silent-exit,receipt-missing'
+        }
+
+        It 'the reason-bearing SARIF stays valid against the vendored 2.1.0 schema (dispatch 000304)' -Skip:($PSVersionTable.PSVersion.Major -lt 6) {
+            $rep = New-SarifReport -Findings $script:Synth -Root $TestDrive -ToolVersion '9.9.9' -ExecutionSuccessful $false `
+                -NotAnalyzed @([pscustomobject]@{ Path = (Join-Path $TestDrive 'zeta.ps1'); ElapsedMs = 5; Reasons = @('receipt-missing') })
+            $schema = Get-Content -LiteralPath $script:SchemaPath -Raw
+            (Test-Json -Json ($rep | ConvertTo-Json -Depth 16) -Schema $schema) | Should -BeTrue
+        }
+
+        It 'text mode prints each unanalyzed file with its reasons, and says it is not a clean result (dispatch 000304)' {
+            $txt = Format-ScanTextReport -Findings @() -Root $TestDrive -Skipped 0 -FilesScanned 2 `
+                -NotAnalyzed @([pscustomobject]@{ Path = (Join-Path $TestDrive 'sub/x.ps1'); ElapsedMs = 9; Reasons = @('parse-errors') }, (Join-Path $TestDrive 'y.ps1'))
+            $txt | Should -Match 'could NOT be analyzed \(no COMPLETE completion receipt -- not a clean result\)'
+            $txt | Should -Match 'sub/x\.ps1 \(reasons: parse-errors\)'
+            $txt | Should -Match '(?m)^  y\.ps1$'
+        }
+
+        It 'text mode tells a VALID PARTIAL receipt apart from a missing one (owner ruling A2-Q01, dispatch 000304)' {
+            # A file that does not parse has a valid receipt whose analysis is partial; the warning must not
+            # call that receipt missing or invalid -- and a file with no receipt keeps its own reasons.
+            $txt = Format-ScanTextReport -Findings @() -Root $TestDrive -Skipped 0 -FilesScanned 2 -NotAnalyzed @(
+                [pscustomobject]@{ Path = (Join-Path $TestDrive 'broken.ps1'); ElapsedMs = 9; Reasons = @('parse-errors'); Completeness = 'partial' },
+                [pscustomobject]@{ Path = (Join-Path $TestDrive 'silent.ps1'); ElapsedMs = 7; Reasons = @('child-silent-exit', 'receipt-missing'); Completeness = 'failed' })
+            $txt | Should -Match 'could NOT be analyzed \(no COMPLETE completion receipt -- not a clean result\)'
+            $txt | Should -Not -Match 'no valid completion receipt' -Because 'a partial receipt is a valid one'
+            $txt | Should -Match '(?m)^  broken\.ps1 \(valid receipt, PARTIAL analysis; reasons: parse-errors\)\r?$'
+            $txt | Should -Match '(?m)^  silent\.ps1 \(reasons: child-silent-exit, receipt-missing\)\r?$'
         }
     }
 }
@@ -389,6 +437,7 @@ Describe 'SARIF scan -- finding identity (one engine)' -Skip:$script:SkipDaemon 
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-receipt.ps1')
         . (Join-Path $PSScriptRoot 'corpus/Corpus.Common.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
         $paths = Get-CorpusPaths
@@ -606,6 +655,7 @@ Describe 'SARIF scan -- entry point end-to-end (lsp-scan.ps1)' -Skip:$script:Ski
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-receipt.ps1')
         . (Join-Path $PSScriptRoot 'Sarif.Common.ps1')   # Save-EmittedSarif (dispatch 000159 leg 1b)
         $script:ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         $script:ScanScript = Join-Path $script:ScriptsDir 'lsp-scan.ps1'
@@ -775,6 +825,7 @@ Describe 'RED CONTROL (dispatch 000301 N6): Invoke-ScanFileDiagnostics used to l
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-receipt.ps1')
         $script:Ps301RedScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         $script:Ps301RedFixture = Join-Path $PSScriptRoot 'fixtures/red-controls/lsp-scan-common.pre-000301.ps1'
         $script:Ps301RedHostExe = Resolve-PsHost 'pwsh'
@@ -896,6 +947,7 @@ Describe 'SARIF scan -- prohibitedSuppressions, repo/CI path (P1-5 remainder, R2
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-receipt.ps1')
         $script:Ps294ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         $script:Ps294ScanScript = Join-Path $script:Ps294ScriptsDir 'lsp-scan.ps1'
         $script:Ps294HostExe = Resolve-PsHost 'pwsh'
@@ -989,6 +1041,7 @@ Describe 'SARIF scan -- a client-cap kill is never a clean file (dispatch 000132
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-receipt.ps1')
         $script:ScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         $script:HostExe = Resolve-PsHost 'pwsh'
         $script:KillDataRoot = Join-Path $TestDrive 'killdata'
@@ -1019,6 +1072,7 @@ Describe 'SARIF scan -- the scan daemon honors a raised MaxWaitMs settle cap (di
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-common.ps1')
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-scan-receipt.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
         $script:MwScriptsDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts'
         $script:MwHostExe = Resolve-PsHost 'pwsh'

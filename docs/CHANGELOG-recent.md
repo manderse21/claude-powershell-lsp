@@ -48,6 +48,68 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **`scripts/lsp-scan.ps1` now reports a file analyzed only on a validated completion receipt,
+and a scan can no longer reformat what it scans** (dispatch 000304, leg A2 -- fixes the F1 and the
+A2-owned F2 failures dispatch 000302 measured). Before, a scan inferred "analyzed" from what the
+child did NOT say: seven ways a child can end without analyzing anything read as a clean file, and
+`formatOnEdit=apply` in the scanner's environment rewrote the source and dropped its findings. Now
+the scan asks the client, in its hook payload, under a fresh request id, to write a typed **completion
+receipt** (`scripts/lib/lsp-scan-receipt.ps1`, described by `docs/scan-receipt.schema.json`), and the
+scanner validates it before believing anything: the right request id, the right file, the SHA-256 of
+the bytes the daemon actually read and handed to PSES equal to the file's bytes before and after the
+child, a settled PSScriptAnalyzer pass, and the receipt's finding count and digest equal to the
+records read back. Only a COMPLETE receipt counts; a missing, truncated, malformed, mis-correlated,
+mis-pathed, wrong-bytes, changed-source, degraded, unsettled, unavailable, capped or merely partial one
+is NOT analyzed, and is named with machine reason codes (`receipt-missing`, `child-silent-exit`,
+`daemon-refused`, `source-changed`, ...) on stderr, in the text report and in each SARIF
+`toolExecutionNotifications` entry (message text plus a `properties.reasons` bag). A receipt carries
+the public status token unchanged (`ok` / `incomplete` / `degraded` / `unavailable` -- no new token)
+plus an additive `completeness` (`complete` / `partial` / `failed`); its configuration identity is
+reported as observed and **unbound**, its policy identity **unbound**, and its engine versions are what
+the daemon reads from the PSES and PSScriptAnalyzer module manifests on disk, or `unknown` -- nothing
+is certified that was not bound. **One deliberate behaviour change** (kept by owner ruling, 2026-10-11):
+a file that does not parse, or that the byte-level pre-pass stops (smart punctuation in a BOM-less
+file), was always reported with its findings but without any PSScriptAnalyzer pass; it is now
+**partial**, so the scan exits `4` and names it (`parse-errors` / `pre-pssa-short-circuit`) instead of
+exiting `0` as if it had been fully analyzed. **Under `-FailOn` the effect reaches a scan that used to
+fail the gate:** when such a file's parser finding met the threshold the scan exited `2`; it now exits
+`4` (scan incomplete, SARIF `executionSuccessful=false`), because an incomplete scan outranks the
+threshold -- a gate that tests for exit `2` alone should treat `4` as a failure too. Its findings are still
+in the report, and the text report's warning now reads `no COMPLETE completion receipt -- not a clean
+result` and marks such a file `valid receipt, PARTIAL analysis`, so it is never mistaken for a file
+with no receipt. Exit codes are otherwise as before: `0` complete, `2` `-FailOn` threshold, `3` usage,
+`4` incomplete. **The scan's child payload is pure ASCII:** each non-ASCII character in the JSON a scan
+child reads on stdin is written as a `\uXXXX` escape, because the child decodes stdin with its console's
+code page -- the OEM code page on a stock Windows console, not UTF-8 -- so a non-ASCII file path or data
+root (the default data root is under the user profile) reaches the client intact under any code page.
+Before, on such a console, a file whose path held a non-ASCII character reached the client mangled and
+was silently not analyzed: the scan exited `0` without that file's findings.
+**A Windows PowerShell 5.1 scan reads its findings back as UTF-8.** The client writes them as UTF-8
+without a BOM, and a 5.1 scanner read them with the ANSI code page, so a finding whose message holds a
+non-ASCII character -- PSScriptAnalyzer quotes function, variable, parameter and alias names into its
+messages -- printed garbled in the text report and in SARIF `message.text`. Now that the receipt's digest
+covers every message, the same misread would also have reported the fully analyzed file as not analyzed
+(`diagnostics-mismatch`, exit `4`).
+Underneath: every scan child now runs through one typed spawner
+(`Invoke-ScanChildProcess`: exit code, stdout, stderr, killed, elapsed), which starts both stream drains
+before it waits (a child that floods stderr is no longer held to the cap), kills the whole process tree
+on a timeout on **both** Windows hosts (`Process.Kill($true)` does not exist on Windows PowerShell 5.1,
+where the old cap kill killed nothing; it now falls back to `taskkill /T`), and disposes the process;
+`Invoke-ScanHook` remains as a compatible wrapper. **Formatter-off containment:** every scan child gets
+`formatOnEdit=off` under exactly one spelling -- every other spelling the option resolver would accept
+is removed first -- and the client forces the mode off again in scan mode. The daemon reads each file's
+bytes once and decodes the analyzed text from them (the same decoder as before), and answers a request
+that carries a `requestId` with that id echoed and an additive `analysis` binding; an interactive
+request carries none and its answer is byte-identical. The client loads the receipt library only for a
+scan-mode payload, so the interactive edit path is unchanged: still silent on a clean file, still exit
+0. Tests: the 39 `ScanRed-A2` tests are green and untagged, and the tag is retired from the runner and
+the manifest, which now bounds only A3's 15 tests; `tests/PowerShellLsp.ScanReceipt.Tests.ps1` pins
+the vocabulary, the status/completeness table, valid-envelope negative controls, the schema, the
+spawner and the real daemon's binding, and runs the shipped CLI under capture modes full, metadata and
+off, and on a console pinned to code page 437 over a file whose name and data root are non-ASCII
+(beside a raw-UTF-8 control that must arrive mangled); the real client is now also driven behind the
+shipped CLI, including a file that does not parse under `-FailOn error` (exit `4`).
+
 PATCH: **Two review findings about `scripts/lsp-scan.ps1` are now measured rather than argued: a
 scan can report a file it never analysed as analysed (F1), and a scan run with `formatOnEdit=apply`
 in its environment rewrites the files it scans (F2)** (test-only; no shipped behaviour changes --

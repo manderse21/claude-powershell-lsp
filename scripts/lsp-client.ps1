@@ -51,8 +51,30 @@ $EditContextLines = Get-PluginOptionInt 'editContextLines' 0
 # client asks the warm daemon to format the edited file (Invoke-Formatter honoring the repo
 # settings) and surfaces the result as a SUGGESTION -- never rewriting the file. Read ONCE.
 # 'off' (the default, and any unrecognized value) skips the format path entirely below, so the
-# diagnostics surface is byte-for-byte unchanged. No apply path exists (suggest-only).
+# diagnostics surface is byte-for-byte unchanged. 'apply' (000099) asks the daemon for a GUARDED
+# write-back; a scan child is always forced to 'off' (dispatch 000304, below).
 $FormatMode = ConvertTo-FormatOnEditMode (Get-PluginOption 'formatOnEdit' 'off')
+
+# Scan completion receipt (dispatch 000304, A2). scripts/lsp-scan.ps1 runs this client once per file
+# with a powershell_lsp_scan field in the hook payload naming a request id and a receipt path.
+# Claude Code never sends that field, so on every interactive edit $script:ScanCtx stays $null, the
+# receipt library is not even loaded, and nothing below that reads these variables runs: the
+# interactive surface, its exit code and its timing are unchanged. In scan mode the client records
+# what it actually did in $script:ScanOutcome as it goes, and the main block's finally writes ONE
+# receipt from it on every exit path -- the fail-safe exits included, since those are exactly the
+# ones a scan must never mistake for a clean pass.
+$script:ScanCtx = $null
+$script:ScanOutcome = $null
+
+function Add-ScanOutcomeReason([string]$Reason, [string]$Detail = '') {
+    # Record why this scan-mode request cannot be certified (a code from Get-ScanReceiptReasonTable).
+    # A no-op on an interactive edit.
+    if ($null -eq $script:ScanOutcome) { return }
+    [void]$script:ScanOutcome.Reasons.Add($Reason)
+    if (-not [string]::IsNullOrWhiteSpace($Detail) -and [string]::IsNullOrWhiteSpace([string]$script:ScanOutcome.Detail)) {
+        $script:ScanOutcome.Detail = $Detail
+    }
+}
 
 # Auto-relaunch cooldown (dispatch 000030): the BOUND. After this client fires a relaunch of an
 # idle-stopped daemon, suppress any further relaunch for this long. A pipe-first daemon that launched
@@ -134,7 +156,7 @@ function Write-HookContext([string]$Context) {
     $out | ConvertTo-Json -Depth 6 -Compress
 }
 
-function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, [int]$hardCapMs, [string]$cwd = '', $touchedRanges = $null) {
+function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, [int]$hardCapMs, [string]$cwd = '', $touchedRanges = $null, [string]$requestId = '') {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $client = $null
     try {
@@ -172,6 +194,9 @@ function Get-Diagnostics([string]$pipeName, [string]$filePath, [int]$connectMs, 
         # Edit-range scoping (000019): send the touched ranges only when present.
         # Omitting them is the whole-file path (scoping off or an indeterminate range).
         if ($null -ne $touchedRanges -and @($touchedRanges).Count -gt 0) { $reqObj['touchedRanges'] = @($touchedRanges) }
+        # Scan completion receipt (dispatch 000304): a scan-mode request asks the daemon to echo this id
+        # and bind what it analyzed. Never sent on an interactive edit, so that request is unchanged.
+        if (-not [string]::IsNullOrWhiteSpace($requestId)) { $reqObj['requestId'] = $requestId }
         $writer.WriteLine(($reqObj | ConvertTo-Json -Compress))
         $writer.Flush()
 
@@ -299,12 +324,35 @@ try {
     if ([string]::IsNullOrWhiteSpace($raw)) { Write-CLog 'empty stdin'; exit 0 }
     $payload = $raw | ConvertFrom-Json
 
+    # Scan mode (dispatch 000304): only a payload carrying powershell_lsp_scan loads the receipt
+    # library, so an interactive edit pays nothing for it. A malformed scan field yields no context and
+    # therefore no receipt -- which the scanner reads as receipt-missing, never as a clean file.
+    if ($null -ne (Get-Prop $payload 'powershell_lsp_scan')) {
+        . (Join-Path $PSScriptRoot 'lib/lsp-scan-receipt.ps1')
+        $script:ScanCtx = Get-ScanRequestContext -Payload $payload
+        if ($null -ne $script:ScanCtx) {
+            # Formatter-off containment, client half: a scan child never formats, whatever reached its
+            # environment. The scanner already strips every spelling of formatOnEdit before spawning
+            # this process; forcing the mode here too means no receipt can ever vouch for findings
+            # taken before a formatter rewrote the file.
+            $FormatMode = 'off'
+            $script:ScanOutcome = @{
+                File = ''; Pass = 'none'; Status = 'incomplete'; Binding = $null; Omitted = 0; ScopeApplied = $false
+                AnalysisMs = 0; ClientSource = $null; Records = @(); Detail = ''
+                Reasons = (New-Object System.Collections.Generic.List[string])
+            }
+            Write-CLog ('scan mode: request ' + $script:ScanCtx.RequestId)
+        } else {
+            Write-CLog 'scan field present but malformed; no receipt will be written'
+        }
+    }
+
     $sessionId = [string](Get-Prop $payload 'session_id')
-    if ([string]::IsNullOrWhiteSpace($sessionId)) { Write-CLog 'no session_id'; exit 0 }
+    if ([string]::IsNullOrWhiteSpace($sessionId)) { Write-CLog 'no session_id'; Add-ScanOutcomeReason 'request-invalid' 'no session_id'; exit 0 }
 
     $toolInput = Get-Prop $payload 'tool_input'
     $path = [string](Get-Prop $toolInput 'file_path')
-    if ([string]::IsNullOrWhiteSpace($path)) { Write-CLog 'no tool_input.file_path'; exit 0 }
+    if ([string]::IsNullOrWhiteSpace($path)) { Write-CLog 'no tool_input.file_path'; Add-ScanOutcomeReason 'request-invalid' 'no tool_input.file_path'; exit 0 }
 
     # cwd = the Claude Code session working dir (project root). Captured here for both
     # relative-path resolution AND forwarding to the daemon, which bounds the
@@ -314,10 +362,11 @@ try {
         if (-not [string]::IsNullOrWhiteSpace($cwd)) { $path = Join-Path $cwd $path }
     }
     $path = [System.IO.Path]::GetFullPath($path)
+    if ($null -ne $script:ScanOutcome) { $script:ScanOutcome.File = $path }
 
     $ext = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
-    if (@('.ps1', '.psm1', '.psd1') -notcontains $ext) { Write-CLog ('skip non-PS file: ' + $path); exit 0 }
-    if (-not (Test-Path -LiteralPath $path)) { Write-CLog ('file gone: ' + $path); exit 0 }
+    if (@('.ps1', '.psm1', '.psd1') -notcontains $ext) { Write-CLog ('skip non-PS file: ' + $path); Add-ScanOutcomeReason 'not-powershell'; exit 0 }
+    if (-not (Test-Path -LiteralPath $path)) { Write-CLog ('file gone: ' + $path); Add-ScanOutcomeReason 'source-vanished' ('file gone: ' + $path); exit 0 }
 
     # Managed mode: fail-closed on policy (dispatch 000299, W3-3). Resolved once, above, as
     # $PolicyFailClosed -- a constant $false under the default `open` mode. This is the earliest
@@ -327,6 +376,8 @@ try {
     if ($PolicyFailClosed) {
         Write-Output (Write-HookContext (Get-DiagnosticsStatusBanner 'unavailable' $path `
                     -Reason 'the organization policy that governs this host''s diagnostics could not be validated.'))
+        if ($null -ne $script:ScanOutcome) { $script:ScanOutcome.Status = 'unavailable' }
+        Add-ScanOutcomeReason 'policy-fail-closed' $OrgPolicyWarning
         exit 0
     }
 
@@ -518,6 +569,23 @@ try {
                 records = $total; corrections = 0; cached = $false
                 scopeApplied = $false; scopeTotal = $total; scopeSurfaced = @($shown).Count }
         }
+        # Scan receipt (dispatch 000304): the short-circuit's findings are real, but PSScriptAnalyzer
+        # never ran on this file, so the receipt it gets is PARTIAL by construction (parse-errors /
+        # pre-pssa-short-circuit), never complete. The records are rebuilt with the same normalizers
+        # from the same inputs the capture blocks above used, so the receipt's digest binds exactly
+        # what was captured; the identity is of the bytes on disk as this client read them.
+        if ($null -ne $script:ScanOutcome) {
+            $script:ScanOutcome.Pass = $(if ($hasParseErrors) { 'parser' } else { 'pre-pssa' })
+            $script:ScanOutcome.Status = 'ok'
+            if ($hasPrePssa) { Add-ScanOutcomeReason 'pre-pssa-short-circuit' }
+            $script:ScanOutcome.ClientSource = Read-ScanSourceSnapshot -Path $path -NoText
+            try {
+                $scanRecords = @()
+                if ($hasPrePssa) { $scanRecords += @($prePssaFindings | ForEach-Object { New-CaptureRecordFromDiag $_ }) }
+                if ($hasParseErrors) { $scanRecords += @($parseErrors | ForEach-Object { New-CaptureRecordFromParseError $_ }) }
+                $script:ScanOutcome.Records = @($scanRecords)
+            } catch { Add-ScanOutcomeReason 'client-fatal' ('short-circuit records: ' + $_.Exception.Message) }
+        }
         exit 0
     }
 
@@ -543,7 +611,9 @@ try {
     if ($null -ne $touchedRanges) { Write-CLog ('scoping to ' + @($touchedRanges).Count + ' touched range(s)') }
     else { Write-CLog 'whole-file (scoping off or indeterminate range)' }
 
-    $resp = Get-Diagnostics $pipeName $path $ConnectTimeoutMs $HardCapMs $cwd $touchedRanges
+    # A scan-mode request carries its request id to the daemon (dispatch 000304); '' on every edit.
+    $scanRequestId = if ($null -ne $script:ScanCtx) { [string]$script:ScanCtx.RequestId } else { '' }
+    $resp = Get-Diagnostics $pipeName $path $ConnectTimeoutMs $HardCapMs $cwd $touchedRanges $scanRequestId
     # $resp also carries optional telemetry fields the emit ignores (daemon-side
     # path/analysisMs/codeActionMs/recordCount/correctionCount). A null/!ok response
     # means the edit was never analyzed (unreachable/timeout) -> no stats line.
@@ -578,6 +648,7 @@ try {
             # whose analyzer is fine. No new token; never silence.
             Write-HookContext (Get-DiagnosticsStatusBanner 'incomplete' $path)
             Write-CLog 'daemon LIVE but did not answer within the cap (pipe present) -> no relaunch; emitted honest incomplete banner'
+            Add-ScanOutcomeReason 'daemon-no-answer'
             exit 0
         }
         # Case 3 ONLY from here down -- the pre-000225 recoverable path, unchanged. FIRST attempt a
@@ -589,7 +660,7 @@ try {
         if ($relaunch.LaunchOk) {
             while ($null -eq $resp -and $swTotal.ElapsedMilliseconds -lt $HardCapMs) {
                 Start-Sleep -Milliseconds 250
-                $resp = Get-Diagnostics $pipeName $path $ConnectTimeoutMs $HardCapMs $cwd $touchedRanges
+                $resp = Get-Diagnostics $pipeName $path $ConnectTimeoutMs $HardCapMs $cwd $touchedRanges $scanRequestId
             }
         }
         if ($null -eq $resp) {
@@ -606,13 +677,18 @@ try {
                 Write-HookContext ('PowerShell diagnostics unavailable for ' + $path + ': the analyzer was not reachable and could not be restarted automatically -- this edit was NOT checked. Start a new session to restart it.')
                 Write-CLog ('daemon unreachable -> not recovered (attempted=' + $relaunch.Attempted + ' launchOk=' + $relaunch.LaunchOk + '); emitted honest could-not-restart banner')
             }
+            Add-ScanOutcomeReason 'daemon-unreachable'
             exit 0
         }
         Write-CLog ('auto-relaunch recovered a reachable daemon (status=' + [string](Get-Prop $resp 'status') + ')')
         # fall through: $resp now carries the relaunched daemon's status (transient 'incomplete'
         # during its init window, or a settled pass) -- rendered by the existing status path below.
     }
-    if (-not (Get-Prop $resp 'ok')) { Write-CLog ('daemon error: ' + [string](Get-Prop $resp 'error')); exit 0 }
+    if (-not (Get-Prop $resp 'ok')) {
+        Write-CLog ('daemon error: ' + [string](Get-Prop $resp 'error'))
+        Add-ScanOutcomeReason 'daemon-refused' ([string](Get-Prop $resp 'error'))
+        exit 0
+    }
 
     $diags = @(Get-Prop $resp 'diagnostics')
     $omitted = [int](Get-Prop $resp 'omitted')
@@ -715,6 +791,18 @@ try {
     # sees them inline -- "could not analyze", "fewer rules", and "not installed" never look
     # like "analyzed, found nothing." A clean pass adds NOTHING, so the warm output is unchanged.
     $status = [string](Get-Prop $resp 'status')
+    # Scan receipt (dispatch 000304): the daemon answered, so this request ran the PSScriptAnalyzer
+    # pass. Whether the receipt can be COMPLETE is not decided here -- New-ScanReceipt derives it from
+    # the daemon's binding (request id echo, analyzed path, consumed-bytes SHA-256, settle, analyzer
+    # availability) and from the per-file cap and scope this answer reports.
+    if ($null -ne $script:ScanOutcome) {
+        $script:ScanOutcome.Pass = 'pssa'
+        $script:ScanOutcome.Status = $(if ([string]::IsNullOrWhiteSpace($status)) { 'ok' } else { $status })
+        $script:ScanOutcome.Binding = Get-Prop $resp 'analysis'
+        $script:ScanOutcome.Omitted = $omitted
+        $script:ScanOutcome.ScopeApplied = [bool](Get-Prop $resp 'scopeApplied')
+        $script:ScanOutcome.AnalysisMs = [int](Get-Prop $resp 'analysisMs')
+    }
 
     # Format-on-edit APPLY suppression flag (000099): set true only when a real apply WROTE the file
     # this turn. Initialized here (StrictMode-safe) and read below to suppress the now-stale pre-apply
@@ -931,6 +1019,17 @@ try {
             Add-DiagnosticCaptureEntries -File $path -Records $capRecords | Out-Null
         } catch { Write-CLog ('dogfood capture (daemon path) failed -- swallowed: ' + $_.Exception.Message) }
     }
+    # Scan receipt (dispatch 000304): the receipt vouches for exactly the records captured above --
+    # the same normalizer over the same surfaced set -- so a capture write that silently failed shows
+    # up at the scanner as diagnostics-mismatch instead of as zero findings. An apply turn captured
+    # nothing and never certifies (formatter-active); scan mode forces the mode off, so it cannot occur.
+    if ($null -ne $script:ScanOutcome) {
+        if ($applyModified) { Add-ScanOutcomeReason 'formatter-active' }
+        elseif ($diags.Count -gt 0) {
+            try { $script:ScanOutcome.Records = @($diags | ForEach-Object { New-CaptureRecordFromDiag $_ }) }
+            catch { Add-ScanOutcomeReason 'client-fatal' ('receipt records: ' + $_.Exception.Message) }
+        }
+    }
 
     # Track A: one best-effort JSONL line for this analyzed edit (cache-hit or
     # daemon-analyze). File-only, wrapped, emits nothing to stdout -> the feedback
@@ -949,5 +1048,33 @@ try {
 }
 catch {
     Write-CLog ('FATAL (fail-safe, exit 0): ' + $_.Exception.Message)
+    Add-ScanOutcomeReason 'client-fatal' $_.Exception.Message
     exit 0
+}
+finally {
+    # Scan receipt (dispatch 000304): written HERE, so every exit above -- the clean pass, each
+    # fail-safe exit, the FATAL catch -- leaves exactly one receipt saying what actually happened. A
+    # finally runs on `exit` in both hosts. Nothing here touches stdout or the exit code: the receipt
+    # is a file, and a failure to produce or write it is logged and leaves NO receipt, which the
+    # scanner reads as receipt-missing -- never as a clean file. Interactive edits skip this entirely.
+    if ($null -ne $script:ScanCtx -and $null -ne $script:ScanOutcome) {
+        try {
+            $o = $script:ScanOutcome
+            $scanElapsedMs = 0
+            $swVar = Get-Variable -Name 'swTotal' -Scope Script -ErrorAction SilentlyContinue
+            if ($null -ne $swVar -and $null -ne $swVar.Value) { $scanElapsedMs = [int]$swVar.Value.ElapsedMilliseconds }
+            $scanReceipt = New-ScanReceipt -RequestId ([string]$script:ScanCtx.RequestId) -File ([string]$o.File) `
+                -Pass ([string]$o.Pass) -Status ([string]$o.Status) -Binding $o.Binding -Omitted ([int]$o.Omitted) `
+                -ScopeApplied ([bool]$o.ScopeApplied) -AnalysisMs ([int]$o.AnalysisMs) -ClientSource $o.ClientSource `
+                -Records @($o.Records) -FormatMode ([string]$FormatMode) -ElapsedMs $scanElapsedMs `
+                -Reasons @($o.Reasons.ToArray()) -Detail ([string]$o.Detail)
+            if (Write-ScanReceipt -Path ([string]$script:ScanCtx.ReceiptPath) -Receipt $scanReceipt) {
+                Write-CLog ('scan receipt written: ' + [string]$scanReceipt['completeness'] + ' (' + (@($scanReceipt['reasons']) -join ',') + ')')
+            } else {
+                Write-CLog 'scan receipt NOT written (the scan will read this file as not analyzed)'
+            }
+        } catch {
+            Write-CLog ('scan receipt could not be produced (the scan will read this file as not analyzed): ' + $_.Exception.Message)
+        }
+    }
 }
