@@ -358,7 +358,18 @@ ever edited to do this.
 PSES's own version tag matches what that list was verified against. On a mismatch, and only when no
 repo-local `IncludeRules` exists to merge onto instead, the daemon **declines to merge** rather than
 risk shipping a stale list as PSES's replacement default -- one warning, `RequiredRules` goes
-unenforced for that session, and every other diagnostic is unaffected.
+unenforced for that session, and every other diagnostic is unaffected. The "running" version is the
+`ModuleVersion` of the PowerShellEditorServices manifest the daemon actually launches, read from disk
+(since dispatch 000305; before it, the guard was handed its own verified tag and could never refuse).
+With the pinned bundle the two agree and nothing changes; an unreadable manifest reads `unknown` and
+the guard declines.
+
+**Where the merged file lives.** Under `orgpolicy-settings/` in the plugin's data root, named by the
+SHA-256 of its exact text (`merged-settings-<16 hex>.psd1`), written to a temporary file and renamed
+into place, then read back and re-hashed before the daemon uses it. PSES hands that path to
+PSScriptAnalyzer on every pass, so two daemons sharing a data root with different policies (a scan
+beside an interactive session, say) must never rewrite one file; identical settings share one file
+and different settings never do.
 
 **Exclusion is still the stronger verb.** A rule named in *both* `RequiredRules` and `ExcludeRules`
 is dropped from the merge, not forced on -- the same ordering `SeverityOverrides` above already uses
@@ -403,11 +414,69 @@ instead, deliberately not the same shape:
   (deliberately a parameter, not a `userConfig` knob, matching `-Format` / `-FailOn`'s own
   rationale: a CI invocation names its inputs explicitly). When set, the scan runs one additional,
   restricted `-IncludeSuppressed` analyzer pass and re-surfaces a hidden finding under its **real**
-  rule id -- true enforcement, paid once per scan rather than once per keystroke.
+  rule id -- true enforcement, paid once per scan rather than once per keystroke. Since dispatch
+  000305 the same `-OrgPolicyPath` also drives the scan's MAIN pass (see below), so a scan reports
+  the edit-path `ProhibitedSuppression` finding too -- the same finding the hook raises while editing.
 
 Empty (the default, and every policy written before this feature existed) runs neither pass, costs
 nothing, and -- like `RequiredRules` above -- inherits the same fail-open and integrity guarantees
 this section already describes, since it is read from the same parse behind the same gate.
+
+### Policy identity and application evidence (dispatch 000305)
+
+**`lsp-scan.ps1 -OrgPolicyPath` drives the whole analysis.** Until this release the flag reached only
+the suppression pass above: the daemon and the per-file hook never saw it, so `RequiredRules`,
+`SeverityOverrides` and `ExcludeRules` did not govern a scan's findings unless the same policy also
+arrived through the environment -- and an ambient `orgPolicy` value could govern them instead. Now the
+scan hands the declared path to every child it starts: the daemon merges its `RequiredRules`, and the
+per-file hook applies its exclusions, overrides and prohibited suppressions. Every spelling of the
+knob the option resolver accepts is removed from each child first, so an ambient value cannot win.
+This changes the old suppression-only behavior on purpose (owner ruling O03, "full main pass").
+
+**One resolver, three separate things.** `scripts/lib/lsp-policy.ps1` reads the policy through the
+same `Import-OrgPolicy` the hook has always used -- same absolute-path rule, integrity gate, restricted
+parse and single warning -- and keeps apart:
+
+| | What it is |
+|---|---|
+| requested | the path, where it came from (`cli`, `knob`, `daemon`), the SHA-256 of the file as read, the `.sha256` sidecar verdict |
+| effective | the policy that actually governs analysis, in a canonical form, and its **policy identity** (`effectiveSha256`) |
+| applied | what each party recorded doing with it: the daemon's `RequiredRules` version guard, its merged-settings write (re-read and re-hashed), the settings file it handed PSES; the hook's adjudication of each file's findings |
+
+**The canonical hashing rules.** The identity is the SHA-256 (lower-case hex) of this UTF-8 text, LF
+line ends including the last: a first line `powershell-lsp/effective-policy 1`, then one line per
+member in four sections in fixed order -- `exclude`, `override`, `prohibit`, `require` -- each the
+verb, a TAB and the rule code folded to invariant lower case (an override adds a TAB and the
+canonical severity), sorted ordinally within its section. Rule codes are folded because they match
+case-insensitively everywhere the policy is applied. Exclusion stays the stronger verb in the
+identity too: a rule the policy both requires and excludes is not required, and an override on an
+excluded rule is moot, so neither appears. So two files that enforce the same thing -- reordered,
+re-cased, commented, with duplicates or moot entries -- have one identity, while each member and each
+override's severity moves it. An unusable policy has **no** identity.
+
+**Not required is not failed.** A policy with no `RequiredRules` needs no merged settings file; one
+with no exclusions, overrides or prohibitions asks nothing of the hook; one with no prohibitions needs
+no suppression pass. Those are recorded as `not-required` and are never enforcement failures. Only an
+obligation that was required and not met fails a managed scan.
+
+**Managed scans.** `lsp-scan.ps1 -PolicyMode closed` -- or `POWERSHELL_LSP_POLICY_MODE=closed` when the
+parameter is absent; an explicit `-PolicyMode open` wins over the environment -- certifies a scan
+only when a usable declared policy AND each party's evidence that it was applied are present. See
+[repository scanning](repository-scanning.md#policy-the-full-main-pass-and-managed-scans) for every
+refusal. An unmanaged scan (the default) certifies and refuses nothing; with `-OrgPolicyPath` it reports
+the policy identity, and an unusable policy is still a fail-open warning there.
+
+**The severity-threshold boundary is unchanged, and unmanaged.** The limitation described under
+`SeverityOverrides` and `RequiredRules` -- a raised local `severityThreshold` can still hide a finding
+the organization wanted -- belongs to developer assistance. A managed scan declares its own threshold
+(`Hint`) and refuses to certify when the daemon reports anything else.
+
+**The trust boundary.** Everything here runs as the same user as the analyzer. That user -- or an agent
+acting as that user -- can edit the policy file, its `.sha256` sidecar, the plugin, and the evidence
+the plugin writes. A checksum beside an editable file is integrity *evidence*, not an independent root
+of trust, and the policy identity proves which policy was applied, not that nobody changed it. Enforce
+a release requirement on a protected CI runner whose policy is controlled by someone other than the
+author of the change.
 
 ## severityThreshold
 
@@ -988,7 +1057,7 @@ validate policy means quietly unfiltered" needs a way to say so.
 
 **What it does.** Chooses what happens when `orgPolicy` is configured but cannot be validated.
 
-| Value | Behavior when the configured policy is missing or fails its integrity check |
+| Value | Behavior when the configured policy cannot be validated (any degrade -- see below) |
 |---|---|
 | `open` | The shipped, unchanged behavior: exclusions drop, analysis proceeds unfiltered, one warning is logged (T4.2, fail-open) |
 | `closed` | The edit resolves to the existing `unavailable` diagnostics status -- the SAME token an unbootstrapped PSES uses, with a DIFFERENT reason: "the organization policy ... could not be validated." Diagnostics are not shown for that edit; the very next edit re-validates automatically (no session restart is needed, unlike a PSES `unavailable`) |
@@ -1007,10 +1076,19 @@ being merely absent, both fall back to the already-accepted `open` exposure rath
 surprise fleet-wide diagnostics outage.
 
 **`closed` reacts only to a policy that WAS configured and could not be validated.** With
-`orgPolicy` itself unset, there is nothing to validate, and `closed` is a no-op -- it does not
-retroactively require a policy to exist. This scopes the variable to exactly the two
-[`REVIEW-II-DOCKET.md`](roadmap-ii/REVIEW-II-DOCKET.md) W3-3 cases: a **missing** orgPolicy file,
-or one that fails the [`<policy>.sha256` integrity gate](#orgpolicy).
+`orgPolicy` itself unset, there is nothing to validate, and `closed` is a no-op for an edit -- it does
+not retroactively require a policy to exist. When a policy IS configured, the trigger is **broad**,
+and has been since this variable shipped (`Test-PolicyEnforcementFailClosed`): ANY validation degrade
+fails the edit closed -- a missing file, an unreadable or unparseable one, a relative path, or a failed
+[`<policy>.sha256` integrity gate](#orgpolicy). The two
+[`REVIEW-II-DOCKET.md`](roadmap-ii/REVIEW-II-DOCKET.md) W3-3 cases (a missing file, a failed integrity
+gate) are members of that set, not its boundary. (Earlier wording here named only those two; the code
+never narrowed to them.)
+
+**A scan is different: `closed` with no policy refuses there** (owner ruling O03, dispatch 000305).
+`lsp-scan.ps1` reads this variable as its policy mode when `-PolicyMode` is not given, and a managed
+scan with no declared `-OrgPolicyPath` is reported NOT CERTIFIED (exit `4`) -- certification needs a
+declared policy and evidence it was applied. The interactive unset-policy no-trigger above is unchanged.
 
 **No new diagnostics status token.** `closed` reuses the existing `unavailable` token
 ([CONTRACT.md](../CONTRACT.md) Tier 1.2, frozen) with new wording for this specific cause -- the
@@ -1020,7 +1098,12 @@ clean-empty / non-ok-distinct-visible property are.
 **Checking it worked.** `doctor -Json`'s [`orgPolicy` field](#orgpolicy) reports `applied: false`
 whenever the configured policy is not governing a live edit -- whether because `open` silently
 degraded it or `closed` would fail an edit closed over it -- so a fleet health check can confirm
-the intended state without waiting for someone to hit an actual edit.
+the intended state without waiting for someone to hit an actual edit. `applied` means the policy
+PARSES and passes its integrity gate, nothing more. Since dispatch 000305 two more fields say what was
+actually enforced: `effectiveSha256` (the policy identity as parsed) and `enforcement`, read from the
+running daemon's own record -- `observed` with the identity the daemon applied, whether it
+`matchesParsed`, and its `RequiredRules` state (`activated`, `not-required`, `activation-unsupported`,
+`merge-write-failed`, ...), or `not-observed` with the reason (`no-daemon`, `several-daemons`).
 
 ---
 

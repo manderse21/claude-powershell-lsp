@@ -65,7 +65,9 @@ The envelope:
   "provenanceFloor": "...",
   "captureMode": { "resolved": "metadata", "raw": "", "recognized": false },
   "otelExport": { "display": "", "configured": false, "recognized": false },
-  "orgPolicy": { "path": "", "sha256": "", "sidecarMatch": "not-present", "applied": false },
+  "orgPolicy": { "path": "", "sha256": "", "sidecarMatch": "not-present", "applied": false,
+                 "effectiveSha256": "", "enforcement": { "state": "not-configured", "reason": "", "daemonEffectiveSha256": "",
+                 "matchesParsed": null, "requiredRules": "", "settingsSha256": "" } },
   "summary": { "pass": 6, "fail": 0, "unknown": 8, "total": 14 },
   "checks": [ { "status": "pass", "component": "...", "detail": "...", "remediation": "..." } ]
 }
@@ -118,7 +120,15 @@ The envelope:
   no policy configured every key is still explicit (`""`, `""`, `"not-present"`, `false`) rather
   than the field being absent -- the same honesty rule `captureMode`/`otelExport` follow for an
   unset control. No trust root is implied: signing a policy stays deferred (R9); this only reports
-  identity.
+  identity. `applied` means the policy PARSES and passes its integrity gate -- nothing more. Two
+  later fields (dispatch 000305, added after the four, which keep their names, types and meaning)
+  keep parsing apart from enforcement: `effectiveSha256` is the **policy identity** of the policy as
+  parsed here (equal effective policies give equal values; `""` unless `applied`), and
+  `enforcement` is what a RUNNING daemon reports it applied, from its own session record -- `state`
+  `observed` with `daemonEffectiveSha256`, `matchesParsed`, its `requiredRules` state and the
+  `settingsSha256` of the file it handed PSES; or `not-observed` with a `reason` (`no-daemon`,
+  `several-daemons`, `data-root-unknown`); or `unknown` (`no-policy-record`, an older daemon); or
+  `not-configured`.
 
 ### Adding to this envelope -- the schemaVersion policy
 

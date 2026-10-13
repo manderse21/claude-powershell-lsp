@@ -30,6 +30,53 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **`lsp-scan.ps1 -OrgPolicyPath` now governs the whole analysis, and a new managed mode
+(`-PolicyMode closed`) certifies a scan only with evidence the declared policy was applied**
+(dispatch 000305, leg B1 -- review finding F3; owner ruling O03: managed mode, refuse in managed only,
+full main pass). Before, `-OrgPolicyPath` drove only the prohibited-suppression post-pass: the daemon
+and the per-file hook never saw it, so `RequiredRules`, `SeverityOverrides` and `ExcludeRules` did not
+shape a scan's findings unless the same policy also arrived through the environment -- and an ambient
+`orgPolicy` value could shape them instead. Now the scan hands the declared path to every child it
+starts (every other spelling of the knob removed first), so the daemon merges its required rules and
+each file's hook applies its exclusions, overrides and prohibited suppressions, exactly as while
+editing; **this deliberately changes the old suppression-only behavior** -- a scan with a policy now
+reports the policy's findings, including the edit-path `ProhibitedSuppression` finding beside the
+re-surfaced one. One resolver, `scripts/lib/lsp-policy.ps1`, reads the policy through the unchanged
+`Import-OrgPolicy` and keeps three things apart: the requested policy (path, source, file SHA-256,
+sidecar verdict), the **effective** policy and its canonical **policy identity** (a SHA-256 over a
+documented canonical text, so reordered, re-cased, commented or moot-entry files that enforce the same
+thing share one identity), and each party's **application evidence** -- the daemon's `RequiredRules`
+version guard, its merged-settings write (re-read and re-hashed) and the settings it handed PSES, and
+the hook's adjudication of each file. The completion receipt (now schema version 2) carries that
+evidence as `policy.state` `observed`; it never certifies anything itself. **`-PolicyMode closed`**
+(precedence: explicit `-PolicyMode`, then `POWERSHELL_LSP_POLICY_MODE`, then `open`) certifies only
+when a usable declared policy and agreeing evidence from both parties are present, and otherwise exits
+`4` with `executionSuccessful=false` and fixed reason codes (`policy-not-declared`,
+`policy-file-missing`, `policy-unreadable`, `policy-merge-write-failed`,
+`policy-activation-unsupported`, `policy-disagreement`, `config-ambient`, ...); not-required is never
+failed (a policy with no required rules needs no merged settings). Until the declared child
+configuration lands (A3), a managed scan with ambient analysis options in its environment is refused,
+never certified around them. **A host that sets `POWERSHELL_LSP_POLICY_MODE=closed` now runs its scans
+managed** -- including `/powershell-lsp:scan` -- and such a scan without `-OrgPolicyPath` is NOT
+CERTIFIED (exit `4`; its findings are still reported); the interactive hook's unset-policy no-trigger
+is unchanged. The unmanaged scan (the default) certifies and refuses nothing and keeps every 1.x
+behavior, including the documented severity-threshold boundary; without `-OrgPolicyPath` its SARIF is
+byte-identical, with it the SARIF gains `invocations[0].properties.policy`. `doctor -Json`'s `orgPolicy`
+keeps its four keys -- `applied` is still the boolean it was and still means only that the policy parses
+and passes its integrity gate -- and gains two after them: `effectiveSha256` and `enforcement`, what the
+running daemon reports it actually applied, read from its own session record. Three corrections found
+on the way: the `RequiredRules` version guard was handed its own verified tag and could never refuse --
+it now compares the PSES version the daemon reads from the manifest it launches (the pinned bundle
+agrees, so nothing changes there); the merged settings file was one fixed name every daemon sharing a
+data root rewrote, though PSES hands that path to PSScriptAnalyzer on every pass -- it is now named by
+the SHA-256 of its text under `orgpolicy-settings/`, written atomically and verified; and a corrupt
+policy read under a caller whose `$ErrorActionPreference` was `Continue` came back as a valid EMPTY
+policy with no warning -- `Import-OrgPolicy` now parses with `-ErrorAction Stop`, so the degrade is the
+same for every caller (unchanged for the shipped entry points, which all run under `Stop`).
+`docs/configuration.md` now says what `POWERSHELL_LSP_POLICY_MODE=closed` has always done: ANY
+validation degrade of a configured policy fails an edit closed, not only the two W3-3 cases. No
+`userConfig` knob and no status token is added.
+
 MINOR: **`scripts/lsp-scan.ps1` now reports a file analyzed only on a validated completion receipt,
 and a scan can no longer reformat what it scans** (dispatch 000304, leg A2 -- fixes the F1 and the
 A2-owned F2 failures dispatch 000302 measured). Before, a scan inferred "analyzed" from what the

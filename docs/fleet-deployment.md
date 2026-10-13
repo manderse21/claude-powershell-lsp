@@ -146,6 +146,9 @@ if ($report.orgPolicy.applied) {
 } else {
     Write-Output "org policy NOT applied (sidecarMatch=$($report.orgPolicy.sidecarMatch)) -- check POWERSHELL_LSP_POLICY_MODE if this host should fail closed"
 }
+# Since dispatch 000305: applied means the policy PARSES. Compare the policy identity fleet-wide, and
+# read what a running daemon actually applied (out of a session there is usually no daemon to observe).
+Write-Output "policy identity: $($report.orgPolicy.effectiveSha256); daemon: $($report.orgPolicy.enforcement.state) $($report.orgPolicy.enforcement.reason)"
 ```
 
 **Exit codes, exactly** (unchanged by `-Json`; identical to the human-readable rendering):

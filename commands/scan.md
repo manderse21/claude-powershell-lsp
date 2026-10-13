@@ -56,7 +56,11 @@ Read the exit code and say what it means -- do not report a scan as clean withou
   clean one, so do NOT tell the user their code is clean on a `4` -- say the scan could not
   complete, name the files and the reason codes it printed (for example `parse-errors` for a file
   that does not parse, or `daemon-unreachable`), and suggest `/powershell-lsp:doctor` when the
-  reasons point at the analyzer rather than at the files.
+  reasons point at the analyzer rather than at the files. A `4` that prints **NOT CERTIFIED** is a
+  *managed* scan's refusal instead: this host sets `POWERSHELL_LSP_POLICY_MODE=closed`, so the scan
+  certifies only a declared org policy proven applied, and its reason codes (for example
+  `policy-not-declared`, `config-ambient`) say why it could not. The findings it printed are still
+  real; say that they were not certified, and name the reasons -- do not call the code clean.
 
 Then summarize the findings by rule and severity, and offer to fix them -- but do not edit files
 unless the user asks.
