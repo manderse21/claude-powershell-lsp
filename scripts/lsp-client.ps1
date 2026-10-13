@@ -108,7 +108,10 @@ function Write-CLog([string]$m) {
 # has always carried, extended to the file schema.
 $OrgPolicyKnob = [string](Get-PluginOption 'orgPolicy' '')
 $OrgPolicyWarning = ''
-$OrgPolicy = Import-OrgPolicy -Path $OrgPolicyKnob -WarningOut ([ref]$OrgPolicyWarning)
+# The fixed reason code beside the warning (dispatch 000305): read only by a scan-mode receipt's policy
+# evidence, so a managed scan can name the cause without parsing the prose.
+$OrgPolicyReason = ''
+$OrgPolicy = Import-OrgPolicy -Path $OrgPolicyKnob -WarningOut ([ref]$OrgPolicyWarning) -ReasonOut ([ref]$OrgPolicyReason)
 $OrgExcludes = @($OrgPolicy.ExcludeRules)
 $OrgSeverity = $OrgPolicy.SeverityOverrides
 # P1-5 remainder (R23=D member B, dispatch 000294): ProhibitedSuppressions drives
@@ -329,6 +332,9 @@ try {
     # therefore no receipt -- which the scanner reads as receipt-missing, never as a clean file.
     if ($null -ne (Get-Prop $payload 'powershell_lsp_scan')) {
         . (Join-Path $PSScriptRoot 'lib/lsp-scan-receipt.ps1')
+        # The effective-policy resolver (dispatch 000305, B1): scan mode records the identity of the
+        # policy this client applied and what it did with it. Loaded only here, like the receipt.
+        . (Join-Path $PSScriptRoot 'lib/lsp-policy.ps1')
         $script:ScanCtx = Get-ScanRequestContext -Payload $payload
         if ($null -ne $script:ScanCtx) {
             # Formatter-off containment, client half: a scan child never formats, whatever reached its
@@ -340,6 +346,9 @@ try {
                 File = ''; Pass = 'none'; Status = 'incomplete'; Binding = $null; Omitted = 0; ScopeApplied = $false
                 AnalysisMs = 0; ClientSource = $null; Records = @(); Detail = ''
                 Reasons = (New-Object System.Collections.Generic.List[string])
+                # What the org policy did to THIS file's findings (dispatch 000305): the receipt's policy
+                # evidence counts them, so "applied" is an observation, not an assumption.
+                PolicyDropped = 0; PolicyRestamped = 0; PolicyProhibited = 0
             }
             Write-CLog ('scan mode: request ' + $script:ScanCtx.RequestId)
         } else {
@@ -487,6 +496,7 @@ try {
             $prohibitedSuppressionFindings = @(Find-ProhibitedSuppression -Ast $parsedAst -ProhibitedRules $OrgProhibited)
             if ($null -ne $prohibitedSuppressionFindings -and $prohibitedSuppressionFindings.Count -gt 0) {
                 Write-CLog ('pre-PSSA (prohibited suppression) found ' + $prohibitedSuppressionFindings.Count + ' finding(s)')
+                if ($null -ne $script:ScanOutcome) { $script:ScanOutcome.PolicyProhibited = $prohibitedSuppressionFindings.Count }
             }
         }
     } catch {
@@ -508,11 +518,13 @@ try {
         if ($prePssaFindings.Count -ne $beforeOrg) {
             Write-CLog ('org policy dropped ' + ($beforeOrg - $prePssaFindings.Count) + ' pre-PSSA finding(s)')
         }
+        if ($null -ne $script:ScanOutcome) { $script:ScanOutcome.PolicyDropped += ($beforeOrg - $prePssaFindings.Count) }
     }
     # Org severity imposition, surface 1 of 2 (Policy v2, dispatch 000289). AFTER the drop, so a
     # rule the org both excludes and overrides is dropped rather than re-stamped -- exclusion is
     # the stronger verb and stays final. $OrgSeverity empty short-circuits.
     if ($OrgSeverity.Count -gt 0 -and $null -ne $prePssaFindings -and $prePssaFindings.Count -gt 0) {
+        if ($null -ne $script:ScanOutcome) { $script:ScanOutcome.PolicyRestamped += (Measure-PolicyOverrideHits -Records $prePssaFindings -OrgSeverity $OrgSeverity) }
         $prePssaFindings = @(Set-OrgPolicySeverity -Records $prePssaFindings -OrgSeverity $OrgSeverity)
     }
     $hasParseErrors = ($null -ne $parseErrors -and $parseErrors.Count -gt 0)
@@ -760,12 +772,14 @@ try {
         if ($diags.Count -ne $beforeOrg) {
             Write-CLog ('org policy dropped ' + ($beforeOrg - $diags.Count) + ' diagnostic(s)')
         }
+        if ($null -ne $script:ScanOutcome) { $script:ScanOutcome.PolicyDropped += ($beforeOrg - $diags.Count) }
     }
     # Org severity imposition, surface 2 of 2 (Policy v2, dispatch 000289). Same final position
     # as the drop above and immediately after it, so this one statement covers the live surface,
     # the dogfood capture and the SARIF scan exactly as the drop does -- and so no local include
     # path can put the severity back. $OrgSeverity empty short-circuits, leaving $diags untouched.
     if ($OrgSeverity.Count -gt 0 -and $diags.Count -gt 0) {
+        if ($null -ne $script:ScanOutcome) { $script:ScanOutcome.PolicyRestamped += (Measure-PolicyOverrideHits -Records $diags -OrgSeverity $OrgSeverity) }
         $diags = @(Set-OrgPolicySeverity -Records $diags -OrgSeverity $OrgSeverity)
     }
     # Closed-loop agentic correction (dispatch 000061): the daemon's additive cleared[]/
@@ -1063,11 +1077,26 @@ finally {
             $scanElapsedMs = 0
             $swVar = Get-Variable -Name 'swTotal' -Scope Script -ErrorAction SilentlyContinue
             if ($null -ne $swVar -and $null -ne $swVar.Value) { $scanElapsedMs = [int]$swVar.Value.ElapsedMilliseconds }
+            # The client's policy adjudication record (dispatch 000305, B1): the identity of the policy
+            # object this process applied -- computed from that object, not from a second read -- the
+            # mode it ran under, and what the policy did to this file's findings. A failure to build it
+            # leaves the receipt's policy 'unbound', which a managed scan refuses to certify.
+            $policyEvidence = $null
+            try {
+                $clientResolution = New-PolicyResolution -Policy $OrgPolicy -Path $OrgPolicyKnob -Source 'knob' `
+                    -Warning $OrgPolicyWarning -Reason $OrgPolicyReason
+                $policyEvidence = New-PolicyAdjudicationEvidence -Resolution $clientResolution -Path $OrgPolicyKnob `
+                    -Mode ([string]$PolicyMode) -FailClosed ([bool]$PolicyFailClosed) -Dropped ([int]$o.PolicyDropped) `
+                    -Restamped ([int]$o.PolicyRestamped) -ProhibitedFlagged ([int]$o.PolicyProhibited)
+            } catch {
+                Write-CLog ('scan policy evidence could not be built (the receipt carries none): ' + $_.Exception.Message)
+                $policyEvidence = $null
+            }
             $scanReceipt = New-ScanReceipt -RequestId ([string]$script:ScanCtx.RequestId) -File ([string]$o.File) `
                 -Pass ([string]$o.Pass) -Status ([string]$o.Status) -Binding $o.Binding -Omitted ([int]$o.Omitted) `
                 -ScopeApplied ([bool]$o.ScopeApplied) -AnalysisMs ([int]$o.AnalysisMs) -ClientSource $o.ClientSource `
                 -Records @($o.Records) -FormatMode ([string]$FormatMode) -ElapsedMs $scanElapsedMs `
-                -Reasons @($o.Reasons.ToArray()) -Detail ([string]$o.Detail)
+                -Reasons @($o.Reasons.ToArray()) -Detail ([string]$o.Detail) -PolicyEvidence $policyEvidence
             if (Write-ScanReceipt -Path ([string]$script:ScanCtx.ReceiptPath) -Receipt $scanReceipt) {
                 Write-CLog ('scan receipt written: ' + [string]$scanReceipt['completeness'] + ' (' + (@($scanReceipt['reasons']) -join ',') + ')')
             } else {

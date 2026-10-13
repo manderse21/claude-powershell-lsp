@@ -937,21 +937,28 @@ function Test-OrgPolicyIntegrity {
     # Adversarial control: return '' on a mismatch and 'a TAMPERED policy applies no exclusions'
     # goes RED; treat a malformed sidecar as absent and 'an unsatisfiable expectation degrades'
     # goes RED; drop the boundary guards and 'a 65-hex-char digest is malformed' goes RED.
-    param([string]$PolicyPath)
+    #
+    # $CodeOut (dispatch 000305, B1) receives the FIXED reason code beside the prose, set at the
+    # same site that writes the prose, so a caller that must branch on the cause (the managed scan)
+    # never string-matches this function's wording. Optional; every existing caller omits it.
+    param([string]$PolicyPath, [ref]$CodeOut)
     $sidecar = $PolicyPath + '.sha256'
     if (-not (Test-Path -LiteralPath $sidecar -PathType Leaf)) { return '' }
     $raw = ''
     try {
         $raw = [string](Get-Content -LiteralPath $sidecar -Raw -ErrorAction Stop)
     } catch {
+        if ($null -ne $CodeOut) { $CodeOut.Value = 'policy-integrity-unreadable' }
         return 'orgPolicy integrity file could not be read; no org exclusions applied: ' + $sidecar
     }
     $m = [regex]::Match($raw, '(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])')
     if (-not $m.Success) {
+        if ($null -ne $CodeOut) { $CodeOut.Value = 'policy-integrity-malformed' }
         return 'orgPolicy integrity file declares no SHA-256 digest; no org exclusions ' +
             'applied: ' + $sidecar
     }
     if (Test-PinnedFileHash -Path $PolicyPath -ExpectedSha256 $m.Value) { return '' }
+    if ($null -ne $CodeOut) { $CodeOut.Value = 'policy-integrity-mismatch' }
     return 'orgPolicy integrity check FAILED; no org exclusions applied: ' + $PolicyPath
 }
 
@@ -993,9 +1000,23 @@ function Import-OrgPolicy {
     # RED; drop the try/catch and 'an unparseable policy degrades without throwing' goes RED;
     # accept a relative path and 'a relative path is a warned degrade' goes RED; parse the
     # policy regardless of $reason and 'a TAMPERED policy applies no exclusions' goes RED.
-    param([string]$Path, [ref]$WarningOut)
+    #
+    # $ReasonOut (dispatch 000305, B1) receives a FIXED code for the same degrade the prose names --
+    # policy-path-relative, policy-file-missing, policy-integrity-unreadable / -malformed /
+    # -mismatch, policy-unreadable -- set where the prose is set, so the managed scan can state the
+    # cause without string-matching the wording above. '' whenever $WarningOut is ''. Optional.
+    #
+    # THE PARSE FAILURE NO LONGER DEPENDS ON THE CALLER (dispatch 000305, measured on pwsh 7.6.6 and
+    # Windows PowerShell 5.1.26100). Import-PowerShellDataFile reports an unparseable, empty or
+    # non-hashtable file as a NON-terminating error. Under a caller whose $ErrorActionPreference is
+    # Stop that becomes the catch below; under Continue it was printed and $data came back $null --
+    # and a corrupt policy read as a valid, EMPTY one, with no warning at all. -ErrorAction Stop makes
+    # the degrade the same for every caller; under Stop callers (every shipped entry point) nothing
+    # changes.
+    param([string]$Path, [ref]$WarningOut, [ref]$ReasonOut)
     if ([string]::IsNullOrWhiteSpace($Path)) { return (New-EmptyOrgPolicy) }
     $reason = ''
+    $code = ''
     $codes = @()
     $sev = @{}
     $req = @()
@@ -1003,19 +1024,21 @@ function Import-OrgPolicy {
     try {
         if (-not [System.IO.Path]::IsPathRooted($Path)) {
             $reason = 'orgPolicy path is not absolute; no org exclusions applied: ' + $Path
+            $code = 'policy-path-relative'
         } else {
             $full = [System.IO.Path]::GetFullPath($Path)
             if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
                 $reason = 'orgPolicy file not found; no org exclusions applied: ' + $full
+                $code = 'policy-file-missing'
             } else {
                 # Integrity gate (dispatch 000259) -- evaluated BEFORE the policy is parsed and
                 # before any exclusion is lifted, so an unverified policy never reaches the
                 # filter. With no '<policy>.sha256' beside the file this returns '' and the
                 # read below is byte-for-byte the pre-gate path; the gate is pure opt-in.
-                $reason = Test-OrgPolicyIntegrity -PolicyPath $full
+                $reason = Test-OrgPolicyIntegrity -PolicyPath $full -CodeOut ([ref]$code)
             }
             if ($reason -eq '') {
-                $data = Import-PowerShellDataFile -LiteralPath $full
+                $data = Import-PowerShellDataFile -LiteralPath $full -ErrorAction Stop
                 if ($null -ne $data -and $data.ContainsKey('ExcludeRules')) {
                     $seen = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
                     foreach ($entry in @($data['ExcludeRules'])) {
@@ -1086,12 +1109,14 @@ function Import-OrgPolicy {
         }
     } catch {
         $reason = 'orgPolicy could not be read; no org exclusions applied: ' + $_.Exception.Message
+        $code = 'policy-unreadable'
         $codes = @()
         $sev = @{}
         $req = @()
         $prohib = @()
     }
     if ($reason -ne '' -and $null -ne $WarningOut) { $WarningOut.Value = $reason }
+    if ($reason -ne '' -and $null -ne $ReasonOut) { $ReasonOut.Value = $(if ($code -ne '') { $code } else { 'policy-unreadable' }) }
     return @{ ExcludeRules = @($codes); SeverityOverrides = $sev; RequiredRules = @($req); ProhibitedSuppressions = @($prohib) }
 }
 
@@ -1321,12 +1346,21 @@ function Merge-RequiredRulesSettings {
     # 'org required beats repo-local excluded' goes RED; return the repo-local settings verbatim
     # when $RequiredRules is non-empty and 'a required rule not in the repo file is still added'
     # goes RED.
+    #
+    # $GuardOut (dispatch 000305, B1) receives what the version guard decided, as evidence a managed
+    # scan can certify on: 'pass' (the pinned default list was used and $CurrentPsesTag matched),
+    # 'refused' (it did not, and there was no repo-local IncludeRules to merge onto), 'not-needed'
+    # (a repo-local IncludeRules made the pinned list unnecessary, or nothing was required).
+    # Optional. NOTE: the guard is only as honest as $CurrentPsesTag -- its default is the verified
+    # tag itself, which always passes; the daemon passes the PSES version it observes on disk.
     param(
         [string]$ResolvedSettingsPath = '',
         [string[]]$RequiredRules = @(),
         [string[]]$OrgExcludeRules = @(),
-        [string]$CurrentPsesTag = (Get-PssaDefaultRulesVerifiedForPsesTag)
+        [string]$CurrentPsesTag = (Get-PssaDefaultRulesVerifiedForPsesTag),
+        [ref]$GuardOut
     )
+    if ($null -ne $GuardOut) { $GuardOut.Value = 'not-needed' }
     $required = @($RequiredRules | Where-Object { $_ })
     if ($required.Count -eq 0) { return $null }
 
@@ -1350,8 +1384,10 @@ function Merge-RequiredRulesSettings {
         # to "do not merge" -- the caller logs ONE warning and requiredRules is not enforced this
         # session, exactly the fail-open-but-never-silent shape every other org-policy degrade in
         # this file already uses.
+        if ($null -ne $GuardOut) { $GuardOut.Value = 'refused' }
         return $null
     }
+    if ($null -ne $GuardOut) { $GuardOut.Value = $(if ($hasRepoInclude) { 'not-needed' } else { 'pass' }) }
 
     $include = New-Object System.Collections.ArrayList
     $seenInclude = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
@@ -1398,6 +1434,31 @@ function Merge-RequiredRulesSettings {
     return $merged
 }
 
+function ConvertTo-MergedPssaSettingsText {
+    # The exact .psd1 text Write-MergedPssaSettingsFile writes, as a PURE function (dispatch 000305,
+    # B1): the same settings always render the same text -- fixed key order, LF line ends, and
+    # nested tables in sorted key order (ConvertTo-Psd1Literal) -- so its SHA-256 can name the file
+    # and identify, as evidence, the settings PSES was handed.
+    param([hashtable]$Settings)
+    if ($null -eq $Settings) { return '' }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('# GENERATED by Write-MergedPssaSettingsFile (dispatch 000294). DO NOT EDIT.').Append("`n")
+    [void]$sb.Append('@{').Append("`n")
+    foreach ($key in @('IncludeRules', 'ExcludeRules', 'Severities', 'CustomRulePath', 'RecurseCustomRulePath', 'IncludeDefaultRules', 'RuleArguments', 'FilePath')) {
+        if (-not $Settings.ContainsKey($key)) { continue }
+        [void]$sb.Append('    ' + $key + ' = ' + (ConvertTo-Psd1Literal $Settings[$key])).Append("`n")
+    }
+    [void]$sb.Append('}').Append("`n")
+    return $sb.ToString()
+}
+
+function Get-MergedPssaSettingsDir {
+    # Where merged settings files live (dispatch 000305): their own directory under the data root,
+    # so the file a daemon hands PSES is never one another daemon rewrites (see below).
+    param([string]$DataRoot)
+    return (Join-Path $DataRoot 'orgpolicy-settings')
+}
+
 function Write-MergedPssaSettingsFile {
     # I/O half of the requiredRules merge: serialize $Settings (Merge-RequiredRulesSettings's
     # return value) as a .psd1 under $DataRoot and return its absolute path, or '' on any
@@ -1405,23 +1466,43 @@ function Write-MergedPssaSettingsFile {
     # would for a $null merge result). NEVER writes into the repo-local settings file itself:
     # this is always a NEW file under the plugin's own per-session data root, so a live edit can
     # never corrupt a file the user or the repo owns.
+    #
+    # CONTENT-ADDRESSED AND VERIFIED (dispatch 000305, B1). The file used to be one fixed name in the
+    # data root, which every daemon sharing that root rewrote -- and PSES hands the settings PATH to
+    # PSScriptAnalyzer on every analysis, so a second daemon with a different policy (a scan run
+    # beside an interactive session, say) silently changed what the first one enforced. The name now
+    # carries the SHA-256 of the exact text, so two different settings can never share a file and
+    # the same settings always do; the text is written to a temp file and renamed into place, and
+    # the file is read back and re-hashed before its path is returned. A path is therefore returned
+    # only when the bytes on disk are the bytes this call meant to write -- which is what lets the
+    # daemon report a successful merged-settings write as evidence rather than as a hope.
     param([hashtable]$Settings, [string]$DataRoot)
     if ($null -eq $Settings -or [string]::IsNullOrWhiteSpace($DataRoot)) { return '' }
+    $tmp = ''
     try {
-        New-ContainedDirectory -Path $DataRoot
-        $path = Join-Path $DataRoot 'orgpolicy-merged-settings.psd1'
-        $sb = New-Object System.Text.StringBuilder
-        [void]$sb.AppendLine('# GENERATED by Write-MergedPssaSettingsFile (dispatch 000294). DO NOT EDIT.')
-        [void]$sb.AppendLine('@{')
-        foreach ($key in @('IncludeRules', 'ExcludeRules', 'Severities', 'CustomRulePath', 'RecurseCustomRulePath', 'IncludeDefaultRules', 'RuleArguments', 'FilePath')) {
-            if (-not $Settings.ContainsKey($key)) { continue }
-            $val = $Settings[$key]
-            [void]$sb.AppendLine('    ' + $key + ' = ' + (ConvertTo-Psd1Literal $val))
+        $dir = Get-MergedPssaSettingsDir -DataRoot $DataRoot
+        New-ContainedDirectory -Path $dir
+        $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes((ConvertTo-MergedPssaSettingsText -Settings $Settings))
+        $sha = Get-Sha256HexFromBytes -Bytes $bytes
+        $path = Join-Path $dir ('merged-settings-' + $sha.Substring(0, 16) + '.psd1')
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            # Already written by this or another daemon -- identical text, so identical name.
+            if ((Get-Sha256HexFromBytes -Bytes ([System.IO.File]::ReadAllBytes($path))) -ceq $sha) { return $path }
+            [System.IO.File]::Delete($path)
         }
-        [void]$sb.AppendLine('}')
-        [System.IO.File]::WriteAllText($path, $sb.ToString(), (New-Object System.Text.UTF8Encoding($false)))
+        $tmp = $path + '.' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.tmp'
+        [System.IO.File]::WriteAllBytes($tmp, $bytes)
+        [System.IO.File]::Move($tmp, $path)
+        $tmp = ''
+        if ((Get-Sha256HexFromBytes -Bytes ([System.IO.File]::ReadAllBytes($path))) -cne $sha) { return '' }
         return $path
-    } catch { return '' }
+    } catch {
+        return ''
+    } finally {
+        if (-not [string]::IsNullOrWhiteSpace($tmp)) {
+            try { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } } catch { }
+        }
+    }
 }
 
 function ConvertTo-Psd1Literal {
@@ -1429,6 +1510,8 @@ function ConvertTo-Psd1Literal {
     # settings hashtable carries: string, bool, int, an array of strings, or a nested hashtable
     # (RuleArguments). Not a general-purpose serializer -- an unrecognized shape renders as
     # $null with a comment marker rather than a guess that could silently change meaning.
+    # A nested table renders in SORTED key order (dispatch 000305): a [hashtable]'s own order is
+    # not stable across processes, and the merged-settings file is named by its text's SHA-256.
     param($Value)
     if ($null -eq $Value) { return '$null' }
     if ($Value -is [bool]) { return $(if ($Value) { '$true' } else { '$false' }) }
@@ -1436,8 +1519,10 @@ function ConvertTo-Psd1Literal {
     if ($Value -is [string]) { return "'" + $Value.Replace("'", "''") + "'" }
     if ($Value -is [System.Collections.IDictionary]) {
         $parts = New-Object System.Collections.ArrayList
-        foreach ($k in @($Value.Keys)) {
-            [void]$parts.Add('        ' + [string]$k + ' = ' + (ConvertTo-Psd1Literal $Value[$k]))
+        $keys = @(@($Value.Keys) | ForEach-Object { [string]$_ })
+        [System.Array]::Sort($keys, [System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($k in $keys) {
+            [void]$parts.Add('        ' + $k + ' = ' + (ConvertTo-Psd1Literal $Value[$k]))
         }
         return "@{`n" + ($parts -join "`n") + "`n    }"
     }

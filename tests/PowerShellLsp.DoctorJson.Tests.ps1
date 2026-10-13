@@ -737,13 +737,18 @@ Describe 'orgPolicy -- policy identity in the doctor envelope (dispatch 000299, 
         $o.orgPolicy.applied | Should -Be $false
     }
 
-    It 'publishes FOUR keys and no others' {
+    It 'publishes the FOUR 000299 keys first and unchanged, then exactly the two 000305 additions' {
+        # Dispatch 000305 (B1) added effectiveSha256 and enforcement AFTER the four keys this
+        # Describe pins; the four keep their names, their order and (the other Its here) their
+        # meaning. A consumer that reads the four by name is unaffected.
         $dir = New-OpFixtureDir
         $policy = Join-Path $dir 'org.psd1'
         Set-Content -LiteralPath $policy -Encoding ascii -Value '@{ ExcludeRules = @() }'
         $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $policy
         $o = (Get-EnvelopeText) | ConvertFrom-Json
-        (@($o.orgPolicy.PSObject.Properties.Name) -join ',') | Should -BeExactly 'path,sha256,sidecarMatch,applied'
+        $names = @($o.orgPolicy.PSObject.Properties.Name)
+        (@($names[0..3]) -join ',') | Should -BeExactly 'path,sha256,sidecarMatch,applied'
+        ($names -join ',') | Should -BeExactly 'path,sha256,sidecarMatch,applied,effectiveSha256,enforcement'
     }
 
     It 'RED CONTROL: a naive byte-equality sidecar check misreads the sha256sum shape as a mismatch' {
@@ -801,5 +806,126 @@ Describe 'orgPolicy -- policy identity in the doctor envelope (dispatch 000299, 
         $o.schemaVersion | Should -Be 1
         (@($o.PSObject.Properties.Name) -join ',') |
             Should -BeExactly 'schemaVersion,status,versions,provenanceFloor,captureMode,otelExport,orgPolicy,summary,checks'
+    }
+}
+
+Describe 'orgPolicy -- parsing kept apart from enforcement in the doctor envelope (dispatch 000305, B1)' {
+    # applied keeps its type and its LIMITED meaning: the configured policy parses and passes its
+    # integrity gate -- nothing more. effectiveSha256 names the policy as parsed (the canonical
+    # identity, scripts/lib/lsp-policy.ps1), and enforcement says what a RUNNING daemon reports it
+    # applied, read from the daemon's own session record. The observations below are the shape
+    # Get-DoctorDaemonObservation returns, with the daemon's record parsed from JSON exactly as it is
+    # read from a session file.
+    BeforeAll {
+        function New-OpbFixturePolicy([string]$Text) {
+            $d = Join-Path $TestDrive ('opb-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+            $p = Join-Path $d 'org.psd1'
+            Set-Content -LiteralPath $p -Encoding ascii -Value $Text
+            return $p
+        }
+        function New-OpbDaemonRecord([string]$EffectiveSha256, [string]$State = 'activated') {
+            $ev = New-PolicyApplicationEvidence -RequiredState $State -RequiredCount 1 -GuardVerifiedFor 'v4.6.0' `
+                -GuardObserved 'v4.6.0' -GuardResult 'pass' -SettingsPath 'C:\x.psd1' -SettingsSource 'merged' -SettingsSha256 ('a' * 64) -Delivered $true
+            $ev.resolution = [ordered]@{ path = 'p'; configured = $true; usable = $true; reason = ''; effectiveSha256 = $EffectiveSha256 }
+            return (($ev | ConvertTo-Json -Depth 6) | ConvertFrom-Json)
+        }
+    }
+    AfterEach {
+        Remove-Item Env:\CLAUDE_PLUGIN_OPTION_ORGPOLICY -ErrorAction SilentlyContinue
+    }
+
+    It 'the four 000299 keys keep their TYPES: three strings and a boolean' {
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = (New-OpbFixturePolicy "@{ ExcludeRules = @('PSUseApprovedVerbs') }")
+        $o = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd'))) | ConvertFrom-Json
+        $o.orgPolicy.path | Should -BeOfType [string]
+        $o.orgPolicy.sha256 | Should -BeOfType [string]
+        $o.orgPolicy.sidecarMatch | Should -BeOfType [string]
+        $o.orgPolicy.applied | Should -BeOfType [bool]
+        $o.orgPolicy.applied | Should -BeTrue
+    }
+
+    It 'applied keeps its limited meaning: a policy that PARSES reads applied=true even with no daemon to enforce it' {
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = (New-OpbFixturePolicy "@{ RequiredRules = @('PSAvoidGlobalVars') }")
+        $info = Get-OrgPolicyEnforcementReportInfo -DaemonObservation $null
+        $info.applied | Should -BeTrue -Because 'applied means the policy parses and passes its gate -- not that anything enforced it'
+        $info.enforcement.state | Should -BeExactly 'not-observed'
+        $info.enforcement.reason | Should -BeExactly 'no-daemon'
+        $info.enforcement.matchesParsed | Should -BeNullOrEmpty
+    }
+
+    It 'effectiveSha256 is the canonical identity of the parsed policy, and equal policies give equal values' {
+        $a = New-OpbFixturePolicy "@{ ExcludeRules = @('PSUseApprovedVerbs', 'PSAvoidUsingWriteHost'); RequiredRules = @('PSAvoidGlobalVars') }"
+        $b = New-OpbFixturePolicy "# reordered, re-cased, a duplicate`n@{ RequiredRules = @('psavoidglobalvars'); ExcludeRules = @('PSAvoidUsingWriteHost', 'psuseapprovedverbs', 'PSUseApprovedVerbs') }"
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $a
+        $ia = Get-OrgPolicyEnforcementReportInfo
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $b
+        $ib = Get-OrgPolicyEnforcementReportInfo
+        $ia.effectiveSha256 | Should -Match '^[0-9a-f]{64}$'
+        $ia.effectiveSha256 | Should -BeExactly ([string](Resolve-EffectivePolicy -Path $a).identity.sha256)
+        $ib.effectiveSha256 | Should -BeExactly $ia.effectiveSha256
+        $ib.sha256 | Should -Not -BeExactly $ia.sha256 -Because 'the FILE identity differs; only the effective identity is equal'
+    }
+
+    It 'a policy that does not parse has applied=false and NO effective identity' {
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = (New-OpbFixturePolicy '@{ ExcludeRules = @( not data')
+        $info = Get-OrgPolicyEnforcementReportInfo
+        $info.applied | Should -BeFalse
+        $info.effectiveSha256 | Should -BeExactly ''
+    }
+
+    It 'enforcement reads the RUNNING daemon''s own record: observed, matching the parsed identity, with its RequiredRules state' {
+        $p = New-OpbFixturePolicy "@{ RequiredRules = @('PSAvoidGlobalVars') }"
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $p
+        $sha = [string](Resolve-EffectivePolicy -Path $p).identity.sha256
+        $obs = @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; Policy = (New-OpbDaemonRecord -EffectiveSha256 $sha) }
+        $info = Get-OrgPolicyEnforcementReportInfo -DaemonObservation $obs
+        $info.enforcement.state | Should -BeExactly 'observed'
+        $info.enforcement.daemonEffectiveSha256 | Should -BeExactly $sha
+        $info.enforcement.matchesParsed | Should -BeTrue
+        $info.enforcement.requiredRules | Should -BeExactly 'activated'
+        $info.enforcement.settingsSha256 | Should -BeExactly ('a' * 64)
+    }
+
+    It 'a daemon that applied a DIFFERENT policy is reported as not matching -- parsing is not enforcement' {
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = (New-OpbFixturePolicy "@{ RequiredRules = @('PSAvoidGlobalVars') }")
+        $obs = @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; Policy = (New-OpbDaemonRecord -EffectiveSha256 ('b' * 64)) }
+        $info = Get-OrgPolicyEnforcementReportInfo -DaemonObservation $obs
+        $info.applied | Should -BeTrue
+        $info.enforcement.state | Should -BeExactly 'observed'
+        $info.enforcement.matchesParsed | Should -BeFalse
+    }
+
+    It 'enforcement is honest when nothing can be observed: <Name> -> <State> (<Reason>)' -TestCases @(
+        @{ Name = 'several daemons'; Obs = @{ DataRootKnown = $true; Determinable = $false; DaemonPresent = $true; Policy = $null }; State = 'not-observed'; Reason = 'several-daemons' }
+        @{ Name = 'no live daemon'; Obs = @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $false; Policy = $null }; State = 'not-observed'; Reason = 'no-daemon' }
+        @{ Name = 'data root unknown'; Obs = @{ DataRootKnown = $false; Determinable = $false; DaemonPresent = $false }; State = 'not-observed'; Reason = 'data-root-unknown' }
+        @{ Name = 'an older daemon record'; Obs = @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; Policy = $null }; State = 'unknown'; Reason = 'no-policy-record' }
+    ) {
+        param($Name, $Obs, $State, $Reason)
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = (New-OpbFixturePolicy "@{ ExcludeRules = @('PSUseApprovedVerbs') }")
+        $info = Get-OrgPolicyEnforcementReportInfo -DaemonObservation $Obs
+        $info.enforcement.state | Should -BeExactly $State
+        $info.enforcement.reason | Should -BeExactly $Reason
+    }
+
+    It 'with no policy configured, enforcement says not-configured and the four keys are the no-policy values' {
+        Remove-Item Env:\CLAUDE_PLUGIN_OPTION_ORGPOLICY -ErrorAction SilentlyContinue
+        $info = Get-OrgPolicyEnforcementReportInfo -DaemonObservation @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; Policy = $null }
+        $info.path | Should -BeExactly ''
+        $info.applied | Should -BeFalse
+        $info.effectiveSha256 | Should -BeExactly ''
+        $info.enforcement.state | Should -BeExactly 'not-configured'
+    }
+
+    It 'Format-DoctorJson passes the daemon observation through to orgPolicy.enforcement' {
+        $p = New-OpbFixturePolicy "@{ RequiredRules = @('PSAvoidGlobalVars') }"
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $p
+        $sha = [string](Resolve-EffectivePolicy -Path $p).identity.sha256
+        $obs = @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; Policy = (New-OpbDaemonRecord -EffectiveSha256 $sha) }
+        $o = (Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd')) -DaemonObservation $obs) | ConvertFrom-Json
+        $o.orgPolicy.enforcement.state | Should -BeExactly 'observed'
+        $o.orgPolicy.enforcement.matchesParsed | Should -BeTrue
+        $o.orgPolicy.effectiveSha256 | Should -BeExactly $sha
     }
 }

@@ -120,6 +120,9 @@ function New-SvFakeScriptsDir {
     #   <Root>/scripts/lib/lsp-scan-receipt.ps1 <- the REAL receipt library (dispatch 000304): a fake
     #                                        that emits a completion receipt does it by CALLING the
     #                                        production producer, never by spelling a row by hand.
+    #   <Root>/scripts/lib/lsp-policy.ps1  <- the REAL policy library (dispatch 000305): a fake that
+    #                                        records policy evidence builds it with the production
+    #                                        builders, and the real client loads it in scan mode.
     # Returns the scripts directory. -ClientFixture '' leaves lsp-client.ps1 ABSENT on purpose
     # (the missing-client case).
     param([Parameter(Mandatory = $true)][string]$Root, [string]$ClientFixture = '')
@@ -128,6 +131,7 @@ function New-SvFakeScriptsDir {
     $repo = Get-SvRepoRoot
     Copy-Item -LiteralPath (Join-Path $repo 'scripts/lib/lsp-common.ps1') -Destination (Join-Path $scripts 'lib/lsp-common.ps1') -Force
     Copy-Item -LiteralPath (Join-Path $repo 'scripts/lib/lsp-scan-receipt.ps1') -Destination (Join-Path $scripts 'lib/lsp-scan-receipt.ps1') -Force
+    Copy-Item -LiteralPath (Join-Path $repo 'scripts/lib/lsp-policy.ps1') -Destination (Join-Path $scripts 'lib/lsp-policy.ps1') -Force
     Copy-Item -LiteralPath (Get-SvFixturePath 'fake-session-start.ps1') -Destination (Join-Path $scripts 'session-start.ps1') -Force
     Copy-Item -LiteralPath (Get-SvFixturePath 'fake-session-end.ps1') -Destination (Join-Path $scripts 'session-end.ps1') -Force
     if (-not [string]::IsNullOrWhiteSpace($ClientFixture)) {
@@ -140,7 +144,8 @@ function New-SvCliTree {
     # A RELOCATED COPY of the scan CLI with fake hooks beside it:
     #   <Root>/scripts/lsp-scan.ps1, <Root>/scripts/lib/lsp-common.ps1,
     #   <Root>/scripts/lib/lsp-scan-common.ps1, <Root>/scripts/lib/lsp-scan-receipt.ps1 (dispatch
-    #   000304) and <Root>/.claude-plugin/plugin.json are BYTE COPIES of the shipped files -- each
+    #   000304), <Root>/scripts/lib/lsp-policy.ps1 (dispatch 000305) and
+    #   <Root>/.claude-plugin/plugin.json are BYTE COPIES of the shipped files -- each
     #   one's SHA-256 is compared with its source and the build throws on any difference, so the code
     #   under test is provably the shipped code;
     #   session-start.ps1 / session-end.ps1 / lsp-client.ps1 are the fakes (New-SvFakeScriptsDir).
@@ -167,6 +172,7 @@ function New-SvCliTree {
         @{ Rel = 'scripts/lib/lsp-common.ps1' }
         @{ Rel = 'scripts/lib/lsp-scan-common.ps1' }
         @{ Rel = 'scripts/lib/lsp-scan-receipt.ps1' }
+        @{ Rel = 'scripts/lib/lsp-policy.ps1' }
         @{ Rel = '.claude-plugin/plugin.json' }
     )
     if ($RealClient) { $pairs += @{ Rel = 'scripts/lsp-client.ps1' } }

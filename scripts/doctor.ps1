@@ -89,6 +89,9 @@ param(
 # Get-LifecycleProvenanceFloor, the single source the efficacy ledger renders its own floor from.
 # Loaded AFTER lsp-common.ps1, which it depends on.
 . (Join-Path $PSScriptRoot 'lib/lifecycle-provenance.ps1')
+# The effective-policy resolver (dispatch 000305, B1): -Json's orgPolicy gains the policy identity and
+# what the running daemon reports it applied (Get-OrgPolicyEnforcementReportInfo). After lsp-common.ps1.
+. (Join-Path $PSScriptRoot 'lib/lsp-policy.ps1')
 
 # The native-serve removability probe's init-result wait bound (dispatch 000104, OQ2). Measured:
 # the direct launcher's initialize RESULT arrives ~1.9 s (warm, this repo's Windows dev host); the
@@ -1307,20 +1310,24 @@ function Get-DoctorDaemonObservation {
         # DaemonVersion (DX finding O2): the version the RUNNING daemon stamped into its own
         # record. '' when the record carries no such field -- which is exactly what a daemon
         # older than the field looks like, and is reported as unknown, never as a mismatch.
+        # Policy (dispatch 000305, B1): the daemon's OWN record of what it did with its org policy, read
+        # from the same handle -- $null when the record carries none (an older daemon), reported as
+        # unknown, never as a disagreement.
         $live += [pscustomobject]@{
             Pipe = $pipe
             State = [string](Get-Prop $obj 'state')
             DaemonVersion = [string](Get-Prop $obj 'pluginVersion')
+            Policy = (Get-Prop $obj 'policy')
         }
     }
 
     if ($live.Count -eq 0) {
         # No live daemon in scope -> the benign 000030 absent-but-relaunchable case.
-        return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $false; State = ''; Reachable = $null; LiveCount = 0; Pipe = ''; DaemonVersion = '' }
+        return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $false; State = ''; Reachable = $null; LiveCount = 0; Pipe = ''; DaemonVersion = ''; Policy = $null }
     }
     if (-not $scoped -and $live.Count -gt 1) {
         # Several live daemons and no session id to pick THIS session's -> honest UNKNOWN.
-        return @{ DataRootKnown = $true; Determinable = $false; DaemonPresent = $true; State = ''; Reachable = $null; LiveCount = $live.Count; Pipe = ''; DaemonVersion = '' }
+        return @{ DataRootKnown = $true; Determinable = $false; DaemonPresent = $true; State = ''; Reachable = $null; LiveCount = $live.Count; Pipe = ''; DaemonVersion = ''; Policy = $null }
     }
     $d = $live[0]
     $reachable = Test-DoctorDaemonPingProbe -PipeName $d.Pipe
@@ -1328,7 +1335,7 @@ function Get-DoctorDaemonObservation {
     # check just identified, instead of re-discovering and possibly disagreeing with it. The
     # daemon's own version rides along for the same reason: the reconciliation below must describe
     # the daemon THIS resolution identified, never one re-discovered separately.
-    return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; State = $d.State; Reachable = $reachable; LiveCount = 1; Pipe = $d.Pipe; DaemonVersion = $d.DaemonVersion }
+    return @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; State = $d.State; Reachable = $reachable; LiveCount = 1; Pipe = $d.Pipe; DaemonVersion = $d.DaemonVersion; Policy = $d.Policy }
 }
 
 function Get-DoctorVersionLine {
@@ -2331,8 +2338,17 @@ function Format-DoctorJson {
     #
     # The seam shape matches $Version / $Provenance in the two human renderings: parameters with
     # inert defaults, so an out-of-band render still produces honest output rather than throwing.
+    #
+    # orgPolicy SINCE DISPATCH 000305 (B1) is Get-OrgPolicyEnforcementReportInfo (lib/lsp-policy.ps1):
+    # the same four keys, first and unchanged -- applied keeps its boolean type and its limited meaning,
+    # "the configured policy parses and passes its integrity gate" -- then effectiveSha256 (the policy
+    # identity as parsed) and enforcement (what the running daemon reports it APPLIED, read from its
+    # own session record via $DaemonObservation). Additive, so schemaVersion does not move.
+    # $DaemonObservation is Get-DoctorDaemonObservation's result; $null renders enforcement honestly
+    # as not observed.
     param([object[]] $Results, [string] $Version = '', [string] $Provenance = '',
-        [string] $PwshVersion = '', [string] $PsesPin = '', [string] $PssaPin = '')
+        [string] $PwshVersion = '', [string] $PsesPin = '', [string] $PssaPin = '',
+        $DaemonObservation = $null)
     if ([string]::IsNullOrWhiteSpace($Version)) { $Version = [string](Get-PluginVersion) }
     if ([string]::IsNullOrWhiteSpace($Provenance)) { $Provenance = Get-DoctorProvenanceHeader }
     $all = @($Results)
@@ -2357,7 +2373,7 @@ function Format-DoctorJson {
         provenanceFloor = $Provenance
         captureMode     = (Get-DiagnosticCaptureModeInfo)
         otelExport      = (Get-OtelEndpointReportInfo)
-        orgPolicy       = (Get-OrgPolicyReportInfo)
+        orgPolicy       = (Get-OrgPolicyEnforcementReportInfo -DaemonObservation $DaemonObservation)
         summary         = [ordered]@{
             pass    = @($all | Where-Object { $_.Status -eq 'pass' }).Count
             fail    = @($all | Where-Object { $_.Status -eq 'fail' }).Count
@@ -2407,7 +2423,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         # information stream, where an in-process caller piping the script into ConvertFrom-Json
         # would receive nothing. Under "pwsh -File" both reach stdout, so this costs the shipped
         # command surfaces nothing and buys the machine case correctness.
-        Write-Output (Format-DoctorJson -Results $doctorResults -PwshVersion $pwshV -PsesPin $psesV -PssaPin $pssaV)
+        Write-Output (Format-DoctorJson -Results $doctorResults -PwshVersion $pwshV -PsesPin $psesV -PssaPin $pssaV -DaemonObservation $dObs)
     } elseif ($Summary) {
         Write-Host (Format-DoctorSummary -Results $doctorResults -DaemonVersion $dVer -DaemonPresent $dPresent)
     } else {
