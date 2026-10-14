@@ -127,8 +127,11 @@ The envelope:
   `enforcement` is what a RUNNING daemon reports it applied, from its own session record -- `state`
   `observed` with `daemonEffectiveSha256`, `matchesParsed`, its `requiredRules` state and the
   `settingsSha256` of the file it handed PSES; or `not-observed` with a `reason` (`no-daemon`,
-  `several-daemons`, `data-root-unknown`); or `unknown` (`no-policy-record`, an older daemon); or
-  `not-configured`.
+  `several-daemons`, `data-root-unknown`, or `pending`); or `unknown` (`no-policy-record`, an older
+  daemon); or `not-configured`. **`pending` means not yet applied, never a mismatch:** a daemon writes
+  its record from startup and keeps it `pending` until it analyzes its first PowerShell file, so in a
+  fresh session, before any `.ps1` edit, it has applied nothing yet -- `matchesParsed` is `null` there,
+  and the next `doctor -Json` after an edit reads `observed`.
 
 ### Adding to this envelope -- the schemaVersion policy
 

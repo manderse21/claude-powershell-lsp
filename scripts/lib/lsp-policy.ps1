@@ -786,9 +786,15 @@ function Get-OrgPolicyEnforcementReportInfo {
     #                    '' unless it is usable -- equal effective policies give equal values;
     #   enforcement      what a RUNNING daemon reports it applied, from the record it writes itself:
     #                    state = not-configured | not-observed | observed | unknown; a reason when not
-    #                    observed (no-daemon | several-daemons | data-root-unknown | no-policy-record);
-    #                    and when observed, the daemon's own identity, whether it matches the parsed
-    #                    one, its RequiredRules state and the SHA-256 of the settings file it handed PSES.
+    #                    observed (no-daemon | several-daemons | data-root-unknown | pending) or unknown
+    #                    (no-policy-record); and when observed, the daemon's own identity, whether it
+    #                    matches the parsed one, its RequiredRules state and the SHA-256 of the
+    #                    settings file it handed PSES.
+    # PENDING IS NOT YET APPLIED (review finding B1-I02). Every daemon writes its record from startup,
+    # and it stays 'pending' -- with no resolution -- until the daemon analyzes its first PowerShell
+    # file (pses-daemon.ps1). Such a daemon has applied nothing yet, so it reads not-observed with
+    # reason pending and matchesParsed $null, never as a mismatch; the managed verdict reads the same
+    # record as missing evidence (Test-ScanPolicyCertification), not as a disagreement.
     # $DaemonObservation is Get-DoctorDaemonObservation's result ($null = not resolved).
     param($DaemonObservation = $null)
     $info = Get-OrgPolicyReportInfo
@@ -814,12 +820,17 @@ function Get-OrgPolicyEnforcementReportInfo {
                 $enf.reason = 'no-policy-record'
             } else {
                 $rr = Get-PolicyField -Object $dp -Name 'requiredRules'
-                $dSha = [string](Get-PolicyField -Object (Get-PolicyField -Object $dp -Name 'resolution') -Name 'effectiveSha256')
-                $enf.state = 'observed'
-                $enf.daemonEffectiveSha256 = $dSha
-                $enf.matchesParsed = ($dSha -ne '' -and $dSha -ceq $parsedSha)
-                $enf.requiredRules = [string](Get-PolicyField -Object $rr -Name 'state')
-                $enf.settingsSha256 = [string](Get-PolicyField -Object (Get-PolicyField -Object $dp -Name 'settings') -Name 'sha256')
+                $rrState = [string](Get-PolicyField -Object $rr -Name 'state')
+                if ($rrState -eq 'pending') {
+                    $enf.reason = 'pending'   # the startup record: nothing applied yet (state stays not-observed)
+                } else {
+                    $dSha = [string](Get-PolicyField -Object (Get-PolicyField -Object $dp -Name 'resolution') -Name 'effectiveSha256')
+                    $enf.state = 'observed'
+                    $enf.daemonEffectiveSha256 = $dSha
+                    $enf.matchesParsed = ($dSha -ne '' -and $dSha -ceq $parsedSha)
+                    $enf.requiredRules = $rrState
+                    $enf.settingsSha256 = [string](Get-PolicyField -Object (Get-PolicyField -Object $dp -Name 'settings') -Name 'sha256')
+                }
             }
         }
     }

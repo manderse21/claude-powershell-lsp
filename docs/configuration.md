@@ -1112,7 +1112,9 @@ PARSES and passes its integrity gate, nothing more. Since dispatch 000305 two mo
 actually enforced: `effectiveSha256` (the policy identity as parsed) and `enforcement`, read from the
 running daemon's own record -- `observed` with the identity the daemon applied, whether it
 `matchesParsed`, and its `RequiredRules` state (`activated`, `not-required`, `activation-unsupported`,
-`merge-write-failed`, ...), or `not-observed` with the reason (`no-daemon`, `several-daemons`).
+`merge-write-failed`, ...), or `not-observed` with the reason (`no-daemon`, `several-daemons`, or
+`pending` -- a daemon that has not analyzed a PowerShell file yet and so has applied nothing; not a
+mismatch).
 
 ---
 

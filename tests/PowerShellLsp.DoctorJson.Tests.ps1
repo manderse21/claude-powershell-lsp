@@ -830,6 +830,21 @@ Describe 'orgPolicy -- parsing kept apart from enforcement in the doctor envelop
             $ev.resolution = [ordered]@{ path = 'p'; configured = $true; usable = $true; reason = ''; effectiveSha256 = $EffectiveSha256 }
             return (($ev | ConvertTo-Json -Depth 6) | ConvertFrom-Json)
         }
+        function New-OpbStartupRecord([string]$OrgPolicyPath) {
+            # The record a daemon writes from STARTUP, built by pses-daemon.ps1's OWN statement: its one
+            # top-level '$script:policyApplication = ...' assignment, lifted from the source by AST and
+            # evaluated with $OrgPolicyPath as the daemon's parameter -- then carried through the session file
+            # as Write-SessionFile writes it (ConvertTo-Json -Depth 5) and Get-DoctorDaemonObservation reads
+            # it (ConvertFrom-Json).
+            $errs = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:ScriptsDir 'pses-daemon.ps1'), [ref]$null, [ref]$errs)
+            $top = @($ast.EndBlock.Statements | Where-Object {
+                    $_ -is [System.Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -eq '$script:policyApplication' })
+            if ($top.Count -ne 1) { throw ('pses-daemon.ps1 must build ONE top-level startup record; found ' + $top.Count) }
+            $build = [scriptblock]::Create('param($OrgPolicyPath) ' + $top[0].Right.Extent.Text)
+            $session = [ordered]@{ sessionId = 'opb'; pid = $PID; state = 'ready'; policy = (& $build $OrgPolicyPath) }
+            return ((($session | ConvertTo-Json -Depth 5) | ConvertFrom-Json).policy)
+        }
     }
     AfterEach {
         Remove-Item Env:\CLAUDE_PLUGIN_OPTION_ORGPOLICY -ErrorAction SilentlyContinue
@@ -894,6 +909,39 @@ Describe 'orgPolicy -- parsing kept apart from enforcement in the doctor envelop
         $info.applied | Should -BeTrue
         $info.enforcement.state | Should -BeExactly 'observed'
         $info.enforcement.matchesParsed | Should -BeFalse
+    }
+
+    It 'a daemon still holding its STARTUP record reads NOT YET APPLIED -- not-observed (pending), never a mismatch (review finding B1-I02)' {
+        $p = New-OpbFixturePolicy "@{ RequiredRules = @('PSAvoidGlobalVars') }"
+        $env:CLAUDE_PLUGIN_OPTION_ORGPOLICY = $p
+        $rec = New-OpbStartupRecord -OrgPolicyPath $p
+        # CONTROL: this is the daemon's pending record, carrying no identity, beside a policy that parses --
+        # exactly the inputs on which doctor reported observed with matchesParsed=false (a false mismatch in
+        # every fresh session, before the first PowerShell file is analyzed).
+        [string]$rec.requiredRules.state | Should -BeExactly 'pending'
+        [string]$rec.resolution.effectiveSha256 | Should -BeExactly ''
+        $obs = @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; Policy = $rec }
+        $info = Get-OrgPolicyEnforcementReportInfo -DaemonObservation $obs
+        $info.applied | Should -BeTrue
+        $info.effectiveSha256 | Should -Match '^[0-9a-f]{64}$'
+        $info.enforcement.state | Should -BeExactly 'not-observed'
+        $info.enforcement.reason | Should -BeExactly 'pending'
+        $info.enforcement.matchesParsed | Should -BeNullOrEmpty
+        $info.enforcement.daemonEffectiveSha256 | Should -BeExactly ''
+        $info.enforcement.requiredRules | Should -BeExactly ''
+        # In the envelope, matchesParsed is a JSON null.
+        $json = Format-DoctorJson -Results @((New-DoctorResult -Status 'pass' -Component 'c' -Detail 'd')) -DaemonObservation $obs
+        $o = $json | ConvertFrom-Json
+        $o.orgPolicy.enforcement.state | Should -BeExactly 'not-observed'
+        $o.orgPolicy.enforcement.reason | Should -BeExactly 'pending'
+        $json | Should -Match '"matchesParsed":\s*null'
+        # The contrast: the same statement for a daemon launched with NO policy has already resolved
+        # (not-configured), so beside a configured policy it IS a mismatch -- only pending is spared.
+        $none = New-OpbStartupRecord -OrgPolicyPath ''
+        [string]$none.requiredRules.state | Should -BeExactly 'not-configured'
+        $info2 = Get-OrgPolicyEnforcementReportInfo -DaemonObservation @{ DataRootKnown = $true; Determinable = $true; DaemonPresent = $true; Policy = $none }
+        $info2.enforcement.state | Should -BeExactly 'observed'
+        $info2.enforcement.matchesParsed | Should -BeFalse
     }
 
     It 'enforcement is honest when nothing can be observed: <Name> -> <State> (<Reason>)' -TestCases @(

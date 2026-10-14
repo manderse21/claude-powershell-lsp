@@ -24,7 +24,7 @@
 #      the control and refuses a missing, a corrupt and an undeclared policy, a failed merged-settings
 #      write (a squatted target, computed with the production functions), ambient configuration and a
 #      forged rule code; the unmanaged scan keeps its fail-open behavior; doctor reports the running
-#      daemon's own record.
+#      daemon's own record -- not yet applied (pending) before its first analyzed file.
 #
 # ASCII-only (PS 5.1 em-dash trap); StrictMode-safe.
 
@@ -992,12 +992,20 @@ Describe 'Explicit -OrgPolicyPath drives the MAIN pass, with every ambient plugi
         $script:MpDocDaemon = $null
         $script:MpDocInfo = $null
         $script:MpDocRecord = $null
+        $script:MpDocPendingInfo = $null
         try {
             $saved = Save-SvAmbientEnv
             try {
                 $script:MpDocDaemon = Start-ScanDaemon -ScriptsDir $script:MpScripts -DataRoot $script:MpData -SessionId $script:MpDocSid `
                     -HostExe $script:MpHost -OrgPolicyPath $script:MpReqPolicy
                 if ($null -ne $script:MpDocDaemon) {
+                    . (Join-Path $script:MpScripts 'doctor.ps1')
+                    # BEFORE the first analyzed file (review finding B1-I02): the daemon is ready and its record is
+                    # still the 'pending' one it starts with -- its warm-start never resolves the session's
+                    # settings -- so doctor must read it as not yet applied, never as a mismatch.
+                    $env:CLAUDE_PLUGIN_OPTION_orgPolicy = $script:MpReqPolicy
+                    $script:MpDocPendingInfo = Get-OrgPolicyEnforcementReportInfo -DaemonObservation (Get-DoctorDaemonObservation -SessionId $script:MpDocSid)
+                    Remove-Item Env:\CLAUDE_PLUGIN_OPTION_orgPolicy -ErrorAction SilentlyContinue
                     [void](Invoke-ScanFileDiagnostics -ScriptsDir $script:MpScripts -DataRoot $script:MpData -SessionId $script:MpDocSid `
                         -HostExe $script:MpHost -FilePath (Join-Path $script:MpReqDir 'thing.ps1') -Cwd $script:MpReqDir -OrgPolicyPath $script:MpReqPolicy)
                     $sf = Join-Path $script:MpData ('session/' + $script:MpDocSid + '.json')
@@ -1008,7 +1016,6 @@ Describe 'Explicit -OrgPolicyPath drives the MAIN pass, with every ambient plugi
                         if ($null -ne $rec -and $null -ne $rec.PSObject.Properties['policy'] -and [string]$rec.policy.requiredRules.state -ne 'pending') { $script:MpDocRecord = $rec; break }
                         Start-Sleep -Milliseconds 500
                     }
-                    . (Join-Path $script:MpScripts 'doctor.ps1')
                     $obs = Get-DoctorDaemonObservation -SessionId $script:MpDocSid
                     $env:CLAUDE_PLUGIN_OPTION_orgPolicy = $script:MpReqPolicy
                     $script:MpDocInfo = Get-OrgPolicyEnforcementReportInfo -DaemonObservation $obs
@@ -1140,6 +1147,17 @@ Describe 'Explicit -OrgPolicyPath drives the MAIN pass, with every ambient plugi
         @($m.Policy.reasons) | Should -Contain 'policy-unreadable'
         [string]$m.Policy.effective.sha256 | Should -BeExactly '' -Because 'the review measured this policy CERTIFIED as 937b69ab...646d'
         $m.Err | Should -Match 'not a rule name'
+    }
+
+    It 'DOCTOR before the first analyzed file: the daemon''s startup record reads not yet applied (pending), never a mismatch (review finding B1-I02)' {
+        $script:MpDocDaemon | Should -Not -BeNullOrEmpty -Because 'the scan daemon must have come up'
+        $script:MpDocPendingInfo | Should -Not -BeNullOrEmpty -Because 'doctor must have observed the daemon before its first analysis'
+        $script:MpDocPendingInfo.applied | Should -BeTrue -Because 'the policy parses'
+        $script:MpDocPendingInfo.effectiveSha256 | Should -Match '^[0-9a-f]{64}$'
+        $script:MpDocPendingInfo.enforcement.state | Should -BeExactly 'not-observed'
+        $script:MpDocPendingInfo.enforcement.reason | Should -BeExactly 'pending'
+        $script:MpDocPendingInfo.enforcement.matchesParsed | Should -BeNullOrEmpty
+        $script:MpDocPendingInfo.enforcement.daemonEffectiveSha256 | Should -BeExactly ''
     }
 
     It 'DOCTOR reads the running daemon''s own record: RequiredRules activated, the merged file it wrote, matching the parsed policy' {

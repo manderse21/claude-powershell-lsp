@@ -201,6 +201,9 @@ and never parse it a second way. Things that bite when you change this path:
   and the same on every host. Never fold with `ToLowerInvariant` (it folds U+212A KELVIN SIGN to `k` on
   PowerShell 7 only), and never test the set with `-match`: it ignores case, and `[A-Z]` then admits
   U+212A on both hosts. Use `[regex]::IsMatch` with no options, and `\z`, not `$`.
+- **A daemon's record starts `pending`** and stays so until its first analyzed PowerShell file; it
+  carries no resolution, so every reader treats it as not yet applied -- the managed verdict as
+  `policy-evidence-missing`, doctor as `not-observed` (`pending`) -- never as a disagreement.
 - **PSScriptAnalyzer rejects an unknown settings key, and then nothing is analyzed.** Its valid keys are
   `CustomRulePath`, `ExcludeRules`, `IncludeRules`, `IncludeDefaultRules`, `RecurseCustomRulePath`,
   `Rules` and `Severity`; a settings file with any other key (`RuleArguments`, `Severities`) makes every
