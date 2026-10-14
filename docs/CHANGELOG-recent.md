@@ -94,7 +94,14 @@ loses the rename to an identical concurrent write accepts the file in place once
 intended text, instead of reporting a failed write); and a corrupt
 policy read under a caller whose `$ErrorActionPreference` was `Continue` came back as a valid EMPTY
 policy with no warning -- `Import-OrgPolicy` now parses with `-ErrorAction Stop`, so the degrade is the
-same for every caller (unchanged for the shipped entry points, which all run under `Stop`).
+same for every caller (unchanged for the shipped entry points, which all run under `Stop`). One more
+from review: the policy identity is now injective and the same on every host (finding B1-R01) -- a rule
+code must be a rule name (ASCII letters, digits, `_`, `-`, `.` and `\`), or `Import-OrgPolicy` refuses
+the whole policy as unreadable (`policy-unreadable`, one warning, fail-open as for any unreadable
+policy), so no code can carry the canonical text's TAB or line-end separators (one forged exclusion
+rendered as another policy's lines and presented its identity), and codes fold ASCII `A`-`Z` only
+(`ToLowerInvariant` folded U+212A KELVIN SIGN to `k` on PowerShell 7 and not on Windows PowerShell
+5.1); ordinary policies keep their identities.
 `docs/configuration.md` now says what `POWERSHELL_LSP_POLICY_MODE=closed` has always done: ANY
 validation degrade of a configured policy fails an edit closed, not only the two W3-3 cases. No
 `userConfig` knob and no status token is added.

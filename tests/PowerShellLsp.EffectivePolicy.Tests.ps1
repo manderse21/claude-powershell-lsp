@@ -6,7 +6,9 @@
 # FIVE LAYERS:
 #   1. The resolver (no daemon): Import-OrgPolicy's fixed reason codes, the caller-independent parse
 #      failure, the canonical identity (equal effective policies -> equal identity; every member moves
-#      it), obligations (not-required is never failed), and the client's no-second-read resolution.
+#      it; injective and host-independent -- a rule code that is not a rule name is refused, and only
+#      ASCII A-Z is folded), obligations (not-required is never failed), and the client's no-second-read
+#      resolution.
 #   2. Application evidence (no daemon): the RequiredRules version guard's verdict, the content-
 #      addressed and verified merged-settings write, and the evidence records.
 #   3. The managed verdict (no daemon): Test-ScanPolicyCertification's table -- every refusal code,
@@ -20,8 +22,9 @@
 #      -OrgPolicyPath supplied: the four members drive the MAIN pass (required rule, override,
 #      exclusion, prohibited suppression -- each against a no-policy baseline); managed mode certifies
 #      the control and refuses a missing, a corrupt and an undeclared policy, a failed merged-settings
-#      write (a squatted target, computed with the production functions) and ambient configuration;
-#      the unmanaged scan keeps its fail-open behavior; doctor reports the running daemon's own record.
+#      write (a squatted target, computed with the production functions), ambient configuration and a
+#      forged rule code; the unmanaged scan keeps its fail-open behavior; doctor reports the running
+#      daemon's own record.
 #
 # ASCII-only (PS 5.1 em-dash trap); StrictMode-safe.
 
@@ -39,12 +42,13 @@ BeforeAll {
     . (Join-Path $script:EpRepo 'scripts/lib/lsp-policy.ps1')
 
     function New-EpPolicy {
-        # A policy file under $TestDrive with $Text, returned as its absolute path.
-        param([string]$Text, [string]$Name = 'org.psd1')
+        # A policy file under $TestDrive with $Text, returned as its absolute path. -Bom writes the UTF-8
+        # BOM a non-ASCII policy needs for Windows PowerShell 5.1 to read it as UTF-8 at all.
+        param([string]$Text, [string]$Name = 'org.psd1', [switch]$Bom)
         $d = Join-Path $TestDrive ('ep-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Force -Path $d | Out-Null
         $p = Join-Path $d $Name
-        [System.IO.File]::WriteAllText($p, $Text + "`n", (New-Object System.Text.UTF8Encoding($false)))
+        [System.IO.File]::WriteAllText($p, $Text + "`n", (New-Object System.Text.UTF8Encoding([bool]$Bom)))
         return $p
     }
 }
@@ -179,6 +183,113 @@ Describe 'The effective-policy resolver: one reader, fixed reasons, a canonical 
         $file = Join-Path $TestDrive ('canon-' + [guid]::NewGuid().ToString('N') + '.txt')
         [System.IO.File]::WriteAllBytes($file, (New-Object System.Text.UTF8Encoding($false)).GetBytes($expected))
         $r.identity.sha256 | Should -BeExactly ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant())
+    }
+
+    It 'A RULE CODE MUST BE A RULE NAME: <Name> refuses the whole policy as unreadable (review finding B1-R01)' -TestCases @(
+        @{ Name = 'an LF and a TAB inside an ExcludeRules code'; Bom = $false; Text = ("@{ ExcludeRules = @('PSUseApprovedVerbs" + "`n" + 'require' + "`t" + "PSAvoidGlobalVars') }") }
+        @{ Name = 'a TAB inside a RequiredRules code'; Bom = $false; Text = ("@{ RequiredRules = @('PSAvoid" + "`t" + "GlobalVars') }") }
+        @{ Name = 'a CR inside a ProhibitedSuppressions code'; Bom = $false; Text = ("@{ ProhibitedSuppressions = @('PSAvoidUsing" + "`r" + "PlainTextForPassword') }") }
+        @{ Name = 'an LF inside a SeverityOverrides key'; Bom = $false; Text = ("@{ SeverityOverrides = @{ 'PSAvoidX" + "`n" + "override' = 'Error' } }") }
+        @{ Name = 'a space inside a code'; Bom = $false; Text = "@{ ExcludeRules = @('PSUse ApprovedVerbs') }" }
+        @{ Name = 'a wildcard, which no enforcement point matches as a name'; Bom = $false; Text = "@{ RequiredRules = @('PSAvoid*') }" }
+        @{ Name = 'U+212A KELVIN SIGN inside a code'; Bom = $true; Text = ("@{ ExcludeRules = @('PSMisleadingBac" + [string][char]0x212A + "tick') }") }
+        @{ Name = 'a non-ASCII space around a rule name'; Bom = $true; Text = ("@{ ExcludeRules = @('" + [string][char]0x00A0 + "PSUseApprovedVerbs') }") }
+    ) {
+        param($Name, $Bom, $Text)
+        $p = New-EpPolicy $Text -Bom:$Bom
+        $w = ''; $r = ''
+        $pol = Import-OrgPolicy -Path $p -WarningOut ([ref]$w) -ReasonOut ([ref]$r)
+        $w | Should -Match 'not a rule name' -Because ($Name + ' is malformed policy, refused with one warning')
+        $w | Should -MatchExactly '\A[\x20-\x7E]+\z' -Because 'the warning shows the entry as one line of printable ASCII (case-sensitive: -Match would let U+212A pass as k)'
+        $r | Should -BeExactly 'policy-unreadable' -Because 'the existing corrupt-policy refusal, not a new code'
+        foreach ($m in @('ExcludeRules', 'RequiredRules', 'ProhibitedSuppressions')) { @($pol[$m]).Count | Should -Be 0 -Because ($m + ': an unreadable policy applies nothing') }
+        $pol.SeverityOverrides.Count | Should -Be 0
+        $res = Resolve-EffectivePolicy -Path $p -Source 'cli'
+        $res.usable | Should -BeFalse
+        $res.reason | Should -BeExactly 'policy-unreadable'
+        $res.identity.sha256 | Should -BeExactly '' -Because 'a policy that is not usable has no identity to present'
+    }
+
+    It 'SEPARATOR INJECTION: one forged rule code can no longer present another policy''s identity (review finding B1-R01)' {
+        $org = New-EpPolicy "@{ ExcludeRules = @('PSUseApprovedVerbs'); RequiredRules = @('PSAvoidGlobalVars') }"
+        $forged = New-EpPolicy ("@{ ExcludeRules = @('PSUseApprovedVerbs" + "`n" + 'require' + "`t" + "PSAvoidGlobalVars') }")
+        $ro = Resolve-EffectivePolicy -Path $org -Source 'cli'
+        # CONTROL: the forged file holds ONE string, and the pre-correction encoding (verb, TAB, the code
+        # through ToLowerInvariant, LF -- nothing refused or escaped) renders it as the org policy's exact
+        # canonical text, so it would have presented the org policy's identity (measured by the review:
+        # both managed scans CERTIFIED as 937b69ab...646d).
+        $raw = @((Import-PowerShellDataFile -LiteralPath $forged).ExcludeRules)
+        $raw.Count | Should -Be 1
+        $tab = [string][char]9
+        $naive = 'powershell-lsp/effective-policy 1' + "`n" + 'exclude' + $tab + ([string]$raw[0]).Trim().ToLowerInvariant() + "`n"
+        $naive | Should -BeExactly (ConvertTo-EffectivePolicyText -Effective $ro.effective) -Because 'CONTROL: the collision is real'
+        (Get-Sha256HexFromBytes -Bytes ((New-Object System.Text.UTF8Encoding($false)).GetBytes($naive))) | Should -BeExactly $ro.identity.sha256
+        # THE CORRECTION: the forged policy is unreadable, has no identity, and a managed scan refuses it.
+        $ro.usable | Should -BeTrue
+        $ro.identity.sha256 | Should -BeExactly '937b69abf90e7c72590ce2f8550f0328f688826cff796ffbcb2d163ee636646d' -Because 'an ordinary policy keeps the identity the review measured'
+        $rf = Resolve-EffectivePolicy -Path $forged -Source 'cli'
+        $rf.usable | Should -BeFalse
+        $rf.reason | Should -BeExactly 'policy-unreadable'
+        $rf.identity.sha256 | Should -BeExactly ''
+        $c = Test-ScanPolicyCertification -Mode 'closed' -Declared $rf
+        $c.Certified | Should -BeFalse
+        @($c.Reasons) | Should -Contain 'policy-unreadable'
+    }
+
+    It 'HOST-INDEPENDENT FOLDING: U+212A KELVIN SIGN is refused on every host, and only ASCII A-Z is folded (review finding B1-R01)' {
+        $k = [string][char]0x212A
+        $kelvin = New-EpPolicy ("@{ ExcludeRules = @('PSMisleadingBac" + $k + "tick') }") -Bom
+        # CONTROL: the policy as parsed on THIS host really carries U+212A, and OrdinalIgnoreCase -- the
+        # match every enforcement point uses -- does not take it for the real rule. ToLowerInvariant folded
+        # it to 'k' on PowerShell 7 and not on Windows PowerShell 5.1 (measured by the review), so before
+        # this correction it shared PSMisleadingBacktick's identity on one host and had its own on the other.
+        $parsed = [string]@((Import-PowerShellDataFile -LiteralPath $kelvin).ExcludeRules)[0]
+        $parsed.Contains($k) | Should -BeTrue -Because 'CONTROL: the BOM made both hosts read U+212A'
+        [string]::Equals($parsed, 'PSMisleadingBacktick', [System.StringComparison]::OrdinalIgnoreCase) | Should -BeFalse
+        # THE CORRECTION, the same on every host: the Kelvin policy is refused and has no identity, and the
+        # real rule's policy has the known-answer identity.
+        $rk = Resolve-EffectivePolicy -Path $kelvin
+        $rk.usable | Should -BeFalse
+        $rk.reason | Should -BeExactly 'policy-unreadable'
+        $rk.identity.sha256 | Should -BeExactly ''
+        $real = Resolve-EffectivePolicy -Path (New-EpPolicy "@{ ExcludeRules = @('PSMisleadingBacktick') }")
+        $expected = 'powershell-lsp/effective-policy 1' + "`n" + 'exclude' + [string][char]9 + 'psmisleadingbacktick' + "`n"
+        ConvertTo-EffectivePolicyText -Effective $real.effective | Should -BeExactly $expected
+        $file = Join-Path $TestDrive ('kelvin-' + [guid]::NewGuid().ToString('N') + '.txt')
+        [System.IO.File]::WriteAllBytes($file, (New-Object System.Text.UTF8Encoding($false)).GetBytes($expected))
+        $real.identity.sha256 | Should -BeExactly ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant())
+        # The fold itself: A-Z only. U+212A and every other non-ASCII character are left exactly as they are.
+        ConvertTo-AsciiLowerCase ('PSMisleadingBac' + $k + 'tick') | Should -BeExactly ('psmisleadingbac' + $k + 'tick')
+        $eAcute = [string][char]0x00C9
+        ConvertTo-AsciiLowerCase ('AZaz09_-.\' + $eAcute) | Should -BeExactly ('azaz09_-.\' + $eAcute)
+        # And the canonical text never folds through a culture's or Unicode's case map again.
+        $src = [System.IO.File]::ReadAllText((Join-Path $script:EpRepo 'scripts/lib/lsp-policy.ps1'))
+        $body = $src.Substring($src.IndexOf('function ConvertTo-EffectivePolicyText'))
+        $body = $body.Substring(0, $body.IndexOf('function Get-EffectivePolicyDigest'))
+        $body | Should -Match 'ConvertTo-AsciiLowerCase' -Because 'a floor, so this census cannot pass on the wrong slice'
+        $body | Should -Not -Match '\.To(Lower|Upper)(Invariant)?\('
+    }
+
+    It 'ORDINARY RULE NAMES KEEP THEIR IDENTITIES: every default, plugin and custom-rule name is accepted and folded exactly as before' {
+        # The custom-rule shape is the one PSScriptAnalyzer 1.25.0 reports (measured on both hosts):
+        # '<module>\<function>'. For an ASCII name the new fold equals the old ToLowerInvariant, so every
+        # ordinary policy's canonical text -- and so its identity -- is unchanged.
+        $names = @(Get-PssaDefaultRuleNames) + @('PSAvoidGlobalVars', 'ProhibitedSuppression', 'ManifestConsistency', 'NonAsciiChar',
+            'PS7OnlySyntax', 'ModuleNotInstalled', 'CommandLinePlaceholder', 'BashIsm', 'My.Rules\Measure-NoFoo', 'PSB1_Under_Score9')
+        $names.Count | Should -BeGreaterOrEqual 20 -Because 'a floor, so this census cannot pass by finding nothing'
+        foreach ($n in $names) {
+            Test-OrgPolicyRuleCode $n | Should -BeTrue -Because ($n + ' is a rule name')
+            Test-OrgPolicyRuleCode ('  ' + $n + "`t") | Should -BeTrue -Because 'ASCII whitespace padding is trimmed, as always'
+            ConvertTo-AsciiLowerCase $n | Should -BeExactly $n.ToLowerInvariant() -Because ($n + ' keeps its folded form')
+        }
+        Test-OrgPolicyRuleCode '' | Should -BeTrue -Because 'a blank entry is no rule, skipped as before'
+        Test-OrgPolicyRuleCode '   ' | Should -BeTrue
+        Test-OrgPolicyRuleCode 42 | Should -BeFalse -Because 'not a string (Import-OrgPolicy skips it before asking)'
+        $r = Resolve-EffectivePolicy -Path (New-EpPolicy "@{ ExcludeRules = @('  My.Rules\Measure-NoFoo  ', '', 'PSUseApprovedVerbs'); SeverityOverrides = @{ 'My.Rules\Measure-NoFoo' = 'error' } }")
+        $r.usable | Should -BeTrue
+        $tab = [string][char]9
+        ConvertTo-EffectivePolicyText -Effective $r.effective | Should -BeExactly ('powershell-lsp/effective-policy 1' + "`n" +
+            'exclude' + $tab + 'my.rules\measure-nofoo' + "`n" + 'exclude' + $tab + 'psuseapprovedverbs' + "`n")
     }
 
     It 'obligations distinguish NOT REQUIRED from required, member by member' {
@@ -815,6 +926,10 @@ Describe 'Explicit -OrgPolicyPath drives the MAIN pass, with every ambient plugi
         $script:MpSupPolicy = New-MpPolicy 'suppress' "@{ ProhibitedSuppressions = @('PSAvoidUsingPlainTextForPassword') }"
         $script:MpCorrupt = New-MpPolicy 'corrupt' '@{ ExcludeRules = @( this is not data'
         $script:MpMissing = Join-Path $script:MpWork 'missing.psd1'
+        # The review's forged policy (finding B1-R01): ONE exclusion whose text carries an LF and a TAB, which
+        # the pre-correction canonical text rendered as excluding PSUseApprovedVerbs AND requiring
+        # PSAvoidGlobalVars -- a managed scan of it was CERTIFIED with that policy's identity.
+        $script:MpForged = New-MpPolicy 'forged' ("@{ ExcludeRules = @('PSUseApprovedVerbs" + "`n" + 'require' + "`t" + "PSAvoidGlobalVars') }")
 
         # The squat: the EXACT content-addressed path the daemon will write for src-mw under the required
         # policy, computed with the production functions over the same inputs the daemon uses.
@@ -868,6 +983,7 @@ Describe 'Explicit -OrgPolicyPath drives the MAIN pass, with every ambient plugi
         $script:Mp.MergeFailOpen = Invoke-MpScan -Target $script:MpMwDir -Policy $script:MpReqPolicy
         $script:Mp.Ambient = Invoke-MpScan -Target $script:MpExcDir -Policy $script:MpExcPolicy -Mode 'closed' -Extra @{ CLAUDE_PLUGIN_OPTION_ruleExclude = 'PSAvoidUsingWriteHost' }
         $script:Mp.EnvManaged = Invoke-MpScan -Target $script:MpOvrDir -Extra @{ POWERSHELL_LSP_POLICY_MODE = 'closed' }
+        $script:Mp.Forged = Invoke-MpScan -Target $script:MpReqDir -Policy $script:MpForged -Mode 'closed'
 
         # Doctor reads a RUNNING daemon's own record: a scan daemon under the required policy, one
         # scan-mode analysis (which resolves the session's settings), then the production observation.
@@ -1014,6 +1130,16 @@ Describe 'Explicit -OrgPolicyPath drives the MAIN pass, with every ambient plugi
     It 'POWERSHELL_LSP_POLICY_MODE=closed makes the scan managed when no -PolicyMode is given (mode from env)' {
         $script:Mp.EnvManaged.Policy.mode | Should -BeExactly 'closed'
         $script:Mp.EnvManaged.Policy.modeSource | Should -BeExactly 'env'
+    }
+
+    It 'FORGED RULE CODE end to end: the separator-injection policy is NOT CERTIFIED and presents no identity (review finding B1-R01)' {
+        $m = $script:Mp.Forged
+        $m.Exit | Should -Be 4 -Because ('stderr: ' + $m.Err)
+        [bool]$m.Invocation.executionSuccessful | Should -BeFalse
+        $m.Policy.certification | Should -BeExactly 'not-certified'
+        @($m.Policy.reasons) | Should -Contain 'policy-unreadable'
+        [string]$m.Policy.effective.sha256 | Should -BeExactly '' -Because 'the review measured this policy CERTIFIED as 937b69ab...646d'
+        $m.Err | Should -Match 'not a rule name'
     }
 
     It 'DOCTOR reads the running daemon''s own record: RequiredRules activated, the merged file it wrote, matching the parsed policy' {

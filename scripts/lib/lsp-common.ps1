@@ -962,11 +962,49 @@ function Test-OrgPolicyIntegrity {
     return 'orgPolicy integrity check FAILED; no org exclusions applied: ' + $PolicyPath
 }
 
+function Test-OrgPolicyRuleCode {
+    # Is one org-policy rule-code entry, AS WRITTEN (before it is trimmed), well formed? $true when it
+    # is a RULE NAME -- one or more ASCII letters, digits, '_', '-', '.' or '\' -- or blank (empty or
+    # ASCII whitespace only: no rule, skipped by Import-OrgPolicy exactly as before), padded only by
+    # ASCII whitespace; $false for anything else, which Import-OrgPolicy then refuses through its
+    # corrupt-policy degrade (policy-unreadable). Refused, never escaped: such a string names no rule
+    # any enforcement point can match (dispatch 000305, B1, review finding B1-R01).
+    #
+    # WHY THIS SET. It holds every rule name a finding can carry: PSScriptAnalyzer's own rules
+    # (PSAvoidGlobalVars), this plugin's (ProhibitedSuppression), and a custom rule, which reports itself
+    # as '<module>\<function>' -- measured with PSScriptAnalyzer 1.25.0 on pwsh 7.6.6 and Windows
+    # PowerShell 5.1: 'My.Rules\Measure-NoFoo'. And it is what keeps the policy identity
+    # (ConvertTo-EffectivePolicyText, lsp-policy.ps1) injective and host-independent: no code can carry
+    # the TAB or LF that separate the canonical text's fields and lines, and every code is ASCII, so
+    # folding A-Z alone is exactly the OrdinalIgnoreCase match every enforcement point uses, on every
+    # host. The entry is checked BEFORE it is trimmed and may be padded only by ASCII whitespace, so
+    # String.Trim's idea of Unicode whitespace never decides which code a policy names.
+    #
+    # [regex]::IsMatch with no options, never -match: -match ignores case, and then [A-Z] admits
+    # U+212A KELVIN SIGN (measured on both hosts); with no options [A-Za-z] is exactly 52 code points.
+    # \z, not $, so a trailing LF is never forgiven.
+    param($Entry)
+    if ($Entry -isnot [string]) { return $false }
+    return [regex]::IsMatch($Entry, '\A[\t\n\v\f\r ]*(?:[A-Za-z0-9_.\\-]+[\t\n\v\f\r ]*)?\z')
+}
+
+function Format-OrgPolicyRuleCodeError {
+    # The reason Import-OrgPolicy refuses a policy whose $Member holds $Entry, an entry
+    # Test-OrgPolicyRuleCode rejects. The entry is shown with every character outside printable ASCII
+    # replaced by '?' and cut at 80, so the one warning a degrade writes stays one ASCII line.
+    param([string]$Member, [string]$Entry)
+    $shown = -join @($Entry.ToCharArray() | ForEach-Object { if ([int]$_ -ge 0x20 -and [int]$_ -le 0x7E) { [string]$_ } else { '?' } })
+    if ($shown.Length -gt 80) { $shown = $shown.Substring(0, 80) + '...' }
+    return ($Member + " names '" + $shown + "', which is not a rule name (a rule code may hold only " +
+        "ASCII letters, digits, '_', '-', '.' and '\')")
+}
+
 function Import-OrgPolicy {
     # Read the ExcludeRules of the org settings .psd1 at $Path as a trimmed, de-duplicated
     # string[] of rule codes. @() means "no org constraint" -- and @() is also the answer for
     # EVERY failure: relative path, missing file, unreadable file, unparseable data, a shape
-    # that carries no rule list, or (dispatch 000259) a FAILED integrity gate.
+    # that carries no rule list, (dispatch 000259) a FAILED integrity gate, or (dispatch 000305)
+    # a rule code that is not a rule name.
     #
     # FAIL-OPEN is the load-bearing invariant: an org policy that cannot be read must never
     # break the user's edit (the hook never fails). But a policy that silently stops enforcing
@@ -999,7 +1037,16 @@ function Import-OrgPolicy {
     # Adversarial control: drop the [string] type test and 'ignores non-string entries' goes
     # RED; drop the try/catch and 'an unparseable policy degrades without throwing' goes RED;
     # accept a relative path and 'a relative path is a warned degrade' goes RED; parse the
-    # policy regardless of $reason and 'a TAMPERED policy applies no exclusions' goes RED.
+    # policy regardless of $reason and 'a TAMPERED policy applies no exclusions' goes RED;
+    # drop the rule-code checks and 'A RULE CODE MUST BE A RULE NAME' goes RED.
+    #
+    # A RULE CODE MUST BE A RULE NAME (dispatch 000305, B1, review finding B1-R01). A string entry in
+    # any of the four members -- or a SeverityOverrides key -- that Test-OrgPolicyRuleCode rejects (a
+    # TAB or line end inside it, any character outside ASCII letters, digits and '_', '-', '.', '\')
+    # makes the whole policy unreadable: thrown inside the try below, so it is the same corrupt-policy
+    # degrade as unparseable data -- @() for every member, policy-unreadable, ONE warning. Before this,
+    # such a string was kept as a code: it matched nothing, yet one carrying a TAB and LF rendered,
+    # in the policy identity's canonical text, as the lines of a different policy.
     #
     # $ReasonOut (dispatch 000305, B1) receives a FIXED code for the same degrade the prose names --
     # policy-path-relative, policy-file-missing, policy-integrity-unreadable / -malformed /
@@ -1047,6 +1094,7 @@ function Import-OrgPolicy {
                         # a code that can never match (or, worse, one that matches nothing while
                         # looking like enforcement).
                         if ($entry -isnot [string]) { continue }
+                        if (-not (Test-OrgPolicyRuleCode $entry)) { throw (Format-OrgPolicyRuleCodeError -Member 'ExcludeRules' -Entry $entry) }
                         $c = $entry.Trim()
                         if ([string]::IsNullOrWhiteSpace($c)) { continue }
                         if ($seen.Add($c)) { $codes += $c }
@@ -1065,6 +1113,7 @@ function Import-OrgPolicy {
                     if ($table -is [System.Collections.IDictionary]) {
                         foreach ($k in @($table.Keys)) {
                             if ($k -isnot [string]) { continue }
+                            if (-not (Test-OrgPolicyRuleCode $k)) { throw (Format-OrgPolicyRuleCodeError -Member 'SeverityOverrides' -Entry $k) }
                             $rule = ([string]$k).Trim()
                             if ([string]::IsNullOrWhiteSpace($rule)) { continue }
                             $v = $table[$k]
@@ -1091,6 +1140,7 @@ function Import-OrgPolicy {
                     $seenReq = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
                     foreach ($entry in @($data['RequiredRules'])) {
                         if ($entry -isnot [string]) { continue }
+                        if (-not (Test-OrgPolicyRuleCode $entry)) { throw (Format-OrgPolicyRuleCodeError -Member 'RequiredRules' -Entry $entry) }
                         $c = $entry.Trim()
                         if ([string]::IsNullOrWhiteSpace($c)) { continue }
                         if ($seenReq.Add($c)) { $req += $c }
@@ -1100,6 +1150,7 @@ function Import-OrgPolicy {
                     $seenProhib = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
                     foreach ($entry in @($data['ProhibitedSuppressions'])) {
                         if ($entry -isnot [string]) { continue }
+                        if (-not (Test-OrgPolicyRuleCode $entry)) { throw (Format-OrgPolicyRuleCodeError -Member 'ProhibitedSuppressions' -Entry $entry) }
                         $c = $entry.Trim()
                         if ([string]::IsNullOrWhiteSpace($c)) { continue }
                         if ($seenProhib.Add($c)) { $prohib += $c }

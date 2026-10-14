@@ -275,7 +275,9 @@ as it did before this feature existed, and adds no new knob: the key lives insid
 the `orgPolicy` path already points at.
 
 **It fails open, but never silently.** Every failure -- a missing file, an unreadable file, an
-unparseable one, or a **relative** path (only absolute paths are honored, for the same reason as
+unparseable one, a rule code that is not a rule name (see
+[the canonical hashing rules](#policy-identity-and-application-evidence-dispatch-000305)), or a
+**relative** path (only absolute paths are honored, for the same reason as
 `settingsPath`: a relative path would resolve against whatever directory Claude Code launched in)
 -- applies **no** exclusions and writes exactly **one** warning to `logs/lsp-client.log`. A policy
 that cannot be read never blocks your edit, and never quietly stops enforcing without saying so. A
@@ -446,9 +448,16 @@ parse and single warning -- and keeps apart:
 **The canonical hashing rules.** The identity is the SHA-256 (lower-case hex) of this UTF-8 text, LF
 line ends including the last: a first line `powershell-lsp/effective-policy 1`, then one line per
 member in four sections in fixed order -- `exclude`, `override`, `prohibit`, `require` -- each the
-verb, a TAB and the rule code folded to invariant lower case (an override adds a TAB and the
-canonical severity), sorted ordinally within its section. Rule codes are folded because they match
-case-insensitively everywhere the policy is applied. Exclusion stays the stronger verb in the
+verb, a TAB and the rule code with ASCII `A`-`Z` folded to `a`-`z` and nothing else folded (an
+override adds a TAB and the canonical severity), sorted ordinally within its section. Rule codes are
+folded because they match case-insensitively everywhere the policy is applied. **A rule code must be
+a rule name** -- ASCII letters, digits, `_`, `-`, `.` and `\` (a custom rule reports itself as
+`Module\Measure-Name`), padded only by ASCII whitespace -- in every member and every
+`SeverityOverrides` key; a policy naming anything else (a TAB or line end inside a code, a space, a
+wildcard, a non-ASCII character) is refused as unreadable (`policy-unreadable`, one warning, fail-open
+as for any unreadable policy). So no code can carry the text's separators, two different effective
+policies never share an identity, and every host computes the same identity from the same file.
+Exclusion stays the stronger verb in the
 identity too: a rule the policy both requires and excludes is not required, and an override on an
 excluded rule is moot, so neither appears. So two files that enforce the same thing -- reordered,
 re-cased, commented, with duplicates or moot entries -- have one identity, while each member and each

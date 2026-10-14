@@ -203,13 +203,31 @@ function Get-EffectivePolicyOverrides {
     return $out
 }
 
+function ConvertTo-AsciiLowerCase {
+    # $Text with ASCII 'A'-'Z' folded to 'a'-'z' and every other character left exactly as it is: the
+    # rule-code fold of the canonical text, computed the same way on every host (dispatch 000305, B1,
+    # review finding B1-R01). Never ToLowerInvariant -- it folds U+212A KELVIN SIGN to 'k' on
+    # PowerShell 7 and not on Windows PowerShell 5.1 (measured on 7.6.6 and 5.1.26100), so one policy
+    # file had two identities, and on PowerShell 7 a code that OrdinalIgnoreCase does not match to a
+    # rule shared that rule's line.
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return [string]$Text }
+    $chars = $Text.ToCharArray()
+    for ($i = 0; $i -lt $chars.Length; $i++) {
+        $n = [int]$chars[$i]
+        if ($n -ge 65 -and $n -le 90) { $chars[$i] = [char]($n + 32) }
+    }
+    return (-join $chars)
+}
+
 function ConvertTo-EffectivePolicyText {
     # THE CANONICAL HASHING RULES, as one function. The identity is the SHA-256 of this text:
     #   - the first line is '<schema id> <version>' (Get-EffectivePolicySchema);
     #   - then one line per member, in four sections in this fixed order: exclude, override,
     #     prohibit, require;
-    #   - a line is the verb, a TAB, the rule code folded to invariant lower case, and for an
-    #     override a TAB and the canonical severity name (Error / Warning / Information / Hint);
+    #   - a line is the verb, a TAB, the rule code with ASCII A-Z folded to a-z and nothing else
+    #     folded (ConvertTo-AsciiLowerCase), and for an override a TAB and the canonical severity
+    #     name (Error / Warning / Information / Hint);
     #   - within a section, lines are sorted ordinally;
     #   - lines end in LF, including the last; the text is encoded as UTF-8 without a BOM.
     # Rule codes are folded because they match case-insensitively everywhere the policy is applied
@@ -217,6 +235,12 @@ function ConvertTo-EffectivePolicyText {
     # spellings of one code are one policy. Built by concatenation, never ConvertTo-Json: Windows
     # PowerShell 5.1 and PowerShell 7 serialize JSON differently, and the daemon, the client and the
     # scan may run under different hosts.
+    # INJECTIVE AND HOST-INDEPENDENT (review finding B1-R01). Every code here is a rule name --
+    # Import-OrgPolicy refuses a policy naming anything else as unreadable (Test-OrgPolicyRuleCode,
+    # lsp-common.ps1) -- so no code holds the TAB or LF that separate fields and lines, and two
+    # different effective policies always render two different texts. And every code is ASCII, so
+    # folding A-Z alone is exactly the OrdinalIgnoreCase equality the enforcement points use, and
+    # every host computes the same text from the same policy.
     param($Effective)
     $schema = Get-EffectivePolicySchema
     $tab = [string][char]9
@@ -224,13 +248,16 @@ function ConvertTo-EffectivePolicyText {
     $lines.Add([string]$schema.Id + ' ' + [string]$schema.Version)
     $ov = Get-EffectivePolicyOverrides -Effective $Effective
     $exclude = New-Object 'System.Collections.Generic.List[string]'
-    foreach ($c in (Get-PolicyStringList -Object $Effective -Name 'ExcludeRules')) { $exclude.Add('exclude' + $tab + $c.ToLowerInvariant()) }
+    foreach ($c in (Get-PolicyStringList -Object $Effective -Name 'ExcludeRules')) { $exclude.Add('exclude' + $tab + (ConvertTo-AsciiLowerCase $c)) }
     $override = New-Object 'System.Collections.Generic.List[string]'
-    foreach ($k in @($ov.Keys)) { $override.Add('override' + $tab + ([string]$k).Trim().ToLowerInvariant() + $tab + [string]$ov[$k]) }
+    foreach ($k in @($ov.Keys)) {
+        $code = ([string]$k).Trim()
+        $override.Add('override' + $tab + (ConvertTo-AsciiLowerCase $code) + $tab + [string]$ov[$k])
+    }
     $prohibit = New-Object 'System.Collections.Generic.List[string]'
-    foreach ($c in (Get-PolicyStringList -Object $Effective -Name 'ProhibitedSuppressions')) { $prohibit.Add('prohibit' + $tab + $c.ToLowerInvariant()) }
+    foreach ($c in (Get-PolicyStringList -Object $Effective -Name 'ProhibitedSuppressions')) { $prohibit.Add('prohibit' + $tab + (ConvertTo-AsciiLowerCase $c)) }
     $require = New-Object 'System.Collections.Generic.List[string]'
-    foreach ($c in (Get-PolicyStringList -Object $Effective -Name 'RequiredRules')) { $require.Add('require' + $tab + $c.ToLowerInvariant()) }
+    foreach ($c in (Get-PolicyStringList -Object $Effective -Name 'RequiredRules')) { $require.Add('require' + $tab + (ConvertTo-AsciiLowerCase $c)) }
     foreach ($section in @($exclude, $override, $prohibit, $require)) {
         $arr = $section.ToArray()
         [System.Array]::Sort($arr, [System.StringComparer]::Ordinal)
