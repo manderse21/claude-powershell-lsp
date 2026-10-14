@@ -191,7 +191,11 @@ and never parse it a second way. Things that bite when you change this path:
 - **The merged settings file is content-addressed** (`orgpolicy-settings/merged-settings-<sha16>.psd1`)
   because PSES hands PSScriptAnalyzer the settings PATH on every pass: a shared fixed name let one
   daemon rewrite what another enforced. Never write it in place; `Write-MergedPssaSettingsFile` returns a
-  path only after re-hashing the bytes on disk.
+  path only after re-hashing the bytes on disk. Keep its catch around the rename: two daemons writing the
+  same new text race to it, and the loser must accept the winner's file (same name, same digest) rather
+  than report `merge-write-failed` -- which a managed scan refuses and an unmanaged session runs without.
+- **No file, no proof.** A managed verdict over zero files is `analysis-empty`, never certified: O03
+  certifies only on evidence the policy was applied, and an empty target produces none.
 - **PSScriptAnalyzer rejects an unknown settings key, and then nothing is analyzed.** Its valid keys are
   `CustomRulePath`, `ExcludeRules`, `IncludeRules`, `IncludeDefaultRules`, `RecurseCustomRulePath`,
   `Rules` and `Severity`; a settings file with any other key (`RuleArguments`, `Severities`) makes every

@@ -281,6 +281,29 @@ Describe 'RequiredRules application evidence: the version guard and the merged-s
         Write-MergedPssaSettingsFile -Settings $settings -DataRoot $data2 | Should -BeExactly ''
     }
 
+    It 'a LOST RENAME is not a failed write: a concurrent writer''s identical file is accepted, a different one is not' {
+        # The race, made deterministic: the first look reports no file (the other daemon has not renamed
+        # yet), then this call's rename meets the file the other daemon put in place. Only that look is
+        # mocked; the rename, the read-back and the temp cleanup are real.
+        $settings = @{ IncludeRules = @('Race') }
+        $sha = Get-Sha256HexFromBytes -Bytes ((New-Object System.Text.UTF8Encoding($false)).GetBytes((ConvertTo-MergedPssaSettingsText -Settings $settings)))
+        $name = 'merged-settings-' + $sha.Substring(0, 16) + '.psd1'
+        $data = Join-Path $TestDrive ('mwr-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $target = Join-Path (Get-MergedPssaSettingsDir -DataRoot $data) $name
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+        [System.IO.File]::WriteAllText($target, (ConvertTo-MergedPssaSettingsText -Settings $settings), (New-Object System.Text.UTF8Encoding($false)))
+        Mock Test-Path { $false } -ParameterFilter { $PathType -eq 'Leaf' -and [string]$LiteralPath -like ('*' + $name) }
+        Write-MergedPssaSettingsFile -Settings $settings -DataRoot $data | Should -BeExactly $target
+        Should -Invoke Test-Path -Times 1 -Exactly -ParameterFilter { $PathType -eq 'Leaf' -and [string]$LiteralPath -like ('*' + $name) } -Because 'the race must really have been staged'
+        @(Get-ChildItem -LiteralPath (Split-Path -Parent $target) -Filter '*.tmp').Count | Should -Be 0 -Because 'the losing writer''s temp file is removed'
+        # The control: the same race against a file that does NOT hash to the intended text is refused.
+        $data2 = Join-Path $TestDrive ('mwr-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $target2 = Join-Path (Get-MergedPssaSettingsDir -DataRoot $data2) $name
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target2) | Out-Null
+        [System.IO.File]::WriteAllText($target2, '@{ IncludeRules = @(''NotTheIntendedText'') }')
+        Write-MergedPssaSettingsFile -Settings $settings -DataRoot $data2 | Should -BeExactly '' -Because 'a path is returned only for the bytes this call meant to write'
+    }
+
     It 'the daemon''s application record carries every observation it is given, and an unknown state reads pending' {
         $res = Resolve-EffectivePolicy -Path (New-EpPolicy "@{ RequiredRules = @('R') }")
         $ev = New-PolicyApplicationEvidence -Resolution $res -RequiredState 'activated' -RequiredCount 1 -GuardVerifiedFor 'v4.6.0' `
@@ -515,6 +538,42 @@ Describe 'The managed verdict, the mode precedence and the ambient refusal (disp
         @($c.AllReasons) | Should -Contain 'analysis-incomplete'
     }
 
+    It 'NO FILE, NO PROOF: a managed verdict over zero files is analysis-empty, never certified; unmanaged is untouched' {
+        foreach ($decl in @($script:VdReq, $script:VdExc)) {
+            $c = Test-ScanPolicyCertification -Mode 'closed' -Declared $decl
+            $c.Certified | Should -BeFalse -Because 'O03 certifies only when proof the policy was applied is present'
+            @($c.Reasons) -join ',' | Should -BeExactly 'analysis-empty' -Because 'a usable declared policy and no ambient option leave only the missing proof'
+            $c2 = Test-ScanPolicyCertification -Mode 'closed' -Declared $decl -Files @($null)
+            @($c2.Reasons) | Should -Contain 'analysis-empty' -Because 'a null entry is not an analyzed file'
+        }
+        (Test-ScanPolicyCertification -Mode 'closed' -Declared $null).Reasons -join ',' | Should -BeExactly 'analysis-empty,policy-not-declared'
+        $open = Test-ScanPolicyCertification -Mode 'open' -Declared $script:VdReq
+        $open.Managed | Should -BeFalse
+        @($open.AllReasons).Count | Should -Be 0 -Because 'an unmanaged empty scan refuses nothing (exit 0, as always)'
+    }
+
+    It 'THE DAEMON''S PENDING RECORD is missing evidence, not a disagreement: <Key>' -TestCases @(
+        @{ Key = 'VdReq' }
+        @{ Key = 'VdExc' }
+    ) {
+        # The record the daemon starts with, exactly as it builds it (pses-daemon.ps1): it stays 'pending'
+        # when Initialize-PssaSettings returns before resolving anything, and it carries no resolution.
+        param($Key)
+        $decl = Get-Variable -Name $Key -Scope Script -ValueOnly
+        $pending = New-PolicyApplicationEvidence -Path 'C:\org.psd1' -RequiredState 'pending' -GuardVerifiedFor 'v4.6.0'
+        $f = New-VdFile -Declared $decl
+        $f.Receipt.policy.daemon = (($pending | ConvertTo-Json -Depth 8) | ConvertFrom-Json)
+        $c = Test-ScanPolicyCertification -Mode 'closed' -Declared $decl -Files @($f)
+        $c.Certified | Should -BeFalse
+        @($c.Files[0].Reasons) -join ',' | Should -BeExactly 'policy-evidence-missing'
+        # The control: the same record AFTER it resolved -- not-configured, i.e. a daemon launched with no
+        # policy at all -- is a real disagreement with the declared one.
+        $none = New-PolicyApplicationEvidence -Path '' -RequiredState 'not-configured' -GuardVerifiedFor 'v4.6.0'
+        $f2 = New-VdFile -Declared $decl
+        $f2.Receipt.policy.daemon = (($none | ConvertTo-Json -Depth 8) | ConvertFrom-Json)
+        @((Test-ScanPolicyCertification -Mode 'closed' -Declared $decl -Files @($f2)).Files[0].Reasons) | Should -Contain 'policy-disagreement'
+    }
+
     It 'every code the verdict can return is declared in the reason table' {
         $table = Get-PolicyReasonTable
         $src = [System.IO.File]::ReadAllText((Join-Path $script:EpRepo 'scripts/lib/lsp-policy.ps1'))
@@ -598,13 +657,19 @@ Describe 'The shipped CLI certifies only on agreeing evidence -- production-buil
             # One end-to-end run of the RELOCATED shipped CLI, managed, over one target, with the
             # policy-evidence fake as its client. Hermetic: no CLAUDE_PLUGIN_OPTION_* / POWERSHELL_LSP_*
             # inherited, its own data root, the variant in a data file.
-            param([string]$Variant, [string]$PolicyText, [string]$Mode = 'closed')
+            # -EmptyTarget: the target holds no PowerShell file (one .txt), so the scan takes its
+            # no-files branch and no client or daemon ever runs.
+            param([string]$Variant, [string]$PolicyText, [string]$Mode = 'closed', [switch]$EmptyTarget)
             $root = New-SvTempRoot -Tag ('pv' + [guid]::NewGuid().ToString('N').Substring(0, 4)) -MintingFile 'tests/PowerShellLsp.EffectivePolicy.Tests.ps1'
             [void]$script:PvRoots.Add($root)
             $tree = New-SvCliTree -Root $root -ClientFixture 'pv-policy-variant.ps1'
             $src = Join-Path $root 'src'
             New-Item -ItemType Directory -Force -Path $src | Out-Null
-            [System.IO.File]::WriteAllText((Join-Path $src 'target.ps1'), "function Get-PvTarget {`n    param([string]`$Name)`n    Write-Output `$Name`n}`n", (New-Object System.Text.UTF8Encoding($false)))
+            if ($EmptyTarget) {
+                [System.IO.File]::WriteAllText((Join-Path $src 'notes.txt'), "not PowerShell`n")
+            } else {
+                [System.IO.File]::WriteAllText((Join-Path $src 'target.ps1'), "function Get-PvTarget {`n    param([string]`$Name)`n    Write-Output `$Name`n}`n", (New-Object System.Text.UTF8Encoding($false)))
+            }
             $data = Join-Path $root 'data'
             New-Item -ItemType Directory -Force -Path $data | Out-Null
             [System.IO.File]::WriteAllText((Join-Path $data 'pv-variant.txt'), $Variant)
@@ -679,6 +744,21 @@ Describe 'The shipped CLI certifies only on agreeing evidence -- production-buil
         $c.Run.ExitCode | Should -Be 4 -Because ('stderr: ' + $c.Run.Err)
         @($c.Policy.reasons) | Should -Contain 'policy-suppression-pass-failed'
         $c.Policy.suppressionPass | Should -BeExactly 'failed'
+    }
+
+    It 'AN EMPTY TARGET is NOT CERTIFIED in managed mode (analysis-empty, exit 4) and stays exit 0 unmanaged' {
+        $m = Invoke-PvCase -Variant 'applied' -PolicyText $script:PvExclude -EmptyTarget
+        $m.Marker | Should -BeNullOrEmpty -Because 'no client may have run: the target holds no PowerShell file'
+        $m.Run.ExitCode | Should -Be 4 -Because ('stderr: ' + $m.Run.Err)
+        [bool]$m.Sarif.runs[0].invocations[0].executionSuccessful | Should -BeFalse
+        $m.Policy.certification | Should -BeExactly 'not-certified'
+        @($m.Policy.reasons) -join ',' | Should -BeExactly 'analysis-empty'
+        $m.Run.Err | Should -Match 'analysis-empty'
+        $m.Run.Err | Should -Not -Match 'CERTIFIED --' -Because 'the certified line must never be printed for zero files'
+        $o = Invoke-PvCase -Variant 'applied' -PolicyText $script:PvExclude -EmptyTarget -Mode 'open'
+        $o.Run.ExitCode | Should -Be 0 -Because ('nothing to analyze is not a fault in an unmanaged scan; stderr: ' + $o.Run.Err)
+        [bool]$o.Sarif.runs[0].invocations[0].executionSuccessful | Should -BeTrue
+        $o.Policy.certification | Should -BeExactly 'not-requested'
     }
 }
 

@@ -1476,6 +1476,11 @@ function Write-MergedPssaSettingsFile {
     # the file is read back and re-hashed before its path is returned. A path is therefore returned
     # only when the bytes on disk are the bytes this call meant to write -- which is what lets the
     # daemon report a successful merged-settings write as evidence rather than as a hope.
+    #
+    # A LOST RENAME IS NOT A FAILED WRITE. Two daemons on one data root that write the same NEW text
+    # can both find no file, and then the second rename throws because the first one's file is already
+    # in place. The name is the text's digest, so that file is accepted -- but only as a FILE, and only
+    # when it re-hashes to the intended text below; a directory or any other failure still returns ''.
     param([hashtable]$Settings, [string]$DataRoot)
     if ($null -eq $Settings -or [string]::IsNullOrWhiteSpace($DataRoot)) { return '' }
     $tmp = ''
@@ -1492,8 +1497,13 @@ function Write-MergedPssaSettingsFile {
         }
         $tmp = $path + '.' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.tmp'
         [System.IO.File]::WriteAllBytes($tmp, $bytes)
-        [System.IO.File]::Move($tmp, $path)
-        $tmp = ''
+        try {
+            [System.IO.File]::Move($tmp, $path)
+            $tmp = ''
+        } catch {
+            # A concurrent writer renamed first (see above); the finally removes this call's temp file.
+            if (-not [System.IO.File]::Exists($path)) { throw }
+        }
         if ((Get-Sha256HexFromBytes -Bytes ([System.IO.File]::ReadAllBytes($path))) -cne $sha) { return '' }
         return $path
     } catch {

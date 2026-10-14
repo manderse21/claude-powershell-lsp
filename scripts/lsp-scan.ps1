@@ -177,8 +177,10 @@ $childPolicyMode = $(if ([string]$policyModeInfo.source -eq 'cli') { [string]$po
 $policyReported = ($managed -or $null -ne $declaredPolicy)
 
 # No PowerShell files -> a well-formed empty report, exit 0 (nothing to analyze is not a fault). A
-# managed scan still refuses what it can refuse without a file (no usable declared policy, ambient
-# configuration) -- nothing was applied, so nothing else can be certified or refused.
+# MANAGED scan is never certified here: nothing was analyzed, so nothing shows the policy was applied
+# (analysis-empty, from Test-ScanPolicyCertification), and it names whatever else it can refuse without
+# a file (no usable declared policy, ambient configuration) -- exit 4, so a managed gate pointed at the
+# wrong directory cannot read CERTIFIED.
 if ($files.Count -eq 0) {
     $emptyCert = Test-ScanPolicyCertification -Mode ([string]$policyModeInfo.resolved) -Declared $declaredPolicy -Ambient $ambientOptions
     $emptyOk = (-not [bool]$emptyCert.Managed) -or [bool]$emptyCert.Certified

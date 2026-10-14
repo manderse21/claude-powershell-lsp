@@ -72,7 +72,9 @@ when a usable declared policy and agreeing evidence from both parties are presen
 `4` with `executionSuccessful=false` and fixed reason codes (`policy-not-declared`,
 `policy-file-missing`, `policy-unreadable`, `policy-merge-write-failed`,
 `policy-activation-unsupported`, `policy-disagreement`, `config-ambient`, ...); not-required is never
-failed (a policy with no required rules needs no merged settings). Until the declared child
+failed (a policy with no required rules needs no merged settings), and a target with no PowerShell
+file is never certified (`analysis-empty`: nothing shows the policy was applied, so a managed gate
+pointed at the wrong directory exits `4`; unmanaged, it is exit `0` as before). Until the declared child
 configuration lands (A3), a managed scan with ambient analysis options in its environment is refused,
 never certified around them. **A host that sets `POWERSHELL_LSP_POLICY_MODE=closed` now runs its scans
 managed** -- including `/powershell-lsp:scan` -- and such a scan without `-OrgPolicyPath` is NOT
@@ -87,7 +89,9 @@ on the way: the `RequiredRules` version guard was handed its own verified tag an
 it now compares the PSES version the daemon reads from the manifest it launches (the pinned bundle
 agrees, so nothing changes there); the merged settings file was one fixed name every daemon sharing a
 data root rewrote, though PSES hands that path to PSScriptAnalyzer on every pass -- it is now named by
-the SHA-256 of its text under `orgpolicy-settings/`, written atomically and verified; and a corrupt
+the SHA-256 of its text under `orgpolicy-settings/`, written atomically and verified (a daemon that
+loses the rename to an identical concurrent write accepts the file in place once it re-hashes to the
+intended text, instead of reporting a failed write); and a corrupt
 policy read under a caller whose `$ErrorActionPreference` was `Continue` came back as a valid EMPTY
 policy with no warning -- `Import-OrgPolicy` now parses with `-ErrorAction Stop`, so the degrade is the
 same for every caller (unchanged for the shipped entry points, which all run under `Stop`).

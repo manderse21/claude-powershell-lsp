@@ -117,6 +117,7 @@ holds; each failure is named by its code on stderr, in the text report, and as a
 | `policy-file-missing`, `policy-path-relative`, `policy-unreadable`, `policy-integrity-*` | the declared policy cannot be used (the same degrades the edit hook fails closed on) |
 | `config-ambient` | a `CLAUDE_PLUGIN_OPTION_*` that changes analysis (rule lists, threshold, cap, settings, ruleset, profile, host, ...) reached the scan from its environment |
 | `analysis-incomplete` | a file has no COMPLETE receipt |
+| `analysis-empty` | the target holds no PowerShell file, so nothing shows the policy was applied (an unmanaged scan of such a target still exits `0`) |
 | `policy-evidence-missing` | a file's receipt carries no application record from the hook or the daemon |
 | `policy-disagreement` | the hook or the daemon applied a policy whose identity differs from the declared one |
 | `policy-activation-unsupported` | `RequiredRules` could not be activated: the running PSES version is not one the pinned default list was verified for |

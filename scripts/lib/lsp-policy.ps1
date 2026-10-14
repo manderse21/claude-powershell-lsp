@@ -118,6 +118,7 @@ function Get-PolicyReasonTable {
     $t['config-observed-mismatch'] = [ordered]@{ Stage = 'certification'; Meaning = 'the configuration the daemon reports differs from the configuration the scan declared' }
     $t['engine-unknown'] = [ordered]@{ Stage = 'certification'; Meaning = 'the analysis engine versions could not be observed' }
     $t['analysis-incomplete'] = [ordered]@{ Stage = 'certification'; Meaning = 'the file has no complete completion receipt' }
+    $t['analysis-empty'] = [ordered]@{ Stage = 'certification'; Meaning = 'the scan analyzed no PowerShell file, so nothing shows the policy was applied' }
     return $t
 }
 
@@ -551,9 +552,14 @@ function Test-ScanPolicyCertification {
     # scan is certified only when every one of these holds, each failure its own code:
     #   run level   a policy was declared (policy-not-declared); it is usable (its resolution code);
     #               no ambient analysis option reached the scan (config-ambient); a required
-    #               suppression pass ran (policy-suppression-pass-failed);
+    #               suppression pass ran (policy-suppression-pass-failed); at least one file was
+    #               analyzed (analysis-empty) -- with no file there is no evidence the policy was
+    #               applied, and O03 certifies only on that proof, so a managed gate pointed at a
+    #               directory with no PowerShell in it never reads CERTIFIED;
     #   per file    the file's receipt is complete (analysis-incomplete); it carries application
-    #               evidence (policy-evidence-missing); the client adjudicated, and the daemon
+    #               evidence (policy-evidence-missing -- also when the daemon's record is still the
+    #               'pending' one it starts with, which has resolved nothing yet and so cannot
+    #               disagree); the client adjudicated, and the daemon
     #               applied, the DECLARED identity (policy-disagreement); when the policy requires a
     #               merged settings file, the daemon activated it -- guard passed, written and
     #               verified, delivered, and the file PSES reads still hashes to what was written
@@ -590,6 +596,7 @@ function Test-ScanPolicyCertification {
     }
     if (@($Ambient | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) { $run.Add('config-ambient') }
     if ($SuppressionPass -eq 'failed') { $run.Add('policy-suppression-pass-failed') }
+    if (@($Files | Where-Object { $null -ne $_ }).Count -eq 0) { $run.Add('analysis-empty') }
     $want = Get-ScanDeclaredAnalysisConfiguration
 
     $fileOut = New-Object System.Collections.ArrayList
@@ -615,14 +622,14 @@ function Test-ScanPolicyCertification {
                     [string](Get-PolicyField -Object $cr -Name 'effectiveSha256') -cne $declaredSha) { $r.Add('policy-disagreement') }
             }
             if ($pass -eq 'pssa') {
-                if ($null -eq $daemon) {
+                $rr = Get-PolicyField -Object $daemon -Name 'requiredRules'
+                $state = [string](Get-PolicyField -Object $rr -Name 'state')
+                if ($null -eq $daemon -or $state -eq 'pending') {
                     $r.Add('policy-evidence-missing')
                 } else {
                     $dr = Get-PolicyField -Object $daemon -Name 'resolution'
                     if ((Get-PolicyField -Object $dr -Name 'usable') -ne $true -or
                         [string](Get-PolicyField -Object $dr -Name 'effectiveSha256') -cne $declaredSha) { $r.Add('policy-disagreement') }
-                    $rr = Get-PolicyField -Object $daemon -Name 'requiredRules'
-                    $state = [string](Get-PolicyField -Object $rr -Name 'state')
                     if ($needsMerge) {
                         switch ($state) {
                             'activated' {
