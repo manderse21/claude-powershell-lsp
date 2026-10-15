@@ -56,11 +56,19 @@ Read the exit code and say what it means -- do not report a scan as clean withou
   clean one, so do NOT tell the user their code is clean on a `4` -- say the scan could not
   complete, name the files and the reason codes it printed (for example `parse-errors` for a file
   that does not parse, or `daemon-unreachable`), and suggest `/powershell-lsp:doctor` when the
-  reasons point at the analyzer rather than at the files. A `4` that prints **NOT CERTIFIED** is a
-  *managed* scan's refusal instead: this host sets `POWERSHELL_LSP_POLICY_MODE=closed`, so the scan
-  certifies only a declared org policy proven applied, and its reason codes (for example
-  `policy-not-declared`, `config-ambient`) say why it could not. The findings it printed are still
-  real; say that they were not certified, and name the reasons -- do not call the code clean.
+  reasons point at the analyzer rather than at the files. This command never runs a *managed*
+  (certifying) scan -- it passes no `-PolicyMode`, and `POWERSHELL_LSP_POLICY_MODE` never makes a scan
+  managed -- so it never prints **NOT CERTIFIED**. A file whose reasons include `policy-fail-closed`
+  was not analyzed because this host fails closed over an organization policy that does not validate
+  (`POWERSHELL_LSP_POLICY_MODE=closed`): say so, and suggest `/powershell-lsp:doctor` (its `orgPolicy`
+  report names why the policy does not validate).
+
+If stderr carries **`warning: PSScriptAnalyzer would reject a settings file`**, the repository's
+`PSScriptAnalyzerSettings.psd1` (or the configured `settingsPath`) is one PSScriptAnalyzer refuses -- the
+warning names the key or value. The scan did not use it, so its findings come from the analyzer's
+default rules, not the repository's configuration: report the findings, tell the user their settings
+file is broken and what the warning names, and do not present the findings as the repository's own
+rule set.
 
 Then summarize the findings by rule and severity, and offer to fix them -- but do not edit files
 unless the user asks.

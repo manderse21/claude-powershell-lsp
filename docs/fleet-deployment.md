@@ -100,6 +100,16 @@ configuration-management tool such as Ansible or Puppet writing `/etc/environmen
 `/etc/profile.d/*.sh` drop-in serves the same role. Neither is exercised by this repository's own
 CI, which runs Windows, macOS and Linux legs but does not test fleet-management tooling itself.)
 
+**`POWERSHELL_LSP_POLICY_MODE` governs interactive edits; it never makes a scan certify.** Set it to
+`closed` and every Claude Code edit on the host fails closed over an `orgPolicy` that does not validate
+(see configuration.md). It does NOT make `scripts/lsp-scan.ps1` a managed, certifying scan -- including
+`/powershell-lsp:scan` -- on that host (owner ruling, dispatch 000306): a CI gate or scheduled audit that
+needs a certified result passes both on its own command line,
+`lsp-scan.ps1 <path> -OrgPolicyPath <policy.psd1> -PolicyMode closed`, and reads exit `4` with
+`NOT CERTIFIED` as a failed gate. (A scan's per-file hook children still inherit the variable, so a
+declared policy that does not validate fails those files' analysis closed -- reported not analyzed,
+reason `policy-fail-closed` -- in any scan on such a host.)
+
 `orgPolicy` -- the userConfig knob `POWERSHELL_LSP_POLICY_MODE` governs -- is different: it IS a
 `userConfig` knob (Tier 1, frozen), so it cannot be set by machine environment variable the same
 way. It is a per-installation setting resolved through the plugin's own config resolution

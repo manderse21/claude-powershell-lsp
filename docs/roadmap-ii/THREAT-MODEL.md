@@ -344,6 +344,14 @@ while keeping *how this plugin invokes them* in scope. The plugin-side bounds th
 real: the walk-up stops at the project root (`:553`) and never ascends past the directory of an
 out-of-workspace file (`:556-561`), so the settings file honored is one already inside the tree the
 user opened. No fix is proposed here.
+*Amended 2026-10-15 (dispatch 000306):* the plugin now also READS the resolved file before PSES does
+-- `Read-PssaSettingsFile`, to refuse a settings file PSScriptAnalyzer would reject (one makes PSES
+analyze nothing and still publish a settled, empty result). The read is data-only: the file is parsed,
+never run, every value must be a constant, `$true`/`$false`/`$null`, an array, a table or a cast of
+those before `Ast.SafeGetValue` builds it, so a hostile file can at most be refused (an unmanaged session
+then falls back to PSES's default rules; a managed scan refuses to certify). The RequiredRules merge has
+read the same file since dispatch 000294, now through the same reader. What PSES does with a file the
+plugin accepts is unchanged and still not derived.
 
 **T3.3 Hostile module manifest.** *Mitigated.* Manifests are read with `Import-PowerShellDataFile`
 (`scripts/lib/lsp-common.ps1:2799,2850,2879`), the restricted-language data-only parser. This path

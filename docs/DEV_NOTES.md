@@ -203,12 +203,34 @@ and never parse it a second way. Things that bite when you change this path:
   U+212A on both hosts. Use `[regex]::IsMatch` with no options, and `\z`, not `$`.
 - **A daemon's record starts `pending`** and stays so until its first analyzed PowerShell file; it
   carries no resolution, so every reader treats it as not yet applied -- the managed verdict as
-  `policy-evidence-missing`, doctor as `not-observed` (`pending`) -- never as a disagreement.
+  `policy-evidence-missing`, doctor as `not-observed` (`pending`) -- never as a disagreement. Build it
+  only with `New-PolicyStartupEvidence`: `Reset-PsesState` returns to it on every PSES re-spawn (and
+  clears `settingsPathInUse`), because a re-spawned child was never sent the dead child's settings
+  (dispatch 000306, B1-K05). Every exit of `Initialize-PssaSettings` must record what it did -- a
+  settings resolution that throws records the TERMINAL `settings-unresolved`, which doctor reads as
+  `not-observed` (`settings-unresolved`) and the managed verdict as `policy-evidence-missing`; an early
+  `return` that records nothing leaves `pending` standing for the daemon's whole life (B1-OOB-I01).
 - **PSScriptAnalyzer rejects an unknown settings key, and then nothing is analyzed.** Its valid keys are
   `CustomRulePath`, `ExcludeRules`, `IncludeRules`, `IncludeDefaultRules`, `RecurseCustomRulePath`,
   `Rules` and `Severity`; a settings file with any other key (`RuleArguments`, `Severities`) makes every
   analysis fail inside PSES, which still publishes an empty, settled result -- zero findings that look
   clean (measured 2026-10-13 against the vendored PSSA). Do not build a test fixture on such a key.
+  The same is true of a value of the wrong shape and, under PSES, of a RELATIVE `CustomRulePath` (PSES
+  runs from the daemon's log directory). Since dispatch 000306 the daemon reads every settings file it
+  would hand PSES through `Read-PssaSettingsFile` and hands none it rejects; the merge carries only the
+  entries it accepts. The rules that reader encodes were MEASURED on both hosts (identical, with and
+  without PSES's own `-Severity` argument) and `tests/PowerShellLsp.PolicySettings.Tests.ps1` re-measures
+  parity against the vendored analyzer on every leg -- change a rule there, not here from memory. Two
+  things it deliberately mirrors: PSScriptAnalyzer reads the FIRST table in the file (a statement before
+  it is fine), and it does not refuse a parse error by itself. One thing it cannot see: whether a
+  `CustomRulePath` module yields a rule (measured boundary, kept visible by a test).
+- **A merged settings file is removed only when no LIVE daemon names it.** `Remove-StaleMergedPssaSettings`
+  (dispatch 000306, B1-K07) runs after every merge and reads the session records on the same data root:
+  a file a live daemon's record names (by FILE NAME -- one data root can be spelled two ways) is kept
+  however old, anything younger than the grace window is kept (a reused file has its write time
+  refreshed), an unreadable record stops the sweep, and nothing outside `orgpolicy-settings/` but the one
+  legacy `orgpolicy-merged-settings.psd1` is ever touched. Deleting another daemon's file would not fail
+  loudly: PSES would analyze nothing on every later pass.
 
 ## The public contract has teeth
 
