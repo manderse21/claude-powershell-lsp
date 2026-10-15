@@ -352,8 +352,10 @@ those, or one of those in parentheses or behind a sign (a command in parentheses
 never run) before `Ast.SafeGetValue` builds it, so a hostile file can at most be refused (an unmanaged session
 then falls back to PSES's default rules; a managed scan refuses to certify). Its `CustomRulePath` check
 resolves each entry with PowerShell's own path resolver -- the lookup PSScriptAnalyzer itself makes
-inside PSES -- so a UNC entry reaches its host from the daemon as it already did from PSES; nothing it
-names is loaded or run by the check. The RequiredRules merge has
+inside PSES -- so a UNC entry reaches its host from the daemon as it already did from PSES -- and,
+since review finding B1b-K01, lists the directories an entry reaches (at most 2000 of them) to see
+whether it leads to a rule module or assembly, as PSScriptAnalyzer itself does; nothing it names is
+loaded or run by the check. The RequiredRules merge has
 read the same file since dispatch 000294, now through the same reader. What PSES does with a file the
 plugin accepts is unchanged and still not derived.
 

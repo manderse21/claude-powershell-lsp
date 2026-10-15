@@ -145,8 +145,9 @@ the daemon both applied the policy whose identity the scan resolved, that a requ
 settings were written, verified and handed to PSES, that the settings file PSES reads still hashed to
 what was written, and -- since dispatch 000306 -- that the daemon found every settings file the analysis
 rests on, the repository's and the merged one, to be one PSScriptAnalyzer accepts, by the checks
-[below](#settings-files-the-analysis-rests-on-dispatch-000306). It does NOT prove that the rule
-modules a `CustomRulePath` names load (the boundary described there), and it does
+[below](#settings-files-the-analysis-rests-on-dispatch-000306). It does NOT prove that a rule module
+or assembly a `CustomRulePath` reaches holds a rule (the one boundary that check leaves, described there
+and left to leg A3's runtime signal), and it does
 not make the plugin tamper-proof: a process running as the same user can edit the policy, its sidecar,
 the plugin and its evidence. Run release gates on a protected runner whose policy someone other than the
 change's author controls. Until the declared child configuration lands (leg A3), a managed scan run with
@@ -184,11 +185,20 @@ Windows PowerShell 5.1 and PowerShell 7 alike:
 - `CustomRulePath` is not empty, and every entry is a path that means the same thing from any directory
   -- a full path (`C:\rules`, `\\server\share\rules`, `/opt/rules`), a `~` path, or either behind
   `FileSystem::` -- that PowerShell's own path resolver, the call PSScriptAnalyzer makes for each entry,
-  resolves without error (a wildcard that matches is used; one that matches nothing is no error). PSES
+  resolves without error (a wildcard that matches is used; one that matches nothing is no error by
+  itself -- but see the next point). PSES
   runs from the daemon's own working directory, not the repository's, so through the real daemon a
   relative entry made PSES analyze nothing, `IncludeDefaultRules` or not; a drive-relative entry
   (`C:rules`) or a root-relative one (`\rules`) depends on the current directory too and is refused the
-  same way.
+  same way;
+- unless `IncludeDefaultRules = $true`, the `CustomRulePath` entries together reach a rule source
+  PSScriptAnalyzer loads (review finding B1b-K01): a `.psm1`, `.psd1` or `.dll` file, a module directory
+  (one holding a module named for it, itself or in a version folder), or a directory holding
+  assemblies -- and, with `RecurseCustomRulePath = $true`, any such directory below it. A wildcard that
+  matches nothing, an empty directory, a `.txt` or `.ps1`, or a directory whose module is named
+  otherwise reaches none; PSScriptAnalyzer then finds no rules ("Cannot find ScriptAnalyzer rules in the
+  specified path") and PSES analyzes nothing. One entry that reaches nothing beside one that does is
+  fine, as it is to PSScriptAnalyzer.
 
 The verdict -- `valid`, `rejected`, `unparsable`, or `none` when no settings file was resolved -- is
 recorded in the daemon's application evidence (`policy.daemon.settings.validation`, with a one-line
@@ -207,12 +217,14 @@ beside it -- measured -- so carrying it changes nothing you can see; `Rules` is 
 managed scan over a repository file with a rejected key is refused even though the merged file, without
 that key, was valid and was used: the analysis did not run on the settings the repository declared.
 
-**What the check cannot see.** It reads the settings file, not the rule modules a `CustomRulePath` names:
-a `CustomRulePath` that resolves but yields no rule -- an empty directory, a module with no rule in it,
-a wildcard that matches nothing -- passes the check, and unless the file also sets
+**What the check cannot see.** It reads the settings file and lists the directories a `CustomRulePath`
+reaches, but loads nothing: a rule source that resolves but holds no rule -- a module that exports no
+rule function, a `.dll` that is no rule assembly -- passes the check, and unless the file also sets
 `IncludeDefaultRules = $true` PSScriptAnalyzer then refuses the settings ("Cannot find ScriptAnalyzer
-rules in the specified path") and PSES analyzes nothing. That boundary is measured and kept visible by a
-test.
+rules in the specified path") and PSES analyzes nothing. That one boundary is left to a runtime signal
+(leg A3); it is measured and kept visible by a test. Every other way a `CustomRulePath` reaches no rule is
+refused as above (since review finding B1b-K01; before it, `CustomRulePath = @('~/*.nomatch')` alone read
+valid and a managed scan certified an empty result).
 
 **Where the check is stricter than PSScriptAnalyzer.** A few forms PSScriptAnalyzer accepts are refused
 by design -- the safe direction: a managed scan refuses, an unmanaged one warns and uses PSES's default

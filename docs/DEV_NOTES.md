@@ -232,10 +232,14 @@ and never parse it a second way. Things that bite when you change this path:
   `-not`/`!`/`-bnot` and a sub-expression holding data are all accepted. The reader accepts the first
   two (B1b-R02 -- `ExcludeRules = ('A', 'B')` is ordinary PowerShell, and refusing it cost a repository
   its settings file in every unmanaged session) and still refuses the other two, the safe direction,
-  kept visible by a test. One thing it cannot see: whether the
-  paths a `CustomRulePath` resolves to yield a rule -- without `IncludeDefaultRules = $true`,
-  PSScriptAnalyzer refuses settings whose custom paths yield none (measured boundary, kept visible by a
-  test).
+  kept visible by a test. Without `IncludeDefaultRules = $true`, PSScriptAnalyzer refuses settings
+  whose custom paths reach no rule source (B1b-K01, measured): a `CustomRulePath` DIRECTORY loads a
+  module only when it is a module directory (`X\X.psm1`, `X\X.psd1`, or either in a version folder)
+  and otherwise loads its `*.dll` files -- a module file under another name in it yields nothing, and
+  `RecurseCustomRulePath` walks the directories below for the same; a file loads only as `.psm1`,
+  `.psd1` or `.dll` (a `.ps1` warns "Cannot find rule extension"). The reader mirrors that
+  (`Test-PssaSettingsRulePathYieldsRule`). One thing it cannot see without loading it: whether a rule
+  source HOLDS a rule (measured boundary, kept visible by a test).
 - **A merged settings file is removed only when no LIVE daemon names it.** `Remove-StaleMergedPssaSettings`
   (dispatch 000306, B1-K07) runs after every merge and reads the session records on the same data root:
   a file a live daemon's record names (by FILE NAME -- one data root can be spelled two ways) is kept

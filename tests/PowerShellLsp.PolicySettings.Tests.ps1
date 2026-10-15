@@ -70,6 +70,35 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
         $script:RdEmpty = Join-Path $TestDrive 'rd-empty'
         New-Item -ItemType Directory -Force -Path $script:RdEmpty | Out-Null
         $script:RdMissing = Join-Path $TestDrive 'rd-no-such/rules.psm1'
+        # Review finding B1b-K01 -- where a CustomRulePath leads PSScriptAnalyzer (measured, both hosts): a
+        # module directory named for its module, or holding it in a version folder; one nested below a
+        # directory given with RecurseCustomRulePath; and places that hold no module or assembly. Then the
+        # boundary: rule sources that RESOLVE but hold no rule.
+        function New-RdRuleModule([string]$Path, [string]$Function, [switch]$NoRule) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+            $body = if ($NoRule) { 'function ' + $Function + " { 'x' }" } else {
+                'function ' + $Function + " {`n    param([Parameter(Mandatory = `$true)][System.Management.Automation.Language.ScriptBlockAst]`$ScriptBlockAst)`n    return @()`n}"
+            }
+            [System.IO.File]::WriteAllText($Path, ($body + "`nExport-ModuleMember -Function " + $Function + "`n"))
+        }
+        $script:RdModDir = Join-Path $TestDrive 'rd-moddirs/B1b.ModDir'
+        New-RdRuleModule (Join-Path $script:RdModDir 'B1b.ModDir.psm1') 'Measure-B1bModDir'
+        $script:RdVerDir = Join-Path $TestDrive 'rd-moddirs/B1b.Ver'
+        New-RdRuleModule (Join-Path $script:RdVerDir '1.0.0/B1b.Ver.psm1') 'Measure-B1bVer'
+        [System.IO.File]::WriteAllText((Join-Path $script:RdVerDir '1.0.0/B1b.Ver.psd1'), "@{ RootModule = 'B1b.Ver.psm1'; ModuleVersion = '1.0.0'; GUID = '3f6a1c2e-8b4d-4e5f-9a7b-0c1d2e3f4a5b'; FunctionsToExport = @('Measure-B1bVer') }`n")
+        $script:RdOuter = Join-Path $TestDrive 'rd-outer'
+        New-RdRuleModule (Join-Path $script:RdOuter 'B1b.Deep/B1b.Deep.psm1') 'Measure-B1bDeep'
+        $script:RdTxtDir = Join-Path $TestDrive 'rd-txtonly'
+        New-Item -ItemType Directory -Force -Path $script:RdTxtDir | Out-Null
+        $script:RdTxtFile = Join-Path $script:RdTxtDir 'readme.txt'
+        [System.IO.File]::WriteAllText($script:RdTxtFile, 'not a rule module')
+        $script:RdNoRule = Join-Path $TestDrive 'rd-norule/B1b.NoRule.psm1'
+        New-RdRuleModule $script:RdNoRule 'Get-B1bNothing' -NoRule
+        $script:RdNoRuleDir = Join-Path $TestDrive 'rd-norule-dir/B1b.NoRuleDir'
+        New-RdRuleModule (Join-Path $script:RdNoRuleDir 'B1b.NoRuleDir.psm1') 'Get-B1bNothingEither' -NoRule
+        $script:RdFakeAssembly = Join-Path $TestDrive 'rd-fake-assembly'
+        New-Item -ItemType Directory -Force -Path $script:RdFakeAssembly | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $script:RdFakeAssembly 'NotAnAssembly.dll'), 'not an assembly')
         # THE MATRIX. Verdicts are the reader's; 'Pssa' is what the vendored PSScriptAnalyzer 1.25.0 was
         # MEASURED to do with the same file on Windows PowerShell 5.1 and PowerShell 7 (dispatch 000306),
         # and what the parity test below re-measures on the running host.
@@ -113,6 +142,17 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
             @{ Name = 'a FileSystem-qualified CustomRulePath'; Verdict = 'valid'; Text = ('@{ CustomRulePath = @(' + $q + 'FileSystem::' + $script:RdModule + $q + ') }') }
             @{ Name = 'a drive-relative CustomRulePath'; Verdict = 'rejected'; Text = "@{ CustomRulePath = @('C:rd-rules\B1b.Rules.psm1') }" }
             @{ Name = 'a FileSystem-qualified relative CustomRulePath'; Verdict = 'rejected'; Text = "@{ CustomRulePath = @('FileSystem::rd-rules\B1b.Rules.psm1') }" }
+            @{ Name = 'a CustomRulePath wildcard matching nothing (B1b-K01)'; Verdict = 'rejected'; Text = ('@{ CustomRulePath = @(' + $q + (Join-Path $script:RdRules '*.nomatch') + $q + ') }') }
+            @{ Name = 'an empty CustomRulePath directory (B1b-K01)'; Verdict = 'rejected'; Text = ('@{ CustomRulePath = @(' + $q + $script:RdEmpty + $q + ') }') }
+            @{ Name = 'a CustomRulePath directory holding no module or assembly (B1b-K01)'; Verdict = 'rejected'; Text = ('@{ CustomRulePath = @(' + $q + $script:RdTxtDir + $q + ') }') }
+            @{ Name = 'a CustomRulePath file that is no module (B1b-K01)'; Verdict = 'rejected'; Text = ('@{ CustomRulePath = @(' + $q + $script:RdTxtFile + $q + ') }') }
+            @{ Name = 'a CustomRulePath directory holding a module named otherwise (B1b-K01)'; Verdict = 'rejected'; Text = ('@{ CustomRulePath = @(' + $q + $script:RdRules + $q + ') }') }
+            @{ Name = 'a nested module directory without RecurseCustomRulePath (B1b-K01)'; Verdict = 'rejected'; Text = ('@{ CustomRulePath = @(' + $q + $script:RdOuter + $q + ') }') }
+            @{ Name = 'a module directory as CustomRulePath'; Verdict = 'valid'; Text = ('@{ CustomRulePath = @(' + $q + $script:RdModDir + $q + ') }') }
+            @{ Name = 'a versioned module directory as CustomRulePath'; Verdict = 'valid'; Text = ('@{ CustomRulePath = @(' + $q + $script:RdVerDir + $q + ') }') }
+            @{ Name = 'a nested module directory with RecurseCustomRulePath'; Verdict = 'valid'; Text = ('@{ CustomRulePath = @(' + $q + $script:RdOuter + $q + '); RecurseCustomRulePath = $true }') }
+            @{ Name = 'a CustomRulePath entry reaching nothing beside one reaching a module'; Verdict = 'valid'; Text = ('@{ CustomRulePath = @(' + $q + (Join-Path $script:RdRules '*.nomatch') + $q + ', ' + $q + $script:RdModule + $q + ') }') }
+            @{ Name = 'an empty CustomRulePath directory beside the default rules'; Verdict = 'valid'; Text = ('@{ CustomRulePath = @(' + $q + $script:RdEmpty + $q + '); IncludeDefaultRules = $true }') }
             @{ Name = 'an empty file'; Verdict = 'unparsable'; Text = '' }
             @{ Name = 'no table'; Verdict = 'unparsable'; Text = "'x'" }
             @{ Name = 'a syntax error'; Verdict = 'unparsable'; Text = '@{ Severity = ' }
@@ -184,6 +224,17 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
         @{ Name = 'a FileSystem-qualified CustomRulePath'; Verdict = 'valid' }
         @{ Name = 'a drive-relative CustomRulePath'; Verdict = 'rejected' }
         @{ Name = 'a FileSystem-qualified relative CustomRulePath'; Verdict = 'rejected' }
+        @{ Name = 'a CustomRulePath wildcard matching nothing (B1b-K01)'; Verdict = 'rejected' }
+        @{ Name = 'an empty CustomRulePath directory (B1b-K01)'; Verdict = 'rejected' }
+        @{ Name = 'a CustomRulePath directory holding no module or assembly (B1b-K01)'; Verdict = 'rejected' }
+        @{ Name = 'a CustomRulePath file that is no module (B1b-K01)'; Verdict = 'rejected' }
+        @{ Name = 'a CustomRulePath directory holding a module named otherwise (B1b-K01)'; Verdict = 'rejected' }
+        @{ Name = 'a nested module directory without RecurseCustomRulePath (B1b-K01)'; Verdict = 'rejected' }
+        @{ Name = 'a module directory as CustomRulePath'; Verdict = 'valid' }
+        @{ Name = 'a versioned module directory as CustomRulePath'; Verdict = 'valid' }
+        @{ Name = 'a nested module directory with RecurseCustomRulePath'; Verdict = 'valid' }
+        @{ Name = 'a CustomRulePath entry reaching nothing beside one reaching a module'; Verdict = 'valid' }
+        @{ Name = 'an empty CustomRulePath directory beside the default rules'; Verdict = 'valid' }
         @{ Name = 'an empty file'; Verdict = 'unparsable' }
         @{ Name = 'no table'; Verdict = 'unparsable' }
         @{ Name = 'a syntax error'; Verdict = 'unparsable' }
@@ -207,6 +258,23 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
         if ($null -eq $script:RdHomeCase) { Set-ItResult -Skipped -Because 'the test drive is not under the home directory on this host'; return }
         $r = Read-PssaSettingsFile -Path (New-PsFile $script:RdHomeCase.Text)
         $r.Verdict | Should -BeExactly 'valid' -Because ([string]$r.Problem)
+    }
+
+    It 'B1b-K01: the review''s one-line file -- a CustomRulePath wildcard under ~ that matches nothing -- reads REJECTED and is never carried: PSScriptAnalyzer finds no rules in it' {
+        $r = Read-PssaSettingsFile -Path (New-PsFile "@{ CustomRulePath = @('~/*.b1b-review-nomatch') }")
+        $r.Verdict | Should -BeExactly 'rejected' -Because ([string]$r.Problem)
+        $r.Problem | Should -Match 'reaches no rule module or assembly'
+        @($r.Rejected) | Should -Contain 'CustomRulePath'
+        $r.Entries.Contains('CustomRulePath') | Should -BeFalse -Because 'a merge must not carry an entry PSScriptAnalyzer refuses'
+        (Read-PssaSettingsFile -Path (New-PsFile "@{ CustomRulePath = @('~/*.b1b-review-nomatch'); IncludeDefaultRules = `$true }")).Verdict |
+            Should -BeExactly 'valid' -Because 'CONTROL: beside the default rules PSScriptAnalyzer accepts the same entry'
+    }
+
+    It 'B1b-K01: the directory check never refuses on a guess -- a tree larger than its budget counts as a rule source' {
+        $root = Join-Path $TestDrive 'rd-budget'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root 'a/b/c') | Out-Null
+        Test-PssaSettingsRuleDirectory -Path $root -Recurse $true | Should -BeFalse -Because 'CONTROL: no rule source anywhere in the tree'
+        Test-PssaSettingsRuleDirectory -Path $root -Recurse $true -Budget 2 | Should -BeTrue
     }
 
     It 'a drive-relative or root-relative CustomRulePath reads REJECTED even when it exists from the reader''s own location -- PSES resolves it from elsewhere' -Skip:(-not $script:PsOnWindows) {
@@ -314,13 +382,15 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
                 [System.IO.File]::WriteAllText($p, [string]$c.Text, (New-Object System.Text.UTF8Encoding($false)))
                 $script:RpFiles[[string]$c.Name] = $p
             }
-            # The boundary: custom paths that RESOLVE but yield no rule, with no IncludeDefaultRules.
+            # The boundary (review finding B1b-K01 closed the rest, now matrix fixtures above): a rule source
+            # that RESOLVES but holds no rule -- a module exporting no rule function, the module directory
+            # around one, a .dll that is no rule assembly -- with no IncludeDefaultRules.
             $script:RpBoundaries = [ordered]@{
-                'boundary.psd1'          = (Join-Path $script:RpDir 'boundary.psd1')
-                'boundary-wildcard.psd1' = (Join-Path $script:RpDir 'boundary-wildcard.psd1')
+                'boundary-module.psd1'    = ("@{ CustomRulePath = @('" + $script:RdNoRule + "') }")
+                'boundary-moduledir.psd1' = ("@{ CustomRulePath = @('" + $script:RdNoRuleDir + "') }")
+                'boundary-assembly.psd1'  = ("@{ CustomRulePath = @('" + $script:RdFakeAssembly + "') }")
             }
-            [System.IO.File]::WriteAllText($script:RpBoundaries['boundary.psd1'], ("@{ CustomRulePath = @('" + $script:RdEmpty + "') }"))
-            [System.IO.File]::WriteAllText($script:RpBoundaries['boundary-wildcard.psd1'], ("@{ CustomRulePath = @('" + (Join-Path $script:RdRules '*.nomatch') + "') }"))
+            foreach ($k in @($script:RpBoundaries.Keys)) { [System.IO.File]::WriteAllText((Join-Path $script:RpDir $k), [string]$script:RpBoundaries[$k]) }
             # Values PSScriptAnalyzer ACCEPTS that the reader still refuses (review finding B1b-R02 kept the
             # reader to parentheses and signs): stricter by design, measured, kept visible below.
             $script:RpStricter = [ordered]@{
@@ -375,13 +445,14 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
             ($mismatch.ToArray() -join '; ') | Should -BeExactly ''
         }
 
-        It 'BOUNDARY, documented in docs/repository-scanning.md: a CustomRulePath that resolves but yields no rule (an empty directory; a wildcard matching nothing), without IncludeDefaultRules, reads valid here and is refused by PSScriptAnalyzer' {
-            # Measured, so the gap stays visible: what the paths a CustomRulePath resolves to CONTAIN is
-            # not something a static read of the settings file can see (with IncludeDefaultRules = $true
-            # PSScriptAnalyzer accepts the same settings and runs its defaults -- a matrix case above). If
-            # PSScriptAnalyzer ever accepts these, or the reader ever refuses them, this test says so.
+        It 'BOUNDARY, documented in docs/repository-scanning.md: a rule module or assembly that resolves but holds no rule, without IncludeDefaultRules, reads valid here and is refused by PSScriptAnalyzer' {
+            # Measured, so the gap stays visible: whether a module or an assembly HOLDS a rule is not
+            # something a static read can see without loading it (left to a runtime signal, A3). Every
+            # other way a CustomRulePath reaches no rule is refused since review finding B1b-K01 -- the
+            # matrix fixtures above. If PSScriptAnalyzer ever accepts these, or the reader ever refuses
+            # them, this test says so.
             foreach ($k in @($script:RpBoundaries.Keys)) {
-                (Read-PssaSettingsFile -Path $script:RpBoundaries[$k]).Verdict | Should -BeExactly 'valid' -Because $k
+                (Read-PssaSettingsFile -Path (Join-Path $script:RpDir $k)).Verdict | Should -BeExactly 'valid' -Because $k
                 $script:RpVerdicts[$k] | Should -BeFalse -Because $k
             }
         }

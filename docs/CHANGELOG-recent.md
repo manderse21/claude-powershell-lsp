@@ -52,7 +52,9 @@ MINOR: **A settings file PSScriptAnalyzer would reject is no longer handed to PS
 `RequiredRules` merge now carries the repository's `Rules` and `Severity`** (dispatch 000306, leg B1b
 -- review findings B1-K04, B1-K05, B1-K07 and B1-OOB-I01). A `PSScriptAnalyzerSettings.psd1` that
 PSScriptAnalyzer rejects -- a key it does not accept, a value of the wrong shape, a relative (to a
-directory or a drive) or missing `CustomRulePath` entry, a file that is not a settings table -- made
+directory or a drive) or missing `CustomRulePath` entry, a `CustomRulePath` that reaches no rule module or
+assembly (a wildcard matching nothing, an empty directory; review finding B1b-K01) without
+`IncludeDefaultRules = $true`, a file that is not a settings table -- made
 PSES analyze NOTHING while it still
 published a settled, empty result: zero findings that read clean, in an edit and in a scan, unmanaged
 and managed alike (a managed scan CERTIFIED it). Now the daemon reads every settings file it would hand
@@ -90,9 +92,9 @@ re-spawn. **Old merged settings files are removed:** after each merge the daemon
 files on its data root that no live daemon's session record names and that are more than ten minutes
 old, and the orphaned `orgpolicy-merged-settings.psd1` from the layout before dispatch 000305 -- never
 anything else, never a directory, and nothing when a session record cannot be read. Not covered, and
-documented: whether the paths a `CustomRulePath` resolves to actually yield a rule (an empty rule
-directory, or a wildcard that matches nothing, still passes the check; without
-`IncludeDefaultRules = $true` PSScriptAnalyzer then refuses the settings). `doctor -Json`'s `orgPolicy` keys
+documented: whether a rule module or assembly a `CustomRulePath` reaches holds a rule (one that exports
+no rule function still passes the check; without `IncludeDefaultRules = $true` PSScriptAnalyzer then
+refuses the settings) -- left to a runtime signal. `doctor -Json`'s `orgPolicy` keys
 keep their names, order and types. No `userConfig` knob, status token or CLI flag is added.
 
 MINOR: **`lsp-scan.ps1 -OrgPolicyPath` now governs the whole analysis, and a new managed mode

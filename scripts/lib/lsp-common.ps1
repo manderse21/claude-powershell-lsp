@@ -1545,6 +1545,83 @@ function Test-PssaSettingsRulePathAnchored {
     return $p.StartsWith('/')
 }
 
+function Test-PssaSettingsRuleFileName {
+    # Is $Name a file PSScriptAnalyzer loads rules from when a CustomRulePath directory holds it: any
+    # assembly (*.dll), or the module file named after that directory ($ModuleName.psd1 / .psm1)?
+    # -ModuleOnly: the module file only (a version-named subdirectory of a module directory).
+    param([string]$Name, [string]$ModuleName, [switch]$ModuleOnly)
+    $ext = [System.IO.Path]::GetExtension($Name)
+    if (-not $ModuleOnly -and [string]::Equals($ext, '.dll', [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    if ([string]::Equals($ext, '.psd1', [System.StringComparison]::OrdinalIgnoreCase) -or [string]::Equals($ext, '.psm1', [System.StringComparison]::OrdinalIgnoreCase)) {
+        return [string]::Equals([System.IO.Path]::GetFileNameWithoutExtension($Name), $ModuleName, [System.StringComparison]::OrdinalIgnoreCase)
+    }
+    return $false
+}
+
+function Test-PssaSettingsRuleDirectory {
+    # Does PSScriptAnalyzer load rules from the CustomRulePath directory $Path (dispatch 000306, review
+    # finding B1b-K01)? MEASURED on the vendored 1.25.0, both hosts: a directory entry loads a MODULE only
+    # when it is a module directory -- it holds <its own name>.psd1 or .psm1, itself or in a version-named
+    # subdirectory (B1bc.Mod\B1bc.Mod.psm1, B1bc.Ver\1.0.0\B1bc.Ver.psd1) -- and otherwise loads the
+    # assemblies (*.dll) in it; a directory holding only other files, or a module file under another name
+    # (rules\My.Rules.psm1), yields no rule. With RecurseCustomRulePath = $true the same holds for every
+    # directory below it (outer\B1bc.Deep\B1bc.Deep.psm1 loads then, and not without it). Never refuses on
+    # a guess: a directory it cannot list, or a tree of more than $Budget directories, counts as a rule
+    # source.
+    param([string]$Path, [bool]$Recurse = $false, [int]$Budget = 2000)
+    $pending = New-Object 'System.Collections.Generic.Queue[string]'
+    $pending.Enqueue($Path)
+    $listed = 0
+    while ($pending.Count -gt 0) {
+        $dir = $pending.Dequeue()
+        $listed++
+        if ($listed -gt $Budget) { return $true }
+        try {
+            $di = New-Object System.IO.DirectoryInfo($dir)
+            foreach ($f in @($di.GetFiles())) {
+                if (Test-PssaSettingsRuleFileName -Name $f.Name -ModuleName $di.Name) { return $true }
+            }
+            foreach ($sub in @($di.GetDirectories())) {
+                $ver = $null
+                if ([version]::TryParse($sub.Name, [ref]$ver)) {
+                    foreach ($f in @($sub.GetFiles())) {
+                        if (Test-PssaSettingsRuleFileName -Name $f.Name -ModuleName $di.Name -ModuleOnly) { return $true }
+                    }
+                }
+                if ($Recurse) { $pending.Enqueue($sub.FullName) }
+            }
+        } catch { return $true }
+    }
+    return $false
+}
+
+function Test-PssaSettingsRulePathYieldsRule {
+    # Does any entry of the CustomRulePath $Entries lead PSScriptAnalyzer to a rule source: a .psm1, .psd1
+    # or .dll file the entry names (directly or through a wildcard), or a directory it loads rules from
+    # (Test-PssaSettingsRuleDirectory)? Review finding B1b-K01, MEASURED on the vendored 1.25.0, both
+    # hosts: settings whose entries TOGETHER reach none -- a wildcard matching nothing, an empty directory,
+    # a directory or file holding no module or assembly (a .txt, a .ps1) -- are refused ("Cannot find
+    # ScriptAnalyzer rules in the specified path", and PSES analyzes nothing) unless IncludeDefaultRules
+    # is $true; a dead entry beside one that reaches a rule source is not. What stays out of sight: a rule
+    # source that holds no rule (a module exporting no rule function, an assembly with no rule in it).
+    param([string[]]$Entries, [bool]$Recurse = $false)
+    foreach ($e in @($Entries)) {
+        $paths = @()
+        try { $paths = @($ExecutionContext.SessionState.Path.GetResolvedPSPathFromPSPath($e) | ForEach-Object { [string]$_.ProviderPath }) } catch { $paths = @() }
+        foreach ($p in $paths) {
+            if ([System.IO.Directory]::Exists($p)) {
+                if (Test-PssaSettingsRuleDirectory -Path $p -Recurse $Recurse) { return $true }
+            } elseif ([System.IO.File]::Exists($p)) {
+                $ext = [System.IO.Path]::GetExtension($p)
+                foreach ($x in @('.psm1', '.psd1', '.dll')) {
+                    if ([string]::Equals($ext, $x, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+                }
+            }
+        }
+    }
+    return $false
+}
+
 function Get-PssaSettingsEntryProblem {
     # '' when PSScriptAnalyzer, run by PSES as this plugin runs it, accepts $Value under the canonical
     # key $Key; otherwise one line saying why not. Each rule here was measured (see above):
@@ -1559,12 +1636,15 @@ function Get-PssaSettingsEntryProblem {
     #                            makes for each entry: it refuses the settings when that call THROWS (a
     #                            path or a drive that does not exist), and a wildcard that matches is
     #                            used while one that matches nothing is no error (measured, both hosts);
+    #                            and -- review finding B1b-K01 -- unless $IncludeDefaultRules, the entries
+    #                            must together reach a rule source (Test-PssaSettingsRulePathYieldsRule,
+    #                            with $RecurseCustomRulePath), or PSScriptAnalyzer finds no rules at all;
     #   IncludeDefaultRules / RecurseCustomRulePath  a boolean;
     #   Rules                    a table whose every value is a table (one rule's settings).
-    # What this cannot see -- whether the modules a CustomRulePath resolves to hold a rule (without
-    # IncludeDefaultRules = $true, PSScriptAnalyzer refuses settings whose custom paths yield none) -- is
-    # a documented boundary (docs/repository-scanning.md).
-    param([string]$Key, $Value)
+    # What this cannot see -- whether a module or an assembly a CustomRulePath reaches holds a rule
+    # (without IncludeDefaultRules = $true, PSScriptAnalyzer refuses settings whose custom paths yield
+    # none) -- is a documented boundary (docs/repository-scanning.md), left to a runtime signal.
+    param([string]$Key, $Value, [bool]$IncludeDefaultRules = $false, [bool]$RecurseCustomRulePath = $false)
     switch ($Key) {
         'Severity' {
             $p = Get-PssaSettingsStringListProblem -Key $Key -Value $Value
@@ -1591,6 +1671,9 @@ function Get-PssaSettingsEntryProblem {
                 $resolves = $true
                 try { [void]$ExecutionContext.SessionState.Path.GetResolvedPSPathFromPSPath($e) } catch { $resolves = $false }
                 if (-not $resolves) { return ("CustomRulePath entry '" + (Format-PssaSettingsText $e 80) + "' does not exist") }
+            }
+            if (-not $IncludeDefaultRules -and -not (Test-PssaSettingsRulePathYieldsRule -Entries $entries -Recurse $RecurseCustomRulePath)) {
+                return 'CustomRulePath reaches no rule module or assembly, and IncludeDefaultRules is not $true: PSScriptAnalyzer finds no rules'
             }
             return ''
         }
@@ -1673,6 +1756,14 @@ function Read-PssaSettingsFile {
         }
         $names = @(@($data.Keys) | Where-Object { $_ -is [string] })
         [System.Array]::Sort($names, [System.StringComparer]::OrdinalIgnoreCase)
+        # What CustomRulePath's check needs from its neighbours (review finding B1b-K01): only a boolean
+        # $true counts, as only a boolean is accepted.
+        $includeDefault = $false
+        $recurseRules = $false
+        foreach ($k in $names) {
+            if ([string]::Equals($k, 'IncludeDefaultRules', [System.StringComparison]::OrdinalIgnoreCase) -and $data[$k] -is [bool]) { $includeDefault = [bool]$data[$k] }
+            if ([string]::Equals($k, 'RecurseCustomRulePath', [System.StringComparison]::OrdinalIgnoreCase) -and $data[$k] -is [bool]) { $recurseRules = [bool]$data[$k] }
+        }
         foreach ($k in $names) {
             $name = $null
             foreach ($c in $canon) { if ([string]::Equals($c, $k, [System.StringComparison]::OrdinalIgnoreCase)) { $name = $c; break } }
@@ -1685,7 +1776,7 @@ function Read-PssaSettingsFile {
             $p = ''
             if ($null -eq $v) { $p = ($name + ' has a $null value') }
             elseif ($v -is [System.Collections.IDictionary]) { $p = Get-PssaSettingsTreeProblem -Table $v -Where (' in ' + $name) }
-            if ($p -eq '') { $p = Get-PssaSettingsEntryProblem -Key $name -Value $v }
+            if ($p -eq '') { $p = Get-PssaSettingsEntryProblem -Key $name -Value $v -IncludeDefaultRules $includeDefault -RecurseCustomRulePath $recurseRules }
             if ($p -ne '') {
                 $rejected.Add((Format-PssaSettingsText $k 60))
                 $problems.Add($p)
