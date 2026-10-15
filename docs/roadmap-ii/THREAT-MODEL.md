@@ -347,8 +347,9 @@ user opened. No fix is proposed here.
 *Amended 2026-10-15 (dispatch 000306):* the plugin now also READS the resolved file before PSES does
 -- `Read-PssaSettingsFile`, to refuse a settings file PSScriptAnalyzer would reject (one makes PSES
 analyze nothing and still publish a settled, empty result). The read is data-only: the file is parsed,
-never run, every value must be a constant, `$true`/`$false`/`$null`, an array, a table or a cast of
-those before `Ast.SafeGetValue` builds it, so a hostile file can at most be refused (an unmanaged session
+never run, every value must be a constant, `$true`/`$false`/`$null`, an array, a table, a cast of
+those, or one of those in parentheses or behind a sign (a command in parentheses is still refused,
+never run) before `Ast.SafeGetValue` builds it, so a hostile file can at most be refused (an unmanaged session
 then falls back to PSES's default rules; a managed scan refuses to certify). Its `CustomRulePath` check
 resolves each entry with PowerShell's own path resolver -- the lookup PSScriptAnalyzer itself makes
 inside PSES -- so a UNC entry reaches its host from the daemon as it already did from PSES; nothing it

@@ -227,7 +227,12 @@ and never parse it a second way. Things that bite when you change this path:
   without PSES's own `-Severity` argument) and `tests/PowerShellLsp.PolicySettings.Tests.ps1` re-measures
   parity against the vendored analyzer on every leg -- change a rule there, not here from memory. Two
   things it deliberately mirrors: PSScriptAnalyzer reads the FIRST table in the file (a statement before
-  it is fine), and it does not refuse a parse error by itself. One thing it cannot see: whether the
+  it is fine), and it does not refuse a parse error by itself. PSScriptAnalyzer evaluates a value the
+  way `Ast.SafeGetValue` does (measured, both hosts): parentheses around a pure expression, a sign,
+  `-not`/`!`/`-bnot` and a sub-expression holding data are all accepted. The reader accepts the first
+  two (B1b-R02 -- `ExcludeRules = ('A', 'B')` is ordinary PowerShell, and refusing it cost a repository
+  its settings file in every unmanaged session) and still refuses the other two, the safe direction,
+  kept visible by a test. One thing it cannot see: whether the
   paths a `CustomRulePath` resolves to yield a rule -- without `IncludeDefaultRules = $true`,
   PSScriptAnalyzer refuses settings whose custom paths yield none (measured boundary, kept visible by a
   test).

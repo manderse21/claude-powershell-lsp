@@ -42,7 +42,8 @@ PSES the way PSScriptAnalyzer does -- as data, never run (`Read-PssaSettingsFile
 MEASURED on the vendored PSScriptAnalyzer 1.25.0 under Windows PowerShell 5.1 and PowerShell 7 (the
 same verdicts on both, with and without PSES's `-Severity` argument; a `CustomRulePath` entry goes
 through PowerShell's own path resolver, as it does inside PSScriptAnalyzer, so `~`, `FileSystem::` and
-wildcard entries keep working), and never hands PSES one it
+wildcard entries keep working; a value in parentheses or behind a sign -- `ExcludeRules = ('A', 'B')`,
+`($true)`, `-(5)` -- is data, as it is to PSScriptAnalyzer, review finding B1b-R02), and never hands PSES one it
 rejects: the session falls back to PSES's default rules and the daemon log says why, an unmanaged scan
 prints a stderr warning naming the problem, and a managed scan is NOT CERTIFIED with the new reason
 code `policy-settings-rejected`. The verdict rides the daemon's application evidence as

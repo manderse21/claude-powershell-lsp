@@ -172,8 +172,9 @@ file, the daemon reads it the way PSScriptAnalyzer does, as data (parsed, never 
 `Read-PssaSettingsFile`), and checks what PSScriptAnalyzer 1.25.0 was **measured** to require, on
 Windows PowerShell 5.1 and PowerShell 7 alike:
 
-- the file holds a settings table, and every value in it is data (no command, no variable but
-  `$true`/`$false`/`$null`, no expandable string);
+- the file holds a settings table, and every value in it is data: a constant, `$true`/`$false`/`$null`,
+  an array, a table, a cast, or one of those in parentheses or behind a sign (`('A', 'B')`, `($true)`,
+  `-(5)`) -- no command, no variable but `$true`/`$false`/`$null`, no expandable string;
 - every key is one PSScriptAnalyzer accepts -- `CustomRulePath`, `ExcludeRules`, `IncludeRules`,
   `IncludeDefaultRules`, `RecurseCustomRulePath`, `Rules`, `Severity`, in any case;
 - `Severity`, `IncludeRules`, `ExcludeRules` and `CustomRulePath` are a string or an array of strings;
@@ -211,4 +212,11 @@ a `CustomRulePath` that resolves but yields no rule -- an empty directory, a mod
 a wildcard that matches nothing -- passes the check, and unless the file also sets
 `IncludeDefaultRules = $true` PSScriptAnalyzer then refuses the settings ("Cannot find ScriptAnalyzer
 rules in the specified path") and PSES analyzes nothing. That boundary is measured and kept visible by a
+test.
+
+**Where the check is stricter than PSScriptAnalyzer.** A few forms PSScriptAnalyzer accepts are refused
+by design -- the safe direction: a managed scan refuses, an unmanaged one warns and uses PSES's default
+rules. A root-relative `CustomRulePath` entry (`\rules`, which follows PSES's current drive) or one on
+another PowerShell drive (`Temp:\` exists under PowerShell 7 only); and a value built with a
+sub-expression (`$('Warning')`) or with `-not`, `!` or `-bnot`. Each is measured and kept visible by a
 test.

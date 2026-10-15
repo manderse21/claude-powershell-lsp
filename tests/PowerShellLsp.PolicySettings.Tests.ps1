@@ -82,6 +82,12 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
             @{ Name = 'a statement before the table'; Verdict = 'valid'; Text = "`$x = 1`n@{ Severity = @('Warning') }" }
             @{ Name = 'a cast and a negative number'; Verdict = 'valid'; Text = "@{ Rules = @{ PSAvoidLongLines = @{ Enable = `$true; MaximumLineLength = [int]80; Other = -1 } } }" }
             @{ Name = 'a double rule argument'; Verdict = 'valid'; Text = "@{ Rules = @{ PSAvoidLongLines = @{ Enable = `$true; MaximumLineLength = 1.5 } } }" }
+            @{ Name = 'a parenthesized list (B1b-R02)'; Verdict = 'valid'; Text = "@{ ExcludeRules = ('PSAvoidUsingCmdletAliases', 'PSAvoidGlobalVars') }" }
+            @{ Name = 'a parenthesized scalar (B1b-R02)'; Verdict = 'valid'; Text = "@{ IncludeRules = ('PSAvoidGlobalVars') }" }
+            @{ Name = 'a parenthesized boolean (B1b-R02)'; Verdict = 'valid'; Text = "@{ IncludeDefaultRules = (`$true) }" }
+            @{ Name = 'parenthesized values nested in Rules (B1b-R02)'; Verdict = 'valid'; Text = "@{ Rules = @{ PSAvoidLongLines = @{ Enable = (`$true); MaximumLineLength = (120) } } }" }
+            @{ Name = 'a signed parenthesized number (B1b-R02)'; Verdict = 'valid'; Text = "@{ Rules = @{ PSAvoidLongLines = @{ Enable = `$true; Other = -(5) } } }" }
+            @{ Name = 'a parenthesized key and a parenthesized cast (B1b-R02)'; Verdict = 'valid'; Text = "@{ ('Severity') = @('Warning'); Rules = @{ PSAvoidLongLines = @{ MaximumLineLength = ([int]80) } } }" }
             @{ Name = 'severity names padded, numeric, comma-joined'; Verdict = 'valid'; Text = "@{ Severity = @(' Warning ', '1', 'Warning,Error') }" }
             @{ Name = 'RuleArguments'; Verdict = 'rejected'; Text = "@{ RuleArguments = @{ PSAvoidUsingCmdletAliases = @{ Enable = `$true } } }" }
             @{ Name = 'Severities'; Verdict = 'rejected'; Text = "@{ Severities = @('Warning') }" }
@@ -111,6 +117,8 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
             @{ Name = 'no table'; Verdict = 'unparsable'; Text = "'x'" }
             @{ Name = 'a syntax error'; Verdict = 'unparsable'; Text = '@{ Severity = ' }
             @{ Name = 'a command in a value'; Verdict = 'unparsable'; Text = '@{ Severity = (Get-Date) }' }
+            @{ Name = 'a parenthesized pipeline'; Verdict = 'unparsable'; Text = "@{ IncludeRules = (@('PSAvoidGlobalVars') | Sort-Object) }" }
+            @{ Name = 'a parenthesized assignment'; Verdict = 'unparsable'; Text = "@{ Severity = (`$x = 'Warning') }" }
             @{ Name = 'an expandable string'; Verdict = 'unparsable'; Text = '@{ IncludeRules = @("$env:USERNAME") }' }
             @{ Name = 'a variable other than true, false, null'; Verdict = 'unparsable'; Text = '@{ CustomRulePath = @($PSScriptRoot) }' }
             @{ Name = 'a duplicate key'; Verdict = 'unparsable'; Text = "@{ Severity = @('Error'); severity = @('Warning') }" }
@@ -145,6 +153,12 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
         @{ Name = 'a statement before the table'; Verdict = 'valid' }
         @{ Name = 'a cast and a negative number'; Verdict = 'valid' }
         @{ Name = 'a double rule argument'; Verdict = 'valid' }
+        @{ Name = 'a parenthesized list (B1b-R02)'; Verdict = 'valid' }
+        @{ Name = 'a parenthesized scalar (B1b-R02)'; Verdict = 'valid' }
+        @{ Name = 'a parenthesized boolean (B1b-R02)'; Verdict = 'valid' }
+        @{ Name = 'parenthesized values nested in Rules (B1b-R02)'; Verdict = 'valid' }
+        @{ Name = 'a signed parenthesized number (B1b-R02)'; Verdict = 'valid' }
+        @{ Name = 'a parenthesized key and a parenthesized cast (B1b-R02)'; Verdict = 'valid' }
         @{ Name = 'severity names padded, numeric, comma-joined'; Verdict = 'valid' }
         @{ Name = 'RuleArguments'; Verdict = 'rejected' }
         @{ Name = 'Severities'; Verdict = 'rejected' }
@@ -174,6 +188,8 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
         @{ Name = 'no table'; Verdict = 'unparsable' }
         @{ Name = 'a syntax error'; Verdict = 'unparsable' }
         @{ Name = 'a command in a value'; Verdict = 'unparsable' }
+        @{ Name = 'a parenthesized pipeline'; Verdict = 'unparsable' }
+        @{ Name = 'a parenthesized assignment'; Verdict = 'unparsable' }
         @{ Name = 'an expandable string'; Verdict = 'unparsable' }
         @{ Name = 'a variable other than true, false, null'; Verdict = 'unparsable' }
         @{ Name = 'a duplicate key'; Verdict = 'unparsable' }
@@ -236,6 +252,24 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
         Test-Path -LiteralPath $marker | Should -BeFalse -Because 'nothing in a settings file is evaluated except as data'
     }
 
+    It 'the reader NEVER RUNS a command in parentheses either: only a pure expression in parentheses is data' {
+        $marker = Join-Path $TestDrive ('ran-' + [guid]::NewGuid().ToString('N') + '.txt')
+        $text = "@{ Severity = (New-Item -ItemType File -Path '" + $marker + "'); Rules = @{ X = @{ N = -(New-Item -ItemType File -Path '" + $marker + "') } } }"
+        (Read-PssaSettingsFile -Path (New-PsFile $text)).Verdict | Should -BeExactly 'unparsable'
+        Test-Path -LiteralPath $marker | Should -BeFalse -Because 'a parenthesized command is a command, not data'
+    }
+
+    It 'B1b-R02: a parenthesized or signed value is DATA, read as PSScriptAnalyzer reads it -- the list, the boolean and the numbers it holds' {
+        $r = Read-PssaSettingsFile -Path (New-PsFile ("@{ ExcludeRules = ('PSAvoidUsingCmdletAliases', 'PSAvoidGlobalVars'); IncludeDefaultRules = (`$true);" +
+                " Rules = @{ PSAvoidLongLines = @{ Enable = (`$true); MaximumLineLength = (120); Other = -(5) } } }"))
+        $r.Verdict | Should -BeExactly 'valid' -Because ([string]$r.Problem)
+        (@($r.Entries['ExcludeRules']) -join ',') | Should -BeExactly 'PSAvoidUsingCmdletAliases,PSAvoidGlobalVars'
+        $r.Entries['IncludeDefaultRules'] | Should -BeOfType [bool]
+        $r.Entries['IncludeDefaultRules'] | Should -BeTrue
+        $r.Entries['Rules']['PSAvoidLongLines']['MaximumLineLength'] | Should -Be 120
+        $r.Entries['Rules']['PSAvoidLongLines']['Other'] | Should -Be -5
+    }
+
     It 'severity names follow the measured enum parse: <Entry> -> <Ok>' -TestCases @(
         @{ Entry = 'Warning'; Ok = $true }
         @{ Entry = 'information'; Ok = $true }
@@ -287,6 +321,15 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
             }
             [System.IO.File]::WriteAllText($script:RpBoundaries['boundary.psd1'], ("@{ CustomRulePath = @('" + $script:RdEmpty + "') }"))
             [System.IO.File]::WriteAllText($script:RpBoundaries['boundary-wildcard.psd1'], ("@{ CustomRulePath = @('" + (Join-Path $script:RdRules '*.nomatch') + "') }"))
+            # Values PSScriptAnalyzer ACCEPTS that the reader still refuses (review finding B1b-R02 kept the
+            # reader to parentheses and signs): stricter by design, measured, kept visible below.
+            $script:RpStricter = [ordered]@{
+                'stricter-subexpression.psd1' = "@{ Severity = `$('Warning') }"
+                'stricter-not.psd1'           = "@{ IncludeDefaultRules = -not `$false }"
+                'stricter-exclaim.psd1'       = "@{ IncludeDefaultRules = !`$false }"
+                'stricter-bnot.psd1'          = "@{ Rules = @{ PSAvoidLongLines = @{ Other = -bnot 5 } } }"
+            }
+            foreach ($k in @($script:RpStricter.Keys)) { [System.IO.File]::WriteAllText((Join-Path $script:RpDir $k), [string]$script:RpStricter[$k]) }
             $cwd = Join-Path $TestDrive 'parity-cwd'
             New-Item -ItemType Directory -Force -Path $cwd | Out-Null
             $driver = Join-Path $script:RpDir 'driver.ps1'
@@ -317,7 +360,7 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
 
         It 'the vendored analyzer was found and judged every fixture (this Context cannot pass vacuously)' {
             $script:RpManifest | Should -Not -BeNullOrEmpty
-            $script:RpVerdicts.Count | Should -Be (@($script:RdCases).Count + $script:RpBoundaries.Count)
+            $script:RpVerdicts.Count | Should -Be (@($script:RdCases).Count + $script:RpBoundaries.Count + $script:RpStricter.Count)
         }
 
         It 'every fixture''s verdict equals whether PSScriptAnalyzer accepts it, called as PSES calls it' {
@@ -340,6 +383,16 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
             foreach ($k in @($script:RpBoundaries.Keys)) {
                 (Read-PssaSettingsFile -Path $script:RpBoundaries[$k]).Verdict | Should -BeExactly 'valid' -Because $k
                 $script:RpVerdicts[$k] | Should -BeFalse -Because $k
+            }
+        }
+
+        It 'KEPT STRICTER, documented in docs/repository-scanning.md: a sub-expression holding data, and the operators -not, ! and -bnot, read unparsable here though PSScriptAnalyzer accepts them' {
+            # Stricter is the safe direction for certification (a managed scan refuses; an unmanaged one
+            # warns and falls back to PSES's defaults). If PSScriptAnalyzer ever refuses these, or the reader
+            # ever accepts them, this test says so.
+            foreach ($k in @($script:RpStricter.Keys)) {
+                (Read-PssaSettingsFile -Path (Join-Path $script:RpDir $k)).Verdict | Should -BeExactly 'unparsable' -Because $k
+                $script:RpVerdicts[$k] | Should -BeTrue -Because $k
             }
         }
     }

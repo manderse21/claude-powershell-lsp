@@ -1422,11 +1422,15 @@ function Test-PssaSettingsSeverityName {
 function Test-PssaSettingsValueAst {
     # Is $Ast a value node the settings reader treats as DATA? Constants (strings, numbers -- a leading
     # minus is part of the number), $true / $false / $null, @(...) and comma arrays of such values,
-    # nested hashtables, and a cast of such a value ([int]5 -- measured, accepted). Anything else -- a
-    # command, a sub-expression, an expandable string, any other variable ($PSScriptRoot, $env:X, all
-    # measured REFUSED by PSScriptAnalyzer) -- is not data, so the file reads as unparsable without
-    # anything in it being evaluated. Deliberately no wider than PSScriptAnalyzer's own reader: where the
-    # two might differ ($(...) is one), this refuses.
+    # nested hashtables, a cast of such a value ([int]5 -- measured, accepted), and -- review finding
+    # B1b-R02 -- such a value in parentheses (('A', 'B'), ($true), (120): the parentheses' pipeline must
+    # be a pure expression, never a command) or behind a sign (-(5), +(5)), all measured ACCEPTED by
+    # PSScriptAnalyzer on both hosts. Anything else -- a command, a sub-expression, an expandable string,
+    # any other variable ($PSScriptRoot, $env:X, all measured REFUSED by PSScriptAnalyzer) -- is not data,
+    # so the file reads as unparsable without anything in it being evaluated. Deliberately no wider than
+    # PSScriptAnalyzer's own reader, which evaluates like Ast.SafeGetValue: where the two might differ,
+    # this refuses. Measured to differ, and kept refused (a test keeps it visible): a sub-expression
+    # holding data ($('Warning')) and the operators !, -not and -bnot, which PSScriptAnalyzer accepts.
     param($Ast)
     if ($null -eq $Ast) { return $false }
     if ($Ast -is [System.Management.Automation.Language.ConstantExpressionAst]) { return $true }
@@ -1435,6 +1439,16 @@ function Test-PssaSettingsValueAst {
         return (@('true', 'false', 'null') -contains ([string]$Ast.VariablePath.UserPath).ToLowerInvariant())
     }
     if ($Ast -is [System.Management.Automation.Language.ConvertExpressionAst]) { return (Test-PssaSettingsValueAst $Ast.Child) }
+    if ($Ast -is [System.Management.Automation.Language.ParenExpressionAst]) {
+        $pure = $null
+        if ($Ast.Pipeline -is [System.Management.Automation.Language.PipelineAst]) { $pure = $Ast.Pipeline.GetPureExpression() }
+        return (Test-PssaSettingsValueAst $pure)
+    }
+    if ($Ast -is [System.Management.Automation.Language.UnaryExpressionAst]) {
+        $sign = $Ast.TokenKind
+        if ($sign -ne [System.Management.Automation.Language.TokenKind]::Minus -and $sign -ne [System.Management.Automation.Language.TokenKind]::Plus) { return $false }
+        return (Test-PssaSettingsValueAst $Ast.Child)
+    }
     if ($Ast -is [System.Management.Automation.Language.ArrayLiteralAst]) {
         foreach ($e in @($Ast.Elements)) { if (-not (Test-PssaSettingsValueAst $e)) { return $false } }
         return $true
