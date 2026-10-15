@@ -676,8 +676,11 @@ function Get-PluginOptionBool {
 
 # --- PSScriptAnalyzer settings resolution (dispatch 000018) ----------------
 # Honor a repo-local PSScriptAnalyzerSettings.psd1 by resolving its ABSOLUTE path
-# and letting PSES READ it (we never parse or execute the user's .psd1 ourselves --
-# it is PowerShell data, an arbitrary-code risk; PSES is the trusted consumer).
+# and letting PSES READ it (we never EXECUTE the user's .psd1 -- it is PowerShell
+# data, an arbitrary-code risk; PSES is the trusted consumer). The resolver below only
+# resolves the path. Since dispatch 000306 the daemon also reads the file it resolved
+# as DATA -- Read-PssaSettingsFile: parsed, never run, nothing evaluated but constants --
+# to check PSScriptAnalyzer will accept it before PSES is handed it.
 # Track 1 (cited from PSES v4.6.0 source) pinned the mechanism and the bound:
 #   - PSES takes the path via workspace/didChangeConfiguration as
 #     Powershell.ScriptAnalysis.SettingsPath (camelCased on the wire) and hands it
@@ -1364,14 +1367,321 @@ function Get-PssaDefaultRulesVerifiedForPsesTag {
     return 'v4.6.0'
 }
 
+# --- what PSScriptAnalyzer accepts in a settings file (dispatch 000306, B1b; review finding B1-K04) ---
+# A settings file PSScriptAnalyzer rejects makes PSES analyze NOTHING while it still publishes a
+# settled, empty result -- zero findings that read clean, unmanaged and managed alike (measured
+# 2026-10-13 and 2026-10-15). So the merge writes only what PSScriptAnalyzer accepts, and the daemon
+# validates every settings file it would hand PSES BEFORE PSES sees it (Read-PssaSettingsFile). The
+# rules below are MEASURED against the vendored PSScriptAnalyzer 1.25.0 under Windows PowerShell 5.1
+# and PowerShell 7 -- identical verdicts on both hosts, with and without the -Severity argument PSES
+# passes beside -Settings -- not recalled from documentation.
+
+function Get-PssaSettingsKeyNames {
+    # THE keys a PSScriptAnalyzer settings file may hold, in canonical case. Measured: the vendored
+    # 1.25.0 refuses any other key with "<key> is not a valid key in the settings hashtable. Valid keys
+    # are CustomRulePath, ExcludeRules, IncludeRules, IncludeDefaultRules, RecurseCustomRulePath, Rules
+    # and Severity." -- these seven, the same on both hosts -- and accepts each of them in any case.
+    return @('CustomRulePath', 'ExcludeRules', 'IncludeRules', 'IncludeDefaultRules', 'RecurseCustomRulePath', 'Rules', 'Severity')
+}
+
+function Get-PssaSettingsSeverityNames {
+    # PSScriptAnalyzer's severity names, which a settings file's Severity entries must parse as. Measured:
+    # any case and surrounding blanks are accepted; 'Hint', '' and any other word are refused
+    # ("Requested value 'Hint' was not found."), on both hosts.
+    return @('Information', 'Warning', 'Error', 'ParseError')
+}
+
+function Test-PssaSettingsSeverityName {
+    # Does PSScriptAnalyzer accept $Name as one Severity entry? It parses the entry as its severity enum,
+    # ignoring case, so this mirrors that parse as measured: the entry is trimmed; one that starts with
+    # a digit or a sign must be a number in the enum's UInt32 range ('7' is accepted, '99999999999' is
+    # refused); otherwise every comma-separated part must be a severity name ('Warning,Error' is
+    # accepted, 'Warning,' is refused). Stricter than the parse only where PSScriptAnalyzer might accept
+    # a mixed list such as 'Warning,1' -- that reads as rejected, never as valid.
+    param($Name)
+    if ($Name -isnot [string]) { return $false }
+    $t = $Name.Trim()
+    if ($t -eq '') { return $false }
+    $c = $t[0]
+    if ([char]::IsDigit($c) -or $c -eq '-' -or $c -eq '+') {
+        $n = [uint32]0
+        return [uint32]::TryParse($t, [System.Globalization.NumberStyles]::AllowLeadingSign, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$n)
+    }
+    foreach ($part in $t.Split(',')) {
+        $p = $part.Trim()
+        if ($p -eq '') { return $false }
+        $known = $false
+        foreach ($s in (Get-PssaSettingsSeverityNames)) {
+            if ([string]::Equals($s, $p, [System.StringComparison]::OrdinalIgnoreCase)) { $known = $true; break }
+        }
+        if (-not $known) { return $false }
+    }
+    return $true
+}
+
+function Test-PssaSettingsValueAst {
+    # Is $Ast a value node the settings reader treats as DATA? Constants (strings, numbers -- a leading
+    # minus is part of the number), $true / $false / $null, @(...) and comma arrays of such values,
+    # nested hashtables, and a cast of such a value ([int]5 -- measured, accepted). Anything else -- a
+    # command, a sub-expression, an expandable string, any other variable ($PSScriptRoot, $env:X, all
+    # measured REFUSED by PSScriptAnalyzer) -- is not data, so the file reads as unparsable without
+    # anything in it being evaluated. Deliberately no wider than PSScriptAnalyzer's own reader: where the
+    # two might differ ($(...) is one), this refuses.
+    param($Ast)
+    if ($null -eq $Ast) { return $false }
+    if ($Ast -is [System.Management.Automation.Language.ConstantExpressionAst]) { return $true }
+    if ($Ast -is [System.Management.Automation.Language.VariableExpressionAst]) {
+        if ($null -eq $Ast.VariablePath -or -not $Ast.VariablePath.IsUnqualified) { return $false }
+        return (@('true', 'false', 'null') -contains ([string]$Ast.VariablePath.UserPath).ToLowerInvariant())
+    }
+    if ($Ast -is [System.Management.Automation.Language.ConvertExpressionAst]) { return (Test-PssaSettingsValueAst $Ast.Child) }
+    if ($Ast -is [System.Management.Automation.Language.ArrayLiteralAst]) {
+        foreach ($e in @($Ast.Elements)) { if (-not (Test-PssaSettingsValueAst $e)) { return $false } }
+        return $true
+    }
+    if ($Ast -is [System.Management.Automation.Language.ArrayExpressionAst]) {
+        if ($null -eq $Ast.SubExpression) { return $false }
+        foreach ($s in @($Ast.SubExpression.Statements)) {
+            $pure = $null
+            if ($s -is [System.Management.Automation.Language.PipelineAst]) { $pure = $s.GetPureExpression() }
+            if (-not (Test-PssaSettingsValueAst $pure)) { return $false }
+        }
+        return $true
+    }
+    if ($Ast -is [System.Management.Automation.Language.HashtableAst]) {
+        foreach ($pair in @($Ast.KeyValuePairs)) {
+            if (-not (Test-PssaSettingsValueAst $pair.Item1)) { return $false }
+            $pure = $null
+            if ($pair.Item2 -is [System.Management.Automation.Language.PipelineAst]) { $pure = $pair.Item2.GetPureExpression() }
+            if (-not (Test-PssaSettingsValueAst $pure)) { return $false }
+        }
+        return $true
+    }
+    return $false
+}
+
+function Format-PssaSettingsText {
+    # $Text as one printable-ASCII line, cut at $Max -- for a settings problem quoted into a log line or
+    # into evidence, where a key name from a user's file must not carry a line end or a non-ASCII byte.
+    param([string]$Text, [int]$Max = 160)
+    if ([string]::IsNullOrEmpty($Text)) { return '' }
+    $shown = -join @($Text.ToCharArray() | ForEach-Object { if ([int]$_ -ge 0x20 -and [int]$_ -le 0x7E) { [string]$_ } else { '?' } })
+    if ($shown.Length -gt $Max) { $shown = $shown.Substring(0, $Max) + '...' }
+    return $shown
+}
+
+function Get-PssaSettingsTreeProblem {
+    # PSScriptAnalyzer walks a settings table recursively before it reads any key, and refuses a key that
+    # is not a string ("Key  in the settings is not a string.") and a $null value ("Value  for key ... has
+    # the wrong data type.") at every level of nested TABLES -- a $null inside an array is not checked
+    # (all measured). '' when $Table passes that walk, else why not.
+    param($Table, [string]$Where = '')
+    foreach ($k in @($Table.Keys)) {
+        if ($k -isnot [string]) { return ('a key' + $Where + ' is not a string') }
+        $v = $Table[$k]
+        if ($null -eq $v) { return ("'" + (Format-PssaSettingsText $k 60) + "'" + $Where + ' has a $null value') }
+        if ($v -is [System.Collections.IDictionary]) {
+            $inner = Get-PssaSettingsTreeProblem -Table $v -Where (" in '" + (Format-PssaSettingsText $k 60) + "'")
+            if ($inner -ne '') { return $inner }
+        }
+    }
+    return ''
+}
+
+function Get-PssaSettingsStringListProblem {
+    # PSScriptAnalyzer reads Severity, IncludeRules, ExcludeRules and CustomRulePath as "a string or an
+    # array of strings" and refuses anything else, including an array holding a non-string (measured:
+    # @('Warning', 5) and @('PSAvoidGlobalVars', $null) are both refused). '' when $Value is one.
+    param([string]$Key, $Value)
+    if ($Value -is [string]) { return '' }
+    if ($Value -is [System.Array]) {
+        foreach ($e in @($Value)) { if ($e -isnot [string]) { return ($Key + ' holds an entry that is not a string') } }
+        return ''
+    }
+    return ($Key + ' is not a string or an array of strings')
+}
+
+function Get-PssaSettingsEntryProblem {
+    # '' when PSScriptAnalyzer, run by PSES as this plugin runs it, accepts $Value under the canonical
+    # key $Key; otherwise one line saying why not. Each rule here was measured (see above):
+    #   Severity                 a string list whose every entry parses as a severity;
+    #   IncludeRules/ExcludeRules a string list;
+    #   CustomRulePath           a string list that is not empty, with no blank entry, every entry an
+    #                            ABSOLUTE path that exists -- a relative entry resolves against PSES's own
+    #                            working directory (the daemon's log directory), not the repository, and
+    #                            through the real daemon a repository file naming '.\rules\x.psm1' made
+    #                            PSES analyze nothing, IncludeDefaultRules or not;
+    #   IncludeDefaultRules / RecurseCustomRulePath  a boolean;
+    #   Rules                    a table whose every value is a table (one rule's settings).
+    # What this cannot see -- a module that exists but from which PSScriptAnalyzer loads no rule -- is
+    # a documented boundary (docs/repository-scanning.md).
+    param([string]$Key, $Value)
+    switch ($Key) {
+        'Severity' {
+            $p = Get-PssaSettingsStringListProblem -Key $Key -Value $Value
+            if ($p -ne '') { return $p }
+            foreach ($e in @($Value)) {
+                if (-not (Test-PssaSettingsSeverityName $e)) {
+                    return ("Severity names '" + (Format-PssaSettingsText $e 40) + "', which is not a PSScriptAnalyzer severity (" + ((Get-PssaSettingsSeverityNames) -join ', ') + ')')
+                }
+            }
+            return ''
+        }
+        'IncludeRules' { return (Get-PssaSettingsStringListProblem -Key $Key -Value $Value) }
+        'ExcludeRules' { return (Get-PssaSettingsStringListProblem -Key $Key -Value $Value) }
+        'CustomRulePath' {
+            $p = Get-PssaSettingsStringListProblem -Key $Key -Value $Value
+            if ($p -ne '') { return $p }
+            $entries = @($Value)
+            if ($entries.Count -eq 0) { return 'CustomRulePath is empty (PSScriptAnalyzer then finds no rules in it)' }
+            foreach ($e in $entries) {
+                if ([string]::IsNullOrWhiteSpace($e)) { return 'CustomRulePath holds a blank entry' }
+                $rooted = $false
+                try { $rooted = [System.IO.Path]::IsPathRooted($e) } catch { $rooted = $false }
+                if (-not $rooted) {
+                    return ("CustomRulePath entry '" + (Format-PssaSettingsText $e 80) + "' is relative; PSES resolves it against its own working directory, not the repository")
+                }
+                $exists = $false
+                try { $exists = Test-Path -LiteralPath $e } catch { $exists = $false }
+                if (-not $exists) { return ("CustomRulePath entry '" + (Format-PssaSettingsText $e 80) + "' does not exist") }
+            }
+            return ''
+        }
+        'IncludeDefaultRules' { if ($Value -is [bool]) { return '' } else { return 'IncludeDefaultRules is not $true or $false' } }
+        'RecurseCustomRulePath' { if ($Value -is [bool]) { return '' } else { return 'RecurseCustomRulePath is not $true or $false' } }
+        'Rules' {
+            if ($Value -isnot [System.Collections.IDictionary]) { return 'Rules is not a table' }
+            foreach ($rk in @($Value.Keys)) {
+                if ($Value[$rk] -isnot [System.Collections.IDictionary]) {
+                    return ("Rules entry '" + (Format-PssaSettingsText ([string]$rk) 60) + "' is not a table")
+                }
+            }
+            return ''
+        }
+    }
+    return ($Key + ' is not a key PSScriptAnalyzer accepts')
+}
+
+function Read-PssaSettingsFile {
+    # Read the PSScriptAnalyzer settings file at $Path the way PSScriptAnalyzer reads it, as DATA, and
+    # say whether PSScriptAnalyzer -- run by PSES as this plugin runs it -- would accept it. Never throws.
+    # Returns [ordered]:
+    #   Path      the path as given;
+    #   Verdict   'valid' | 'rejected' (it reads as a table, and PSScriptAnalyzer would refuse a key or a
+    #             value in it) | 'unparsable' (no file, no table, or something in it that is not data);
+    #   Problem   '' when valid, else the first problem found (keys taken in sorted order), one ASCII line;
+    #   Entries   the ACCEPTED entries only, under their canonical key names (Get-PssaSettingsKeyNames),
+    #             in that fixed order -- what Merge-RequiredRulesSettings carries into a merged file;
+    #   Rejected  the key names (as written, ASCII-shown) that are not carried.
+    #
+    # HOW IT READS, mirroring PSScriptAnalyzer (measured): the file is parsed -- never run -- and the
+    # FIRST table in it is the settings (a statement before it, or an array around it, is allowed;
+    # nothing in a script block counts), whose every value must be data (Test-PssaSettingsValueAst)
+    # before Ast.SafeGetValue -- the data-only evaluation Import-PowerShellDataFile uses -- builds it.
+    # A parse error is not refused by itself, exactly as PSScriptAnalyzer does not: what decides is
+    # whether that first table reads as data. Then the table walk (Get-PssaSettingsTreeProblem), the key
+    # set (Get-PssaSettingsKeyNames) and each value's shape (Get-PssaSettingsEntryProblem).
+    param([string]$Path)
+    $out = [ordered]@{ Path = [string]$Path; Verdict = 'unparsable'; Problem = ''; Entries = [ordered]@{}; Rejected = @() }
+    $full = ''
+    try {
+        if ([string]::IsNullOrWhiteSpace($Path) -or -not [System.IO.Path]::IsPathRooted($Path)) {
+            $out.Problem = 'the settings path is not absolute'
+            return $out
+        }
+        $full = [System.IO.Path]::GetFullPath($Path)
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+            $out.Problem = 'no settings file exists at that path'
+            return $out
+        }
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($full, [ref]$tokens, [ref]$errors)
+        $tables = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.HashtableAst] }, $false))
+        if ($tables.Count -eq 0) {
+            $out.Problem = 'it does not contain a table'
+            return $out
+        }
+        if (-not (Test-PssaSettingsValueAst $tables[0])) {
+            $out.Problem = 'its table holds something that is not data (a command, a variable, an expandable string or a sub-expression)'
+            return $out
+        }
+        $data = $null
+        try { $data = $tables[0].SafeGetValue() } catch {
+            $out.Problem = 'its table could not be read as data: ' + (Format-PssaSettingsText ([string]$_.Exception.Message) 120)
+            return $out
+        }
+        if ($data -isnot [System.Collections.IDictionary]) {
+            $out.Problem = 'its table did not read as a table'
+            return $out
+        }
+        $out.Verdict = 'valid'
+        $canon = Get-PssaSettingsKeyNames
+        $accepted = @{}
+        $rejected = New-Object 'System.Collections.Generic.List[string]'
+        $problems = New-Object 'System.Collections.Generic.List[string]'
+        if (@(@($data.Keys) | Where-Object { $_ -isnot [string] }).Count -gt 0) {
+            $rejected.Add('(a key that is not a string)')
+            $problems.Add('a key is not a string')
+        }
+        $names = @(@($data.Keys) | Where-Object { $_ -is [string] })
+        [System.Array]::Sort($names, [System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($k in $names) {
+            $name = $null
+            foreach ($c in $canon) { if ([string]::Equals($c, $k, [System.StringComparison]::OrdinalIgnoreCase)) { $name = $c; break } }
+            if ($null -eq $name) {
+                $rejected.Add((Format-PssaSettingsText $k 60))
+                $problems.Add(("'" + (Format-PssaSettingsText $k 60) + "' is not a key PSScriptAnalyzer accepts (" + ($canon -join ', ') + ')'))
+                continue
+            }
+            $v = $data[$k]
+            $p = ''
+            if ($null -eq $v) { $p = ($name + ' has a $null value') }
+            elseif ($v -is [System.Collections.IDictionary]) { $p = Get-PssaSettingsTreeProblem -Table $v -Where (' in ' + $name) }
+            if ($p -eq '') { $p = Get-PssaSettingsEntryProblem -Key $name -Value $v }
+            if ($p -ne '') {
+                $rejected.Add((Format-PssaSettingsText $k 60))
+                $problems.Add($p)
+                continue
+            }
+            $accepted[$name] = $v
+        }
+        foreach ($c in $canon) { if ($accepted.ContainsKey($c)) { $out.Entries[$c] = $accepted[$c] } }
+        $out.Rejected = @($rejected.ToArray())
+        if ($problems.Count -gt 0) {
+            $out.Verdict = 'rejected'
+            $out.Problem = Format-PssaSettingsText ([string]$problems[0])
+        }
+        return $out
+    } catch {
+        $out.Verdict = 'unparsable'
+        $out.Entries = [ordered]@{}
+        $out.Problem = 'it could not be read: ' + (Format-PssaSettingsText ([string]$_.Exception.Message) 120)
+        return $out
+    }
+}
+
 function Merge-RequiredRulesSettings {
     # Compute the MERGED PSSA settings hashtable that forces $RequiredRules onto PSES's analysis
     # pass, or $null when nothing should be merged (the caller then takes the untouched
     # pre-000294 path byte-for-byte). PURE: takes the already-resolved pre-change settings path
-    # (or '' when none resolved) and reads it itself via Import-PowerShellDataFile so the merge
-    # can be unit-tested without a daemon; writing the result to disk is a SEPARATE step
-    # (Write-MergedPssaSettingsFile) so this function has no I/O side effect of its own beyond
-    # the one read.
+    # (or '' when none resolved) and reads it itself (Read-PssaSettingsFile) so the merge can be
+    # unit-tested without a daemon -- or takes that read, already made, as $ResolvedSettings, so a
+    # caller that validated the file merges exactly what it validated; writing the result to disk is
+    # a SEPARATE step (Write-MergedPssaSettingsFile) so this function has no I/O side effect of its
+    # own beyond the one read.
+    #
+    # ONLY WHAT PSSCRIPTANALYZER ACCEPTS IS CARRIED (dispatch 000306, B1b, review finding B1-K04). The
+    # merge used to preserve a fixed key list -- Severities, CustomRulePath, RecurseCustomRulePath,
+    # IncludeDefaultRules, RuleArguments, FilePath -- three of which PSScriptAnalyzer rejects, and it
+    # dropped Rules and Severity, the keys it reads. So whenever RequiredRules merged, a repository's
+    # Rules (the Enable flags and arguments of configurable rules -- dropping them silently turned a rule
+    # like PSAvoidLongLines off) and its Severity vanished, and a repository file already holding a
+    # rejected key produced a merged file PSScriptAnalyzer rejected: PSES then analyzed nothing and
+    # published a settled, empty result. Now the repository file is read through Read-PssaSettingsFile
+    # and exactly its ACCEPTED entries are carried -- every key of Get-PssaSettingsKeyNames whose value
+    # PSScriptAnalyzer accepts; a rejected key or value is never written. An unparsable file is not
+    # merged onto (as before: the merge then starts from PSES's own default list).
     #
     # Returns $null (meaning: do not merge, take the untouched path) when: $RequiredRules is
     # empty (the overwhelmingly common case -- org policy unset or names no required rule); OR
@@ -1409,7 +1719,9 @@ function Merge-RequiredRulesSettings {
         [string[]]$RequiredRules = @(),
         [string[]]$OrgExcludeRules = @(),
         [string]$CurrentPsesTag = (Get-PssaDefaultRulesVerifiedForPsesTag),
-        [ref]$GuardOut
+        [ref]$GuardOut,
+        # Read-PssaSettingsFile's result for $ResolvedSettingsPath, when the caller already made it.
+        $ResolvedSettings = $null
     )
     if ($null -ne $GuardOut) { $GuardOut.Value = 'not-needed' }
     $required = @($RequiredRules | Where-Object { $_ })
@@ -1418,17 +1730,14 @@ function Merge-RequiredRulesSettings {
     $orgExcSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($e in @($OrgExcludeRules | Where-Object { $_ })) { [void]$orgExcSet.Add(([string]$e).Trim()) }
 
-    # Load whatever repo-local settings would otherwise apply (or nothing).
+    # Load whatever repo-local settings would otherwise apply (or nothing): only the entries
+    # PSScriptAnalyzer accepts (Read-PssaSettingsFile's Entries, under their canonical key names).
     $baseData = $null
-    if (-not [string]::IsNullOrWhiteSpace($ResolvedSettingsPath)) {
-        try {
-            if (Test-Path -LiteralPath $ResolvedSettingsPath -PathType Leaf) {
-                $baseData = Import-PowerShellDataFile -LiteralPath $ResolvedSettingsPath
-            }
-        } catch { $baseData = $null }
-    }
+    $read = $ResolvedSettings
+    if ($null -eq $read -and -not [string]::IsNullOrWhiteSpace($ResolvedSettingsPath)) { $read = Read-PssaSettingsFile -Path $ResolvedSettingsPath }
+    if ($null -ne $read -and [string]$read.Verdict -ne 'unparsable') { $baseData = $read.Entries }
 
-    $hasRepoInclude = ($null -ne $baseData -and $baseData.ContainsKey('IncludeRules'))
+    $hasRepoInclude = ($null -ne $baseData -and $baseData.Contains('IncludeRules'))
     if (-not $hasRepoInclude -and $CurrentPsesTag -ne (Get-PssaDefaultRulesVerifiedForPsesTag)) {
         # No repo-local IncludeRules to merge onto, and the pinned PSES default list is not
         # verified for the tag actually in use: refuse to guess PSES's real default set. Degrade
@@ -1457,7 +1766,7 @@ function Merge-RequiredRulesSettings {
     }
 
     $exclude = New-Object System.Collections.ArrayList
-    if ($null -ne $baseData -and $baseData.ContainsKey('ExcludeRules')) {
+    if ($null -ne $baseData -and $baseData.Contains('ExcludeRules')) {
         $reqSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
         foreach ($r in $required) { [void]$reqSet.Add(([string]$r).Trim()) }
         foreach ($r in @($baseData['ExcludeRules'])) {
@@ -1475,11 +1784,14 @@ function Merge-RequiredRulesSettings {
 
     $merged = @{ IncludeRules = @($include) }
     if ($exclude.Count -gt 0) { $merged['ExcludeRules'] = @($exclude) }
-    # Preserve every other repo-local field faithfully -- RuleArguments tables and all -- so the
-    # merge changes ONLY which rules run, never how an already-running rule is configured.
+    # Preserve every other ACCEPTED repo-local entry faithfully -- the Rules tables and all -- so the
+    # merge changes ONLY which rules run, never how an already-running rule is configured, and writes
+    # nothing PSScriptAnalyzer would refuse (dispatch 000306): the remaining keys of
+    # Get-PssaSettingsKeyNames, and only the entries Read-PssaSettingsFile accepted.
     if ($null -ne $baseData) {
-        foreach ($k in @('Severities', 'CustomRulePath', 'RecurseCustomRulePath', 'IncludeDefaultRules', 'RuleArguments', 'FilePath')) {
-            if ($baseData.ContainsKey($k)) { $merged[$k] = $baseData[$k] }
+        foreach ($k in @(Get-PssaSettingsKeyNames)) {
+            if ($k -eq 'IncludeRules' -or $k -eq 'ExcludeRules') { continue }
+            if ($baseData.Contains($k)) { $merged[$k] = $baseData[$k] }
         }
     }
     return $merged
@@ -1490,12 +1802,16 @@ function ConvertTo-MergedPssaSettingsText {
     # B1): the same settings always render the same text -- fixed key order, LF line ends, and
     # nested tables in sorted key order (ConvertTo-Psd1Literal) -- so its SHA-256 can name the file
     # and identify, as evidence, the settings PSES was handed.
+    # ONLY KEYS PSSCRIPTANALYZER ACCEPTS are rendered (dispatch 000306): the old list wrote Severities,
+    # RuleArguments and FilePath, which it rejects, and never Severity or Rules, which it reads. The
+    # order keeps IncludeRules and ExcludeRules first, so a merge of those two alone -- the common one
+    # -- renders byte-for-byte the text, and so the file name, it always had.
     param([hashtable]$Settings)
     if ($null -eq $Settings) { return '' }
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.Append('# GENERATED by Write-MergedPssaSettingsFile (dispatch 000294). DO NOT EDIT.').Append("`n")
     [void]$sb.Append('@{').Append("`n")
-    foreach ($key in @('IncludeRules', 'ExcludeRules', 'Severities', 'CustomRulePath', 'RecurseCustomRulePath', 'IncludeDefaultRules', 'RuleArguments', 'FilePath')) {
+    foreach ($key in @('IncludeRules', 'ExcludeRules', 'Severity', 'CustomRulePath', 'RecurseCustomRulePath', 'IncludeDefaultRules', 'Rules')) {
         if (-not $Settings.ContainsKey($key)) { continue }
         [void]$sb.Append('    ' + $key + ' = ' + (ConvertTo-Psd1Literal $Settings[$key])).Append("`n")
     }
@@ -1532,31 +1848,50 @@ function Write-MergedPssaSettingsFile {
     # can both find no file, and then the second rename throws because the first one's file is already
     # in place. The name is the text's digest, so that file is accepted -- but only as a FILE, and only
     # when it re-hashes to the intended text below; a directory or any other failure still returns ''.
-    param([hashtable]$Settings, [string]$DataRoot)
+    #
+    # OLD FILES ARE SWEPT, NEVER ONE IN USE (dispatch 000306, B1b, review finding B1-K07). One file per
+    # distinct merged text used to accumulate, and the pre-000305 fixed file sat orphaned beside them.
+    # After a successful write (or reuse) this calls Remove-StaleMergedPssaSettings, which removes only
+    # files no LIVE daemon on this data root is using, past a grace window -- PSES hands the settings
+    # PATH to PSScriptAnalyzer on every pass, so removing another daemon's file would make its every
+    # later analysis come back empty. A reused file has its write time refreshed, so the grace window
+    # also covers the seconds before this daemon's session record names it. $SweptOut (optional)
+    # receives the paths removed; a sweep never changes this function's result.
+    param([hashtable]$Settings, [string]$DataRoot, [ref]$SweptOut)
+    if ($null -ne $SweptOut) { $SweptOut.Value = @() }
     if ($null -eq $Settings -or [string]::IsNullOrWhiteSpace($DataRoot)) { return '' }
     $tmp = ''
+    $path = ''
     try {
         $dir = Get-MergedPssaSettingsDir -DataRoot $DataRoot
         New-ContainedDirectory -Path $dir
         $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes((ConvertTo-MergedPssaSettingsText -Settings $Settings))
         $sha = Get-Sha256HexFromBytes -Bytes $bytes
-        $path = Join-Path $dir ('merged-settings-' + $sha.Substring(0, 16) + '.psd1')
-        if (Test-Path -LiteralPath $path -PathType Leaf) {
+        $target = Join-Path $dir ('merged-settings-' + $sha.Substring(0, 16) + '.psd1')
+        $reused = $false
+        if (Test-Path -LiteralPath $target -PathType Leaf) {
             # Already written by this or another daemon -- identical text, so identical name.
-            if ((Get-Sha256HexFromBytes -Bytes ([System.IO.File]::ReadAllBytes($path))) -ceq $sha) { return $path }
-            [System.IO.File]::Delete($path)
+            if ((Get-Sha256HexFromBytes -Bytes ([System.IO.File]::ReadAllBytes($target))) -ceq $sha) {
+                $reused = $true
+                try { [System.IO.File]::SetLastWriteTimeUtc($target, [DateTime]::UtcNow) } catch { }
+            } else {
+                [System.IO.File]::Delete($target)
+            }
         }
-        $tmp = $path + '.' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.tmp'
-        [System.IO.File]::WriteAllBytes($tmp, $bytes)
-        try {
-            [System.IO.File]::Move($tmp, $path)
-            $tmp = ''
-        } catch {
-            # A concurrent writer renamed first (see above); the finally removes this call's temp file.
-            if (-not [System.IO.File]::Exists($path)) { throw }
+        if (-not $reused) {
+            $tmp = $target + '.' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.tmp'
+            [System.IO.File]::WriteAllBytes($tmp, $bytes)
+            try {
+                [System.IO.File]::Move($tmp, $target)
+                $tmp = ''
+            } catch {
+                # A concurrent writer renamed first (see above); the finally removes this call's temp file.
+                if (-not [System.IO.File]::Exists($target)) { throw }
+                try { [System.IO.File]::SetLastWriteTimeUtc($target, [DateTime]::UtcNow) } catch { }
+            }
+            if ((Get-Sha256HexFromBytes -Bytes ([System.IO.File]::ReadAllBytes($target))) -cne $sha) { return '' }
         }
-        if ((Get-Sha256HexFromBytes -Bytes ([System.IO.File]::ReadAllBytes($path))) -cne $sha) { return '' }
-        return $path
+        $path = $target
     } catch {
         return ''
     } finally {
@@ -1564,26 +1899,128 @@ function Write-MergedPssaSettingsFile {
             try { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue } } catch { }
         }
     }
+    $swept = Remove-StaleMergedPssaSettings -DataRoot $DataRoot -KeepPath $path
+    if ($null -ne $SweptOut) { $SweptOut.Value = $swept }
+    return $path
+}
+
+function Get-LegacyMergedPssaSettingsPath {
+    # The ONE fixed file the layout before dispatch 000305 wrote, beside everything else in the data
+    # root, which every daemon sharing that root rewrote. Content-addressed files replaced it.
+    param([string]$DataRoot)
+    return (Join-Path $DataRoot 'orgpolicy-merged-settings.psd1')
+}
+
+function Get-MergedPssaSettingsInUse {
+    # Which merged settings files LIVE daemons on $DataRoot are using, read from their own session
+    # records (<data root>/session/*.json -- the handle session-start's reap and doctor already use,
+    # with the same liveness notion: the recorded pid is running). A record names its file twice, as
+    # policy.settings.path (what it handed PSES) and policy.requiredRules.mergedSettingsPath. Returns
+    #   Names        the FILE NAMES named by live records -- names, not paths: every daemon recorded
+    #                here writes into this data root's orgpolicy-settings/, the name is the content's
+    #                digest, and one data root can be spelled two ways (a short 8.3 TEMP, say), so a
+    #                path comparison could miss a file that is in use;
+    #   LegacyInUse  $true when a live record carries NO policy block -- a daemon from before dispatch
+    #                000305, which may be handing PSES the legacy fixed file;
+    #   Complete     $false when a record could not be read (a daemon may be rewriting it): then nobody
+    #                can say what is in use, and the caller must not remove anything.
+    # A pid that is reused by an unrelated process reads as live: that only keeps a file longer.
+    param([string]$DataRoot)
+    $paths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $legacy = $false
+    $complete = $true
+    $sessionDir = Join-Path $DataRoot 'session'
+    if (Test-Path -LiteralPath $sessionDir -PathType Container) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $sessionDir -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+            $rec = $null
+            try { $rec = ([System.IO.File]::ReadAllText($f.FullName)) | ConvertFrom-Json } catch { $rec = $null }
+            if ($null -eq $rec) { $complete = $false; continue }
+            $recPid = 0
+            try { $recPid = [int](Get-Prop $rec 'pid') } catch { $recPid = 0 }
+            if ($recPid -le 0 -or $null -eq (Get-Process -Id $recPid -ErrorAction SilentlyContinue)) { continue }
+            $pol = Get-Prop $rec 'policy'
+            if ($null -eq $pol) { $legacy = $true; continue }
+            foreach ($p in @((Get-Prop (Get-Prop $pol 'settings') 'path'), (Get-Prop (Get-Prop $pol 'requiredRules') 'mergedSettingsPath'))) {
+                $s = [string]$p
+                if ([string]::IsNullOrWhiteSpace($s)) { continue }
+                try { [void]$paths.Add([System.IO.Path]::GetFileName($s)) } catch { }
+            }
+        }
+    }
+    return @{ Names = $paths; LegacyInUse = $legacy; Complete = $complete }
+}
+
+function Remove-StaleMergedPssaSettings {
+    # Remove the merged settings files on $DataRoot that nothing uses any more (dispatch 000306, B1b,
+    # review finding B1-K07), and return their paths (comma-returned: assign, then wrap). Removes ONLY:
+    #   - a FILE directly in orgpolicy-settings/ named merged-settings-<16 hex>.psd1 (or the
+    #     .<8 hex>.tmp a crashed writer left), and
+    #   - the one legacy file <data root>/orgpolicy-merged-settings.psd1,
+    # and of those only one that is not $KeepPath, is not named by a live daemon's session record
+    # (Get-MergedPssaSettingsInUse), and was last written more than $GraceMinutes ago. The legacy file
+    # also stays while a live daemon from before dispatch 000305 might be using it. Never anything
+    # outside orgpolicy-settings/ or that one file, never a directory, never a link or anything through
+    # one, and nothing at all when a session record cannot be read. Best-effort: never throws.
+    param([string]$DataRoot, [string]$KeepPath = '', [int]$GraceMinutes = 10)
+    $removed = New-Object 'System.Collections.Generic.List[string]'
+    if ([string]::IsNullOrWhiteSpace($DataRoot)) { return , $removed.ToArray() }
+    try {
+        $use = Get-MergedPssaSettingsInUse -DataRoot $DataRoot
+        if (-not [bool]$use.Complete) { return , $removed.ToArray() }
+        $keep = $use.Names
+        if (-not [string]::IsNullOrWhiteSpace($KeepPath)) { try { [void]$keep.Add([System.IO.Path]::GetFileName($KeepPath)) } catch { } }
+        $cutoff = [DateTime]::UtcNow.AddMinutes(-1 * [Math]::Max(0, $GraceMinutes))
+        $link = [System.IO.FileAttributes]::ReparsePoint
+        $dir = Get-MergedPssaSettingsDir -DataRoot $DataRoot
+        if ([System.IO.Directory]::Exists($dir)) {
+            $di = New-Object System.IO.DirectoryInfo($dir)
+            if (($di.Attributes -band $link) -eq 0) {
+                foreach ($fi in @($di.GetFiles())) {
+                    $named = [regex]::IsMatch($fi.Name, '\Amerged-settings-[0-9a-f]{16}\.psd1(\.[0-9a-f]{8}\.tmp)?\z')
+                    if (-not $named) { continue }
+                    if (($fi.Attributes -band $link) -ne 0) { continue }
+                    if ($keep.Contains($fi.Name)) { continue }
+                    if ($fi.LastWriteTimeUtc -gt $cutoff) { continue }
+                    try { $fi.Delete(); $removed.Add($fi.FullName) } catch { }
+                }
+            }
+        }
+        $legacyPath = Get-LegacyMergedPssaSettingsPath -DataRoot $DataRoot
+        if (-not [bool]$use.LegacyInUse -and [System.IO.File]::Exists($legacyPath)) {
+            $li = New-Object System.IO.FileInfo($legacyPath)
+            if (($li.Attributes -band $link) -eq 0 -and $li.LastWriteTimeUtc -le $cutoff) {
+                try { $li.Delete(); $removed.Add($li.FullName) } catch { }
+            }
+        }
+    } catch { }
+    return , $removed.ToArray()
 }
 
 function ConvertTo-Psd1Literal {
     # A minimal, ROUND-TRIP-SAFE .psd1 literal renderer for exactly the value shapes a PSSA
-    # settings hashtable carries: string, bool, int, an array of strings, or a nested hashtable
-    # (RuleArguments). Not a general-purpose serializer -- an unrecognized shape renders as
-    # $null with a comment marker rather than a guess that could silently change meaning.
+    # settings hashtable carries: string, bool, int, a double, an array, or a nested hashtable
+    # (the Rules tables). Not a general-purpose serializer -- an unrecognized shape renders as
+    # $null rather than a guess that could silently change meaning (and a merged file holding such a
+    # $null fails the daemon's validation instead of reaching PSES: PSScriptAnalyzer refuses a $null
+    # in a table).
     # A nested table renders in SORTED key order (dispatch 000305): a [hashtable]'s own order is
     # not stable across processes, and the merged-settings file is named by its text's SHA-256.
+    # Since dispatch 000306 the Rules tables are carried, so a double (a rule argument such as 1.5,
+    # measured accepted) renders in the invariant culture, and a nested key that is not a plain
+    # identifier (a custom rule's 'Module\Measure-Name') is single-quoted rather than written bare.
     param($Value)
     if ($null -eq $Value) { return '$null' }
     if ($Value -is [bool]) { return $(if ($Value) { '$true' } else { '$false' }) }
     if ($Value -is [int] -or $Value -is [long]) { return [string]$Value }
+    if ($Value -is [double]) { return $Value.ToString('R', [System.Globalization.CultureInfo]::InvariantCulture) }
     if ($Value -is [string]) { return "'" + $Value.Replace("'", "''") + "'" }
     if ($Value -is [System.Collections.IDictionary]) {
         $parts = New-Object System.Collections.ArrayList
         $keys = @(@($Value.Keys) | ForEach-Object { [string]$_ })
         [System.Array]::Sort($keys, [System.StringComparer]::OrdinalIgnoreCase)
         foreach ($k in $keys) {
-            [void]$parts.Add('        ' + $k + ' = ' + (ConvertTo-Psd1Literal $Value[$k]))
+            $shown = $(if ([regex]::IsMatch($k, '\A[A-Za-z_][A-Za-z0-9_]*\z')) { $k } else { "'" + $k.Replace("'", "''") + "'" })
+            [void]$parts.Add('        ' + $shown + ' = ' + (ConvertTo-Psd1Literal $Value[$k]))
         }
         return "@{`n" + ($parts -join "`n") + "`n    }"
     }

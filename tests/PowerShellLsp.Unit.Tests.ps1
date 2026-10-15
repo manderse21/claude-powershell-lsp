@@ -6150,10 +6150,14 @@ Describe 'Merge-RequiredRulesSettings -- the include-side merge and its preceden
             New-Item -ItemType Directory -Path $script:MrgDir -Force | Out-Null
             Set-PslsOwnerMarker -DataRoot $script:MrgDir -MintingFile 'tests/PowerShellLsp.Unit.Tests.ps1'
             $script:MrgSettings = Join-Path $script:MrgDir 'PSScriptAnalyzerSettings.psd1'
+            # Severity and Rules are keys PSScriptAnalyzer accepts; Severities and RuleArguments are two it
+            # REJECTS (dispatch 000306, review finding B1-K04) -- the merge carries the first two, never the last.
             Set-Content -LiteralPath $script:MrgSettings -Encoding ascii -Value @(
                 '@{'
                 "    IncludeRules = @('PSUseApprovedVerbs')"
                 "    ExcludeRules = @('PSAvoidGlobalVars')"
+                '    Severity = @(''Warning'', ''Error'')'
+                "    Rules = @{ PSAvoidUsingCmdletAliases = @{ allowlist = @('cd') } }"
                 '    Severities = @(''Warning'', ''Error'')'
                 "    RuleArguments = @{ PSAvoidUsingCmdletAliases = @{ Whitelist = @('cd') } }"
                 '}'
@@ -6179,10 +6183,15 @@ Describe 'Merge-RequiredRulesSettings -- the include-side merge and its preceden
             $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $script:MrgSettings -RequiredRules @('PSAvoidGlobalFunctions') -CurrentPsesTag 'v9.9.9'
             $m | Should -Not -Be $null
         }
-        It 'preserves Severities and RuleArguments faithfully' {
+        It 'preserves Severity and Rules faithfully -- and never the Severities or RuleArguments PSScriptAnalyzer rejects (dispatch 000306)' {
+            # Before dispatch 000306 this test asserted the OPPOSITE -- that the merge kept Severities and
+            # RuleArguments -- which was review finding B1-K04's defect: PSScriptAnalyzer rejects both keys,
+            # so the merged file analyzed nothing, while the Rules and Severity it reads were dropped.
             $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $script:MrgSettings -RequiredRules @('PSAvoidGlobalFunctions')
-            @($m.Severities) -join ',' | Should -BeExactly 'Warning,Error'
-            $m.RuleArguments.PSAvoidUsingCmdletAliases.Whitelist[0] | Should -BeExactly 'cd'
+            @($m.Severity) -join ',' | Should -BeExactly 'Warning,Error'
+            $m.Rules.PSAvoidUsingCmdletAliases.allowlist[0] | Should -BeExactly 'cd'
+            $m.ContainsKey('Severities') | Should -BeFalse
+            $m.ContainsKey('RuleArguments') | Should -BeFalse
         }
     }
 }
@@ -6256,10 +6265,12 @@ Describe 'Write-MergedPssaSettingsFile / ConvertTo-Psd1Literal -- round-trip fid
         Write-MergedPssaSettingsFile -Settings $null -DataRoot $script:WmsDir | Should -BeExactly ''
         Write-MergedPssaSettingsFile -Settings @{ IncludeRules = @('X') } -DataRoot '' | Should -BeExactly ''
     }
-    It 'round-trips IncludeRules, ExcludeRules, Severities and a nested RuleArguments table' {
+    It 'round-trips IncludeRules, ExcludeRules, Severity and a nested Rules table -- and writes no key PSScriptAnalyzer rejects (dispatch 000306)' {
         $settings = @{
             IncludeRules  = @('PSAvoidGlobalVars', 'PSUseDeclaredVarsMoreThanAssignments')
             ExcludeRules  = @('PSAvoidUsingWriteHost')
+            Severity      = @('Error', 'Warning')
+            Rules         = @{ PSAvoidUsingCmdletAliases = @{ allowlist = @('cd', 'dir') } }
             Severities    = @('Error', 'Warning')
             RuleArguments = @{ PSAvoidUsingCmdletAliases = @{ Whitelist = @('cd', 'dir') } }
         }
@@ -6268,8 +6279,11 @@ Describe 'Write-MergedPssaSettingsFile / ConvertTo-Psd1Literal -- round-trip fid
         $reloaded = Import-PowerShellDataFile -LiteralPath $path
         @($reloaded.IncludeRules) -join ',' | Should -BeExactly 'PSAvoidGlobalVars,PSUseDeclaredVarsMoreThanAssignments'
         @($reloaded.ExcludeRules)[0] | Should -BeExactly 'PSAvoidUsingWriteHost'
-        $reloaded.RuleArguments.PSAvoidUsingCmdletAliases.Whitelist.Count | Should -Be 2
-        $reloaded.RuleArguments.PSAvoidUsingCmdletAliases.Whitelist[1] | Should -BeExactly 'dir'
+        @($reloaded.Severity) -join ',' | Should -BeExactly 'Error,Warning'
+        $reloaded.Rules.PSAvoidUsingCmdletAliases.allowlist.Count | Should -Be 2
+        $reloaded.Rules.PSAvoidUsingCmdletAliases.allowlist[1] | Should -BeExactly 'dir'
+        $reloaded.ContainsKey('Severities') | Should -BeFalse -Because 'PSScriptAnalyzer rejects it; the renderer writes only the keys it accepts'
+        $reloaded.ContainsKey('RuleArguments') | Should -BeFalse
     }
     It 'escapes an embedded single quote safely' {
         $path = Write-MergedPssaSettingsFile -Settings @{ IncludeRules = @("weird'name") } -DataRoot $script:WmsDir

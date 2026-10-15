@@ -87,8 +87,9 @@ param(
     # mode: the scan is CERTIFIED only when the declared -OrgPolicyPath is usable AND the daemon's and
     # each client's evidence show that exact policy was applied; with no declared policy, or anything
     # less, it is NOT CERTIFIED (exit 4) with reason codes. 'open' is the unmanaged scan -- nothing is
-    # certified or refused. Omitted: POWERSHELL_LSP_POLICY_MODE, then open. A CLI parameter, not a
-    # userConfig knob.
+    # certified or refused. Omitted: open. Managed mode is EXPLICIT ONLY (owner ruling Q03, dispatch
+    # 000306): POWERSHELL_LSP_POLICY_MODE keeps its interactive fail-closed meaning and never makes a
+    # scan managed. A CLI parameter, not a userConfig knob.
     [ValidateSet('open', 'closed')]
     [string] $PolicyMode
 )
@@ -268,6 +269,17 @@ if ($null -ne $declaredPolicy -and [bool]$declaredPolicy.usable) {
 }
 
 $findings = @(@($allFindings) | Where-Object { $null -ne $_ })
+
+# A settings file PSScriptAnalyzer would reject is never handed to PSES (dispatch 000306, review finding
+# B1-K04): the daemon fell back and recorded why. A managed scan refuses that (policy-settings-rejected,
+# below); an UNMANAGED scan says so on stderr and keeps the findings the fallback produced.
+if (-not $managed) {
+    $settingsRejection = Get-ScanSettingsRejection -Files @($fileEvidence)
+    if ($settingsRejection -ne '') {
+        [Console]::Error.WriteLine('lsp-scan: warning: PSScriptAnalyzer would reject a settings file this scan resolved (' + $settingsRejection +
+            '); it was not handed to PSES as written, so these findings do not rest on it. See docs/repository-scanning.md.')
+    }
+}
 
 # --- the managed verdict (dispatch 000305) -----------------------------------------------------------
 # Unmanaged: Managed=$false and nothing changes. Managed: certified only on a usable declared policy AND

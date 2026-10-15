@@ -9,6 +9,9 @@
 # Every scenario is invoked identically for both trees -- only -OrgPolicyPath and, for the managed rows,
 # POWERSHELL_LSP_POLICY_MODE=closed in the scan's environment, which a pre-change scanner accepts (it has
 # no -PolicyMode parameter) -- so a difference between the two tables is a difference in the code.
+# Since dispatch 000306 (owner ruling Q03) that variable no longer makes a scan managed, so a managed row
+# also passes -PolicyMode closed to a scanner that DECLARES the parameter (read from its own param block):
+# the rows mean the same thing for a pre-B1 tree, B1 and every tree after it.
 #
 # Every scan runs in a child whose environment has every CLAUDE_PLUGIN_OPTION_* and POWERSHELL_LSP_*
 # variable removed: only the explicit policy reaches it. Fixtures live in a fresh temp directory
@@ -90,6 +93,8 @@ try {
     $pMis = Join-Path $work 'missing.psd1'
 
     $closed = @{ POWERSHELL_LSP_POLICY_MODE = 'closed' }
+    $scanAst = [System.Management.Automation.Language.Parser]::ParseFile($ScanScript, [ref]$null, [ref]$null)
+    $hasPolicyMode = ($null -ne $scanAst.ParamBlock) -and (@($scanAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'PolicyMode' }).Count -gt 0)
     $scenarios = @(
         @{ Name = 'baseline-req'; Dir = 'src-req'; Policy = ''; Env = @{} }
         @{ Name = 'required'; Dir = 'src-req'; Policy = $pReq; Env = @{} }
@@ -106,6 +111,7 @@ try {
         $out = Join-Path $work ($s.Name + '.sarif')
         $a = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScanScript, (Join-Path $work $s.Dir), '-Format', 'sarif', '-OutputPath', $out)
         if (-not [string]::IsNullOrWhiteSpace($s.Policy)) { $a += @('-OrgPolicyPath', $s.Policy) }
+        if ($hasPolicyMode -and $s.Env.ContainsKey('POWERSHELL_LSP_POLICY_MODE')) { $a += @('-PolicyMode', 'closed') }
         $envx = @{ CLAUDE_PLUGIN_DATA = $DataRoot }
         foreach ($k in @($s.Env.Keys)) { $envx[$k] = $s.Env[$k] }
         $run = Invoke-MeasureChild -ArgumentList $a -ExtraEnv $envx

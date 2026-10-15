@@ -173,10 +173,9 @@ $script:settingsPathInUse = ''        # the absolute settings file honored this 
 # Policy application evidence (dispatch 000305, B1): what this daemon DID with -OrgPolicyPath, recorded
 # by Initialize-PssaSettings when it resolves the session's settings. 'pending' until then (no file has
 # been analyzed yet), 'not-configured' when the daemon was launched with no policy. Never inferred from
-# the policy file: a scan-mode answer and the session record carry exactly this record.
-$script:policyApplication = New-PolicyApplicationEvidence -Path $OrgPolicyPath `
-    -RequiredState $(if ([string]::IsNullOrWhiteSpace($OrgPolicyPath)) { 'not-configured' } else { 'pending' }) `
-    -GuardVerifiedFor (Get-PssaDefaultRulesVerifiedForPsesTag)
+# the policy file: a scan-mode answer and the session record carry exactly this record. Built by the one
+# builder Reset-PsesState also uses (dispatch 000306), so a re-spawned PSES child starts from it too.
+$script:policyApplication = New-PolicyStartupEvidence -Path $OrgPolicyPath
 # Supervised re-spawn bookkeeping (000022): psesRestarts is the CONSECUTIVE re-spawn
 # count for the current crash episode (reset to 0 after any settled pass); psesGaveUp
 # latches once the budget is spent so the exhaustion logs once and the daemon then stays
@@ -586,6 +585,14 @@ function Reset-PsesState {
     #     -> no publish -> a FALSE 'incomplete' (the restart proving-test would catch this);
     #   - settingsResolved left $true would skip re-pushing the analyzer settings the new
     #     child needs; buf may hold a half-read frame from the dead child.
+    #   - the policy application record and settingsPathInUse describe what the DEAD child was handed
+    #     (dispatch 000306, review finding B1-K05): kept, a re-run of Initialize-PssaSettings that
+    #     records nothing would leave the previous child's agreeing evidence -- and a settings path that
+    #     still re-hashes -- standing for a new child that was never sent them, and a managed scan would
+    #     certify on it. Both go back to the startup state, so until the new child's settings resolve
+    #     every reader sees not-yet-applied.
+    $script:policyApplication = New-PolicyStartupEvidence -Path $OrgPolicyPath
+    $script:settingsPathInUse = ''
     $script:proc = $null
     $script:stdin = $null
     $script:stdout = $null
@@ -938,7 +945,41 @@ function Initialize-PssaSettings {
     try {
         $resolved = Resolve-PssaSettingsPath -EditedFilePath $FilePath -ProjectRoot $root -Override $SettingsPath -Ruleset $Ruleset
     } catch {
-        Write-DLog ('PSSA settings resolve error (ignored, default rules): ' + $_.Exception.Message); return
+        # A RESOLVE FAILURE IS RECORDED, AND TERMINAL (dispatch 000306, review findings B1-K05 and
+        # B1-OOB-I01). This exit used to return before the record below was written, so the record stayed
+        # 'pending' for the daemon's whole life -- doctor said "not yet applied" before and after every
+        # analysis -- or, after a supervised PSES re-spawn, stayed the PREVIOUS child's agreeing record
+        # while the new child ran its default rules. Nothing is handed to PSES (default rules, exactly as
+        # before: fail-open is unchanged); what changed is that the record says so, with a fixed state.
+        $why = [string]$_.Exception.Message
+        Write-DLog ('PSSA settings resolve error (default rules; recorded as settings-unresolved): ' + $why)
+        $script:settingsPathInUse = ''
+        $script:policyApplication = New-PolicyApplicationEvidence -Path $OrgPolicyPath `
+            -RequiredState $(if ([string]::IsNullOrWhiteSpace($OrgPolicyPath)) { 'not-configured' } else { 'settings-unresolved' }) `
+            -GuardVerifiedFor (Get-PssaDefaultRulesVerifiedForPsesTag) `
+            -SettingsValidation 'unresolved' -SettingsValidationDetail ('settings resolution failed: ' + $why)
+        return
+    }
+
+    # VALIDATED BEFORE PSES SEES IT (dispatch 000306, review finding B1-K04). A settings file
+    # PSScriptAnalyzer rejects -- a key it does not accept, a value of the wrong shape, a relative
+    # CustomRulePath, a file that is not a settings table -- makes PSES analyze NOTHING while it still
+    # publishes a settled, empty result: zero findings that read clean. So the resolved file is read the
+    # way PSScriptAnalyzer reads it (Read-PssaSettingsFile, data only, never run) and a rejected one is
+    # never handed to PSES: the session falls back to PSES's default rules and says why here, in the log,
+    # and in the record ($validation) -- which a managed scan refuses as policy-settings-rejected. An
+    # unmanaged session keeps analyzing (fail-open), on the defaults instead of on nothing.
+    $resolvedRead = $null
+    $validation = 'none'
+    $validationDetail = ''
+    if (-not [string]::IsNullOrWhiteSpace($resolved)) {
+        $resolvedRead = Read-PssaSettingsFile -Path $resolved
+        $validation = [string]$resolvedRead.Verdict
+        if ($validation -ne 'valid') {
+            $validationDetail = 'resolved settings file: ' + [string]$resolvedRead.Problem
+            Write-DLog ('PSSA settings: PSScriptAnalyzer would REJECT ' + $resolved + ' (' + $validation + ': ' +
+                [string]$resolvedRead.Problem + '); it is not handed to PSES')
+        }
     }
 
     # requiredRules (P1-5 remainder, R23=D, dispatch 000294): the ONE place the daemon's
@@ -965,8 +1006,15 @@ function Initialize-PssaSettings {
     # handed the version this daemon reads from the PSES manifest it launches; with the pinned bundle
     # that is the verified tag and nothing changes, and when it is not, the guard does what it was
     # written to do.
-    $toSend = $resolved
-    $source = $(if ([string]::IsNullOrWhiteSpace($resolved)) { 'none' } else { 'resolved' })
+    #
+    # THE MERGE CARRIES WHAT PSSCRIPTANALYZER ACCEPTS, AND IS VALIDATED TOO (dispatch 000306). The merge
+    # reads the very read validated above (-ResolvedSettings), so it carries exactly the repository's
+    # accepted entries -- its Rules and Severity included -- and never a rejected key; the merged file is
+    # then read back the same way, and one PSScriptAnalyzer would reject is not handed to PSES either
+    # (RequiredRules 'settings-rejected'; the pre-merge path, if it is valid, or the defaults).
+    $resolvedUsable = ($validation -eq 'valid')
+    $toSend = $(if ($resolvedUsable) { $resolved } else { '' })
+    $source = $(if ($resolvedUsable) { 'resolved' } else { 'none' })
     $res = $null
     $state = 'not-configured'
     $count = 0
@@ -989,23 +1037,37 @@ function Initialize-PssaSettings {
                     $guardObserved = Get-DaemonPsesVersionTag
                     $guard = ''
                     $merged = Merge-RequiredRulesSettings -ResolvedSettingsPath $resolved -RequiredRules $reqRules `
-                        -OrgExcludeRules $orgExcl -CurrentPsesTag $guardObserved -GuardOut ([ref]$guard)
+                        -OrgExcludeRules $orgExcl -CurrentPsesTag $guardObserved -GuardOut ([ref]$guard) -ResolvedSettings $resolvedRead
                     $guardResult = $guard
                     if ($null -eq $merged) {
                         $state = 'activation-unsupported'
                         Write-DLog ('PSSA settings: requiredRules merge declined by the PSES-tag guard (observed ' + $guardObserved +
                             ', list verified for ' + (Get-PssaDefaultRulesVerifiedForPsesTag) + '); falling back to pre-merge path')
                     } else {
-                        $mergedPath = Write-MergedPssaSettingsFile -Settings $merged -DataRoot $DataRoot
+                        $swept = @()
+                        $mergedPath = Write-MergedPssaSettingsFile -Settings $merged -DataRoot $DataRoot -SweptOut ([ref]$swept)
+                        if (@($swept).Count -gt 0) { Write-DLog ('PSSA settings: removed ' + @($swept).Count + ' stale merged settings file(s) no live daemon was using') }
                         if ([string]::IsNullOrWhiteSpace($mergedPath)) {
                             $state = 'merge-write-failed'
                             Write-DLog 'PSSA settings: requiredRules merge computed but the merged settings file could not be written and verified (falling back to pre-merge path)'
                         } else {
                             $mergedSha = Get-PolicyFileSha256 -Path $mergedPath
-                            $toSend = $mergedPath
-                            $source = 'merged'
-                            $state = 'not-delivered'   # until the push below is actually sent
-                            Write-DLog ('PSSA settings: requiredRules merged (' + $count + ' rule(s)) -> ' + $mergedPath)
+                            $mergedRead = Read-PssaSettingsFile -Path $mergedPath
+                            if ([string]$mergedRead.Verdict -ne 'valid') {
+                                $state = 'settings-rejected'
+                                if ($validation -eq 'valid' -or $validation -eq 'none') {
+                                    $validation = [string]$mergedRead.Verdict
+                                    $validationDetail = 'merged settings file: ' + [string]$mergedRead.Problem
+                                }
+                                Write-DLog ('PSSA settings: PSScriptAnalyzer would REJECT the merged settings file ' + $mergedPath + ' (' +
+                                    [string]$mergedRead.Verdict + ': ' + [string]$mergedRead.Problem + '); falling back to pre-merge path')
+                            } else {
+                                if ($validation -eq 'none') { $validation = 'valid' }
+                                $toSend = $mergedPath
+                                $source = 'merged'
+                                $state = 'not-delivered'   # until the push below is actually sent
+                                Write-DLog ('PSSA settings: requiredRules merged (' + $count + ' rule(s)) -> ' + $mergedPath)
+                            }
                         }
                     }
                 }
@@ -1018,7 +1080,11 @@ function Initialize-PssaSettings {
 
     $delivered = $false
     try {
-        if ([string]::IsNullOrWhiteSpace($toSend)) { Write-DLog 'PSSA settings: none resolved (default rules)'; return }
+        if ([string]::IsNullOrWhiteSpace($toSend)) {
+            if ($validation -eq 'none') { Write-DLog 'PSSA settings: none resolved (default rules)' }
+            else { Write-DLog ('PSSA settings: falling back to PSES default rules (' + $validation + ' settings, ' + $validationDetail + ')') }
+            return
+        }
         $script:settingsPathInUse = $toSend
         Send-Lsp @{ jsonrpc = '2.0'; method = 'workspace/didChangeConfiguration'
             params = @{ settings = @{ powershell = @{ scriptAnalysis = (New-ScriptAnalysisSettings $toSend) } } } }
@@ -1033,7 +1099,8 @@ function Initialize-PssaSettings {
             -GuardVerifiedFor (Get-PssaDefaultRulesVerifiedForPsesTag) -GuardObserved $guardObserved -GuardResult $guardResult `
             -MergedPath $mergedPath -MergedSha256 $mergedSha `
             -SettingsPath $script:settingsPathInUse -SettingsSource $(if ($delivered) { $source } else { 'none' }) `
-            -SettingsSha256 (Get-PolicyFileSha256 -Path $script:settingsPathInUse) -Delivered $delivered
+            -SettingsSha256 (Get-PolicyFileSha256 -Path $script:settingsPathInUse) -Delivered $delivered `
+            -SettingsValidation $validation -SettingsValidationDetail $validationDetail
     }
 }
 

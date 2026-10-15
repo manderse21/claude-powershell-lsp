@@ -19,6 +19,14 @@
 #   no-evidence             no policy evidence at all (the receipt's policy block stays unbound)
 #   engine-unknown          the engine versions could not be observed
 #   config-narrowed         the daemon reports an ambient ruleExclude it was launched with
+#   settings-rejected       the daemon found that PSScriptAnalyzer would reject the repository's settings
+#                           file (dispatch 000306): it did not hand it to PSES and recorded the verdict
+#   settings-unresolved     the daemon's settings resolution threw, so it handed PSES nothing (dispatch
+#                           000306): the terminal record a re-spawned PSES child now gets instead of the
+#                           previous child's agreeing one
+#
+# Every daemon record carries the settings verdict the real daemon records (dispatch 000306): 'valid'
+# when it handed PSES a merged file, 'none' when it handed none.
 #
 # The variant name is read from <CLAUDE_PLUGIN_DATA>/pv-variant.txt, which the test writes before the
 # run -- no environment variable is involved, so no ambient value can select a variant.
@@ -62,16 +70,20 @@ if ($state -eq 'activated') {
     $settingsSource = 'merged'
     $settingsPath = $mergedPath
 }
+$validation = $(if ($settingsSource -eq 'merged') { 'valid' } else { 'none' })
+$validationDetail = ''
 switch ($variant) {
-    'activation-unsupported' { $state = 'activation-unsupported'; $guardObserved = 'v9.9.9'; $guardResult = 'refused'; $mergedPath = ''; $mergedSha = ''; $settingsSource = 'none'; $settingsPath = '' }
-    'merge-write-failed' { $state = 'merge-write-failed'; $mergedPath = ''; $mergedSha = ''; $settingsSource = 'none'; $settingsPath = '' }
+    'activation-unsupported' { $state = 'activation-unsupported'; $guardObserved = 'v9.9.9'; $guardResult = 'refused'; $mergedPath = ''; $mergedSha = ''; $settingsSource = 'none'; $settingsPath = ''; $validation = 'none' }
+    'merge-write-failed' { $state = 'merge-write-failed'; $mergedPath = ''; $mergedSha = ''; $settingsSource = 'none'; $settingsPath = ''; $validation = 'none' }
+    'settings-rejected' { $validation = 'rejected'; $validationDetail = "resolved settings file: 'RuleArguments' is not a key PSScriptAnalyzer accepts" }
+    'settings-unresolved' { $state = 'settings-unresolved'; $daemonRes = $null; $guardObserved = ''; $guardResult = ''; $mergedPath = ''; $mergedSha = ''; $settingsSource = 'none'; $settingsPath = ''; $validation = 'unresolved'; $validationDetail = 'settings resolution failed: Illegal characters in path.' }
 }
 $settingsSha = $(if ($settingsPath -ne '') { Get-PolicyFileSha256 -Path $settingsPath } else { '' })
 if ($variant -eq 'settings-changed') { $settingsSha = ('0' * 64) }
 $daemonEvidence = New-PolicyApplicationEvidence -Resolution $daemonRes -Path $knob -RequiredState $state `
     -RequiredCount $required.Count -GuardVerifiedFor 'v4.6.0' -GuardObserved $guardObserved -GuardResult $guardResult `
     -MergedPath $mergedPath -MergedSha256 $mergedSha -SettingsPath $settingsPath -SettingsSource $settingsSource `
-    -SettingsSha256 $settingsSha -Delivered ($settingsSource -eq 'merged')
+    -SettingsSha256 $settingsSha -Delivered ($settingsSource -eq 'merged') -SettingsValidation $validation -SettingsValidationDetail $validationDetail
 $clientEvidence = New-PolicyAdjudicationEvidence -Resolution $clientRes -Path $knob -Mode ([string](Get-PolicyModeInfo).resolved)
 
 $snap = Read-ScanSourceSnapshot -Path $path
