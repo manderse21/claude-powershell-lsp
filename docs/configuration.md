@@ -195,7 +195,8 @@ auto-discovery.
 
 **A settings file PSScriptAnalyzer would reject is never handed to PSES** (dispatch 000306). Such a
 file -- a key it does not accept, a value of the wrong shape, a `CustomRulePath` entry that is relative
-or missing, a file that is not a settings table -- makes PSES analyze *nothing* while it still
+(to a directory or a drive) or that does not exist, a file that is not a settings table -- makes PSES
+analyze *nothing* while it still
 publishes a settled, empty result: zero findings that look clean. So the daemon first reads the file
 the way PSScriptAnalyzer does, as data (parsed, never run), and when PSScriptAnalyzer would refuse it,
 the session falls back to PSES's default rules and the daemon log says why. The rules it checks, and

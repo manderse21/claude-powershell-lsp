@@ -33,13 +33,16 @@ security/patch re-pin with no behavior change ships as a PATCH.
 MINOR: **A settings file PSScriptAnalyzer would reject is no longer handed to PSES, and a
 `RequiredRules` merge now carries the repository's `Rules` and `Severity`** (dispatch 000306, leg B1b
 -- review findings B1-K04, B1-K05, B1-K07 and B1-OOB-I01). A `PSScriptAnalyzerSettings.psd1` that
-PSScriptAnalyzer rejects -- a key it does not accept, a value of the wrong shape, a relative or missing
-`CustomRulePath` entry, a file that is not a settings table -- made PSES analyze NOTHING while it still
+PSScriptAnalyzer rejects -- a key it does not accept, a value of the wrong shape, a relative (to a
+directory or a drive) or missing `CustomRulePath` entry, a file that is not a settings table -- made
+PSES analyze NOTHING while it still
 published a settled, empty result: zero findings that read clean, in an edit and in a scan, unmanaged
 and managed alike (a managed scan CERTIFIED it). Now the daemon reads every settings file it would hand
 PSES the way PSScriptAnalyzer does -- as data, never run (`Read-PssaSettingsFile`) -- against rules
 MEASURED on the vendored PSScriptAnalyzer 1.25.0 under Windows PowerShell 5.1 and PowerShell 7 (the
-same verdicts on both, with and without PSES's `-Severity` argument), and never hands PSES one it
+same verdicts on both, with and without PSES's `-Severity` argument; a `CustomRulePath` entry goes
+through PowerShell's own path resolver, as it does inside PSScriptAnalyzer, so `~`, `FileSystem::` and
+wildcard entries keep working), and never hands PSES one it
 rejects: the session falls back to PSES's default rules and the daemon log says why, an unmanaged scan
 prints a stderr warning naming the problem, and a managed scan is NOT CERTIFIED with the new reason
 code `policy-settings-rejected`. The verdict rides the daemon's application evidence as
@@ -68,8 +71,9 @@ re-spawn. **Old merged settings files are removed:** after each merge the daemon
 files on its data root that no live daemon's session record names and that are more than ten minutes
 old, and the orphaned `orgpolicy-merged-settings.psd1` from the layout before dispatch 000305 -- never
 anything else, never a directory, and nothing when a session record cannot be read. Not covered, and
-documented: whether a `CustomRulePath` module PSScriptAnalyzer can find actually yields a rule (an
-absolute rule directory with no loadable rule still passes the check). `doctor -Json`'s `orgPolicy` keys
+documented: whether the paths a `CustomRulePath` resolves to actually yield a rule (an empty rule
+directory, or a wildcard that matches nothing, still passes the check; without
+`IncludeDefaultRules = $true` PSScriptAnalyzer then refuses the settings). `doctor -Json`'s `orgPolicy` keys
 keep their names, order and types. No `userConfig` knob, status token or CLI flag is added.
 
 MINOR: **`lsp-scan.ps1 -OrgPolicyPath` now governs the whole analysis, and a new managed mode

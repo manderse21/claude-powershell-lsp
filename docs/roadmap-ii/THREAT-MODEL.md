@@ -349,7 +349,10 @@ user opened. No fix is proposed here.
 analyze nothing and still publish a settled, empty result). The read is data-only: the file is parsed,
 never run, every value must be a constant, `$true`/`$false`/`$null`, an array, a table or a cast of
 those before `Ast.SafeGetValue` builds it, so a hostile file can at most be refused (an unmanaged session
-then falls back to PSES's default rules; a managed scan refuses to certify). The RequiredRules merge has
+then falls back to PSES's default rules; a managed scan refuses to certify). Its `CustomRulePath` check
+resolves each entry with PowerShell's own path resolver -- the lookup PSScriptAnalyzer itself makes
+inside PSES -- so a UNC entry reaches its host from the daemon as it already did from PSES; nothing it
+names is loaded or run by the check. The RequiredRules merge has
 read the same file since dispatch 000294, now through the same reader. What PSES does with a file the
 plugin accepts is unchanged and still not derived.
 

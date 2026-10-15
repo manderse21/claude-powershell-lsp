@@ -1501,19 +1501,54 @@ function Get-PssaSettingsStringListProblem {
     return ($Key + ' is not a string or an array of strings')
 }
 
+function Test-PssaSettingsRulePathAnchored {
+    # Does the CustomRulePath entry $Path name the same place from ANY current location -- so the daemon
+    # can resolve it exactly as PSScriptAnalyzer will inside PSES, which runs from the daemon's log
+    # directory, never the repository's? Anchored: a full file-system path (X:\ or X:/, or a UNC
+    # \\server\share, on Windows; /... elsewhere), a home-relative ~ path, or a full path behind the
+    # FileSystem provider's qualifier (FileSystem:: or Microsoft.PowerShell.Core\FileSystem::). NOT
+    # anchored (measured on both hosts, dispatch 000306): a relative path (.\rules, rules\x.psm1); a
+    # drive-relative one (C:rules -- the current directory ON that drive, which PSES does not share: one
+    # that existed from the daemon's location read valid and PSScriptAnalyzer, run from elsewhere,
+    # refused it); a root-relative one (\rules -- the current drive); a path on any other PowerShell drive
+    # (Temp:\ exists under PowerShell 7 only, and PSES may run under the other host). ASCII-only: the
+    # drive letter is [A-Za-z], compared case-sensitively.
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $p = $Path
+    $qualified = $false
+    foreach ($prefix in @('Microsoft.PowerShell.Core\FileSystem::', 'FileSystem::')) {
+        if ($p.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $p = $p.Substring($prefix.Length)
+            $qualified = $true
+            break
+        }
+    }
+    if (-not $qualified -and $p -cmatch '\A~(?:[\\/]|\z)') { return $true }
+    if ([System.IO.Path]::DirectorySeparatorChar -eq '\') {
+        return (($p -cmatch '\A[A-Za-z]:[\\/]') -or ($p -cmatch '\A[\\/]{2}[^\\/]'))
+    }
+    return $p.StartsWith('/')
+}
+
 function Get-PssaSettingsEntryProblem {
     # '' when PSScriptAnalyzer, run by PSES as this plugin runs it, accepts $Value under the canonical
     # key $Key; otherwise one line saying why not. Each rule here was measured (see above):
     #   Severity                 a string list whose every entry parses as a severity;
     #   IncludeRules/ExcludeRules a string list;
-    #   CustomRulePath           a string list that is not empty, with no blank entry, every entry an
-    #                            ABSOLUTE path that exists -- a relative entry resolves against PSES's own
-    #                            working directory (the daemon's log directory), not the repository, and
-    #                            through the real daemon a repository file naming '.\rules\x.psm1' made
-    #                            PSES analyze nothing, IncludeDefaultRules or not;
+    #   CustomRulePath           a string list that is not empty, with no blank entry, every entry
+    #                            ANCHORED (Test-PssaSettingsRulePathAnchored) -- a relative entry resolves
+    #                            against PSES's own working directory (the daemon's log directory), not
+    #                            the repository, and through the real daemon a repository file naming
+    #                            '.\rules\x.psm1' made PSES analyze nothing, IncludeDefaultRules or not --
+    #                            and resolvable by PowerShell's own resolver, the call PSScriptAnalyzer
+    #                            makes for each entry: it refuses the settings when that call THROWS (a
+    #                            path or a drive that does not exist), and a wildcard that matches is
+    #                            used while one that matches nothing is no error (measured, both hosts);
     #   IncludeDefaultRules / RecurseCustomRulePath  a boolean;
     #   Rules                    a table whose every value is a table (one rule's settings).
-    # What this cannot see -- a module that exists but from which PSScriptAnalyzer loads no rule -- is
+    # What this cannot see -- whether the modules a CustomRulePath resolves to hold a rule (without
+    # IncludeDefaultRules = $true, PSScriptAnalyzer refuses settings whose custom paths yield none) -- is
     # a documented boundary (docs/repository-scanning.md).
     param([string]$Key, $Value)
     switch ($Key) {
@@ -1536,14 +1571,12 @@ function Get-PssaSettingsEntryProblem {
             if ($entries.Count -eq 0) { return 'CustomRulePath is empty (PSScriptAnalyzer then finds no rules in it)' }
             foreach ($e in $entries) {
                 if ([string]::IsNullOrWhiteSpace($e)) { return 'CustomRulePath holds a blank entry' }
-                $rooted = $false
-                try { $rooted = [System.IO.Path]::IsPathRooted($e) } catch { $rooted = $false }
-                if (-not $rooted) {
-                    return ("CustomRulePath entry '" + (Format-PssaSettingsText $e 80) + "' is relative; PSES resolves it against its own working directory, not the repository")
+                if (-not (Test-PssaSettingsRulePathAnchored $e)) {
+                    return ("CustomRulePath entry '" + (Format-PssaSettingsText $e 80) + "' is relative (to a directory, a drive or the current drive); PSES resolves it from its own working directory, not the repository")
                 }
-                $exists = $false
-                try { $exists = Test-Path -LiteralPath $e } catch { $exists = $false }
-                if (-not $exists) { return ("CustomRulePath entry '" + (Format-PssaSettingsText $e 80) + "' does not exist") }
+                $resolves = $true
+                try { [void]$ExecutionContext.SessionState.Path.GetResolvedPSPathFromPSPath($e) } catch { $resolves = $false }
+                if (-not $resolves) { return ("CustomRulePath entry '" + (Format-PssaSettingsText $e 80) + "' does not exist") }
             }
             return ''
         }

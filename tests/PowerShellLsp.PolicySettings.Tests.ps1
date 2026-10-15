@@ -102,6 +102,11 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
             @{ Name = 'a relative CustomRulePath'; Verdict = 'rejected'; Text = "@{ CustomRulePath = @('./rules/B1b.Rules.psm1') }" }
             @{ Name = 'a missing absolute CustomRulePath'; Verdict = 'rejected'; Text = ('@{ CustomRulePath = @(' + $q + $script:RdMissing + $q + ') }') }
             @{ Name = 'an absolute custom rule module'; Verdict = 'valid'; Text = ('@{ CustomRulePath = @(' + $q + $script:RdModule + $q + ') }') }
+            @{ Name = 'a wildcard CustomRulePath'; Verdict = 'valid'; Text = ('@{ CustomRulePath = @(' + $q + (Join-Path $script:RdRules '*.psm1') + $q + ') }') }
+            @{ Name = 'a wildcard CustomRulePath matching nothing, beside the default rules'; Verdict = 'valid'; Text = ('@{ CustomRulePath = @(' + $q + (Join-Path $script:RdRules '*.nomatch') + $q + '); IncludeDefaultRules = $true }') }
+            @{ Name = 'a FileSystem-qualified CustomRulePath'; Verdict = 'valid'; Text = ('@{ CustomRulePath = @(' + $q + 'FileSystem::' + $script:RdModule + $q + ') }') }
+            @{ Name = 'a drive-relative CustomRulePath'; Verdict = 'rejected'; Text = "@{ CustomRulePath = @('C:rd-rules\B1b.Rules.psm1') }" }
+            @{ Name = 'a FileSystem-qualified relative CustomRulePath'; Verdict = 'rejected'; Text = "@{ CustomRulePath = @('FileSystem::rd-rules\B1b.Rules.psm1') }" }
             @{ Name = 'an empty file'; Verdict = 'unparsable'; Text = '' }
             @{ Name = 'no table'; Verdict = 'unparsable'; Text = "'x'" }
             @{ Name = 'a syntax error'; Verdict = 'unparsable'; Text = '@{ Severity = ' }
@@ -110,6 +115,17 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
             @{ Name = 'a variable other than true, false, null'; Verdict = 'unparsable'; Text = '@{ CustomRulePath = @($PSScriptRoot) }' }
             @{ Name = 'a duplicate key'; Verdict = 'unparsable'; Text = "@{ Severity = @('Error'); severity = @('Warning') }" }
         )
+        # A home-relative entry, where the test drive lies under the home directory (Windows; not a Linux
+        # /tmp): ~ is what the FileSystem provider's Home is, in this process and in the parity child alike.
+        $script:RdHomeCase = $null
+        $fsHome = [string](Get-PSProvider -PSProvider FileSystem).Home
+        if (-not [string]::IsNullOrWhiteSpace($fsHome)) {
+            $fsHome = $fsHome.TrimEnd('\', '/')
+            if ($script:RdModule.StartsWith($fsHome + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $script:RdHomeCase = @{ Name = 'a home-relative CustomRulePath'; Verdict = 'valid'; Text = ('@{ CustomRulePath = @(' + $q + '~' + $script:RdModule.Substring($fsHome.Length) + $q + ') }') }
+                $script:RdCases += $script:RdHomeCase
+            }
+        }
     }
 
     It 'the accepted key set is the measured seven, in canonical case -- and docs/DEV_NOTES.md lists the same seven' {
@@ -149,6 +165,11 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
         @{ Name = 'a relative CustomRulePath'; Verdict = 'rejected' }
         @{ Name = 'a missing absolute CustomRulePath'; Verdict = 'rejected' }
         @{ Name = 'an absolute custom rule module'; Verdict = 'valid' }
+        @{ Name = 'a wildcard CustomRulePath'; Verdict = 'valid' }
+        @{ Name = 'a wildcard CustomRulePath matching nothing, beside the default rules'; Verdict = 'valid' }
+        @{ Name = 'a FileSystem-qualified CustomRulePath'; Verdict = 'valid' }
+        @{ Name = 'a drive-relative CustomRulePath'; Verdict = 'rejected' }
+        @{ Name = 'a FileSystem-qualified relative CustomRulePath'; Verdict = 'rejected' }
         @{ Name = 'an empty file'; Verdict = 'unparsable' }
         @{ Name = 'no table'; Verdict = 'unparsable' }
         @{ Name = 'a syntax error'; Verdict = 'unparsable' }
@@ -164,6 +185,33 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
         $r.Verdict | Should -BeExactly $Verdict -Because ([string]$r.Problem)
         if ($Verdict -eq 'valid') { $r.Problem | Should -BeExactly '' } else { $r.Problem | Should -Not -BeNullOrEmpty }
         $r.Problem | Should -Not -Match '[^\x20-\x7E]' -Because 'a problem is one printable-ASCII line'
+    }
+
+    It 'a home-relative (~) CustomRulePath reads valid: PowerShell resolves ~ to the same home inside PSES' {
+        if ($null -eq $script:RdHomeCase) { Set-ItResult -Skipped -Because 'the test drive is not under the home directory on this host'; return }
+        $r = Read-PssaSettingsFile -Path (New-PsFile $script:RdHomeCase.Text)
+        $r.Verdict | Should -BeExactly 'valid' -Because ([string]$r.Problem)
+    }
+
+    It 'a drive-relative or root-relative CustomRulePath reads REJECTED even when it exists from the reader''s own location -- PSES resolves it from elsewhere' -Skip:(-not $script:PsOnWindows) {
+        # Measured (dispatch 000306): 'C:rules\x.psm1' that existed from the daemon's location read VALID
+        # (it is "rooted" to .NET) while PSScriptAnalyzer, run from another directory, refused it -- the
+        # settled empty result this check exists to prevent. '\rules\x.psm1' names the current DRIVE's
+        # root, and PSES's current drive is its log directory's, not necessarily the daemon's.
+        $here = Join-Path $TestDrive 'rd-here'
+        New-Item -ItemType Directory -Force -Path (Join-Path $here 'rules') | Out-Null
+        Copy-Item -LiteralPath $script:RdModule -Destination (Join-Path $here 'rules\B1b.Rules.psm1')
+        $driveRelative = $here.Substring(0, 2) + 'rules\B1b.Rules.psm1'
+        $rootRelative = $here.Substring(2) + '\rules\B1b.Rules.psm1'
+        Push-Location -LiteralPath $here
+        try {
+            foreach ($e in @($driveRelative, $rootRelative)) {
+                Test-Path -LiteralPath $e | Should -BeTrue -Because ('CONTROL: ' + $e + ' exists from the reader''s own location')
+                $r = Read-PssaSettingsFile -Path (New-PsFile ("@{ CustomRulePath = @('" + $e + "') }"))
+                $r.Verdict | Should -BeExactly 'rejected' -Because $e
+                $r.Problem | Should -Match 'is relative'
+            }
+        } finally { Pop-Location }
     }
 
     It 'a missing file, a relative path and a blank path read unparsable, never valid' {
@@ -232,8 +280,13 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
                 [System.IO.File]::WriteAllText($p, [string]$c.Text, (New-Object System.Text.UTF8Encoding($false)))
                 $script:RpFiles[[string]$c.Name] = $p
             }
-            $script:RpBoundary = Join-Path $script:RpDir 'boundary.psd1'
-            [System.IO.File]::WriteAllText($script:RpBoundary, ("@{ CustomRulePath = @('" + $script:RdEmpty + "') }"))
+            # The boundary: custom paths that RESOLVE but yield no rule, with no IncludeDefaultRules.
+            $script:RpBoundaries = [ordered]@{
+                'boundary.psd1'          = (Join-Path $script:RpDir 'boundary.psd1')
+                'boundary-wildcard.psd1' = (Join-Path $script:RpDir 'boundary-wildcard.psd1')
+            }
+            [System.IO.File]::WriteAllText($script:RpBoundaries['boundary.psd1'], ("@{ CustomRulePath = @('" + $script:RdEmpty + "') }"))
+            [System.IO.File]::WriteAllText($script:RpBoundaries['boundary-wildcard.psd1'], ("@{ CustomRulePath = @('" + (Join-Path $script:RdRules '*.nomatch') + "') }"))
             $cwd = Join-Path $TestDrive 'parity-cwd'
             New-Item -ItemType Directory -Force -Path $cwd | Out-Null
             $driver = Join-Path $script:RpDir 'driver.ps1'
@@ -264,7 +317,7 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
 
         It 'the vendored analyzer was found and judged every fixture (this Context cannot pass vacuously)' {
             $script:RpManifest | Should -Not -BeNullOrEmpty
-            $script:RpVerdicts.Count | Should -Be (@($script:RdCases).Count + 1)
+            $script:RpVerdicts.Count | Should -Be (@($script:RdCases).Count + $script:RpBoundaries.Count)
         }
 
         It 'every fixture''s verdict equals whether PSScriptAnalyzer accepts it, called as PSES calls it' {
@@ -279,12 +332,15 @@ Describe 'What PSScriptAnalyzer accepts in a settings file -- measured, and a re
             ($mismatch.ToArray() -join '; ') | Should -BeExactly ''
         }
 
-        It 'BOUNDARY, documented in docs/repository-scanning.md: an absolute CustomRulePath directory from which PSScriptAnalyzer loads no rule reads valid here and is refused by PSScriptAnalyzer' {
-            # Measured, so the gap stays visible: what a rule module CONTAINS is not something a static
-            # read of the settings file can see. If PSScriptAnalyzer ever accepts this, or the reader ever
-            # refuses it, this test says so.
-            (Read-PssaSettingsFile -Path $script:RpBoundary).Verdict | Should -BeExactly 'valid'
-            $script:RpVerdicts['boundary.psd1'] | Should -BeFalse
+        It 'BOUNDARY, documented in docs/repository-scanning.md: a CustomRulePath that resolves but yields no rule (an empty directory; a wildcard matching nothing), without IncludeDefaultRules, reads valid here and is refused by PSScriptAnalyzer' {
+            # Measured, so the gap stays visible: what the paths a CustomRulePath resolves to CONTAIN is
+            # not something a static read of the settings file can see (with IncludeDefaultRules = $true
+            # PSScriptAnalyzer accepts the same settings and runs its defaults -- a matrix case above). If
+            # PSScriptAnalyzer ever accepts these, or the reader ever refuses them, this test says so.
+            foreach ($k in @($script:RpBoundaries.Keys)) {
+                (Read-PssaSettingsFile -Path $script:RpBoundaries[$k]).Verdict | Should -BeExactly 'valid' -Because $k
+                $script:RpVerdicts[$k] | Should -BeFalse -Because $k
+            }
         }
     }
 }

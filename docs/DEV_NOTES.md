@@ -216,14 +216,21 @@ and never parse it a second way. Things that bite when you change this path:
   analysis fail inside PSES, which still publishes an empty, settled result -- zero findings that look
   clean (measured 2026-10-13 against the vendored PSSA). Do not build a test fixture on such a key.
   The same is true of a value of the wrong shape and, under PSES, of a RELATIVE `CustomRulePath` (PSES
-  runs from the daemon's log directory). Since dispatch 000306 the daemon reads every settings file it
+  runs from the daemon's log directory) -- drive-relative `C:rules` and root-relative `\rules` included:
+  .NET calls those "rooted", but they still depend on a current directory PSES does not share. A
+  `CustomRulePath` entry is checked with `Test-PssaSettingsRulePathAnchored` and then with PowerShell's
+  own resolver (`GetResolvedPSPathFromPSPath`, the call PSScriptAnalyzer makes): it refuses the settings
+  exactly when that call throws, so `~`, `FileSystem::` and wildcards behave as they do under PSES
+  (measured). Since dispatch 000306 the daemon reads every settings file it
   would hand PSES through `Read-PssaSettingsFile` and hands none it rejects; the merge carries only the
   entries it accepts. The rules that reader encodes were MEASURED on both hosts (identical, with and
   without PSES's own `-Severity` argument) and `tests/PowerShellLsp.PolicySettings.Tests.ps1` re-measures
   parity against the vendored analyzer on every leg -- change a rule there, not here from memory. Two
   things it deliberately mirrors: PSScriptAnalyzer reads the FIRST table in the file (a statement before
-  it is fine), and it does not refuse a parse error by itself. One thing it cannot see: whether a
-  `CustomRulePath` module yields a rule (measured boundary, kept visible by a test).
+  it is fine), and it does not refuse a parse error by itself. One thing it cannot see: whether the
+  paths a `CustomRulePath` resolves to yield a rule -- without `IncludeDefaultRules = $true`,
+  PSScriptAnalyzer refuses settings whose custom paths yield none (measured boundary, kept visible by a
+  test).
 - **A merged settings file is removed only when no LIVE daemon names it.** `Remove-StaleMergedPssaSettings`
   (dispatch 000306, B1-K07) runs after every merge and reads the session records on the same data root:
   a file a live daemon's record names (by FILE NAME -- one data root can be spelled two ways) is kept

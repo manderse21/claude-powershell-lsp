@@ -180,9 +180,14 @@ Windows PowerShell 5.1 and PowerShell 7 alike:
   every `Severity` entry names a PSScriptAnalyzer severity (`Hint` does not); `IncludeDefaultRules` and
   `RecurseCustomRulePath` are booleans; `Rules` is a table of tables; no value anywhere in a table is
   `$null`;
-- `CustomRulePath` is not empty and every entry is an **absolute** path that exists -- PSES runs from the
-  daemon's own working directory, not the repository's, so through the real daemon a relative entry
-  made PSES analyze nothing, `IncludeDefaultRules` or not.
+- `CustomRulePath` is not empty, and every entry is a path that means the same thing from any directory
+  -- a full path (`C:\rules`, `\\server\share\rules`, `/opt/rules`), a `~` path, or either behind
+  `FileSystem::` -- that PowerShell's own path resolver, the call PSScriptAnalyzer makes for each entry,
+  resolves without error (a wildcard that matches is used; one that matches nothing is no error). PSES
+  runs from the daemon's own working directory, not the repository's, so through the real daemon a
+  relative entry made PSES analyze nothing, `IncludeDefaultRules` or not; a drive-relative entry
+  (`C:rules`) or a root-relative one (`\rules`) depends on the current directory too and is refused the
+  same way.
 
 The verdict -- `valid`, `rejected`, `unparsable`, or `none` when no settings file was resolved -- is
 recorded in the daemon's application evidence (`policy.daemon.settings.validation`, with a one-line
@@ -202,6 +207,8 @@ managed scan over a repository file with a rejected key is refused even though t
 that key, was valid and was used: the analysis did not run on the settings the repository declared.
 
 **What the check cannot see.** It reads the settings file, not the rule modules a `CustomRulePath` names:
-an absolute `CustomRulePath` that exists but from which PSScriptAnalyzer loads no rule (a directory
-holding no loadable rule module, say) passes the check and still makes PSES analyze nothing. That
-boundary is measured and kept visible by a test.
+a `CustomRulePath` that resolves but yields no rule -- an empty directory, a module with no rule in it,
+a wildcard that matches nothing -- passes the check, and unless the file also sets
+`IncludeDefaultRules = $true` PSScriptAnalyzer then refuses the settings ("Cannot find ScriptAnalyzer
+rules in the specified path") and PSES analyzes nothing. That boundary is measured and kept visible by a
+test.
