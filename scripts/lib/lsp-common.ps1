@@ -2136,21 +2136,43 @@ function Remove-StaleMergedPssaSettings {
 
 function ConvertTo-Psd1Literal {
     # A minimal, ROUND-TRIP-SAFE .psd1 literal renderer for exactly the value shapes a PSSA
-    # settings hashtable carries: string, bool, int, a double, an array, or a nested hashtable
+    # settings hashtable carries: string, bool, a number, an array, or a nested hashtable
     # (the Rules tables). Not a general-purpose serializer -- an unrecognized shape renders as
     # $null rather than a guess that could silently change meaning (and a merged file holding such a
     # $null fails the daemon's validation instead of reaching PSES: PSScriptAnalyzer refuses a $null
     # in a table).
     # A nested table renders in SORTED key order (dispatch 000305): a [hashtable]'s own order is
     # not stable across processes, and the merged-settings file is named by its text's SHA-256.
-    # Since dispatch 000306 the Rules tables are carried, so a double (a rule argument such as 1.5,
-    # measured accepted) renders in the invariant culture, and a nested key that is not a plain
-    # identifier (a custom rule's 'Module\Measure-Name') is single-quoted rather than written bare.
+    # Since dispatch 000306 the Rules tables are carried, so a nested key that is not a plain
+    # identifier (a custom rule's 'Module\Measure-Name') is single-quoted rather than written bare, and
+    # -- review finding B1b-I01 -- every primitive NUMBER a rule argument can hold keeps its type and its
+    # value, written in the invariant culture: an [int] as a plain literal (its own type); a [decimal] as
+    # a d-suffixed literal (PSScriptAnalyzer refuses a [decimal] cast -- decimal is no .NET primitive,
+    # measured); every other ([long], [double], [single], [byte], [sbyte], [int16], [uint16], [uint32],
+    # [uint64]) behind a cast of its text -- [uint32]'120', [double]'1.5' (17 significant digits for a
+    # double and 9 for a single, which always round-trip, where .NET Framework's 'R' format may not; NaN
+    # and 1E+300 survive too). Each form was measured accepted by PSScriptAnalyzer and read back with its
+    # type on both hosts. A [char] or a BigInteger is no primitive number and still renders $null.
     param($Value)
     if ($null -eq $Value) { return '$null' }
     if ($Value -is [bool]) { return $(if ($Value) { '$true' } else { '$false' }) }
-    if ($Value -is [int] -or $Value -is [long]) { return [string]$Value }
-    if ($Value -is [double]) { return $Value.ToString('R', [System.Globalization.CultureInfo]::InvariantCulture) }
+    $inv = [System.Globalization.CultureInfo]::InvariantCulture
+    if ($Value -is [int]) { return $Value.ToString($inv) }
+    if ($Value -is [decimal]) { return ($Value.ToString($inv) + 'd') }
+    $cast = ''
+    if ($Value -is [long]) { $cast = 'long' }
+    elseif ($Value -is [double]) { $cast = 'double' }
+    elseif ($Value -is [single]) { $cast = 'single' }
+    elseif ($Value -is [byte]) { $cast = 'byte' }
+    elseif ($Value -is [sbyte]) { $cast = 'sbyte' }
+    elseif ($Value -is [int16]) { $cast = 'int16' }
+    elseif ($Value -is [uint16]) { $cast = 'uint16' }
+    elseif ($Value -is [uint32]) { $cast = 'uint32' }
+    elseif ($Value -is [uint64]) { $cast = 'uint64' }
+    if ($cast -ne '') {
+        $text = if ($Value -is [double]) { $Value.ToString('G17', $inv) } elseif ($Value -is [single]) { $Value.ToString('G9', $inv) } else { $Value.ToString($inv) }
+        return ('[' + $cast + "]'" + $text + "'")
+    }
     if ($Value -is [string]) { return "'" + $Value.Replace("'", "''") + "'" }
     if ($Value -is [System.Collections.IDictionary]) {
         $parts = New-Object System.Collections.ArrayList

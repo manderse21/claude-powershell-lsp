@@ -240,6 +240,12 @@ and never parse it a second way. Things that bite when you change this path:
   `.psd1` or `.dll` (a `.ps1` warns "Cannot find rule extension"). The reader mirrors that
   (`Test-PssaSettingsRulePathYieldsRule`). One thing it cannot see without loading it: whether a rule
   source HOLDS a rule (measured boundary, kept visible by a test).
+- **A merged settings file writes every number with its type.** PSScriptAnalyzer evaluates a cast only
+  to a .NET primitive, so `[decimal]'1.5'` and `[string]'x'` are REFUSED (measured, both hosts):
+  `ConvertTo-Psd1Literal` writes a decimal as a `d` literal (`1.5d`), an `[int]` bare, and every other
+  primitive number behind a cast of its invariant-culture text (`[uint32]'120'`), doubles and singles with
+  17 and 9 significant digits -- .NET Framework's `R` format does not always round-trip. A shape it does
+  not know still renders `$null`, which the merged file's own validation then rejects (B1b-I01).
 - **A merged settings file is removed only when no LIVE daemon names it.** `Remove-StaleMergedPssaSettings`
   (dispatch 000306, B1-K07) runs after every merge and reads the session records on the same data root:
   a file a live daemon's record names (by FILE NAME -- one data root can be spelled two ways) is kept

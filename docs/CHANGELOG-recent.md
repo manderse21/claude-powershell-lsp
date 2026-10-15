@@ -74,7 +74,9 @@ dropped `Rules` and `Severity` -- so whenever `RequiredRules` merged, a configur
 switched on through `Rules` (`PSAvoidLongLines`, say) went silent -- and carried `Severities`,
 `RuleArguments` and `FilePath`, which PSScriptAnalyzer rejects, so a repository file holding one of them
 produced a merged file PSES analyzed nothing with. Now every accepted entry of the repository's file is
-carried (its `Rules` with each `Enable` flag and argument, a double argument included, and its
+carried (its `Rules` with each `Enable` flag and argument -- every number keeping its type and value,
+`[uint32]120`, `120d`, `[byte]`, `[single]`, `[double]` and the rest, where review finding B1b-I01
+found them written `$null` and the merged file then rejected -- and its
 `Severity` -- which, measured, has no observable effect under PSES because PSES passes its own
 `-Severity`), no rejected one is, a merge of `IncludeRules`/`ExcludeRules` alone renders the same text
 and file name as before, and the merged file is checked like any other before PSES sees it (the

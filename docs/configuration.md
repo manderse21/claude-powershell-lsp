@@ -376,7 +376,11 @@ rule configuration vanished -- a configurable rule it had switched on with `Enab
 `PSAvoidLongLines`, went silent -- and a repository file already holding one of those rejected keys
 produced a merged file PSScriptAnalyzer refused, so PSES analyzed nothing at all. (Dropping
 `Severity` changed nothing observable: PSES passes its own `-Severity` beside the settings file, which
-overrides a settings file's `Severity` -- measured.) The merged file is read back and checked like any
+overrides a settings file's `Severity` -- measured.) Every number a rule argument holds keeps its type
+and value in the merged file (review finding B1b-I01): an `[int]` as itself, a decimal as a `d`
+literal, and any other -- `[uint32]`, `[byte]`, `[single]`, `[long]`, `[double]` and the rest -- behind a
+cast of its text; such an argument used to be written `$null`, the merged file then read rejected, and
+`RequiredRules` went unenforced for that session. The merged file is read back and checked like any
 other settings file before PSES sees it.
 
 **Guarded against version drift.** The pinned 15-rule default is trusted only when the running

@@ -516,6 +516,61 @@ Describe 'The RequiredRules merge carries exactly what PSScriptAnalyzer accepts 
         @($back.Entries['Rules'].Keys) | Should -Contain 'My.Rules\Measure-Thing'
     }
 
+    It 'B1b-I01: a <Form> rule argument survives the merge with its TYPE and its value (it rendered $null, or another type)' -TestCases @(
+        @{ Form = '[uint32]120' }
+        @{ Form = '120d' }
+        @{ Form = '0.1000000000000000000000000001d' }
+        @{ Form = '[byte]120' }
+        @{ Form = '[single]1.1' }
+        @{ Form = '[long]120' }
+        @{ Form = '[double]120' }
+        @{ Form = "[double]'NaN'" }
+        @{ Form = '[int16]-120' }
+        @{ Form = '[uint16]120' }
+        @{ Form = "[uint64]'18446744073709551615'" }
+        @{ Form = '[sbyte]-5' }
+    ) {
+        param($Form)
+        $repo = New-PsFile ("@{ Rules = @{ PSAvoidLongLines = @{ Enable = `$true; MaximumLineLength = 40; Other = " + $Form + ' } } }')
+        $before = Read-PssaSettingsFile -Path $repo
+        $before.Verdict | Should -BeExactly 'valid' -Because ('CONTROL: the repository file is one PSScriptAnalyzer accepts -- ' + [string]$before.Problem)
+        $orig = $before.Entries['Rules']['PSAvoidLongLines']['Other']
+        $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $repo -RequiredRules @('PSAvoidGlobalVars') -CurrentPsesTag 'v4.6.0'
+        $p = Write-MergedPssaSettingsFile -Settings $m -DataRoot (Join-Path $TestDrive ('i01-' + [guid]::NewGuid().ToString('N').Substring(0, 8)))
+        $p | Should -Not -BeNullOrEmpty
+        $back = Read-PssaSettingsFile -Path $p
+        $back.Verdict | Should -BeExactly 'valid' -Because ([string]$back.Problem + ' -- ' + [System.IO.File]::ReadAllText($p))
+        $v = $back.Entries['Rules']['PSAvoidLongLines']['Other']
+        $v.GetType().FullName | Should -BeExactly $orig.GetType().FullName
+        if ($orig -is [double] -and [double]::IsNaN($orig)) { [double]::IsNaN($v) | Should -BeTrue } else { $v | Should -Be $orig }
+    }
+
+    It 'B1b-I01: a PowerShell 7 suffix literal (120u, 120uy, 120s, 120ul) survives the merge with its type' -Skip:($PSVersionTable.PSVersion.Major -lt 7) {
+        $repo = New-PsFile '@{ Rules = @{ PSAvoidLongLines = @{ Enable = $true; MaximumLineLength = 120u; A = 120uy; B = 120s; C = 120ul } } }'
+        $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $repo -RequiredRules @('PSAvoidGlobalVars') -CurrentPsesTag 'v4.6.0'
+        $p = Write-MergedPssaSettingsFile -Settings $m -DataRoot (Join-Path $TestDrive ('i01s-' + [guid]::NewGuid().ToString('N').Substring(0, 8)))
+        $back = Read-PssaSettingsFile -Path $p
+        $back.Verdict | Should -BeExactly 'valid' -Because ([string]$back.Problem)
+        $t = $back.Entries['Rules']['PSAvoidLongLines']
+        $t['MaximumLineLength'] | Should -BeOfType [uint32]
+        $t['A'] | Should -BeOfType [byte]
+        $t['B'] | Should -BeOfType [int16]
+        $t['C'] | Should -BeOfType [uint64]
+        [System.IO.File]::ReadAllText($p) | Should -Not -Match '120u' -Because 'the merged file is read by either host, and Windows PowerShell 5.1 has no suffix literals'
+    }
+
+    It 'an int and a double rule argument render as they did, and read back the same (the I01 control)' {
+        (ConvertTo-Psd1Literal 120) | Should -BeExactly '120'
+        (ConvertTo-Psd1Literal (-7)) | Should -BeExactly '-7'
+        $repo = New-PsFile '@{ Rules = @{ PSAvoidLongLines = @{ Enable = $true; MaximumLineLength = 40; Other = 0.1 } } }'
+        $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $repo -RequiredRules @('PSAvoidGlobalVars') -CurrentPsesTag 'v4.6.0'
+        $p = Write-MergedPssaSettingsFile -Settings $m -DataRoot (Join-Path $TestDrive ('i01c-' + [guid]::NewGuid().ToString('N').Substring(0, 8)))
+        $back = Read-PssaSettingsFile -Path $p
+        $back.Entries['Rules']['PSAvoidLongLines']['Other'] | Should -BeOfType [double]
+        $back.Entries['Rules']['PSAvoidLongLines']['Other'] | Should -Be 0.1
+        $back.Entries['Rules']['PSAvoidLongLines']['MaximumLineLength'] | Should -BeOfType [int]
+    }
+
     It 'an UNPARSABLE repository file is not merged onto: the merge starts from PSES''s own default list, as before' {
         $repo = New-PsFile '@{ IncludeRules = @( this is not'
         $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $repo -RequiredRules @('PSAvoidGlobalVars') -CurrentPsesTag 'v4.6.0'
@@ -528,6 +583,78 @@ Describe 'The RequiredRules merge carries exactly what PSScriptAnalyzer accepts 
         $handed = [ordered]@{ Path = $repo; Verdict = 'valid'; Problem = ''; Entries = [ordered]@{ IncludeRules = @('FromTheRead') }; Rejected = @() }
         $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $repo -RequiredRules @('PSAvoidGlobalVars') -ResolvedSettings $handed -CurrentPsesTag 'v4.6.0'
         @($m.IncludeRules) -join ',' | Should -BeExactly 'FromTheRead,PSAvoidGlobalVars'
+    }
+}
+
+Describe 'The merged settings, judged by the vendored PSScriptAnalyzer: what the repository configures and the organization requires runs (dispatch 000306 B1b, review findings B1b-R01, B1b-K02, B1b-I01)' -Skip:$script:PsUnsupported {
+
+    BeforeAll {
+        $script:MjData = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) { $env:PSLS_TEST_DATA_DIR } else { Join-Path ([System.IO.Path]::GetTempPath()) 'psls-sarifscan-test-data' }
+        New-Item -ItemType Directory -Force -Path $script:MjData | Out-Null
+        $prevData = $env:CLAUDE_PLUGIN_DATA
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $env:CLAUDE_PLUGIN_DATA = $script:MjData
+            & (Resolve-PsHost 'pwsh') -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:PsScripts 'ensure-pssa.ps1') 2>&1 | Out-Null
+            $script:MjManifest = [string](Find-VendoredPssaManifest)
+        } finally { $ErrorActionPreference = $prevEap; $env:CLAUDE_PLUGIN_DATA = $prevData }
+        # Each case: a repository settings file (or none) merged with a RequiredRules list by THIS tree's
+        # Merge-RequiredRulesSettings and rendered by its ConvertTo-MergedPssaSettingsText -- the exact text
+        # the daemon would hand PSES -- then judged by the analyzer the way PSES calls it, from an empty
+        # working directory.
+        $script:MjDir = Join-Path $TestDrive 'merged-judged'
+        New-Item -ItemType Directory -Force -Path $script:MjDir | Out-Null
+        $script:MjCases = [ordered]@{}
+        function Add-MjCase([string]$Name, [string]$RepoText, [string[]]$Required) {
+            $repo = ''
+            if ($RepoText -ne '') { $repo = New-PsFile $RepoText }
+            $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $repo -RequiredRules $Required -CurrentPsesTag 'v4.6.0'
+            $text = ConvertTo-MergedPssaSettingsText -Settings $m
+            [System.IO.File]::WriteAllText((Join-Path $script:MjDir ($Name + '.psd1')), $text, (New-Object System.Text.UTF8Encoding($false)))
+            $script:MjCases[$Name] = $text
+        }
+        Add-MjCase 'i01-uint32-line-length' "@{ IncludeRules = @('PSAvoidLongLines'); Rules = @{ PSAvoidLongLines = @{ Enable = `$true; MaximumLineLength = [uint32]40 } } }" @('PSAvoidGlobalVars')
+        # The sample: a plural noun, an alias, a global and a 62-column line.
+        [System.IO.File]::WriteAllText((Join-Path $script:MjDir 'code.txt'), ("function Get-Items { param() 'x' }`ngci`n`$global:mj = 1`n# " + ('x' * 60) + "`n"))
+        $driver = Join-Path $TestDrive 'merged-judged-driver.ps1'
+        [System.IO.File]::WriteAllText($driver, (@(
+                    'param([string]$Manifest, [string]$Dir)'
+                    '$ErrorActionPreference = ''Stop'''
+                    'Import-Module $Manifest -Force'
+                    '$code = [System.IO.File]::ReadAllText((Join-Path $Dir ''code.txt''))'
+                    'foreach ($f in @(Get-ChildItem -LiteralPath $Dir -Filter ''*.psd1'')) {'
+                    '    $r = ''refused'''
+                    '    try { $r = (@(Invoke-ScriptAnalyzer -ScriptDefinition $code -Severity @(''Error'', ''Warning'', ''Information'') -Settings $f.FullName -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.RuleName } | Sort-Object -Unique) -join '','') } catch { $r = ''refused'' }'
+                    '    [string]$f.BaseName + ''='' + $r'
+                    '}') -join "`n"))
+        $script:MjResults = @{}
+        if (-not [string]::IsNullOrWhiteSpace($script:MjManifest)) {
+            $cwd = Join-Path $TestDrive 'merged-judged-cwd'
+            New-Item -ItemType Directory -Force -Path $cwd | Out-Null
+            $exe = (Get-Process -Id $PID).Path
+            $prev = Get-Location
+            try {
+                Set-Location -LiteralPath $cwd
+                $lines = @(& $exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $driver -Manifest $script:MjManifest -Dir $script:MjDir 2>$null)
+            } finally { Set-Location $prev }
+            foreach ($l in $lines) {
+                $i = ([string]$l).IndexOf('=')
+                if ($i -gt 0) { $script:MjResults[([string]$l).Substring(0, $i)] = ([string]$l).Substring($i + 1) }
+            }
+        }
+        function Get-MjRules([string]$Name) { return @(([string]$script:MjResults[$Name]).Split(',') | Where-Object { $_ }) }
+    }
+
+    It 'the vendored analyzer judged every merged file (this Describe cannot pass vacuously)' {
+        $script:MjManifest | Should -Not -BeNullOrEmpty
+        $script:MjResults.Count | Should -Be $script:MjCases.Count
+    }
+
+    It 'B1b-I01: a [uint32] line length the repository sets survives the merge -- PSAvoidLongLines reports the 62-column line under it' {
+        $script:MjCases['i01-uint32-line-length'] | Should -Match "MaximumLineLength = \[uint32\]'40'"
+        Get-MjRules 'i01-uint32-line-length' | Should -Contain 'PSAvoidLongLines' -Because $script:MjResults['i01-uint32-line-length']
+        Get-MjRules 'i01-uint32-line-length' | Should -Contain 'PSAvoidGlobalVars'
     }
 }
 

@@ -207,8 +207,9 @@ unmanaged scan says so on stderr and its findings come from PSES's default rules
 CERTIFIED with `policy-settings-rejected`.
 
 When `RequiredRules` merges, the merged file carries exactly the repository file's **accepted** entries
--- its `Rules` (each rule's `Enable` flag and arguments) and `Severity` included -- and never a rejected
-one, and it is checked the same way before PSES sees it. Before this release the merge dropped `Rules`
+-- its `Rules` (each rule's `Enable` flag and arguments, every number keeping its type: `[uint32]`,
+`[byte]`, `[single]`, a decimal and the rest -- review finding B1b-I01) and `Severity` included -- and
+never a rejected one, and it is checked the same way before PSES sees it. Before this release the merge dropped `Rules`
 and `Severity` and carried `Severities`, `RuleArguments` and `FilePath`, which PSScriptAnalyzer rejects:
 a repository's configurable rules (`PSAvoidLongLines` switched on through `Rules`, say) went silent, and
 a repository file already holding one of those keys produced a merged file PSES analyzed nothing with.
