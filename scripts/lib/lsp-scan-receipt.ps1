@@ -42,10 +42,14 @@
 # the lowest ceiling among its reasons.
 #
 # NOTHING IS CERTIFIED THAT WAS NOT BOUND. A receipt records the configuration the daemon was
-# launched with as OBSERVED and the policy as UNBOUND: binding the declared scan environment is A3's
-# leg, and managed policy is B1's. The engine versions are what the daemon can read from the module
-# manifests on disk, or 'unknown' -- never a pin standing in for an observation. Nothing in this
-# file writes a digest it did not compute from real bytes.
+# launched with as OBSERVED and unbound: binding the declared scan environment is A3's leg. Since
+# schema version 2 (dispatch 000305, B1) it also carries the POLICY APPLICATION EVIDENCE each party
+# recorded -- the client's adjudication and the daemon's application (scripts/lib/lsp-policy.ps1) --
+# under policy.state 'observed'. That is evidence, not a verdict: a receipt never certifies a policy;
+# only a managed scan does (Test-ScanPolicyCertification), and only from this evidence. The engine
+# versions are what the daemon can read from the module manifests on disk, or 'unknown' -- never a
+# pin standing in for an observation. Nothing in this file writes a digest it did not compute from
+# real bytes.
 #
 # Load-silent: function definitions only (G1/G2, tests/PowerShellLsp.LibPurity.Tests.ps1). Uses
 # Get-Prop, Get-PluginVersion, Get-Sha256HexFromBytes, Get-PsesBundleRoot and
@@ -59,7 +63,16 @@
 
 function Get-ScanReceiptSchema {
     # The receipt's identity on the wire. Bump Version only for a change a reader must know about.
-    return [ordered]@{ Id = 'powershell-lsp/scan-receipt'; Version = 1 }
+    # 2 (dispatch 000305, B1): policy.state may be 'observed', carrying application evidence -- a
+    # version-1 reader refuses any policy state but 'unbound', so it must know.
+    return [ordered]@{ Id = 'powershell-lsp/scan-receipt'; Version = 2 }
+}
+
+function Get-ScanReceiptPolicyStates {
+    # What a receipt's policy block may say: 'unbound' (no evidence was recorded) or 'observed' (each
+    # party's own application record rides beside it). Never 'verified' or 'certified': certification
+    # is the managed scan's verdict over this evidence, never a receipt's claim about itself.
+    return @('unbound', 'observed')
 }
 
 function Get-ScanReceiptStatusTokens {
@@ -288,7 +301,10 @@ function New-ScanAnalysisBinding {
         [bool]$PssaAvailable = $false,
         [bool]$Cached = $false,
         $Engine = $null,
-        $Config = $null
+        $Config = $null,
+        # The daemon's policy application record (dispatch 000305, B1; New-PolicyApplicationEvidence in
+        # scripts/lib/lsp-policy.ps1), or $null. Carried, never interpreted, here.
+        $Policy = $null
     )
     $src = $null
     if ($null -ne $Snapshot -and [bool]$Snapshot.Exists -and -not [string]::IsNullOrWhiteSpace([string]$Snapshot.Sha256)) {
@@ -303,6 +319,7 @@ function New-ScanAnalysisBinding {
         cached        = $Cached
         engine        = $Engine
         config        = $Config
+        policy        = $Policy
     }
 }
 
@@ -448,7 +465,11 @@ function New-ScanReceipt {
         [string]$FormatMode = 'off',
         [int]$ElapsedMs = 0,
         [string[]]$Reasons = @(),
-        [string]$Detail = ''
+        [string]$Detail = '',
+        # The client's policy adjudication record (dispatch 000305, B1; New-PolicyAdjudicationEvidence
+        # in scripts/lib/lsp-policy.ps1). With it the receipt's policy block is 'observed' and carries
+        # it beside the daemon's record from the binding; without it the block stays 'unbound'.
+        $PolicyEvidence = $null
     )
     $schema = Get-ScanReceiptSchema
     if ((Get-ScanReceiptPasses) -notcontains $Pass) { $Pass = 'none' }
@@ -461,7 +482,9 @@ function New-ScanReceipt {
     $daemon = $null
     $engine = [ordered]@{ pses = 'unknown'; pssa = 'unknown'; source = 'none'; daemonPlugin = 'unknown'; daemonHost = 'unknown'; psesHost = '' }
     $observed = $null
+    $daemonPolicy = $null
     if ($Pass -eq 'pssa' -and $null -ne $Binding) {
+        $daemonPolicy = Get-ScanReceiptField $Binding 'policy'
         $bsrc = Get-ScanReceiptField $Binding 'source'
         if ($null -ne $bsrc -and -not [string]::IsNullOrWhiteSpace([string](Get-ScanReceiptField $bsrc 'sha256'))) {
             $source = [ordered]@{
@@ -505,7 +528,7 @@ function New-ScanReceipt {
         daemon        = $daemon
         engine        = $engine
         config        = [ordered]@{ state = 'unbound'; observed = $observed }
-        policy        = [ordered]@{ state = 'unbound' }
+        policy        = $(if ($null -ne $PolicyEvidence) { [ordered]@{ state = 'observed'; client = $PolicyEvidence; daemon = $daemonPolicy } } else { [ordered]@{ state = 'unbound' } })
         diagnostics   = (Get-ScanDiagnosticsDigest -Records @($Records))
         formatMode    = [string]$FormatMode
         elapsedMs     = [Math]::Max(0, [int]$ElapsedMs)
@@ -626,7 +649,12 @@ function Get-ScanReceiptShapeProblems {
     $c = Get-ScanReceiptField $Receipt 'config'
     if ([string](Get-ScanReceiptField $c 'state') -cne 'unbound') { $p.Add('config.state is not unbound (no declared environment is bound in this schema version)') }
     $pol = Get-ScanReceiptField $Receipt 'policy'
-    if ([string](Get-ScanReceiptField $pol 'state') -cne 'unbound') { $p.Add('policy.state is not unbound (no managed policy is certified in this schema version)') }
+    $polState = [string](Get-ScanReceiptField $pol 'state')
+    if ((Get-ScanReceiptPolicyStates) -cnotcontains $polState) {
+        $p.Add('policy.state is not unbound/observed (a receipt carries policy evidence; it never certifies a policy)')
+    } elseif ($polState -ceq 'observed') {
+        foreach ($sp in @(Get-ScanReceiptPolicyEvidenceProblems -Policy $pol)) { $p.Add([string]$sp) }
+    }
     $dg = Get-ScanReceiptField $Receipt 'diagnostics'
     if ($null -eq $dg) { $p.Add('diagnostics is missing') }
     else {
@@ -635,6 +663,72 @@ function Get-ScanReceiptShapeProblems {
     }
     if (-not ((Get-ScanReceiptField $Receipt 'formatMode') -is [string])) { $p.Add('formatMode is not a string') }
     if (-not (Test-ScanReceiptInt (Get-ScanReceiptField $Receipt 'elapsedMs') 0)) { $p.Add('elapsedMs is not a non-negative integer') }
+    return @($p.ToArray())
+}
+
+function Get-ScanReceiptPolicyEvidenceProblems {
+    # The STRUCTURAL check of an 'observed' policy block (dispatch 000305, B1): types only. What the
+    # evidence MEANS -- whether the identities agree, whether RequiredRules activated -- is the managed
+    # scan's decision (Test-ScanPolicyCertification in scripts/lib/lsp-policy.ps1), not this check's.
+    # client and daemon may each be null (a request the daemon never answered has no daemon record);
+    # when present, every field must be there with its type, so the decision never reads a guess.
+    # Mirrors the policy definitions in docs/scan-receipt.schema.json.
+    param($Policy)
+    $p = New-Object System.Collections.Generic.List[string]
+    foreach ($k in @('client', 'daemon')) {
+        if (-not (Test-ScanReceiptHasField -Object $Policy -Name $k)) { $p.Add('policy.' + $k + ' is missing (null when not recorded)') }
+    }
+    if ($p.Count -gt 0) { return @($p.ToArray()) }
+    $hex = '^([0-9a-f]{64})?$'
+    foreach ($party in @('client', 'daemon')) {
+        $e = Get-ScanReceiptField $Policy $party
+        if ($null -eq $e) { continue }
+        $res = Get-ScanReceiptField $e 'resolution'
+        if ($null -eq $res) { $p.Add('policy.' + $party + '.resolution is missing'); continue }
+        foreach ($k in @('path', 'reason', 'effectiveSha256')) {
+            if (-not ((Get-ScanReceiptField $res $k) -is [string])) { $p.Add('policy.' + $party + '.resolution.' + $k + ' is not a string') }
+        }
+        foreach ($k in @('configured', 'usable')) {
+            if (-not ((Get-ScanReceiptField $res $k) -is [bool])) { $p.Add('policy.' + $party + '.resolution.' + $k + ' is not a boolean') }
+        }
+        if ([string](Get-ScanReceiptField $res 'effectiveSha256') -cnotmatch $hex) { $p.Add('policy.' + $party + '.resolution.effectiveSha256 is not empty or 64 lower-case hex') }
+    }
+    $c = Get-ScanReceiptField $Policy 'client'
+    if ($null -ne $c) {
+        if (-not ((Get-ScanReceiptField $c 'mode') -is [string])) { $p.Add('policy.client.mode is not a string') }
+        if (-not ((Get-ScanReceiptField $c 'failClosed') -is [bool])) { $p.Add('policy.client.failClosed is not a boolean') }
+        foreach ($k in @('dropped', 'restamped', 'prohibitedFlagged')) {
+            if (-not (Test-ScanReceiptInt (Get-ScanReceiptField $c $k) 0)) { $p.Add('policy.client.' + $k + ' is not a non-negative integer') }
+        }
+    }
+    $d = Get-ScanReceiptField $Policy 'daemon'
+    if ($null -ne $d) {
+        $rr = Get-ScanReceiptField $d 'requiredRules'
+        if ($null -eq $rr) { $p.Add('policy.daemon.requiredRules is missing') }
+        else {
+            foreach ($k in @('state', 'mergedSettingsPath', 'mergedSettingsSha256')) {
+                if (-not ((Get-ScanReceiptField $rr $k) -is [string])) { $p.Add('policy.daemon.requiredRules.' + $k + ' is not a string') }
+            }
+            if (-not (Test-ScanReceiptInt (Get-ScanReceiptField $rr 'count') 0)) { $p.Add('policy.daemon.requiredRules.count is not a non-negative integer') }
+            if ([string](Get-ScanReceiptField $rr 'mergedSettingsSha256') -cnotmatch $hex) { $p.Add('policy.daemon.requiredRules.mergedSettingsSha256 is not empty or 64 lower-case hex') }
+            $g = Get-ScanReceiptField $rr 'guard'
+            if ($null -eq $g) { $p.Add('policy.daemon.requiredRules.guard is missing') }
+            else {
+                foreach ($k in @('verifiedFor', 'observed', 'result')) {
+                    if (-not ((Get-ScanReceiptField $g $k) -is [string])) { $p.Add('policy.daemon.requiredRules.guard.' + $k + ' is not a string') }
+                }
+            }
+        }
+        $st = Get-ScanReceiptField $d 'settings'
+        if ($null -eq $st) { $p.Add('policy.daemon.settings is missing') }
+        else {
+            foreach ($k in @('path', 'source', 'sha256')) {
+                if (-not ((Get-ScanReceiptField $st $k) -is [string])) { $p.Add('policy.daemon.settings.' + $k + ' is not a string') }
+            }
+            if (-not ((Get-ScanReceiptField $st 'delivered') -is [bool])) { $p.Add('policy.daemon.settings.delivered is not a boolean') }
+            if ([string](Get-ScanReceiptField $st 'sha256') -cnotmatch $hex) { $p.Add('policy.daemon.settings.sha256 is not empty or 64 lower-case hex') }
+        }
+    }
     return @($p.ToArray())
 }
 
@@ -692,6 +786,7 @@ function Test-ScanReceipt {
     $status = 'incomplete'
     $pass = 'none'
     $engineState = 'unknown'
+    $policyState = 'unbound'
     if (-not $file.Present) {
         $reasons.Add('receipt-missing')
         if ($null -ne $Child -and -not $killed -and $null -ne $Child.ExitCode -and [int]$Child.ExitCode -eq 0) {
@@ -749,6 +844,9 @@ function Test-ScanReceipt {
 
             $eng = Get-ScanReceiptField $receipt 'engine'
             if ([string](Get-ScanReceiptField $eng 'pses') -ne 'unknown' -and [string](Get-ScanReceiptField $eng 'pssa') -ne 'unknown') { $engineState = 'observed' }
+            # Policy evidence present or not (dispatch 000305) -- 'observed' is evidence, never a
+            # certification; only a managed scan certifies, from this evidence.
+            $policyState = [string](Get-ScanReceiptField (Get-ScanReceiptField $receipt 'policy') 'state')
         }
     }
 
@@ -772,7 +870,7 @@ function Test-ScanReceipt {
             Source   = $sourceState
             Engine   = $engineState
             Config   = 'unbound'
-            Policy   = 'unbound'
+            Policy   = $policyState
         }
         Receipt       = $receipt
     }

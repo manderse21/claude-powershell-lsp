@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/manderse21/claude-powershell-lsp/blob/main/docs/scan-receipt.schema.json",
-  "title": "powershell-lsp scan completion receipt, schema version 1",
-  "description": "Written by scripts/lsp-client.ps1 in scan mode only (dispatch 000304, A2) and validated by scripts/lib/lsp-scan-common.ps1 before a scanned file is reported analyzed. The vocabulary and the structural check live in scripts/lib/lsp-scan-receipt.ps1 (Get-ScanReceiptShapeProblems); tests/PowerShellLsp.ScanReceipt.Tests.ps1 holds this schema and that function together. A receipt that is VALID against this schema certifies nothing on its own: the scanner also re-derives completeness from the receipt's facts and checks the request id, the file, the bytes on disk before and after the analysis and the finding digest.",
+  "title": "powershell-lsp scan completion receipt, schema version 2",
+  "description": "Written by scripts/lsp-client.ps1 in scan mode only (dispatch 000304, A2) and validated by scripts/lib/lsp-scan-common.ps1 before a scanned file is reported analyzed. The vocabulary and the structural check live in scripts/lib/lsp-scan-receipt.ps1 (Get-ScanReceiptShapeProblems); tests/PowerShellLsp.ScanReceipt.Tests.ps1 holds this schema and that function together. A receipt that is VALID against this schema certifies nothing on its own: the scanner also re-derives completeness from the receipt's facts and checks the request id, the file, the bytes on disk before and after the analysis and the finding digest. Version 2 (dispatch 000305, B1) lets policy carry the application evidence each party recorded; that evidence is never a certification.",
   "type": "object",
   "required": [
     "schema", "schemaVersion", "requestId", "file", "status", "completeness", "pass", "reasons",
@@ -10,7 +10,7 @@
   ],
   "properties": {
     "schema": { "const": "powershell-lsp/scan-receipt" },
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "requestId": {
       "description": "The request id the scanner minted for this file and sent in the hook payload (powershell_lsp_scan.request_id).",
       "type": "string",
@@ -93,7 +93,7 @@
       }
     },
     "config": {
-      "description": "The configuration the daemon was LAUNCHED with, as observed. Unbound in schema version 1: binding the declared scan environment is a later leg (A3).",
+      "description": "The configuration the daemon was LAUNCHED with, as observed. Unbound: binding the declared scan environment is a later leg (A3).",
       "type": "object",
       "required": ["state"],
       "properties": {
@@ -102,12 +102,72 @@
       }
     },
     "policy": {
-      "description": "Managed-policy identity. Unbound in schema version 1: no receipt certifies a policy (B1).",
+      "description": "Policy application EVIDENCE (dispatch 000305, B1): unbound when nothing was recorded; observed when the client's adjudication record and, for a PSScriptAnalyzer pass, the daemon's application record ride here. Never verified or certified: only a managed scan (lsp-scan.ps1 -PolicyMode closed) certifies, from this evidence. The vocabulary of the states inside is scripts/lib/lsp-policy.ps1's.",
       "type": "object",
       "required": ["state"],
       "properties": {
-        "state": { "const": "unbound" }
-      }
+        "state": { "enum": ["unbound", "observed"] },
+        "client": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["resolution", "mode", "failClosed", "dropped", "restamped", "prohibitedFlagged"],
+              "properties": {
+                "resolution": { "$ref": "#/definitions/policyResolution" },
+                "mode": { "type": "string" },
+                "failClosed": { "type": "boolean" },
+                "dropped": { "type": "integer", "minimum": 0 },
+                "restamped": { "type": "integer", "minimum": 0 },
+                "prohibitedFlagged": { "type": "integer", "minimum": 0 }
+              }
+            }
+          ]
+        },
+        "daemon": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["resolution", "requiredRules", "settings"],
+              "properties": {
+                "resolution": { "$ref": "#/definitions/policyResolution" },
+                "requiredRules": {
+                  "type": "object",
+                  "required": ["state", "count", "guard", "mergedSettingsPath", "mergedSettingsSha256"],
+                  "properties": {
+                    "state": { "type": "string" },
+                    "count": { "type": "integer", "minimum": 0 },
+                    "guard": {
+                      "type": "object",
+                      "required": ["verifiedFor", "observed", "result"],
+                      "properties": {
+                        "verifiedFor": { "type": "string" },
+                        "observed": { "type": "string" },
+                        "result": { "type": "string" }
+                      }
+                    },
+                    "mergedSettingsPath": { "type": "string" },
+                    "mergedSettingsSha256": { "type": "string", "pattern": "^([0-9a-f]{64})?$" }
+                  }
+                },
+                "settings": {
+                  "type": "object",
+                  "required": ["path", "source", "sha256", "delivered"],
+                  "properties": {
+                    "path": { "type": "string" },
+                    "source": { "type": "string" },
+                    "sha256": { "type": "string", "pattern": "^([0-9a-f]{64})?$" },
+                    "delivered": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "if": { "properties": { "state": { "const": "observed" } } },
+      "then": { "required": ["state", "client", "daemon"] }
     },
     "diagnostics": {
       "description": "The binding over the findings the receipt vouches for: their count, and a SHA-256 over one canonical line per finding (line, col, ruleId, source, severity, message), sorted ordinally.",
@@ -126,5 +186,19 @@
     "detail": { "type": "string" },
     "producedAt": { "type": "string" },
     "producer": { "type": "object" }
+  },
+  "definitions": {
+    "policyResolution": {
+      "description": "A party's own read of the policy: the path it was given, whether it was configured and usable, the fixed reason code when not, and the policy identity (the SHA-256 of the canonical effective policy, ConvertTo-EffectivePolicyText) when usable.",
+      "type": "object",
+      "required": ["path", "configured", "usable", "reason", "effectiveSha256"],
+      "properties": {
+        "path": { "type": "string" },
+        "configured": { "type": "boolean" },
+        "usable": { "type": "boolean" },
+        "reason": { "type": "string" },
+        "effectiveSha256": { "type": "string", "pattern": "^([0-9a-f]{64})?$" }
+      }
+    }
   }
 }

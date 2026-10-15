@@ -25,6 +25,15 @@
 #      analyzed (never-silent -- an unanalyzed file must never read as a clean one). Since dispatch
 #      000304 a file counts as analyzed ONLY on a validated COMPLETE completion receipt
 #      (scripts/lib/lsp-scan-receipt.ps1); every other file is named, with its reason codes.
+#      Since dispatch 000305 also: a MANAGED scan (-PolicyMode closed) that is NOT CERTIFIED -- no usable
+#      declared policy, or missing / disagreeing evidence that it was applied (reason codes on stderr,
+#      in the text report and in the SARIF). The same exit, because both mean the scan cannot vouch
+#      for its result.
+#
+# POLICY (dispatch 000305, B1; owner ruling O03). -OrgPolicyPath now drives the MAIN analysis -- the
+# daemon's RequiredRules merge and the per-file client's ExcludeRules / SeverityOverrides /
+# ProhibitedSuppressions adjudication -- not only the post-pass, and is resolved ONCE through
+# scripts/lib/lsp-policy.ps1. -PolicyMode closed is the managed mode; see Test-ScanPolicyCertification.
 #
 # ASCII-only (PS 5.1 em-dash trap); StrictMode-safe.
 #
@@ -66,12 +75,22 @@ param(
     # and is a diagnostic lever, NOT a userConfig knob. Off by default (no extra output).
     [switch] $DiagnosticTiming,
 
-    # prohibitedSuppressions, repo/CI path (P1-5 remainder, R23=D member A, dispatch 000294): the
-    # SAME org policy file the in-agent hook reads via the 'orgPolicy' userConfig knob, but a CLI
-    # PARAMETER here -- deliberately NOT a userConfig knob, matching -Format/-FailOn's own
-    # rationale: a CI invocation names its inputs explicitly. Empty (the default) runs no extra
-    # pass at all, so the scan's output is byte-identical to pre-000294.
-    [string] $OrgPolicyPath = ''
+    # The org policy for THIS scan (P1-5 remainder, dispatch 000294; full main pass since dispatch
+    # 000305): the SAME org policy file the in-agent hook reads via the 'orgPolicy' userConfig knob,
+    # but a CLI PARAMETER here -- deliberately NOT a userConfig knob, matching -Format/-FailOn's own
+    # rationale: a CI invocation names its inputs explicitly. It reaches the daemon and every per-file
+    # client (replacing any ambient orgPolicy, under every spelling) and drives the
+    # ProhibitedSuppressions post-pass. Empty (the default) changes nothing about the scan.
+    [string] $OrgPolicyPath = '',
+
+    # Managed policy mode (dispatch 000305, B1; owner ruling O03, 2026-10-12). 'closed' is the MANAGED
+    # mode: the scan is CERTIFIED only when the declared -OrgPolicyPath is usable AND the daemon's and
+    # each client's evidence show that exact policy was applied; with no declared policy, or anything
+    # less, it is NOT CERTIFIED (exit 4) with reason codes. 'open' is the unmanaged scan -- nothing is
+    # certified or refused. Omitted: POWERSHELL_LSP_POLICY_MODE, then open. A CLI parameter, not a
+    # userConfig knob.
+    [ValidateSet('open', 'closed')]
+    [string] $PolicyMode
 )
 
 Set-StrictMode -Version Latest
@@ -81,6 +100,26 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib/lsp-scan-common.ps1')
 # The completion-receipt validator Invoke-ScanFileDiagnostics requires (dispatch 000304, A2).
 . (Join-Path $PSScriptRoot 'lib/lsp-scan-receipt.ps1')
+# The effective-policy resolver and the managed verdict (dispatch 000305, B1).
+. (Join-Path $PSScriptRoot 'lib/lsp-policy.ps1')
+
+function Write-ScanPolicyVerdict {
+    # The managed verdict on stderr -- what lands in the CI step log. Silent for an unmanaged scan.
+    param($Certification, $ModeInfo, $Declared = $null, [int]$FileCount = 0)
+    if ($null -eq $Certification -or -not [bool]$Certification.Managed) { return }
+    $how = 'lsp-scan: managed policy mode (-PolicyMode closed, from ' + [string]$ModeInfo.source + ')'
+    if ([bool]$Certification.Certified) {
+        [Console]::Error.WriteLine($how + ': CERTIFIED -- policy ' + [string]$Declared.identity.sha256 +
+            ' was applied to ' + $FileCount + ' file(s), with evidence from the daemon and each client.')
+        return
+    }
+    [Console]::Error.WriteLine($how + ': NOT CERTIFIED (executionSuccessful=false):')
+    $table = Get-PolicyReasonTable
+    foreach ($code in @($Certification.AllReasons)) {
+        $meaning = $(if ($table.Contains([string]$code)) { [string]$table[[string]$code].Meaning } else { '' })
+        [Console]::Error.WriteLine('  ' + [string]$code + ': ' + $meaning)
+    }
+}
 
 function Write-ScanOutput {
     param([string]$Text, [string]$OutFile)
@@ -115,15 +154,47 @@ $files = @($targets['Files'])
 $root = [string]$targets['Root']
 $skipped = [int]$targets['Skipped']
 
-# No PowerShell files -> a well-formed empty report, exit 0 (nothing to analyze is not a fault).
+# --- policy: the mode, the declared policy, and what reaches the children (dispatch 000305) ---------
+# Resolved ONCE through the seam (Resolve-EffectivePolicy -> Import-OrgPolicy: the same reader, the same
+# integrity gate and the same warning as before). The children then re-resolve the SAME path themselves
+# and report what they applied; a managed scan certifies only when every report agrees with this one.
+$policyModeInfo = Resolve-ScanPolicyMode -Explicit $PolicyMode
+$managed = ([string]$policyModeInfo.resolved -eq 'closed')
+$declaredPolicy = $null
+if (-not [string]::IsNullOrWhiteSpace($OrgPolicyPath)) {
+    $declaredPolicy = Resolve-EffectivePolicy -Path $OrgPolicyPath -Source 'cli'
+    if (-not [bool]$declaredPolicy.usable) { [Console]::Error.WriteLine('lsp-scan: orgPolicy: ' + [string]$declaredPolicy.warning) }
+}
+# Until A3 binds a declared child configuration, an ambient analysis option is refused in managed mode
+# rather than certified around (Get-ScanAmbientAnalysisOptions); an unmanaged scan is unaffected.
+$ambientOptions = @()
+if ($managed) {
+    $ambientOptions = @(Get-ScanAmbientAnalysisOptions -Environment ([System.Environment]::GetEnvironmentVariables()) `
+            -PolicyDeclared ($null -ne $declaredPolicy))
+}
+$childPolicyPath = $(if ($null -ne $declaredPolicy) { $OrgPolicyPath } else { '' })
+$childPolicyMode = $(if ([string]$policyModeInfo.source -eq 'cli') { [string]$policyModeInfo.resolved } else { '' })
+$policyReported = ($managed -or $null -ne $declaredPolicy)
+
+# No PowerShell files -> a well-formed empty report, exit 0 (nothing to analyze is not a fault). A
+# MANAGED scan is never certified here: nothing was analyzed, so nothing shows the policy was applied
+# (analysis-empty, from Test-ScanPolicyCertification), and it names whatever else it can refuse without
+# a file (no usable declared policy, ambient configuration) -- exit 4, so a managed gate pointed at the
+# wrong directory cannot read CERTIFIED.
 if ($files.Count -eq 0) {
+    $emptyCert = Test-ScanPolicyCertification -Mode ([string]$policyModeInfo.resolved) -Declared $declaredPolicy -Ambient $ambientOptions
+    $emptyOk = (-not [bool]$emptyCert.Managed) -or [bool]$emptyCert.Certified
+    $emptyPolicy = $null
+    if ($policyReported) { $emptyPolicy = New-ScanPolicyReport -ModeInfo $policyModeInfo -Declared $declaredPolicy -Certification $emptyCert -Ambient $ambientOptions }
     if ($Format -eq 'sarif') {
-        $report = New-SarifReport -Findings @() -Root $root -ToolVersion (Get-PluginVersion) -ExecutionSuccessful $true
+        $report = New-SarifReport -Findings @() -Root $root -ToolVersion (Get-PluginVersion) -ExecutionSuccessful $emptyOk -PolicyReport $emptyPolicy
         Write-ScanOutput -Text ($report | ConvertTo-Json -Depth 16) -OutFile $OutputPath
     } else {
-        Write-ScanOutput -Text (Format-ScanTextReport -Findings @() -Root $root -Skipped $skipped -FilesScanned 0 -NotAnalyzed @()) -OutFile $OutputPath
+        Write-ScanOutput -Text (Format-ScanTextReport -Findings @() -Root $root -Skipped $skipped -FilesScanned 0 -NotAnalyzed @() -PolicyReport $emptyPolicy) -OutFile $OutputPath
     }
     [Console]::Error.WriteLine('lsp-scan: no PowerShell files (.ps1/.psm1/.psd1) under ' + $full + ' (' + $skipped + ' other file(s) skipped).')
+    Write-ScanPolicyVerdict -Certification $emptyCert -ModeInfo $policyModeInfo -Declared $declaredPolicy -FileCount 0
+    if (-not $emptyOk) { exit 4 }
     exit 0
 }
 
@@ -135,7 +206,8 @@ $dataRoot = if (-not [string]::IsNullOrWhiteSpace($env:CLAUDE_PLUGIN_DATA)) {
 }
 $sessionId = 'scan-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
 
-$daemon = Start-ScanDaemon -ScriptsDir $PSScriptRoot -DataRoot $dataRoot -SessionId $sessionId -HostExe $hostExe
+$daemon = Start-ScanDaemon -ScriptsDir $PSScriptRoot -DataRoot $dataRoot -SessionId $sessionId -HostExe $hostExe `
+    -OrgPolicyPath $childPolicyPath -PolicyMode $childPolicyMode
 if ($null -eq $daemon) {
     # Never emit a fake-clean SARIF: a daemon that never came up means NOTHING was analyzed.
     Stop-ScanDaemon -ScriptsDir $PSScriptRoot -DataRoot $dataRoot -SessionId $sessionId -HostExe $hostExe -DaemonInfo $null
@@ -145,10 +217,15 @@ if ($null -eq $daemon) {
 
 $allFindings = New-Object System.Collections.ArrayList
 $notAnalyzed = New-Object System.Collections.ArrayList
+# What each file's receipt said, for the managed verdict (dispatch 000305): its completeness, the pass
+# that ran, and the parsed receipt carrying the client's and the daemon's policy application records.
+$fileEvidence = New-Object System.Collections.ArrayList
 try {
     foreach ($file in $files) {
         $r = Invoke-ScanFileDiagnostics -ScriptsDir $PSScriptRoot -DataRoot $dataRoot -SessionId $sessionId `
-            -HostExe $hostExe -FilePath $file -Cwd $root -CapMs $TimeoutMs
+            -HostExe $hostExe -FilePath $file -Cwd $root -CapMs $TimeoutMs `
+            -OrgPolicyPath $childPolicyPath -PolicyMode $childPolicyMode
+        [void]$fileEvidence.Add([pscustomobject]@{ File = [string]$r.File; Completeness = [string]$r.Completeness; Pass = [string]$r.Pass; Receipt = $r.Receipt })
         foreach ($f in @($r.Findings)) { [void]$allFindings.Add($f) }
         # Carry each unanalyzed file's elapsed ms (dispatch 000132 leg 2) so the INCOMPLETE surfaces
         # can report how long it ran before the budget cut it, not merely that it ran out -- and its
@@ -169,21 +246,19 @@ try {
     Stop-ScanDaemon -ScriptsDir $PSScriptRoot -DataRoot $dataRoot -SessionId $sessionId -HostExe $hostExe -DaemonInfo $daemon
 }
 
-# prohibitedSuppressions, repo/CI path (P1-5 remainder, R23=D member A, dispatch 000294). Reads
-# org policy itself (lsp-scan.ps1 is a standalone CI entry point with no userConfig context --
-# Get-PluginOption would read nothing here), restricted to files this scan already resolved. A
-# degrade (no policy, no ProhibitedSuppressions, vendored PSSA missing) costs nothing and drops
-# no other finding; logged to stderr, never silent.
-if (-not [string]::IsNullOrWhiteSpace($OrgPolicyPath)) {
-    $scanPolWarn = ''
-    $scanPol = Import-OrgPolicy -Path $OrgPolicyPath -WarningOut ([ref]$scanPolWarn)
-    if ($scanPolWarn -ne '') {
-        [Console]::Error.WriteLine('lsp-scan: orgPolicy: ' + $scanPolWarn)
-    }
-    $prohibitedForScan = @($scanPol.ProhibitedSuppressions)
+# prohibitedSuppressions, repo/CI path (P1-5 remainder, R23=D member A, dispatch 000294), restricted
+# to files this scan already resolved. The policy is the one resolved ONCE above (dispatch 000305) --
+# lsp-scan.ps1 is a standalone CI entry point with no userConfig context, so it reads only what it was
+# given. A degrade (no policy, no ProhibitedSuppressions) costs nothing and drops no other finding; a
+# pass that cannot run (vendored PSSA missing) is logged to stderr, never silent -- and, since dispatch
+# 000305, recorded as a failed obligation a managed scan refuses to certify.
+$suppressionPass = 'not-required'
+if ($null -ne $declaredPolicy -and [bool]$declaredPolicy.usable) {
+    $prohibitedForScan = Get-PolicyStringList -Object $declaredPolicy.effective -Name 'ProhibitedSuppressions'
     if ($prohibitedForScan.Count -gt 0) {
         $psWarn = ''
         $suppressionFindings = @(Invoke-ProhibitedSuppressionScan -Files $files -ProhibitedRules $prohibitedForScan -WarningOut ([ref]$psWarn))
+        $suppressionPass = $(if ($psWarn -ne '') { 'failed' } else { 'ran' })
         if ($psWarn -ne '') { [Console]::Error.WriteLine('lsp-scan: ' + $psWarn) }
         if ($suppressionFindings.Count -gt 0) {
             [Console]::Error.WriteLine('lsp-scan: prohibitedSuppressions (repo/CI path) found ' + $suppressionFindings.Count + ' finding(s).')
@@ -193,16 +268,35 @@ if (-not [string]::IsNullOrWhiteSpace($OrgPolicyPath)) {
 }
 
 $findings = @(@($allFindings) | Where-Object { $null -ne $_ })
-$execOk = (@($notAnalyzed).Count -eq 0)
+
+# --- the managed verdict (dispatch 000305) -----------------------------------------------------------
+# Unmanaged: Managed=$false and nothing changes. Managed: certified only on a usable declared policy AND
+# agreeing application evidence for every file (Test-ScanPolicyCertification); otherwise the scan is NOT
+# CERTIFIED -- executionSuccessful=false and exit 4, with every reason named.
+$policyCert = Test-ScanPolicyCertification -Mode ([string]$policyModeInfo.resolved) -Declared $declaredPolicy `
+    -Ambient $ambientOptions -SuppressionPass $suppressionPass -Files @($fileEvidence)
+$certOk = (-not [bool]$policyCert.Managed) -or [bool]$policyCert.Certified
+$policyReport = $null
+if ($policyReported) {
+    $policyFiles = @(@($policyCert.Files) | ForEach-Object {
+            [ordered]@{ uri = (Get-ScanRelativeUri -FilePath ([string]$_.File) -Root $root); reasons = @($_.Reasons) }
+        } | Sort-Object { [string]$_['uri'] })
+    if ($policyFiles.Count -gt $script:ScanNotAnalyzedNameCap) { $policyFiles = @($policyFiles[0..($script:ScanNotAnalyzedNameCap - 1)]) }
+    $policyReport = New-ScanPolicyReport -ModeInfo $policyModeInfo -Declared $declaredPolicy -Certification $policyCert `
+        -SuppressionPass $suppressionPass -Ambient $ambientOptions -Files $policyFiles
+}
+$execOk = (@($notAnalyzed).Count -eq 0) -and $certOk
 
 # --- emit ------------------------------------------------------------------
 if ($Format -eq 'sarif') {
-    $report = New-SarifReport -Findings $findings -Root $root -ToolVersion (Get-PluginVersion) -ExecutionSuccessful $execOk -NotAnalyzed @($notAnalyzed)
+    $report = New-SarifReport -Findings $findings -Root $root -ToolVersion (Get-PluginVersion) -ExecutionSuccessful $execOk `
+        -NotAnalyzed @($notAnalyzed) -PolicyReport $policyReport
     Write-ScanOutput -Text ($report | ConvertTo-Json -Depth 16) -OutFile $OutputPath
 } else {
     Write-ScanOutput -Text (Format-ScanTextReport -Findings $findings -Root $root -Skipped $skipped `
-            -FilesScanned $files.Count -NotAnalyzed @($notAnalyzed)) -OutFile $OutputPath
+            -FilesScanned $files.Count -NotAnalyzed @($notAnalyzed) -PolicyReport $policyReport) -OutFile $OutputPath
 }
+Write-ScanPolicyVerdict -Certification $policyCert -ModeInfo $policyModeInfo -Declared $declaredPolicy -FileCount $files.Count
 
 # --- exit ------------------------------------------------------------------
 if (@($notAnalyzed).Count -gt 0) {
@@ -223,4 +317,6 @@ if (@($notAnalyzed).Count -gt 0) {
     if ($na.Overflow -gt 0) { [Console]::Error.WriteLine('  ... and ' + $na.Overflow + ' more (' + $na.Total + ' total).') }
     exit 4
 }
+# A managed scan that is not certified cannot vouch for its result either (dispatch 000305).
+if (-not $certOk) { exit 4 }
 exit (Get-FailExitCode -Findings $findings -FailOn $FailOn)

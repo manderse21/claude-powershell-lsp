@@ -299,7 +299,10 @@ Describe 'Scan receipt producer and validator agree; valid-envelope negative con
         @{ Name = 'an unknown reason code'; Mutate = { param($r) $r['reasons'] = @('trust-me') } }
         @{ Name = 'a policy claimed verified'; Mutate = { param($r) $r['policy'] = [ordered]@{ state = 'verified' } } }
         @{ Name = 'a configuration claimed bound'; Mutate = { param($r) $r['config'] = [ordered]@{ state = 'bound'; observed = $null } } }
-        @{ Name = 'a future schema version'; Mutate = { param($r) $r['schemaVersion'] = 2 } }
+        @{ Name = 'a future schema version'; Mutate = { param($r) $r['schemaVersion'] = ([int](Get-ScanReceiptSchema).Version) + 1 } }
+        # Dispatch 000305 (B1) bumped the schema to 2; a version-1 receipt is not silently accepted.
+        @{ Name = 'the previous schema version'; Mutate = { param($r) $r['schemaVersion'] = 1 } }
+        @{ Name = 'an observed policy without its client and daemon records'; Mutate = { param($r) $r['policy'] = [ordered]@{ state = 'observed' } } }
         @{ Name = 'a source digest that is not a SHA-256'; Mutate = { param($r) $r['source']['sha256'] = 'abc' } }
         @{ Name = 'reasons that are not an array'; Mutate = { param($r) $r['reasons'] = 'cache-hit' } }
         @{ Name = 'an engine version left empty instead of unknown'; Mutate = { param($r) $r['engine']['pses'] = '' } }
@@ -368,7 +371,8 @@ Describe 'docs/scan-receipt.schema.json and the in-code shape check are one cont
         (@($script:RtSchema.properties.reasons.items.enum | Sort-Object) -join ',') | Should -BeExactly (@((Get-ScanReceiptReasonTable).Keys | Sort-Object) -join ',')
         [string]$script:RtSchema.properties.schema.const | Should -BeExactly ([string](Get-ScanReceiptSchema).Id)
         [int]$script:RtSchema.properties.schemaVersion.const | Should -Be ([int](Get-ScanReceiptSchema).Version)
-        [string]$script:RtSchema.properties.policy.properties.state.const | Should -BeExactly 'unbound'
+        # Dispatch 000305 (B1): policy may be unbound or observed (application evidence) -- never verified.
+        (@($script:RtSchema.properties.policy.properties.state.enum | Sort-Object) -join ',') | Should -BeExactly (@(Get-ScanReceiptPolicyStates | Sort-Object) -join ',')
         [string]$script:RtSchema.properties.config.properties.state.const | Should -BeExactly 'unbound'
     }
 
@@ -395,7 +399,9 @@ Describe 'docs/scan-receipt.schema.json and the in-code shape check are one cont
         @{ Name = 'a verified policy'; Mutate = { param($r) $r['policy'] = [ordered]@{ state = 'verified' } } }
         @{ Name = 'a bound configuration'; Mutate = { param($r) $r['config'] = [ordered]@{ state = 'bound'; observed = $null } } }
         @{ Name = 'a short source digest'; Mutate = { param($r) $r['source']['sha256'] = 'abc' } }
-        @{ Name = 'schema version 2'; Mutate = { param($r) $r['schemaVersion'] = 2 } }
+        @{ Name = 'a future schema version'; Mutate = { param($r) $r['schemaVersion'] = ([int](Get-ScanReceiptSchema).Version) + 1 } }
+        @{ Name = 'the previous schema version'; Mutate = { param($r) $r['schemaVersion'] = 1 } }
+        @{ Name = 'an observed policy missing its records'; Mutate = { param($r) $r['policy'] = [ordered]@{ state = 'observed' } } }
         @{ Name = 'an upper-case request id'; Mutate = { param($r) $r['requestId'] = ([string]$r['requestId']).ToUpperInvariant() } }
     ) {
         param($Name, $Mutate)

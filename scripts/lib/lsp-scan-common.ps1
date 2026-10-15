@@ -263,12 +263,19 @@ function New-SarifReport {
     # SARIF schema-valid and is ingested as tool status by code scanning (never a spurious alert),
     # so the finding set is byte-identical to before and a COMPLETE scan grows no notifications
     # array at all. originalUriBaseIds.SRCROOT anchors the relative URIs to the scan root.
+    #
+    # -PolicyReport (dispatch 000305, B1; New-ScanPolicyReport in scripts/lib/lsp-policy.ps1) rides as
+    # invocations[0].properties.policy -- the declared policy's identity, the obligations and the
+    # managed verdict -- and a managed scan that is NOT certified adds one error notification per
+    # reason. $null (an unmanaged scan with no -OrgPolicyPath) adds nothing: that SARIF is
+    # byte-identical to before.
     param(
         [object[]]$Findings,
         [string]$Root,
         [string]$ToolVersion = '',
         [bool]$ExecutionSuccessful = $true,
-        [object[]]$NotAnalyzed = @()
+        [object[]]$NotAnalyzed = @(),
+        $PolicyReport = $null
     )
     $items = @(@($Findings) | Where-Object { $null -ne $_ })
     if ([string]::IsNullOrWhiteSpace($ToolVersion)) { $ToolVersion = Get-PluginVersion }
@@ -315,8 +322,8 @@ function New-SarifReport {
     # it is navigable in code scanning without becoming a spurious alert. Bounded to the cap, with
     # a trailing summary notification when the set overflows.
     $na = Get-ScanNotAnalyzedNames -NotAnalyzed $NotAnalyzed -Root $Root
+    $notifs = New-Object System.Collections.ArrayList
     if ($na.Total -gt 0) {
-        $notifs = New-Object System.Collections.ArrayList
         foreach ($it in $na.Items) {
             $rel = [string]$it.Name
             $elapsed = $it.ElapsedMs
@@ -350,8 +357,20 @@ function New-SarifReport {
                 message = [ordered]@{ text = ('powershell-lsp: and ' + $na.Overflow + ' more file(s) could not be analyzed (' + $na.Total + ' total).') }
             })
         }
-        $invocation['toolExecutionNotifications'] = @($notifs)
     }
+    # A managed scan that is not certified says why, one notification per reason code (dispatch 000305).
+    if ($null -ne $PolicyReport -and [string]$PolicyReport['certification'] -eq 'not-certified') {
+        foreach ($note in @($PolicyReport['notes'])) {
+            if ($null -eq $note) { continue }
+            [void]$notifs.Add([ordered]@{
+                level      = 'error'
+                message    = [ordered]@{ text = ('powershell-lsp: managed policy NOT CERTIFIED -- ' + [string]$note.code + ': ' + [string]$note.meaning) }
+                properties = [ordered]@{ reason = [string]$note.code }
+            })
+        }
+    }
+    if ($notifs.Count -gt 0) { $invocation['toolExecutionNotifications'] = @($notifs) }
+    if ($null -ne $PolicyReport) { $invocation['properties'] = [ordered]@{ policy = $PolicyReport } }
     $run = [ordered]@{
         tool        = [ordered]@{ driver = $driver }
         results     = @($results)
@@ -379,12 +398,15 @@ function Format-ScanTextReport {
     # dispatch 000304); a record's reason codes are printed beside its name. A record whose completeness
     # is 'partial' had a VALID receipt for a partial analysis (a file that does not parse, say), and
     # says so, so it is never mistaken for a file with no receipt (owner ruling A2-Q01, 2026-10-11).
+    # -PolicyReport (dispatch 000305) appends a Policy section -- the mode, the declared policy and its
+    # identity, and a managed scan's verdict with each reason. $null appends nothing.
     param(
         [object[]]$Findings,
         [string]$Root,
         [int]$Skipped = 0,
         [int]$FilesScanned = 0,
-        [object[]]$NotAnalyzed = @()
+        [object[]]$NotAnalyzed = @(),
+        $PolicyReport = $null
     )
     $items = @(@($Findings) | Where-Object { $null -ne $_ })
     $sb = New-Object System.Text.StringBuilder
@@ -432,6 +454,29 @@ function Format-ScanTextReport {
             [void]$sb.AppendLine($line)
         }
     }
+    if ($null -ne $PolicyReport) {
+        $mode = [string]$PolicyReport['mode'] + ' (' + [string]$PolicyReport['modeSource'] + ')'
+        $decl = $PolicyReport['declared']
+        if ($null -eq $decl) {
+            [void]$sb.AppendLine('Policy: mode ' + $mode + '; no policy declared (-OrgPolicyPath).')
+        } else {
+            $state = $(if ([bool]$decl['usable']) { 'usable' } else { 'NOT usable (' + [string]$decl['reason'] + ')' })
+            $line = 'Policy: mode ' + $mode + '; declared ' + [string]$decl['path'] + ' -- ' + $state
+            $eff = $PolicyReport['effective']
+            if ($null -ne $eff -and -not [string]::IsNullOrWhiteSpace([string]$eff['sha256'])) { $line = $line + '; effective policy sha256 ' + [string]$eff['sha256'] }
+            [void]$sb.AppendLine($line + '.')
+        }
+        switch ([string]$PolicyReport['certification']) {
+            'certified' { [void]$sb.AppendLine('Policy: CERTIFIED (managed mode) -- the declared policy was applied to every file, with evidence from each party.') }
+            'not-certified' {
+                [void]$sb.AppendLine('Policy: NOT CERTIFIED (managed mode):')
+                foreach ($note in @($PolicyReport['notes'])) {
+                    if ($null -ne $note) { [void]$sb.AppendLine('  ' + [string]$note.code + ': ' + [string]$note.meaning) }
+                }
+            }
+            default { [void]$sb.AppendLine('Policy: unmanaged scan -- nothing is certified or refused (-PolicyMode closed certifies).') }
+        }
+    }
     return $sb.ToString().TrimEnd()
 }
 
@@ -463,6 +508,41 @@ function Set-ScanChildFormatterOff {
         }
     }
     $StartInfo.EnvironmentVariables['CLAUDE_PLUGIN_OPTION_formatOnEdit'] = 'off'
+}
+
+function Set-ScanChildPolicy {
+    # THE DECLARED POLICY REACHES THE MAIN PASS (dispatch 000305, B1; owner ruling O03 "full main
+    # pass"). An explicit -OrgPolicyPath used to drive only the scan's own post-pass; the daemon and the
+    # per-file client read orgPolicy from their environment, which the scan never touched -- so the
+    # flag alone did not make RequiredRules, SeverityOverrides or ExcludeRules govern the findings, and
+    # an ambient orgPolicy could. Every scan child now carries the DECLARED path the way it already
+    # reads the knob: session-start forwards it to the daemon (RequiredRules) and the client applies
+    # it (ExcludeRules, SeverityOverrides, ProhibitedSuppressions, and the closed-mode fail-closed). As
+    # with formatOnEdit above, EVERY spelling the option resolver accepts is removed first and exactly
+    # one is set, so an ambient orgPolicy under another spelling cannot win the enumeration.
+    # $PolicyMode, when given (an explicit -PolicyMode), is set as POWERSHELL_LSP_POLICY_MODE so the
+    # children fail closed exactly when the scan is managed; when it is '' the children inherit the
+    # same environment value the scan resolved its mode from. An empty -OrgPolicyPath changes nothing:
+    # the unmanaged default scan's children are exactly what they were.
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.ProcessStartInfo]$StartInfo,
+        [string]$OrgPolicyPath = '',
+        [string]$PolicyMode = ''
+    )
+    if (-not [string]::IsNullOrWhiteSpace($OrgPolicyPath)) {
+        $prefix = 'CLAUDE_PLUGIN_OPTION_'
+        foreach ($name in @($StartInfo.EnvironmentVariables.Keys)) {
+            $n = [string]$name
+            if (-not $n.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+            if (($n.Substring($prefix.Length) -replace '_', '').ToLowerInvariant() -eq 'orgpolicy') {
+                $StartInfo.EnvironmentVariables.Remove($n)
+            }
+        }
+        $StartInfo.EnvironmentVariables['CLAUDE_PLUGIN_OPTION_orgPolicy'] = $OrgPolicyPath
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PolicyMode)) {
+        $StartInfo.EnvironmentVariables['POWERSHELL_LSP_POLICY_MODE'] = $PolicyMode
+    }
 }
 
 function Stop-ScanProcessTree {
@@ -530,7 +610,10 @@ function Invoke-ScanChildProcess {
         [int]$CapMs = 25000,
         [string]$DataRoot = '',
         [string[]]$ExtraArgs = @(),
-        [hashtable]$ExtraEnv
+        [hashtable]$ExtraEnv,
+        # The scan's declared policy and explicit policy mode (dispatch 000305): see Set-ScanChildPolicy.
+        [string]$OrgPolicyPath = '',
+        [string]$PolicyMode = ''
     )
     # THE PAYLOAD IS ASCII (ConvertTo-ScanAsciiJson, below): the child decodes stdin with the code page
     # of the console it inherits, which is this process's -- often an OEM code page, not UTF-8 -- so
@@ -547,6 +630,7 @@ function Invoke-ScanChildProcess {
     if (-not [string]::IsNullOrWhiteSpace($DataRoot)) { $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot }
     if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
     Set-ScanChildFormatterOff -StartInfo $psi
+    Set-ScanChildPolicy -StartInfo $psi -OrgPolicyPath $OrgPolicyPath -PolicyMode $PolicyMode
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $p = [System.Diagnostics.Process]::Start($psi)
     try {
@@ -618,10 +702,13 @@ function Invoke-ScanHook {
         # StrictMode-safe; when supplied it is set $true on the cap kill so the caller can treat a
         # killed analysis as NOT analyzed (dispatch 000132 leg 1 -- never-silent: a killed file is
         # not a clean file). The stdout return is unchanged ('' on a kill).
-        $Killed = $null
+        $Killed = $null,
+        # Passed through to Invoke-ScanChildProcess (dispatch 000305); '' = unchanged.
+        [string]$OrgPolicyPath = '',
+        [string]$PolicyMode = ''
     )
     $r = Invoke-ScanChildProcess -HostExe $HostExe -ScriptPath $ScriptPath -StdinJson $StdinJson -CapMs $CapMs `
-        -DataRoot $DataRoot -ExtraArgs $ExtraArgs -ExtraEnv $ExtraEnv
+        -DataRoot $DataRoot -ExtraArgs $ExtraArgs -ExtraEnv $ExtraEnv -OrgPolicyPath $OrgPolicyPath -PolicyMode $PolicyMode
     if ($r.Killed) {
         if ($null -ne $Killed) { $Killed.Value = $true }
         return ''
@@ -650,12 +737,16 @@ function Start-ScanDaemon {
     # further safety factor for an unobserved heavier-load tail. The client caps stay strictly above it and
     # were proven non-truncating at this cap (Invoke-ScanFileDiagnostics timeoutMs 18000 < lsp-scan.ps1
     # -TimeoutMs 25000; both > 15000). Full arithmetic: the 000133 outbox and CHANGELOG.
-    param([string]$ScriptsDir, [string]$DataRoot, [string]$SessionId, [string]$HostExe, [int]$MaxWaitMs = 15000)
+    # -OrgPolicyPath / -PolicyMode (dispatch 000305): the scan's declared policy and explicit mode,
+    # carried to session-start -- and so to the daemon's RequiredRules merge -- by Set-ScanChildPolicy.
+    param([string]$ScriptsDir, [string]$DataRoot, [string]$SessionId, [string]$HostExe, [int]$MaxWaitMs = 15000,
+        [string]$OrgPolicyPath = '', [string]$PolicyMode = '')
     New-ContainedDirectory -Path $DataRoot
     Invoke-ScanHook -HostExe $HostExe -ScriptPath (Join-Path $ScriptsDir 'session-start.ps1') `
         -StdinJson (@{ session_id = $SessionId } | ConvertTo-Json -Compress) `
         -ExtraArgs @('-PreferredHost', $HostExe, '-MaxWaitMs', [string]$MaxWaitMs) -CapMs 180000 -DataRoot $DataRoot `
-        -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_perFileCap = '0'; CLAUDE_PLUGIN_OPTION_severityThreshold = 'Hint' } | Out-Null
+        -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_perFileCap = '0'; CLAUDE_PLUGIN_OPTION_severityThreshold = 'Hint' } `
+        -OrgPolicyPath $OrgPolicyPath -PolicyMode $PolicyMode | Out-Null
     $sf = Join-Path $DataRoot ('session/' + $SessionId + '.json')
     for ($i = 0; $i -lt 200; $i++) {
         if (Test-Path -LiteralPath $sf) {
@@ -714,6 +805,10 @@ function Invoke-ScanFileDiagnostics {
     # is the ONLY thing scripts/lsp-scan.ps1's SARIF `message.text` renders, so a caller must never
     # see it degrade to a bare rule id just because nobody set a telemetry-log env var. (A degraded
     # transport could not pass anyway now: the receipt's digest covers each message.)
+    #
+    # -OrgPolicyPath / -PolicyMode (dispatch 000305, B1) carry the scan's declared policy and explicit
+    # mode into the client (Set-ScanChildPolicy), and the result's Receipt is the parsed receipt the
+    # verdict was taken from -- the policy application evidence a managed scan certifies on.
     param(
         [string]$ScriptsDir,
         [string]$DataRoot,
@@ -722,7 +817,9 @@ function Invoke-ScanFileDiagnostics {
         [string]$FilePath,
         [string]$Cwd = '',
         [int]$CapMs = 25000,
-        [string]$CaptureDir = ''
+        [string]$CaptureDir = '',
+        [string]$OrgPolicyPath = '',
+        [string]$PolicyMode = ''
     )
     if ($null -eq (Get-Command -Name 'Test-ScanReceipt' -CommandType Function -ErrorAction SilentlyContinue)) {
         # Never guess a verdict without the validator: dot-source scripts/lib/lsp-scan-receipt.ps1.
@@ -783,7 +880,7 @@ function Invoke-ScanFileDiagnostics {
     $pre = Read-ScanSourceSnapshot -Path $full -NoText
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $child = Invoke-ScanChildProcess -HostExe $HostExe -ScriptPath (Join-Path $ScriptsDir 'lsp-client.ps1') `
-        -StdinJson $stdin -CapMs $CapMs -DataRoot $DataRoot -ExtraEnv $extraEnv
+        -StdinJson $stdin -CapMs $CapMs -DataRoot $DataRoot -ExtraEnv $extraEnv -OrgPolicyPath $OrgPolicyPath -PolicyMode $PolicyMode
     $sw.Stop()
     $elapsedMs = [int]$sw.Elapsed.TotalMilliseconds
     $post = Read-ScanSourceSnapshot -Path $full -NoText
@@ -831,6 +928,7 @@ function Invoke-ScanFileDiagnostics {
         Pass          = [string]$verdict.Pass
         Reasons       = @($verdict.Reasons)
         Certification = $verdict.Certification
+        Receipt       = $verdict.Receipt
         Child         = [pscustomobject]@{
             ExitCode   = $child.ExitCode
             Killed     = [bool]$child.Killed

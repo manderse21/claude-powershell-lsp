@@ -425,6 +425,18 @@ cold. None is a contract change; each is banked here deliberately.
   incomplete -- a deliberate behavior change recorded in the CHANGELOG. A receipt records configuration
   as observed and **unbound** and policy as **unbound**; neither is certified by this schema version.
   Recorded here as a **note, not an amendment**.
+- **Effective-policy resolver and the managed scan (NOT a Tier-1 frozen surface) -- dispatch 000305.**
+  `scripts/lsp-scan.ps1 -OrgPolicyPath` now drives the daemon and the per-file hook, not only the
+  suppression post-pass -- a deliberate behavior change ruled by the owner (O03, "full main pass"),
+  recorded in the CHANGELOG. Everything else is **additive and outside the frozen surface**: a
+  `-PolicyMode open|closed` CLI parameter (not a `userConfig` knob; precedence explicit, then the existing
+  `POWERSHELL_LSP_POLICY_MODE`, then `open`), receipt schema version 2 (`policy.state` may be `observed`,
+  carrying application evidence; a receipt still certifies nothing), a `properties.policy` bag on the
+  scan's SARIF invocation, and two `doctor -Json` `orgPolicy` fields (`effectiveSha256`, `enforcement`)
+  after the four existing keys, whose names, types and meaning are unchanged. **No knob and no status
+  token is added.** The scan's exit codes are unchanged (0 / 2 / 3 / 4): a managed scan that is not
+  certified exits `4`, the code that already means "this scan cannot vouch for its result". Recorded here
+  as a **note, not an amendment**.
 
 ---
 

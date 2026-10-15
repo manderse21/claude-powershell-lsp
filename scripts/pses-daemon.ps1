@@ -105,6 +105,10 @@ $ErrorActionPreference = 'Stop'
 # Scan completion receipt (dispatch 000304, A2): the daemon half of the binding -- the source snapshot
 # reader, the engine identity and the binding a scan-mode diagnostics answer carries.
 . (Join-Path $PSScriptRoot 'lib/lsp-scan-receipt.ps1')
+# Effective-policy resolver (dispatch 000305, B1): the daemon resolves -OrgPolicyPath through the SAME
+# seam the client and the scan use, and records what it actually did with it (the application evidence
+# a scan-mode answer carries and the session record exposes to doctor).
+. (Join-Path $PSScriptRoot 'lib/lsp-policy.ps1')
 
 # Pin the data root explicitly (a detached launch may not inherit the env var).
 if (-not [string]::IsNullOrWhiteSpace($DataRoot)) { $env:CLAUDE_PLUGIN_DATA = $DataRoot }
@@ -166,6 +170,13 @@ $script:reqId     = 1000  # monotonic id for daemon-initiated requests (codeActi
 # file would force an engine rebuild on the hot path.
 $script:settingsResolved  = $false   # have we run the one-time resolve+push yet?
 $script:settingsPathInUse = ''        # the absolute settings file honored this session ('' = default rules)
+# Policy application evidence (dispatch 000305, B1): what this daemon DID with -OrgPolicyPath, recorded
+# by Initialize-PssaSettings when it resolves the session's settings. 'pending' until then (no file has
+# been analyzed yet), 'not-configured' when the daemon was launched with no policy. Never inferred from
+# the policy file: a scan-mode answer and the session record carry exactly this record.
+$script:policyApplication = New-PolicyApplicationEvidence -Path $OrgPolicyPath `
+    -RequiredState $(if ([string]::IsNullOrWhiteSpace($OrgPolicyPath)) { 'not-configured' } else { 'pending' }) `
+    -GuardVerifiedFor (Get-PssaDefaultRulesVerifiedForPsesTag)
 # Supervised re-spawn bookkeeping (000022): psesRestarts is the CONSECUTIVE re-spawn
 # count for the current crash episode (reset to 0 after any settled pass); psesGaveUp
 # latches once the budget is spent so the exhaustion logs once and the daemon then stays
@@ -940,37 +951,100 @@ function Initialize-PssaSettings {
     # pins PSES's own default list alongside the required ones rather than naming ONLY the
     # required rules). $toSend stays byte-identical to $resolved whenever OrgPolicyPath is unset
     # or names no required rule -- the overwhelming common case.
+    #
+    # APPLICATION EVIDENCE (dispatch 000305, B1). The policy is read through Resolve-EffectivePolicy --
+    # Import-OrgPolicy underneath, so every degrade, the integrity gate and the single warning are
+    # unchanged -- and every outcome below is RECORDED in $script:policyApplication as it happens:
+    # not-required, the version guard's verdict (activation-unsupported), a merged-settings write that
+    # did not verify (merge-write-failed), and activated only once the merged file was written, re-read
+    # intact and pushed to PSES. Fail-open for the edit is unchanged: every failure still falls back to
+    # the pre-merge path. What changed is that a managed scan can now SEE which of these happened.
+    #
+    # THE GUARD NOW SEES THE REAL VERSION. Merge-RequiredRulesSettings was called without
+    # -CurrentPsesTag, so it compared the verified tag with ITSELF and could never refuse. It is now
+    # handed the version this daemon reads from the PSES manifest it launches; with the pinned bundle
+    # that is the verified tag and nothing changes, and when it is not, the guard does what it was
+    # written to do.
     $toSend = $resolved
+    $source = $(if ([string]::IsNullOrWhiteSpace($resolved)) { 'none' } else { 'resolved' })
+    $res = $null
+    $state = 'not-configured'
+    $count = 0
+    $guardObserved = ''
+    $guardResult = ''
+    $mergedPath = ''
+    $mergedSha = ''
     if (-not [string]::IsNullOrWhiteSpace($OrgPolicyPath)) {
+        $state = 'policy-unusable'
         try {
-            $polWarn = ''
-            $pol = Import-OrgPolicy -Path $OrgPolicyPath -WarningOut ([ref]$polWarn)
-            if ($polWarn -ne '') { Write-DLog ('orgPolicy (daemon): ' + $polWarn) }
-            $reqRules = @($pol.RequiredRules)
-            if ($reqRules.Count -gt 0) {
-                $merged = Merge-RequiredRulesSettings -ResolvedSettingsPath $resolved -RequiredRules $reqRules -OrgExcludeRules @($pol.ExcludeRules)
-                if ($null -ne $merged) {
-                    $mergedPath = Write-MergedPssaSettingsFile -Settings $merged -DataRoot $DataRoot
-                    if (-not [string]::IsNullOrWhiteSpace($mergedPath)) {
-                        $toSend = $mergedPath
-                        Write-DLog ('PSSA settings: requiredRules merged (' + $reqRules.Count + ' rule(s)) -> ' + $mergedPath)
-                    } else {
-                        Write-DLog 'PSSA settings: requiredRules merge computed but write failed (ignored, falling back to pre-merge path)'
-                    }
+            $res = Resolve-EffectivePolicy -Path $OrgPolicyPath -Source 'daemon'
+            if ([string]$res.warning -ne '') { Write-DLog ('orgPolicy (daemon): ' + [string]$res.warning) }
+            if ([bool]$res.usable) {
+                $reqRules = Get-PolicyStringList -Object $res.effective -Name 'RequiredRules'
+                $orgExcl = Get-PolicyStringList -Object $res.effective -Name 'ExcludeRules'
+                $count = $reqRules.Count
+                if ($count -eq 0) {
+                    $state = 'not-required'
                 } else {
-                    Write-DLog 'PSSA settings: requiredRules merge declined (PSES-tag guard, or nothing to merge); falling back to pre-merge path'
+                    $guardObserved = Get-DaemonPsesVersionTag
+                    $guard = ''
+                    $merged = Merge-RequiredRulesSettings -ResolvedSettingsPath $resolved -RequiredRules $reqRules `
+                        -OrgExcludeRules $orgExcl -CurrentPsesTag $guardObserved -GuardOut ([ref]$guard)
+                    $guardResult = $guard
+                    if ($null -eq $merged) {
+                        $state = 'activation-unsupported'
+                        Write-DLog ('PSSA settings: requiredRules merge declined by the PSES-tag guard (observed ' + $guardObserved +
+                            ', list verified for ' + (Get-PssaDefaultRulesVerifiedForPsesTag) + '); falling back to pre-merge path')
+                    } else {
+                        $mergedPath = Write-MergedPssaSettingsFile -Settings $merged -DataRoot $DataRoot
+                        if ([string]::IsNullOrWhiteSpace($mergedPath)) {
+                            $state = 'merge-write-failed'
+                            Write-DLog 'PSSA settings: requiredRules merge computed but the merged settings file could not be written and verified (falling back to pre-merge path)'
+                        } else {
+                            $mergedSha = Get-PolicyFileSha256 -Path $mergedPath
+                            $toSend = $mergedPath
+                            $source = 'merged'
+                            $state = 'not-delivered'   # until the push below is actually sent
+                            Write-DLog ('PSSA settings: requiredRules merged (' + $count + ' rule(s)) -> ' + $mergedPath)
+                        }
+                    }
                 }
             }
         } catch {
             Write-DLog ('orgPolicy (daemon) read error (ignored, pre-merge path): ' + $_.Exception.Message)
+            $state = 'policy-unusable'
         }
     }
 
-    if ([string]::IsNullOrWhiteSpace($toSend)) { Write-DLog 'PSSA settings: none resolved (default rules)'; return }
-    $script:settingsPathInUse = $toSend
-    Send-Lsp @{ jsonrpc = '2.0'; method = 'workspace/didChangeConfiguration'
-        params = @{ settings = @{ powershell = @{ scriptAnalysis = (New-ScriptAnalysisSettings $toSend) } } } }
-    Write-DLog ('PSSA settings: honoring ' + $toSend)
+    $delivered = $false
+    try {
+        if ([string]::IsNullOrWhiteSpace($toSend)) { Write-DLog 'PSSA settings: none resolved (default rules)'; return }
+        $script:settingsPathInUse = $toSend
+        Send-Lsp @{ jsonrpc = '2.0'; method = 'workspace/didChangeConfiguration'
+            params = @{ settings = @{ powershell = @{ scriptAnalysis = (New-ScriptAnalysisSettings $toSend) } } } }
+        $delivered = $true
+        Write-DLog ('PSSA settings: honoring ' + $toSend)
+    } finally {
+        # Recorded on every exit, including a push that threw (then delivered stays $false and an
+        # activation in progress reads not-delivered -- never activated).
+        if ($state -eq 'not-delivered' -and $delivered) { $state = 'activated' }
+        $script:policyApplication = New-PolicyApplicationEvidence -Resolution $res -Path $OrgPolicyPath `
+            -RequiredState $state -RequiredCount $count `
+            -GuardVerifiedFor (Get-PssaDefaultRulesVerifiedForPsesTag) -GuardObserved $guardObserved -GuardResult $guardResult `
+            -MergedPath $mergedPath -MergedSha256 $mergedSha `
+            -SettingsPath $script:settingsPathInUse -SettingsSource $(if ($delivered) { $source } else { 'none' }) `
+            -SettingsSha256 (Get-PolicyFileSha256 -Path $script:settingsPathInUse) -Delivered $delivered
+    }
+}
+
+function Get-DaemonPsesVersionTag {
+    # The PSES version tag this daemon actually launches -- 'v' + ModuleVersion of the
+    # PowerShellEditorServices manifest in the bundle, READ from disk (Get-ScanManifestVersion, the
+    # same reader the engine identity uses) -- or 'unknown'. What the RequiredRules version guard
+    # compares against the tag the pinned default rule list was verified for (dispatch 000305).
+    $v = Get-ScanManifestVersion -ManifestPath (Join-Path (Get-PsesBundleRoot) 'PowerShellEditorServices/PowerShellEditorServices.psd1')
+    if ([string]::IsNullOrWhiteSpace($v) -or $v -eq 'unknown') { return 'unknown' }
+    return ('v' + $v)
 }
 
 # --- module surface cache (PL-6, dispatch 000062) ----------------------------
@@ -1550,9 +1624,14 @@ function Get-ScanAnalysisBindingFor {
         referenceSurfacing = [string]$script:referenceSurfacingMode
         orgPolicy          = [string]$OrgPolicyPath
     }
+    # Policy application evidence (dispatch 000305, B1): the session's record, with the settings file
+    # PSES reads re-hashed NOW -- PSES hands that path to PSScriptAnalyzer on every pass, so the identity
+    # that matters is the file at this analysis, not at session start.
+    $policy = Copy-PolicyApplicationEvidence -Evidence $script:policyApplication `
+        -SettingsSha256 (Get-PolicyFileSha256 -Path ([string]$script:settingsPathInUse))
     return (New-ScanAnalysisBinding -RequestId $RequestId -AnalyzedPath ([string]$Res.analyzedPath) -Snapshot $Res.snapshot `
             -Settled ([bool]$Res.settled) -PssaAvailable ([bool]$script:pssaAvailable) -Cached ([bool]$Res.cached) `
-            -Engine $engine -Config $config)
+            -Engine $engine -Config $config -Policy $policy)
 }
 
 # --- format-on-edit: suggest, never rewrite (dispatch 000059, PL-8) ----------
@@ -1776,6 +1855,10 @@ function Write-SessionFile([string]$pipeName, [string]$state) {
         heartbeat = (Get-Date -Format 'o')
         psesPid = if ($null -ne $script:proc) { $script:proc.Id } else { $null }
         pluginVersion = (Get-PluginVersion)
+        # What this daemon did with its org policy (dispatch 000305, B1) -- the record doctor -Json reports
+        # as orgPolicy.enforcement, so "is the policy parsed?" and "did the analyzer apply it?" are two
+        # answers. Additive, like pluginVersion: a record without it reads as unknown, never as a mismatch.
+        policy = $script:policyApplication
     }
     try { ($obj | ConvertTo-Json -Depth 5) | Out-File -FilePath $sessionFile -Encoding ascii -Force } catch { }
 }

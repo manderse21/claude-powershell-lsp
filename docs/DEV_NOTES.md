@@ -174,6 +174,42 @@ equal to the records read back. Things that bite when you change this path:
   it, beside a raw-UTF-8 control that must arrive mangled -- so the test cannot pass on a UTF-8 console
   alone, which is how the guard it replaced did.
 
+## Policy has one resolver, and evidence is not a verdict
+
+`scripts/lib/lsp-policy.ps1` (dispatch 000305) is the only place an org policy's EFFECTIVE form and
+identity are computed; the hook, the daemon and the scan all read the file through `Import-OrgPolicy`
+and never parse it a second way. Things that bite when you change this path:
+
+- **`Get-Prop` cannot read a dictionary.** It sees PSObject properties only, and `Import-OrgPolicy`
+  returns a `[hashtable]`; a key read through `Get-Prop` comes back `$null` and a policy silently
+  reads as empty. Use `Get-PolicyField` (both shapes) in policy code.
+- **`Get-PolicyStringList` returns its array through the comma operator.** Assign it, then count it:
+  `@(Get-PolicyStringList ...)` nests the array and every count reads 1.
+- **A receipt carries evidence; only a managed scan certifies.** `policy.state` is `unbound` or
+  `observed`, never `verified`; `Test-ScanPolicyCertification` decides, from evidence, and every code it
+  can return must be in `Get-PolicyReasonTable` (a test reads the function body and holds them together).
+- **The merged settings file is content-addressed** (`orgpolicy-settings/merged-settings-<sha16>.psd1`)
+  because PSES hands PSScriptAnalyzer the settings PATH on every pass: a shared fixed name let one
+  daemon rewrite what another enforced. Never write it in place; `Write-MergedPssaSettingsFile` returns a
+  path only after re-hashing the bytes on disk. Keep its catch around the rename: two daemons writing the
+  same new text race to it, and the loser must accept the winner's file (same name, same digest) rather
+  than report `merge-write-failed` -- which a managed scan refuses and an unmanaged session runs without.
+- **No file, no proof.** A managed verdict over zero files is `analysis-empty`, never certified: O03
+  certifies only on evidence the policy was applied, and an empty target produces none.
+- **A rule code is a rule name, and the identity folds ASCII `A`-`Z` only.** `Test-OrgPolicyRuleCode`
+  (ASCII letters, digits, `_ - . \`) keeps the canonical text injective -- no TAB or LF inside a code --
+  and the same on every host. Never fold with `ToLowerInvariant` (it folds U+212A KELVIN SIGN to `k` on
+  PowerShell 7 only), and never test the set with `-match`: it ignores case, and `[A-Z]` then admits
+  U+212A on both hosts. Use `[regex]::IsMatch` with no options, and `\z`, not `$`.
+- **A daemon's record starts `pending`** and stays so until its first analyzed PowerShell file; it
+  carries no resolution, so every reader treats it as not yet applied -- the managed verdict as
+  `policy-evidence-missing`, doctor as `not-observed` (`pending`) -- never as a disagreement.
+- **PSScriptAnalyzer rejects an unknown settings key, and then nothing is analyzed.** Its valid keys are
+  `CustomRulePath`, `ExcludeRules`, `IncludeRules`, `IncludeDefaultRules`, `RecurseCustomRulePath`,
+  `Rules` and `Severity`; a settings file with any other key (`RuleArguments`, `Severities`) makes every
+  analysis fail inside PSES, which still publishes an empty, settled result -- zero findings that look
+  clean (measured 2026-10-13 against the vendored PSSA). Do not build a test fixture on such a key.
+
 ## The public contract has teeth
 
 The `userConfig` knob **names** and the status **token set** are drift-guarded in CI

@@ -692,7 +692,7 @@ Describe 'Scan verdict at the CLI boundary with the shipped lsp-scan relocated b
         $root = New-SvTempRoot -Tag 'cvident' -MintingFile 'tests/PowerShellLsp.ScanVerdict.Tests.ps1'
         [void]$script:CvRoots.Add($root)
         $tree = New-SvCliTree -Root $root -ClientFixture 's9-clean-complete.ps1'
-        @($tree.Copies).Count | Should -Be 5 -Because 'lsp-scan.ps1, its three libraries (the receipt library since dispatch 000304) and plugin.json'
+        @($tree.Copies).Count | Should -Be 6 -Because 'lsp-scan.ps1, its four libraries (the receipt library since dispatch 000304, the policy library since 000305) and plugin.json'
         foreach ($copy in @($tree.Copies)) {
             $shipped = Get-SvSha256 -Path (Join-Path $repo $copy.Rel)
             $shipped | Should -Match '^[0-9A-F]{64}$'
@@ -845,7 +845,8 @@ Describe 'Scan verdict at the CLI boundary with the shipped lsp-scan AND the shi
         [void]$script:CrRoots.Add($root)
         $tree = New-SvCliTree -Root $root -RealClient -SessionStartFixture 'fake-session-start-pipe.ps1'
         @($tree.Copies | ForEach-Object { $_.Rel }) | Should -Contain 'scripts/lsp-client.ps1'
-        @($tree.Copies).Count | Should -Be 6
+        @($tree.Copies | ForEach-Object { $_.Rel }) | Should -Contain 'scripts/lib/lsp-policy.ps1' -Because 'the real client loads the policy library in scan mode (dispatch 000305)'
+        @($tree.Copies).Count | Should -Be 7
         foreach ($copy in @($tree.Copies)) {
             (Get-SvSha256 -Path (Join-Path $tree.Root $copy.Rel)) | Should -BeExactly (Get-SvSha256 -Path (Join-Path $repo $copy.Rel))
         }
