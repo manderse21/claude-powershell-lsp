@@ -203,12 +203,70 @@ and never parse it a second way. Things that bite when you change this path:
   U+212A on both hosts. Use `[regex]::IsMatch` with no options, and `\z`, not `$`.
 - **A daemon's record starts `pending`** and stays so until its first analyzed PowerShell file; it
   carries no resolution, so every reader treats it as not yet applied -- the managed verdict as
-  `policy-evidence-missing`, doctor as `not-observed` (`pending`) -- never as a disagreement.
+  `policy-evidence-missing`, doctor as `not-observed` (`pending`) -- never as a disagreement. Build it
+  only with `New-PolicyStartupEvidence`: `Reset-PsesState` returns to it on every PSES re-spawn (and
+  clears `settingsPathInUse`), because a re-spawned child was never sent the dead child's settings
+  (dispatch 000306, B1-K05). Every exit of `Initialize-PssaSettings` must record what it did -- a
+  settings resolution that throws records the TERMINAL `settings-unresolved`, which doctor reads as
+  `not-observed` (`settings-unresolved`) and the managed verdict as `policy-evidence-missing`; an early
+  `return` that records nothing leaves `pending` standing for the daemon's whole life (B1-OOB-I01).
 - **PSScriptAnalyzer rejects an unknown settings key, and then nothing is analyzed.** Its valid keys are
   `CustomRulePath`, `ExcludeRules`, `IncludeRules`, `IncludeDefaultRules`, `RecurseCustomRulePath`,
   `Rules` and `Severity`; a settings file with any other key (`RuleArguments`, `Severities`) makes every
   analysis fail inside PSES, which still publishes an empty, settled result -- zero findings that look
   clean (measured 2026-10-13 against the vendored PSSA). Do not build a test fixture on such a key.
+  The same is true of a value of the wrong shape and, under PSES, of a RELATIVE `CustomRulePath` (PSES
+  runs from the daemon's log directory) -- drive-relative `C:rules` and root-relative `\rules` included:
+  .NET calls those "rooted", but they still depend on a current directory PSES does not share. A
+  `CustomRulePath` entry is checked with `Test-PssaSettingsRulePathAnchored` and then with PowerShell's
+  own resolver (`GetResolvedPSPathFromPSPath`, the call PSScriptAnalyzer makes): it refuses the settings
+  exactly when that call throws, so `~`, `FileSystem::` and wildcards behave as they do under PSES
+  (measured). Since dispatch 000306 the daemon reads every settings file it
+  would hand PSES through `Read-PssaSettingsFile` and hands none it rejects; the merge carries only the
+  entries it accepts. The rules that reader encodes were MEASURED on both hosts (identical, with and
+  without PSES's own `-Severity` argument) and `tests/PowerShellLsp.PolicySettings.Tests.ps1` re-measures
+  parity against the vendored analyzer on every leg -- change a rule there, not here from memory. Two
+  things it deliberately mirrors: PSScriptAnalyzer reads the FIRST table in the file (a statement before
+  it is fine), and it does not refuse a parse error by itself. PSScriptAnalyzer evaluates a value the
+  way `Ast.SafeGetValue` does (measured, both hosts): parentheses around a pure expression, a sign,
+  `-not`/`!`/`-bnot` and a sub-expression holding data are all accepted. The reader accepts the first
+  two (B1b-R02 -- `ExcludeRules = ('A', 'B')` is ordinary PowerShell, and refusing it cost a repository
+  its settings file in every unmanaged session) and still refuses the other two, the safe direction,
+  kept visible by a test. Without `IncludeDefaultRules = $true`, PSScriptAnalyzer refuses settings
+  whose custom paths reach no rule source (B1b-K01, measured): a `CustomRulePath` DIRECTORY loads a
+  module only when it is a module directory (`X\X.psm1`, `X\X.psd1`, or either in a version folder)
+  and otherwise loads its `*.dll` files -- a module file under another name in it yields nothing, and
+  `RecurseCustomRulePath` walks the directories below for the same; a file loads only as `.psm1`,
+  `.psd1` or `.dll` (a `.ps1` warns "Cannot find rule extension"). The reader mirrors that
+  (`Test-PssaSettingsRulePathYieldsRule`). One thing it cannot see without loading it: a rule source
+  PSScriptAnalyzer cannot load or run, or that holds no rule -- a module whose manifest names a nested
+  root module, a rule that throws, a module with no rule function (owner ruling K01b; left to A3's
+  runtime signal; the no-rule case is a measured boundary, kept visible by a test).
+- **A required rule is switched on in the merged file, under its canonical name.** Of PSScriptAnalyzer
+  1.25.0's 75 built-in rules, 21 are configurable (derive from `ConfigurableRule`); their `Enable` flag
+  in `Rules` switches them off however `IncludeRules` names them, and 17 of the 21 are off by default --
+  `IncludeRules` alone does not run them. `Enable` on any other rule is ignored. PSScriptAnalyzer
+  matches a `Rules` KEY to a rule name case-sensitively (`psusesingularnouns = @{...}` configures nothing)
+  but a setting name in any case (`enable` works) -- all measured on both hosts. So
+  `Set-PssaRequiredRulesEnabled` writes `Enable = $true` under the canonical key for every required
+  configurable rule (B1b-R01). `Get-PssaBuiltinRuleNames` and `Get-PssaConfigurableRuleNames` are pinned
+  from the vendored analyzer and re-measured by a test on every leg; re-measure them on a PSScriptAnalyzer
+  bump. A settings file with a `CustomRulePath` and without `IncludeDefaultRules = $true` loads ONLY the
+  custom rules -- no built-in rule runs, whatever `IncludeRules` says -- so a merge carrying one sets
+  `IncludeDefaultRules = $true` when a required rule is built-in (B1b-K02).
+- **A merged settings file writes every number with its type.** PSScriptAnalyzer evaluates a cast only
+  to a .NET primitive, so `[decimal]'1.5'` and `[string]'x'` are REFUSED (measured, both hosts):
+  `ConvertTo-Psd1Literal` writes a decimal as a `d` literal (`1.5d`), an `[int]` bare, and every other
+  primitive number behind a cast of its invariant-culture text (`[uint32]'120'`), doubles and singles with
+  17 and 9 significant digits -- .NET Framework's `R` format does not always round-trip. A shape it does
+  not know still renders `$null`, which the merged file's own validation then rejects (B1b-I01).
+- **A merged settings file is removed only when no LIVE daemon names it.** `Remove-StaleMergedPssaSettings`
+  (dispatch 000306, B1-K07) runs after every merge and reads the session records on the same data root:
+  a file a live daemon's record names (by FILE NAME -- one data root can be spelled two ways) is kept
+  however old, anything younger than the grace window is kept (a reused file has its write time
+  refreshed), an unreadable record stops the sweep, and nothing outside `orgpolicy-settings/` but the one
+  legacy `orgpolicy-merged-settings.psd1` is ever touched. Deleting another daemon's file would not fail
+  loudly: PSES would analyze nothing on every later pass.
 
 ## The public contract has teeth
 

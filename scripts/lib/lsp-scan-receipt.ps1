@@ -722,7 +722,9 @@ function Get-ScanReceiptPolicyEvidenceProblems {
         $st = Get-ScanReceiptField $d 'settings'
         if ($null -eq $st) { $p.Add('policy.daemon.settings is missing') }
         else {
-            foreach ($k in @('path', 'source', 'sha256')) {
+            # validation / validationDetail (dispatch 000306): the daemon's verdict on the settings files
+            # the analysis rests on -- typed here; what a verdict means is the managed scan's decision.
+            foreach ($k in @('path', 'source', 'sha256', 'validation', 'validationDetail')) {
                 if (-not ((Get-ScanReceiptField $st $k) -is [string])) { $p.Add('policy.daemon.settings.' + $k + ' is not a string') }
             }
             if (-not ((Get-ScanReceiptField $st 'delivered') -is [bool])) { $p.Add('policy.daemon.settings.delivered is not a boolean') }

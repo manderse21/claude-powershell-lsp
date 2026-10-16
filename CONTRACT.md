@@ -429,14 +429,25 @@ cold. None is a contract change; each is banked here deliberately.
   `scripts/lsp-scan.ps1 -OrgPolicyPath` now drives the daemon and the per-file hook, not only the
   suppression post-pass -- a deliberate behavior change ruled by the owner (O03, "full main pass"),
   recorded in the CHANGELOG. Everything else is **additive and outside the frozen surface**: a
-  `-PolicyMode open|closed` CLI parameter (not a `userConfig` knob; precedence explicit, then the existing
-  `POWERSHELL_LSP_POLICY_MODE`, then `open`), receipt schema version 2 (`policy.state` may be `observed`,
+  `-PolicyMode open|closed` CLI parameter (not a `userConfig` knob; managed only when given explicitly --
+  the existing `POWERSHELL_LSP_POLICY_MODE` never selects it, dispatch 000306), receipt schema version 2 (`policy.state` may be `observed`,
   carrying application evidence; a receipt still certifies nothing), a `properties.policy` bag on the
   scan's SARIF invocation, and two `doctor -Json` `orgPolicy` fields (`effectiveSha256`, `enforcement`)
   after the four existing keys, whose names, types and meaning are unchanged. **No knob and no status
   token is added.** The scan's exit codes are unchanged (0 / 2 / 3 / 4): a managed scan that is not
   certified exits `4`, the code that already means "this scan cannot vouch for its result". Recorded here
   as a **note, not an amendment**.
+- **Settings validation before PSES, and B1's follow-ups (NOT a Tier-1 frozen surface) -- dispatch
+  000306.** A settings file PSScriptAnalyzer would reject is no longer handed to PSES (the session falls
+  back to PSES's default rules; an unmanaged scan warns on stderr), and a `RequiredRules` merge carries
+  exactly the repository file's accepted entries -- behavior changes recorded in the CHANGELOG, as is the
+  owner's Q03 ruling that `POWERSHELL_LSP_POLICY_MODE` never makes a scan managed. Additive and outside the
+  frozen surface: one managed-scan reason code (`policy-settings-rejected`), two fields on the daemon's
+  application evidence in the still-unreleased receipt schema version 2 (`settings.validation`,
+  `settings.validationDetail`), two RequiredRules states (`settings-rejected`, `settings-unresolved`) and
+  one `doctor -Json` `orgPolicy.enforcement.reason` value (`settings-unresolved`). The `orgPolicy` keys
+  keep their names, order and types. **No knob, no status token and no CLI flag is added**; exit codes are
+  unchanged. Recorded here as a **note, not an amendment**.
 
 ---
 

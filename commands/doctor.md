@@ -124,14 +124,24 @@ The envelope:
   later fields (dispatch 000305, added after the four, which keep their names, types and meaning)
   keep parsing apart from enforcement: `effectiveSha256` is the **policy identity** of the policy as
   parsed here (equal effective policies give equal values; `""` unless `applied`), and
-  `enforcement` is what a RUNNING daemon reports it applied, from its own session record -- `state`
-  `observed` with `daemonEffectiveSha256`, `matchesParsed`, its `requiredRules` state and the
-  `settingsSha256` of the file it handed PSES; or `not-observed` with a `reason` (`no-daemon`,
-  `several-daemons`, `data-root-unknown`, or `pending`); or `unknown` (`no-policy-record`, an older
-  daemon); or `not-configured`. **`pending` means not yet applied, never a mismatch:** a daemon writes
-  its record from startup and keeps it `pending` until it analyzes its first PowerShell file, so in a
-  fresh session, before any `.ps1` edit, it has applied nothing yet -- `matchesParsed` is `null` there,
-  and the next `doctor -Json` after an edit reads `observed`.
+  `enforcement` is what a RUNNING daemon reports it applied, from its own session record. Every state:
+  - `observed` -- the daemon resolved its settings and reports what it did: `daemonEffectiveSha256`
+    (the identity it applied), `matchesParsed` (whether that equals `effectiveSha256` -- an identity
+    comparison only), `requiredRules` (`activated`, `not-required`, `activation-unsupported`,
+    `merge-write-failed`, `not-delivered`, `settings-rejected` -- the merged settings file was one
+    PSScriptAnalyzer would reject, so it was not handed to PSES -- or `policy-unusable` /
+    `not-configured`) and the `settingsSha256` of the file it handed PSES. Read `requiredRules`, not
+    `matchesParsed` alone, to know whether a required rule is running.
+  - `not-observed` with a `reason`: `no-daemon`, `several-daemons`, `data-root-unknown`; `pending` --
+    NOT YET applied, never a mismatch: a daemon writes its record from startup, and again whenever it
+    re-spawns PSES, and keeps it `pending` until its next analyzed PowerShell file resolves the
+    session's settings, so `matchesParsed` is `null` and a `doctor -Json` after the next `.ps1` edit
+    reads the resolved state; or `settings-unresolved` -- NEVER applied (dispatch 000306): resolving
+    the session's settings threw (a malformed `settingsPath` on Windows PowerShell 5.1, say), so the
+    daemon handed PSES nothing and applies no policy, and that does not change until PSES is re-spawned
+    or the session restarts; `matchesParsed` is `null` here too. Fix the cause (the daemon log names
+    it) and restart the session.
+  - `unknown` (`no-policy-record`, an older daemon), or `not-configured`.
 
 ### Adding to this envelope -- the schemaVersion policy
 

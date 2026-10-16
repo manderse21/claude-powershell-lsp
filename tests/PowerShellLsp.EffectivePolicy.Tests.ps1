@@ -12,8 +12,9 @@
 #   2. Application evidence (no daemon): the RequiredRules version guard's verdict, the content-
 #      addressed and verified merged-settings write, and the evidence records.
 #   3. The managed verdict (no daemon): Test-ScanPolicyCertification's table -- every refusal code,
-#      and the fully evidenced control that certifies -- the mode precedence (explicit CLI, then
-#      POWERSHELL_LSP_POLICY_MODE, then open), the ambient-option refusal, and the child carrier.
+#      and the fully evidenced control that certifies -- the mode (an explicit -PolicyMode, else open:
+#      POWERSHELL_LSP_POLICY_MODE never selects a managed scan since dispatch 000306, owner ruling Q03),
+#      the ambient-option refusal, and the child carrier.
 #   4. The shipped CLI over PRODUCTION-BUILT evidence (fake hooks, no daemon): lsp-scan.ps1 relocated
 #      beside tests/fixtures/scan-verdict/pv-policy-variant.ps1 certifies the agreeing control and
 #      refuses activation-unsupported, merge-write-failed, a changed settings file, either party's
@@ -356,7 +357,8 @@ Describe 'RequiredRules application evidence: the version guard and the merged-s
     }
 
     It 'the merged settings text is deterministic -- fixed key order, LF line ends, nested tables in sorted key order' {
-        $s = @{ IncludeRules = @('B', 'A'); RuleArguments = @{ Zeta = @{ z = 1; a = 2 }; Alpha = @{ k = 'v' } } }
+        # Rules, not RuleArguments, since dispatch 000306: the renderer writes only keys PSScriptAnalyzer accepts.
+        $s = @{ IncludeRules = @('B', 'A'); Rules = @{ Zeta = @{ z = 1; a = 2 }; Alpha = @{ k = 'v' } } }
         $t1 = ConvertTo-MergedPssaSettingsText -Settings $s
         $t2 = ConvertTo-MergedPssaSettingsText -Settings $s
         $t2 | Should -BeExactly $t1
@@ -559,9 +561,11 @@ Describe 'The managed verdict, the mode precedence and the ambient refusal (disp
                 'pending' { $state = 'pending' }
                 'daemon-activated-unrequired' { $state = 'activated' }
             }
+            # The settings verdict the daemon records since dispatch 000306: valid when it handed PSES a merged
+            # file, none when it handed none (the B1b verdict cases are in PowerShellLsp.PolicySettings.Tests.ps1).
             $daemon = New-PolicyApplicationEvidence -RequiredState $state -RequiredCount 1 -GuardVerifiedFor 'v4.6.0' -GuardObserved 'v4.6.0' `
                 -GuardResult 'pass' -MergedPath 'm' -MergedSha256 $(if ($needs) { $merged } else { '' }) -SettingsPath 'm' -SettingsSource $source `
-                -SettingsSha256 $settingsSha -Delivered $needs
+                -SettingsSha256 $settingsSha -Delivered $needs -SettingsValidation $(if ($needs) { 'valid' } else { 'none' })
             $daemon.resolution = [ordered]@{ path = 'p'; configured = $true; usable = $true; reason = ''; effectiveSha256 = $(if ($Fault -eq 'daemon-disagreement') { 'e' * 64 } else { $sha }) }
             $client = New-PolicyAdjudicationEvidence -Mode 'closed'
             $client.resolution = [ordered]@{ path = 'p'; configured = $true; usable = ($Fault -ne 'client-unusable'); reason = ''; effectiveSha256 = $(if ($Fault -eq 'client-disagreement') { 'f' * 64 } else { $sha }) }
@@ -695,19 +699,21 @@ Describe 'The managed verdict, the mode precedence and the ambient refusal (disp
         foreach ($c in $codes) { $table.Contains($c) | Should -BeTrue -Because ($c + ' is returned and must be declared') }
     }
 
-    It 'MODE PRECEDENCE: an explicit -PolicyMode, then POWERSHELL_LSP_POLICY_MODE, then open' {
+    It 'MODE: managed ONLY on an explicit -PolicyMode closed -- POWERSHELL_LSP_POLICY_MODE never selects a managed scan (owner ruling Q03, dispatch 000306)' {
         $prev = $env:POWERSHELL_LSP_POLICY_MODE
         try {
             Remove-Item Env:\POWERSHELL_LSP_POLICY_MODE -ErrorAction SilentlyContinue
             (Resolve-ScanPolicyMode -Explicit '').resolved | Should -BeExactly 'open'
             (Resolve-ScanPolicyMode -Explicit '').source | Should -BeExactly 'default'
             $env:POWERSHELL_LSP_POLICY_MODE = 'closed'
-            (Resolve-ScanPolicyMode -Explicit '').resolved | Should -BeExactly 'closed'
-            (Resolve-ScanPolicyMode -Explicit '').source | Should -BeExactly 'env'
-            (Resolve-ScanPolicyMode -Explicit 'open').resolved | Should -BeExactly 'open' -Because 'the explicit CLI value wins'
+            (Get-PolicyModeInfo).resolved | Should -BeExactly 'closed' -Because 'CONTROL: the variable is set and recognized -- it keeps its interactive fail-closed meaning'
+            (Resolve-ScanPolicyMode -Explicit '').resolved | Should -BeExactly 'open' -Because 'B1 took the mode from the variable here, so every scan on such a host was managed'
+            (Resolve-ScanPolicyMode -Explicit '').source | Should -BeExactly 'default'
+            (Resolve-ScanPolicyMode -Explicit '').raw | Should -BeExactly 'closed' -Because 'the raw value is still reported, for the record'
+            (Resolve-ScanPolicyMode -Explicit 'closed').resolved | Should -BeExactly 'closed'
+            (Resolve-ScanPolicyMode -Explicit 'closed').source | Should -BeExactly 'cli'
+            (Resolve-ScanPolicyMode -Explicit 'open').resolved | Should -BeExactly 'open'
             (Resolve-ScanPolicyMode -Explicit 'open').source | Should -BeExactly 'cli'
-            $env:POWERSHELL_LSP_POLICY_MODE = 'CLOSED-ish typo'
-            (Resolve-ScanPolicyMode -Explicit '').resolved | Should -BeExactly 'open' -Because 'an unrecognized environment value falls back to open, as Get-PolicyModeInfo does'
             Remove-Item Env:\POWERSHELL_LSP_POLICY_MODE -ErrorAction SilentlyContinue
             (Resolve-ScanPolicyMode -Explicit 'closed').resolved | Should -BeExactly 'closed'
         } finally {
@@ -836,6 +842,10 @@ Describe 'The shipped CLI certifies only on agreeing evidence -- production-buil
         @{ Variant = 'no-evidence'; Code = 'policy-evidence-missing'; Policy = 'exclude' }
         @{ Variant = 'engine-unknown'; Code = 'engine-unknown'; Policy = 'exclude' }
         @{ Variant = 'config-narrowed'; Code = 'config-observed-mismatch'; Policy = 'exclude' }
+        # dispatch 000306 (B1b): the daemon's settings verdict, and the terminal record of a throwing resolution.
+        @{ Variant = 'settings-rejected'; Code = 'policy-settings-rejected'; Policy = 'exclude' }
+        @{ Variant = 'settings-rejected'; Code = 'policy-settings-rejected'; Policy = 'required' }
+        @{ Variant = 'settings-unresolved'; Code = 'policy-evidence-missing'; Policy = 'required' }
     ) {
         param($Variant, $Code, $Policy)
         $text = $(if ($Policy -eq 'required') { $script:PvRequired } else { $script:PvExclude })
@@ -982,7 +992,10 @@ Describe 'Explicit -OrgPolicyPath drives the MAIN pass, with every ambient plugi
         $script:Mp.MergeFail = Invoke-MpScan -Target $script:MpMwDir -Policy $script:MpReqPolicy -Mode 'closed'
         $script:Mp.MergeFailOpen = Invoke-MpScan -Target $script:MpMwDir -Policy $script:MpReqPolicy
         $script:Mp.Ambient = Invoke-MpScan -Target $script:MpExcDir -Policy $script:MpExcPolicy -Mode 'closed' -Extra @{ CLAUDE_PLUGIN_OPTION_ruleExclude = 'PSAvoidUsingWriteHost' }
-        $script:Mp.EnvManaged = Invoke-MpScan -Target $script:MpOvrDir -Extra @{ POWERSHELL_LSP_POLICY_MODE = 'closed' }
+        # POWERSHELL_LSP_POLICY_MODE=closed and no -PolicyMode (owner ruling Q03, dispatch 000306): unmanaged now,
+        # with no declared policy and with one.
+        $script:Mp.EnvClosed = Invoke-MpScan -Target $script:MpOvrDir -Extra @{ POWERSHELL_LSP_POLICY_MODE = 'closed' }
+        $script:Mp.EnvClosedDeclared = Invoke-MpScan -Target $script:MpExcDir -Policy $script:MpExcPolicy -Extra @{ POWERSHELL_LSP_POLICY_MODE = 'closed' }
         $script:Mp.Forged = Invoke-MpScan -Target $script:MpReqDir -Policy $script:MpForged -Mode 'closed'
 
         # Doctor reads a RUNNING daemon's own record: a scan daemon under the required policy, one
@@ -1103,7 +1116,6 @@ Describe 'Explicit -OrgPolicyPath drives the MAIN pass, with every ambient plugi
         @{ Key = 'Corrupt'; Code = 'policy-unreadable' }
         @{ Key = 'MergeFail'; Code = 'policy-merge-write-failed' }
         @{ Key = 'Ambient'; Code = 'config-ambient' }
-        @{ Key = 'EnvManaged'; Code = 'policy-not-declared' }
     ) {
         param($Key, $Code)
         $m = $script:Mp[$Key]
@@ -1134,9 +1146,24 @@ Describe 'Explicit -OrgPolicyPath drives the MAIN pass, with every ambient plugi
         }
     }
 
-    It 'POWERSHELL_LSP_POLICY_MODE=closed makes the scan managed when no -PolicyMode is given (mode from env)' {
-        $script:Mp.EnvManaged.Policy.mode | Should -BeExactly 'closed'
-        $script:Mp.EnvManaged.Policy.modeSource | Should -BeExactly 'env'
+    It 'POWERSHELL_LSP_POLICY_MODE=closed does NOT make a scan managed (owner ruling Q03, dispatch 000306): no policy, exit 0, the unmanaged SARIF' {
+        # B1 read the variable as the scan's mode, so this scan was NOT CERTIFIED (policy-not-declared, exit 4) --
+        # the shape /powershell-lsp:scan took on every host that set the variable for interactive fail-closed.
+        $e = $script:Mp.EnvClosed
+        $e.Exit | Should -Be 0 -Because ('stderr: ' + $e.Err)
+        [bool]$e.Invocation.executionSuccessful | Should -BeTrue
+        $e.Policy | Should -BeNullOrEmpty -Because 'an unmanaged scan without -OrgPolicyPath emits exactly what it always did'
+        $e.Err | Should -Not -Match 'CERTIFIED'
+        $e.Results | Should -Contain 'PSAvoidUsingCmdletAliases:warning'
+    }
+
+    It 'POWERSHELL_LSP_POLICY_MODE=closed with a declared policy and no -PolicyMode: unmanaged -- the policy applies, nothing is certified or refused' {
+        $e = $script:Mp.EnvClosedDeclared
+        $e.Exit | Should -Be 0 -Because ('stderr: ' + $e.Err)
+        $e.Policy.mode | Should -BeExactly 'open'
+        $e.Policy.modeSource | Should -BeExactly 'default'
+        $e.Policy.certification | Should -BeExactly 'not-requested'
+        @($e.Results).Count | Should -Be 0 -Because 'the declared exclusion still drives the main pass'
     }
 
     It 'FORGED RULE CODE end to end: the separator-injection policy is NOT CERTIFIED and presents no identity (review finding B1-R01)' {

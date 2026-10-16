@@ -190,8 +190,20 @@ honor, overriding auto-discovery.
 
 Auto-discovery walks up from the edited file to the nearest `PSScriptAnalyzerSettings.psd1`,
 bounded at the project root. The path **must be absolute** -- a relative value is ignored -- and
-the plugin never parses or executes the file itself; PSES is the trusted consumer. An empty
-value uses auto-discovery.
+the plugin never executes the file; PSES is the trusted consumer. An empty value uses
+auto-discovery.
+
+**A settings file PSScriptAnalyzer would reject is not handed to PSES** (dispatch 000306). Such a
+file -- a key it does not accept, a value of the wrong shape, a `CustomRulePath` entry that is relative
+(to a directory or a drive) or that does not exist, a `CustomRulePath` that reaches no rule module or
+assembly without `IncludeDefaultRules = $true`, a file that is not a settings table -- makes PSES
+analyze *nothing* while it still
+publishes a settled, empty result: zero findings that look clean. So the daemon first reads the file
+the way PSScriptAnalyzer does, as data (parsed, never run), and when PSScriptAnalyzer would refuse it,
+the session falls back to PSES's default rules and the daemon log says why. The file is checked when a
+PSES session starts; an edit to it during a session is checked at the next session (owner ruling K08).
+The rules it checks, and what it cannot see, are in
+[repository scanning](repository-scanning.md#settings-files-the-analysis-rests-on-dispatch-000306).
 
 ## orgPolicy
 
@@ -350,15 +362,52 @@ optional list beside `ExcludeRules`, naming PSScriptAnalyzer rule codes:
 
 **How it reaches PSES.** PSES's own no-settings default is a fixed 15-rule list, pinned from the
 PowerShellEditorServices source at the tag this build verified it against. When `RequiredRules`
-names anything, the daemon merges those rules into whatever `IncludeRules` would otherwise apply --
-the shipped 15-rule default when no repo-local settings file supplies its own `IncludeRules`, or
-that file's own list when it does -- and writes the merged result to a **new** settings file under
-the plugin's own data root. Nothing in the repository, and no file the user or the project owns, is
-ever edited to do this.
+names anything, the daemon writes a **new** settings file under the plugin's own data root that runs
+the required rules beside the rules that would otherwise run (dispatch 000306, owner ruling R03):
+
+- **no settings file** (none in the repository, no `settingsPath` override, `ruleset` left at
+  `pses-default`): its `IncludeRules` is the shipped 15-rule default plus the required rules;
+- **a settings file that names its own `IncludeRules`** (the shipped `ruleset = base` file does): its
+  `IncludeRules` is that list plus the required rules;
+- **a settings file PSScriptAnalyzer accepts that names no `IncludeRules`** -- the usual repository
+  file (or `settingsPath` override), with `ExcludeRules`, `Rules` or a `CustomRulePath`: it names no
+  `IncludeRules` either. PSScriptAnalyzer runs every enabled rule for such a file, and so it does for
+  the merged one: the repository's rules, those its `Rules` entries switch on and its custom rules all
+  still run, and the required rules run because a required rule is taken out of the file's
+  `ExcludeRules`, a required configurable rule is switched on, and `IncludeDefaultRules = $true` is set
+  beside a `CustomRulePath` (all below). Before this release the merge wrote the 15-rule default plus
+  the required rules here too, so whenever `RequiredRules` named anything every other rule the
+  repository ran stopped running -- `PSAvoidUsingWriteHost`, a `PSAvoidLongLines` it switched on
+  through `Rules`, its `CustomRulePath` rules -- while a managed scan certified (review finding
+  B1b-R03; measured, both hosts).
+
+A settings file PSScriptAnalyzer rejects merges as before: its accepted entries are carried, onto its
+own `IncludeRules` when it names one PSScriptAnalyzer accepts and onto the 15-rule default otherwise --
+the session already uses PSES's defaults in place of such a file, and a managed scan refuses it.
+Nothing in the repository, and no file the user or the project owns, is ever edited to do this.
+
+**What the merged file carries** (dispatch 000306). Every entry of the repository's settings file that
+PSScriptAnalyzer accepts -- its `Rules` (each rule's `Enable` flag and arguments, except that a required
+rule is switched on: below) and `Severity` included -- and nothing it rejects. Before this release the merge kept a fixed key list instead: it
+dropped `Rules` and `Severity`, the keys PSScriptAnalyzer reads, and carried `Severities`,
+`RuleArguments` and `FilePath`, which it rejects. So whenever `RequiredRules` merged, a repository's
+rule configuration vanished -- a configurable rule it had switched on with `Enable = $true`, such as
+`PSAvoidLongLines`, went silent -- and a repository file already holding one of those rejected keys
+produced a merged file PSScriptAnalyzer refused, so PSES analyzed nothing at all. Carrying `Rules` was
+not enough on its own: in a file that names no `IncludeRules`, the 15-rule `IncludeRules` the merge
+then wrote kept `PSAvoidLongLines` from running anyway, until owner ruling R03 (above). (Dropping
+`Severity` changed nothing observable: PSES passes its own `-Severity` beside the settings file, which
+overrides a settings file's `Severity` -- measured.) Every number a rule argument holds keeps its type
+and value in the merged file (review finding B1b-I01): an `[int]` as itself, a decimal as a `d`
+literal, and any other -- `[uint32]`, `[byte]`, `[single]`, `[long]`, `[double]` and the rest -- behind a
+cast of its text; such an argument used to be written `$null`, the merged file then read rejected, and
+`RequiredRules` went unenforced for that session. The merged file is read back and checked like any
+other settings file before PSES sees it.
 
 **Guarded against version drift.** The pinned 15-rule default is trusted only when the running
-PSES's own version tag matches what that list was verified against. On a mismatch, and only when no
-repo-local `IncludeRules` exists to merge onto instead, the daemon **declines to merge** rather than
+PSES's own version tag matches what that list was verified against. On a mismatch, and only when the
+merge would use that list (no settings file, or a rejected one with no accepted `IncludeRules` of its
+own), the daemon **declines to merge** rather than
 risk shipping a stale list as PSES's replacement default -- one warning, `RequiredRules` goes
 unenforced for that session, and every other diagnostic is unaffected. The "running" version is the
 `ModuleVersion` of the PowerShellEditorServices manifest the daemon actually launches, read from disk
@@ -371,13 +420,40 @@ SHA-256 of its exact text (`merged-settings-<16 hex>.psd1`), written to a tempor
 into place, then read back and re-hashed before the daemon uses it. PSES hands that path to
 PSScriptAnalyzer on every pass, so two daemons sharing a data root with different policies (a scan
 beside an interactive session, say) must never rewrite one file; identical settings share one file
-and different settings never do.
+and different settings never do. **Old files are removed** (dispatch 000306): after each merge the
+daemon deletes the merged files on its data root that no LIVE daemon's session record names and that
+were last written more than ten minutes ago, and the orphaned `orgpolicy-merged-settings.psd1` an
+earlier release left in the data root (unless a daemon from that earlier release is still running).
+It removes nothing else: never a file outside `orgpolicy-settings/` but that one, never a directory,
+and nothing at all when a session record cannot be read.
 
 **Exclusion is still the stronger verb.** A rule named in *both* `RequiredRules` and `ExcludeRules`
 is dropped from the merge, not forced on -- the same ordering `SeverityOverrides` above already uses
 against `ExcludeRules`. A rule `RequiredRules` names but only a **repo-local** settings file
 excludes is forced on regardless: the org is the outermost voice on the include side exactly as it
 already is on the exclude side.
+
+**A required rule is switched on, too** (owner ruling R01, review finding B1b-R01). A repository's
+`Rules` can switch a *configurable* rule off with `Enable = $false` however `IncludeRules` names it, and
+a configurable rule that is off by default does not run from `IncludeRules` alone. So the merged file
+gives every configurable rule `RequiredRules` names `Enable = $true` -- overriding a repository's
+`Enable = $false`, and carrying its other arguments for that rule -- and so a required configurable
+rule that is off by default (`PSAvoidLongLines` and sixteen others) runs as well. A custom rule the
+repository configures with an `Enable` key is switched on the same way. PSScriptAnalyzer 1.25.0 has 21
+configurable rules (measured; the list is pinned and re-measured by a test); `Enable` means nothing to
+any other rule. One limit, measured: a configurable rule that cannot run without settings the
+repository does not give it -- `PSUseCompatibleCommands` and `PSUseCompatibleTypes` need
+`TargetProfiles` -- is switched on and finds nothing (PSScriptAnalyzer reports "TargetProfiles cannot
+be empty" and analyzes the rest).
+
+**And beside a repository's custom rules** (owner ruling K02, review finding B1b-K02). A settings file
+with a `CustomRulePath` and no `IncludeDefaultRules = $true` makes PSScriptAnalyzer load *only* the
+custom rules, so no built-in rule `IncludeRules` names runs -- measured, a merged file of that shape
+analyzed nothing at all. When the merge carries a repository's `CustomRulePath` and a required rule is a
+built-in one, the merged file sets `IncludeDefaultRules = $true` (over the repository's `$false`, if it
+wrote one). When the repository's file names no `IncludeRules` (above), that runs every enabled
+built-in rule beside the custom ones, not only the required one -- more than the repository's file
+runs alone, never less (measured).
 
 **The boundary, stated plainly.** Exactly like `SeverityOverrides` above: a required rule's finding
 still passes through your local `severityThreshold` once it fires. At the shipped default (`Hint`)
@@ -443,7 +519,7 @@ parse and single warning -- and keeps apart:
 |---|---|
 | requested | the path, where it came from (`cli`, `knob`, `daemon`), the SHA-256 of the file as read, the `.sha256` sidecar verdict |
 | effective | the policy that actually governs analysis, in a canonical form, and its **policy identity** (`effectiveSha256`) |
-| applied | what each party recorded doing with it: the daemon's `RequiredRules` version guard, its merged-settings write (re-read and re-hashed), the settings file it handed PSES; the hook's adjudication of each file's findings |
+| applied | what each party recorded doing with it: the daemon's `RequiredRules` version guard, its merged-settings write (re-read and re-hashed), the settings file it handed PSES and -- since dispatch 000306 -- its verdict on whether PSScriptAnalyzer accepts the settings files the analysis rests on; the hook's adjudication of each file's findings |
 
 **The canonical hashing rules.** The identity is the SHA-256 (lower-case hex) of this UTF-8 text, LF
 line ends including the last: a first line `powershell-lsp/effective-policy 1`, then one line per
@@ -468,9 +544,10 @@ with no exclusions, overrides or prohibitions asks nothing of the hook; one with
 no suppression pass. Those are recorded as `not-required` and are never enforcement failures. Only an
 obligation that was required and not met fails a managed scan.
 
-**Managed scans.** `lsp-scan.ps1 -PolicyMode closed` -- or `POWERSHELL_LSP_POLICY_MODE=closed` when the
-parameter is absent; an explicit `-PolicyMode open` wins over the environment -- certifies a scan
-only when a usable declared policy AND each party's evidence that it was applied are present. See
+**Managed scans.** `lsp-scan.ps1 -PolicyMode closed`, given explicitly, certifies a scan only when a
+usable declared policy AND each party's evidence that it was applied are present. Nothing else makes
+a scan managed: `POWERSHELL_LSP_POLICY_MODE` keeps its interactive meaning and never selects
+certification (owner ruling, dispatch 000306), so `/powershell-lsp:scan` is always unmanaged. See
 [repository scanning](repository-scanning.md#policy-the-full-main-pass-and-managed-scans) for every
 refusal. An unmanaged scan (the default) certifies and refuses nothing; with `-OrgPolicyPath` it reports
 the policy identity, and an unusable policy is still a fail-open warning there.
@@ -1094,10 +1171,14 @@ fails the edit closed -- a missing file, an unreadable or unparseable one, a rel
 gate) are members of that set, not its boundary. (Earlier wording here named only those two; the code
 never narrowed to them.)
 
-**A scan is different: `closed` with no policy refuses there** (owner ruling O03, dispatch 000305).
-`lsp-scan.ps1` reads this variable as its policy mode when `-PolicyMode` is not given, and a managed
-scan with no declared `-OrgPolicyPath` is reported NOT CERTIFIED (exit `4`) -- certification needs a
-declared policy and evidence it was applied. The interactive unset-policy no-trigger above is unchanged.
+**This variable never makes a scan managed** (owner ruling Q03, dispatch 000306). Only an explicit
+`lsp-scan.ps1 -PolicyMode closed` asks for certification. B1 (dispatch 000305, never released) first
+read this variable as a scan's mode when `-PolicyMode` was absent, so on a host that set it for the
+interactive fail-closed above every scan -- `/powershell-lsp:scan` included -- ran managed and, with no
+`-OrgPolicyPath`, read NOT CERTIFIED. What the variable still does in a scan is what it does on every
+edit, because a scan's per-file hook children inherit it: a configured policy that does not validate
+fails that file's analysis closed, and the scan reports the file not analyzed (exit `4`, reason
+`policy-fail-closed`). A gate that wants a certified result says so on its own command line.
 
 **No new diagnostics status token.** `closed` reuses the existing `unavailable` token
 ([CONTRACT.md](../CONTRACT.md) Tier 1.2, frozen) with new wording for this specific cause -- the
@@ -1112,9 +1193,11 @@ PARSES and passes its integrity gate, nothing more. Since dispatch 000305 two mo
 actually enforced: `effectiveSha256` (the policy identity as parsed) and `enforcement`, read from the
 running daemon's own record -- `observed` with the identity the daemon applied, whether it
 `matchesParsed`, and its `RequiredRules` state (`activated`, `not-required`, `activation-unsupported`,
-`merge-write-failed`, ...), or `not-observed` with the reason (`no-daemon`, `several-daemons`, or
-`pending` -- a daemon that has not analyzed a PowerShell file yet and so has applied nothing; not a
-mismatch).
+`merge-write-failed`, `settings-rejected`, ...), or `not-observed` with the reason (`no-daemon`,
+`several-daemons`, `pending` -- a daemon that has not analyzed a PowerShell file yet, or whose PSES was
+just re-spawned, and so has applied nothing yet; not a mismatch -- or `settings-unresolved`: resolving
+the session's settings threw, so the daemon applied nothing and will not until PSES is re-spawned or
+the session restarts; dispatch 000306).
 
 ---
 

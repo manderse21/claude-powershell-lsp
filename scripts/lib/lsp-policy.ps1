@@ -29,9 +29,12 @@
 # name the identity of the very object it applies, and so can the daemon.
 #
 # THE MANAGED SCAN (owner ruling O03, 2026-10-12: managed mode; refuse in managed only; full main
-# pass). `lsp-scan.ps1 -PolicyMode closed` (explicit CLI, then POWERSHELL_LSP_POLICY_MODE, then
-# open) certifies a scan only when a usable DECLARED policy (-OrgPolicyPath) AND proof that each
+# pass). `lsp-scan.ps1 -PolicyMode closed`, given EXPLICITLY (owner ruling Q03, 2026-10-14, dispatch
+# 000306: POWERSHELL_LSP_POLICY_MODE keeps its interactive fail-closed meaning and never makes a scan
+# managed) certifies a scan only when a usable DECLARED policy (-OrgPolicyPath) AND proof that each
 # party applied it are present; Test-ScanPolicyCertification is that decision, pure over evidence.
+# Since dispatch 000306 that proof includes the daemon's verdict that PSScriptAnalyzer accepts the
+# settings files the analysis rests on (Read-PssaSettingsFile, lsp-common.ps1).
 # Not-required is not failed: a policy with no RequiredRules needs no merged settings file, and
 # that is never an enforcement failure. Unmanaged (open) scans keep every 1.x behavior, including
 # the documented severity-threshold boundary; they only gain the full main pass O03 approved.
@@ -44,8 +47,9 @@
 #
 # Load-silent: function definitions only (tests/PowerShellLsp.LibPurity.Tests.ps1). Uses
 # Import-OrgPolicy, Test-OrgPolicyIntegrity, New-EmptyOrgPolicy, Resolve-SeverityName,
-# Get-Sha256HexFromBytes, Get-DiagnosticRuleCode, Get-PolicyModeInfo and Get-OrgPolicyReportInfo
-# from scripts/lib/lsp-common.ps1 -- dot-source that library first. ASCII-only; StrictMode-safe.
+# Get-Sha256HexFromBytes, Get-DiagnosticRuleCode, Get-PolicyModeInfo, Get-OrgPolicyReportInfo,
+# Get-PssaDefaultRulesVerifiedForPsesTag and Format-PssaSettingsText from scripts/lib/lsp-common.ps1
+# -- dot-source that library first. ASCII-only; StrictMode-safe.
 #
 # Author: Mike Andersen / powershell-lsp plugin.
 
@@ -112,6 +116,7 @@ function Get-PolicyReasonTable {
     $t['policy-activation-not-delivered'] = [ordered]@{ Stage = 'application'; Meaning = 'the merged settings were not handed to PSES, or the settings file changed after they were' }
     $t['policy-disagreement'] = [ordered]@{ Stage = 'application'; Meaning = 'a party applied a policy whose identity differs from the declared one' }
     $t['policy-evidence-missing'] = [ordered]@{ Stage = 'application'; Meaning = 'no application evidence for this file, so whether the policy was applied is unprovable' }
+    $t['policy-settings-rejected'] = [ordered]@{ Stage = 'application'; Meaning = 'PSScriptAnalyzer would reject or could not read a settings file this analysis rests on (the repository''s, or the merged one), so the analysis did not run on the settings as declared' }
     $t['policy-suppression-pass-failed'] = [ordered]@{ Stage = 'application'; Meaning = 'the ProhibitedSuppressions pass could not run' }
     # certification -- the managed scan's other preconditions (until A3 binds the declared environment)
     $t['config-ambient'] = [ordered]@{ Stage = 'certification'; Meaning = 'an ambient plugin option that changes analysis reached the scan' }
@@ -126,8 +131,29 @@ function Get-PolicyRequiredRuleStates {
     # The states the daemon's RequiredRules record can take. Only 'activated' and 'not-required' are
     # enforcement successes, and they mean different things: activated = merged, verified, handed to
     # PSES; not-required = the effective policy names no required rule, so there was nothing to do.
+    # Two since dispatch 000306 (B1b):
+    #   settings-rejected    the merged settings file was written, but PSScriptAnalyzer would reject it
+    #                        (Read-PssaSettingsFile), so it was not handed to PSES (review finding B1-K04);
+    #   settings-unresolved  TERMINAL: resolving the session's settings threw, so nothing -- no settings
+    #                        file, no required rule -- was handed to this PSES child. Unlike 'pending'
+    #                        (not yet), it does not change until the daemon re-spawns PSES or the session
+    #                        restarts (review findings B1-K05, B1-OOB-I01).
     return @('not-configured', 'pending', 'policy-unusable', 'not-required', 'activated',
-        'activation-unsupported', 'merge-write-failed', 'not-delivered')
+        'activation-unsupported', 'merge-write-failed', 'not-delivered', 'settings-rejected', 'settings-unresolved')
+}
+
+function Get-PolicySettingsValidationStates {
+    # What the daemon's record says about the settings files its analysis rests on (dispatch 000306,
+    # B1b, review finding B1-K04) -- settings.validation, checked BEFORE PSES is handed anything:
+    #   pending     not resolved yet (the record a daemon starts with, and returns to on a PSES re-spawn);
+    #   none        no settings file was resolved: PSES runs its own default rules;
+    #   valid       PSScriptAnalyzer accepts every settings file in play -- the repository's (or the
+    #               override or the shipped base ruleset) and, when RequiredRules merged, the merged one;
+    #   rejected    one of them holds a key or a value PSScriptAnalyzer refuses;
+    #   unparsable  one of them could not be read as a settings table at all;
+    #   unresolved  resolving the session's settings threw (with RequiredRules 'settings-unresolved').
+    # Only 'valid' and 'none' let a managed scan certify.
+    return @('pending', 'none', 'valid', 'rejected', 'unparsable', 'unresolved')
 }
 
 # --- the effective policy and its identity ------------------------------------
@@ -401,9 +427,12 @@ function New-PolicyApplicationEvidence {
     #                  wrote and verified (path, SHA-256 as re-read);
     #   settings       the settings file PSES was told to use (path; source = merged | resolved |
     #                  none; SHA-256 as read when this record was made) and whether the push to PSES
-    #                  was sent (delivered).
+    #                  was sent (delivered); and, since dispatch 000306, validation -- what the daemon
+    #                  found when it checked the settings files in play against what PSScriptAnalyzer
+    #                  accepts, before PSES saw any (Get-PolicySettingsValidationStates) -- with
+    #                  validationDetail, '' or one ASCII line naming which file and its first problem.
     # Every value is passed in; nothing here reads a file, so the record says only what the daemon
-    # observed.
+    # observed. An omitted validation reads 'pending' -- not checked -- never 'valid' or 'none'.
     param(
         $Resolution = $null,
         [string]$Path = '',
@@ -417,9 +446,12 @@ function New-PolicyApplicationEvidence {
         [string]$SettingsPath = '',
         [string]$SettingsSource = 'none',
         [string]$SettingsSha256 = '',
-        [bool]$Delivered = $false
+        [bool]$Delivered = $false,
+        [string]$SettingsValidation = 'pending',
+        [string]$SettingsValidationDetail = ''
     )
     if ((Get-PolicyRequiredRuleStates) -notcontains $RequiredState) { $RequiredState = 'pending' }
+    if ((Get-PolicySettingsValidationStates) -cnotcontains $SettingsValidation) { $SettingsValidation = 'pending' }
     return [ordered]@{
         resolution    = (New-PolicyResolutionSummary -Resolution $Resolution -Path $Path)
         requiredRules = [ordered]@{
@@ -429,23 +461,40 @@ function New-PolicyApplicationEvidence {
             mergedSettingsPath   = [string]$MergedPath
             mergedSettingsSha256 = [string]$MergedSha256
         }
-        settings      = [ordered]@{ path = [string]$SettingsPath; source = [string]$SettingsSource; sha256 = [string]$SettingsSha256; delivered = $Delivered }
+        settings      = [ordered]@{ path = [string]$SettingsPath; source = [string]$SettingsSource; sha256 = [string]$SettingsSha256; delivered = $Delivered
+            validation = $SettingsValidation; validationDetail = (Format-PssaSettingsText $SettingsValidationDetail 200)
+        }
     }
+}
+
+function New-PolicyStartupEvidence {
+    # The record a daemon holds before it has resolved anything: from startup, and again after every
+    # supervised PSES re-spawn (Reset-PsesState, dispatch 000306, review finding B1-K05) -- 'pending', or
+    # 'not-configured' for a daemon launched with no policy, carrying no resolution and settings
+    # validation 'pending'. ONE builder for both, so a re-spawned PSES child can never inherit the
+    # previous child's agreeing evidence: until Initialize-PssaSettings runs again for the new child,
+    # every reader sees not-yet-applied (policy-evidence-missing to a managed scan, pending to doctor).
+    param([string]$Path = '')
+    return (New-PolicyApplicationEvidence -Path $Path `
+            -RequiredState $(if ([string]::IsNullOrWhiteSpace($Path)) { 'not-configured' } else { 'pending' }) `
+            -GuardVerifiedFor (Get-PssaDefaultRulesVerifiedForPsesTag) -SettingsValidation 'pending')
 }
 
 function Copy-PolicyApplicationEvidence {
     # A copy of a daemon record with the settings file's SHA-256 replaced by $SettingsSha256 -- what a
     # scan-mode answer carries, so the identity it reports is of the file PSScriptAnalyzer reads at
     # THAT analysis (PSES hands it the settings path on every pass), not of the file as it was when
-    # the session's settings were first resolved.
+    # the session's settings were first resolved. The settings validation verdict rides unchanged.
     param($Evidence, [string]$SettingsSha256 = '')
     if ($null -eq $Evidence) { return $null }
     $st = Get-PolicyField -Object $Evidence -Name 'settings'
     $settings = [ordered]@{
-        path      = [string](Get-PolicyField -Object $st -Name 'path')
-        source    = [string](Get-PolicyField -Object $st -Name 'source')
-        sha256    = [string]$SettingsSha256
-        delivered = [bool](Get-PolicyField -Object $st -Name 'delivered')
+        path             = [string](Get-PolicyField -Object $st -Name 'path')
+        source           = [string](Get-PolicyField -Object $st -Name 'source')
+        sha256           = [string]$SettingsSha256
+        delivered        = [bool](Get-PolicyField -Object $st -Name 'delivered')
+        validation       = [string](Get-PolicyField -Object $st -Name 'validation')
+        validationDetail = [string](Get-PolicyField -Object $st -Name 'validationDetail')
     }
     return [ordered]@{
         resolution    = (Get-PolicyField -Object $Evidence -Name 'resolution')
@@ -504,23 +553,27 @@ function Measure-PolicyOverrideHits {
 # --- the managed scan ------------------------------------------------------------
 
 function Resolve-ScanPolicyMode {
-    # The scan's policy mode, by the precedence the dispatch defines: an explicit -PolicyMode, then
-    # the existing POWERSHELL_LSP_POLICY_MODE environment value (Get-PolicyModeInfo, unchanged), then
-    # open. closed is the MANAGED mode. Returns resolved (open | closed), source (cli | env |
-    # default) and the raw environment value. The CLI parameter is validated by its own ValidateSet;
-    # an unrecognized value reaching here falls back the way Get-PolicyModeInfo falls back -- to open.
+    # The scan's policy mode: an EXPLICIT -PolicyMode, else open. closed is the MANAGED mode. Returns
+    # resolved (open | closed), source (cli | default) and the raw POWERSHELL_LSP_POLICY_MODE value,
+    # reported for the record only. The CLI parameter is validated by its own ValidateSet; an
+    # unrecognized value reaching here falls back to open.
+    #
+    # EXPLICIT ONLY (owner ruling Q03, 2026-10-14; dispatch 000306, review finding B1-Q03). B1 first
+    # took the mode from POWERSHELL_LSP_POLICY_MODE when -PolicyMode was absent, so a host that set it
+    # for interactive fail-closed enforcement -- the variable docs/fleet-deployment.md points fleets at
+    # -- ran every scan managed, /powershell-lsp:scan included, and every such scan without
+    # -OrgPolicyPath read NOT CERTIFIED. The variable keeps its interactive meaning (the hook fails an
+    # edit closed over a configured policy that does not validate) and never selects a managed scan; a
+    # gate that wants a certified result says so on its own command line.
     param([string]$Explicit = '')
-    $envInfo = Get-PolicyModeInfo
+    $raw = [string](Get-PolicyModeInfo).raw
     if (-not [string]::IsNullOrWhiteSpace($Explicit)) {
         $n = $Explicit.Trim().ToLowerInvariant()
         if ($n -eq 'open' -or $n -eq 'closed') {
-            return [ordered]@{ resolved = $n; source = 'cli'; raw = [string]$envInfo.raw }
+            return [ordered]@{ resolved = $n; source = 'cli'; raw = $raw }
         }
     }
-    if ([bool]$envInfo.recognized) {
-        return [ordered]@{ resolved = [string]$envInfo.resolved; source = 'env'; raw = [string]$envInfo.raw }
-    }
-    return [ordered]@{ resolved = 'open'; source = 'default'; raw = [string]$envInfo.raw }
+    return [ordered]@{ resolved = 'open'; source = 'default'; raw = $raw }
 }
 
 function Get-ScanAmbientAnalysisOptions {
@@ -586,14 +639,18 @@ function Test-ScanPolicyCertification {
     #   per file    the file's receipt is complete (analysis-incomplete); it carries application
     #               evidence (policy-evidence-missing -- also when the daemon's record is still the
     #               'pending' one it starts with, which has resolved nothing yet and so cannot
-    #               disagree); the client adjudicated, and the daemon
+    #               disagree, or the terminal 'settings-unresolved' one a daemon whose settings
+    #               resolution threw now records, or carries no settings verdict); the client
+    #               adjudicated, and the daemon
     #               applied, the DECLARED identity (policy-disagreement); when the policy requires a
     #               merged settings file, the daemon activated it -- guard passed, written and
     #               verified, delivered, and the file PSES reads still hashes to what was written
     #               (policy-activation-unsupported / policy-merge-write-failed /
-    #               policy-activation-not-delivered); the daemon's observed analysis configuration is
-    #               the declared one (config-observed-mismatch); the engine versions were observed
-    #               (engine-unknown).
+    #               policy-activation-not-delivered); PSScriptAnalyzer accepts every settings file the
+    #               analysis rests on, the repository's and the merged one, by the daemon's own check
+    #               before PSES saw them (policy-settings-rejected, dispatch 000306); the daemon's
+    #               observed analysis configuration is the declared one (config-observed-mismatch); the
+    #               engine versions were observed (engine-unknown).
     # When the policy needs no merged settings, the daemon reporting 'not-required' is a pass: an
     # empty RequiredRules set is not an enforcement failure.
     #
@@ -651,7 +708,12 @@ function Test-ScanPolicyCertification {
             if ($pass -eq 'pssa') {
                 $rr = Get-PolicyField -Object $daemon -Name 'requiredRules'
                 $state = [string](Get-PolicyField -Object $rr -Name 'state')
-                if ($null -eq $daemon -or $state -eq 'pending') {
+                if ($null -eq $daemon -or $state -eq 'pending' -or $state -eq 'settings-unresolved') {
+                    # pending: nothing resolved YET. settings-unresolved (dispatch 000306): resolving the
+                    # session's settings threw, so NOTHING was handed to this PSES child -- terminal, and
+                    # what a re-spawned child whose resolution throws now records instead of keeping the
+                    # previous child's agreeing evidence (review findings B1-K05, B1-OOB-I01). Neither
+                    # record carries a resolution, so neither can disagree: both are missing evidence.
                     $r.Add('policy-evidence-missing')
                 } else {
                     $dr = Get-PolicyField -Object $daemon -Name 'resolution'
@@ -672,10 +734,24 @@ function Test-ScanPolicyCertification {
                             'activation-unsupported' { $r.Add('policy-activation-unsupported') }
                             'merge-write-failed' { $r.Add('policy-merge-write-failed') }
                             'not-delivered' { $r.Add('policy-activation-not-delivered') }
+                            'settings-rejected' { $r.Add('policy-settings-rejected') }
                             default { $r.Add('policy-evidence-missing') }
                         }
                     } elseif ($state -ne 'not-required') {
                         $r.Add('policy-disagreement')
+                    }
+                    # The settings files this analysis rests on (dispatch 000306, review finding B1-K04):
+                    # a settings file PSScriptAnalyzer refuses makes PSES analyze nothing and still publish
+                    # a settled, empty result, and one whose rejected entries a merge dropped is not the
+                    # configuration the repository declared -- so only the daemon's own verdict that every
+                    # settings file in play is accepted ('valid'), or that there was none ('none'),
+                    # certifies. Anything else -- including a record that carries no verdict -- does not.
+                    switch -CaseSensitive ([string](Get-PolicyField -Object (Get-PolicyField -Object $daemon -Name 'settings') -Name 'validation')) {
+                        'valid' { }
+                        'none' { }
+                        'rejected' { $r.Add('policy-settings-rejected') }
+                        'unparsable' { $r.Add('policy-settings-rejected') }
+                        default { $r.Add('policy-evidence-missing') }
                     }
                 }
             }
@@ -774,6 +850,26 @@ function New-ScanPolicyReport {
     }
 }
 
+function Get-ScanSettingsRejection {
+    # What an UNMANAGED scan warns about (dispatch 000306, review finding B1-K04: a rejected settings
+    # file "refuses in managed mode; an unmanaged session warns and falls back"): the first daemon record
+    # among $Files whose settings verdict is rejected or unparsable, as one ASCII line -- the verdict and
+    # the daemon's own detail -- or '' when there is none. Pure over the receipts the scan already holds;
+    # a managed scan reports the same records as policy-settings-rejected instead.
+    param([object[]]$Files = @())
+    foreach ($f in @($Files)) {
+        if ($null -eq $f) { continue }
+        $pol = Get-PolicyField -Object (Get-PolicyField -Object $f -Name 'Receipt') -Name 'policy'
+        $st = Get-PolicyField -Object (Get-PolicyField -Object $pol -Name 'daemon') -Name 'settings'
+        $v = [string](Get-PolicyField -Object $st -Name 'validation')
+        if ($v -ceq 'rejected' -or $v -ceq 'unparsable') {
+            $d = [string](Get-PolicyField -Object $st -Name 'validationDetail')
+            return (Format-PssaSettingsText ($v + $(if ($d -ne '') { ' -- ' + $d } else { '' })) 240)
+        }
+    }
+    return ''
+}
+
 # --- doctor ----------------------------------------------------------------------
 
 function Get-OrgPolicyEnforcementReportInfo {
@@ -786,15 +882,22 @@ function Get-OrgPolicyEnforcementReportInfo {
     #                    '' unless it is usable -- equal effective policies give equal values;
     #   enforcement      what a RUNNING daemon reports it applied, from the record it writes itself:
     #                    state = not-configured | not-observed | observed | unknown; a reason when not
-    #                    observed (no-daemon | several-daemons | data-root-unknown | pending) or unknown
-    #                    (no-policy-record); and when observed, the daemon's own identity, whether it
-    #                    matches the parsed one, its RequiredRules state and the SHA-256 of the
-    #                    settings file it handed PSES.
+    #                    observed (no-daemon | several-daemons | data-root-unknown | pending |
+    #                    settings-unresolved) or unknown (no-policy-record); and when observed, the
+    #                    daemon's own identity, whether it matches the parsed one, its RequiredRules
+    #                    state and the SHA-256 of the settings file it handed PSES.
     # PENDING IS NOT YET APPLIED (review finding B1-I02). Every daemon writes its record from startup,
     # and it stays 'pending' -- with no resolution -- until the daemon analyzes its first PowerShell
-    # file (pses-daemon.ps1). Such a daemon has applied nothing yet, so it reads not-observed with
-    # reason pending and matchesParsed $null, never as a mismatch; the managed verdict reads the same
-    # record as missing evidence (Test-ScanPolicyCertification), not as a disagreement.
+    # file (pses-daemon.ps1), and returns to it when PSES is re-spawned. Such a daemon has applied
+    # nothing yet, so it reads not-observed with reason pending and matchesParsed $null, never as a
+    # mismatch; the managed verdict reads the same record as missing evidence
+    # (Test-ScanPolicyCertification), not as a disagreement.
+    # SETTINGS-UNRESOLVED IS NEVER APPLIED (dispatch 000306, review finding B1-OOB-I01). A daemon whose
+    # settings resolution threw used to keep that 'pending' record for its whole life, so doctor said
+    # "not yet" before and after every analysis. It now records the TERMINAL 'settings-unresolved': it
+    # reads not-observed with reason settings-unresolved -- nothing was applied, and nothing will be
+    # until PSES is re-spawned or the session restarts -- again with matchesParsed $null, because the
+    # record carries no resolution to compare.
     # $DaemonObservation is Get-DoctorDaemonObservation's result ($null = not resolved).
     param($DaemonObservation = $null)
     $info = Get-OrgPolicyReportInfo
@@ -823,6 +926,8 @@ function Get-OrgPolicyEnforcementReportInfo {
                 $rrState = [string](Get-PolicyField -Object $rr -Name 'state')
                 if ($rrState -eq 'pending') {
                     $enf.reason = 'pending'   # the startup record: nothing applied yet (state stays not-observed)
+                } elseif ($rrState -eq 'settings-unresolved') {
+                    $enf.reason = 'settings-unresolved'   # terminal: settings resolution threw, nothing was applied
                 } else {
                     $dSha = [string](Get-PolicyField -Object (Get-PolicyField -Object $dp -Name 'resolution') -Name 'effectiveSha256')
                     $enf.state = 'observed'

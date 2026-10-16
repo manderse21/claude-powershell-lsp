@@ -105,11 +105,12 @@ identity** `effective.sha256`, member counts, obligations and the verdict) and i
 `Policy:` lines; a scan without it, unmanaged, emits exactly what it always did. The canonical
 identity's hashing rules are in [configuration](configuration.md#policy-identity-and-application-evidence-dispatch-000305).
 
-**`-PolicyMode closed` is the managed mode.** Precedence: an explicit `-PolicyMode`, then
-`POWERSHELL_LSP_POLICY_MODE`, then `open`. A managed scan is **CERTIFIED** only when every one of these
-holds; each failure is named by its code on stderr, in the text report, and as a SARIF
-`toolExecutionNotifications` entry with `properties.reason`, and the scan exits `4` with
-`executionSuccessful=false`:
+**`-PolicyMode closed` is the managed mode, and only when given explicitly** (owner ruling Q03, dispatch
+000306). `POWERSHELL_LSP_POLICY_MODE` keeps its interactive fail-closed meaning and never makes a scan
+managed, so `/powershell-lsp:scan` -- which has no policy option -- is always unmanaged. A managed scan
+is **CERTIFIED** only when every one of these holds; each failure is named by its code on stderr, in
+the text report, and as a SARIF `toolExecutionNotifications` entry with `properties.reason`, and the
+scan exits `4` with `executionSuccessful=false`:
 
 | Code | The scan refuses because |
 |---|---|
@@ -118,11 +119,12 @@ holds; each failure is named by its code on stderr, in the text report, and as a
 | `config-ambient` | a `CLAUDE_PLUGIN_OPTION_*` that changes analysis (rule lists, threshold, cap, settings, ruleset, profile, host, ...) reached the scan from its environment |
 | `analysis-incomplete` | a file has no COMPLETE receipt |
 | `analysis-empty` | the target holds no PowerShell file, so nothing shows the policy was applied (an unmanaged scan of such a target still exits `0`) |
-| `policy-evidence-missing` | a file's receipt carries no application record from the hook or the daemon |
+| `policy-evidence-missing` | a file's receipt carries no application record from the hook or the daemon -- or the daemon's record says it has applied nothing: still `pending`, or `settings-unresolved` (its settings resolution threw, so nothing was handed to PSES), or it carries no settings verdict |
 | `policy-disagreement` | the hook or the daemon applied a policy whose identity differs from the declared one |
 | `policy-activation-unsupported` | `RequiredRules` could not be activated: the running PSES version is not one the pinned default list was verified for |
 | `policy-merge-write-failed` | the merged settings file could not be written and read back intact |
 | `policy-activation-not-delivered` | the merged settings were not pushed to PSES, or the settings file changed after they were |
+| `policy-settings-rejected` | PSScriptAnalyzer would reject, or could not read, a settings file the analysis rests on -- the repository's, or the merged one ([below](#settings-files-the-analysis-rests-on-dispatch-000306)) |
 | `policy-suppression-pass-failed` | the `ProhibitedSuppressions` re-surfacing pass could not run |
 | `config-observed-mismatch` | the daemon reports an analysis configuration other than the scan's declared one |
 | `engine-unknown` | the engine versions could not be observed |
@@ -132,22 +134,36 @@ prohibitions needs no suppression pass; the daemon reports `not-required` and th
 
 **Unmanaged stays unmanaged.** Without `-PolicyMode closed` nothing is certified or refused: an unusable
 `-OrgPolicyPath` is a warning on stderr and the findings are reported without it (fail-open, as
-before), and a failed merged-settings write simply leaves the required rule inactive. The local
+before), a failed merged-settings write simply leaves the required rule inactive, and a settings file
+PSScriptAnalyzer would reject is a warning on stderr while the findings come from PSES's default rules
+instead ([below](#settings-files-the-analysis-rests-on-dispatch-000306)). The local
 severity-threshold boundary ([configuration](configuration.md#severityoverrides----how-an-organization-states-a-requirement))
 applies to developer assistance only; a managed scan declares `Hint` and refuses anything else.
 
 **What certification does and does not prove.** It proves that, at each file's analysis, the hook and
 the daemon both applied the policy whose identity the scan resolved, that a required rule's merged
-settings were written, verified and handed to PSES, and that the settings file PSES reads still hashed
-to what was written. It does NOT prove that PSScriptAnalyzer accepted that settings file: a settings
-file with a key PSScriptAnalyzer rejects (its valid keys are `CustomRulePath`, `ExcludeRules`,
-`IncludeRules`, `IncludeDefaultRules`, `RecurseCustomRulePath`, `Rules`, `Severity`) makes PSES analyze
-nothing while still publishing a settled, empty result -- measured, pre-existing, and true of an
-unmanaged scan over such a repository too. It does not make the plugin tamper-proof: a process running as the same user can
-edit the policy, its sidecar, the plugin and its evidence. Run release gates on a protected runner
-whose policy someone other than the change's author controls. Until the declared child configuration
-lands (leg A3), a managed scan run with ambient plugin options set is refused rather than certified
-around them.
+settings were written, verified and handed to PSES (running every required rule -- named in
+`IncludeRules` when the merged file has one, taken out of a repository's `ExcludeRules`, and switched
+on when it is configurable, so a repository's `Enable = $false` cannot keep one off: review finding
+B1b-R01 -- while every rule the repository's own settings file runs still runs: a file PSScriptAnalyzer
+accepts that names no `IncludeRules` gets none in the merged file either, where the merge used to narrow
+it to PSES's 15 defaults plus the required rules, and certify: owner ruling R03, review finding B1b-R03),
+that the settings file PSES reads still hashed to
+what was written, and -- since dispatch 000306 -- that the daemon found every settings file the analysis
+rests on, the repository's and the merged one, to be one PSScriptAnalyzer accepts, by the checks
+[below](#settings-files-the-analysis-rests-on-dispatch-000306). Beside a repository's `CustomRulePath`
+the merged settings also set `IncludeDefaultRules = $true` whenever a required rule is a built-in one
+(review finding B1b-K02): without it PSScriptAnalyzer loads only the custom rules, and a required
+built-in rule never ran while the scan certified; in a file that names no `IncludeRules` it runs every
+enabled built-in rule beside the custom ones, more than that file runs alone. It does NOT prove that a rule
+source a `CustomRulePath` reaches is one PSScriptAnalyzer can load and run, or that it holds a rule (the
+one boundary that check leaves, described there and left to leg A3's runtime signal), nor that a required rule that needs settings the repository does
+not give it could run (`PSUseCompatibleCommands` and `PSUseCompatibleTypes` need `TargetProfiles`, and
+without them find nothing -- [configuration](configuration.md#requiredrules----forcing-a-rule-onto-the-analysis-surface-dispatch-000294)), and it does
+not make the plugin tamper-proof: a process running as the same user can edit the policy, its sidecar,
+the plugin and its evidence. Run release gates on a protected runner whose policy someone other than the
+change's author controls. Until the declared child configuration lands (leg A3), a managed scan run with
+ambient plugin options set is refused rather than certified around them.
 
 **A scan never formats.** Every scan child gets `formatOnEdit=off` under exactly one spelling --
 every other spelling the option resolver accepts is removed from its environment first -- so a
@@ -159,3 +175,95 @@ workflow from the CI legs, so it can never turn a merge gate red. Copy it as a s
 two details are deliberate: it scans `scripts/` rather than the repo root (because
 `tests/corpus/samples/` is deliberately-bad code), and it pins `upload-sarif` by **commit SHA**,
 not by tag.
+
+## Settings files the analysis rests on (dispatch 000306)
+
+A `PSScriptAnalyzerSettings.psd1` that PSScriptAnalyzer rejects does not make PSES fail visibly: PSES
+analyzes **nothing** and still publishes a settled, empty result, so a scan over such a repository
+used to read complete and clean -- unmanaged and managed alike. So before PSES is handed any settings
+file, the daemon reads it the way PSScriptAnalyzer does, as data (parsed, never run:
+`Read-PssaSettingsFile`), and checks what PSScriptAnalyzer 1.25.0 was **measured** to require, on
+Windows PowerShell 5.1 and PowerShell 7 alike:
+
+- the file holds a settings table, and every value in it is data: a constant, `$true`/`$false`/`$null`,
+  an array, a table, a cast, or one of those in parentheses or behind a sign (`('A', 'B')`, `($true)`,
+  `-(5)`) -- no command, no variable but `$true`/`$false`/`$null`, no expandable string;
+- every key is one PSScriptAnalyzer accepts -- `CustomRulePath`, `ExcludeRules`, `IncludeRules`,
+  `IncludeDefaultRules`, `RecurseCustomRulePath`, `Rules`, `Severity`, in any case;
+- `Severity`, `IncludeRules`, `ExcludeRules` and `CustomRulePath` are a string or an array of strings;
+  every `Severity` entry names a PSScriptAnalyzer severity (`Hint` does not); `IncludeDefaultRules` and
+  `RecurseCustomRulePath` are booleans; `Rules` is a table of tables; no value anywhere in a table is
+  `$null`;
+- `CustomRulePath` is not empty, and every entry is a path that means the same thing from any directory
+  -- a full path (`C:\rules`, `\\server\share\rules`, `/opt/rules`), a `~` path, or either behind
+  `FileSystem::` -- that PowerShell's own path resolver, the call PSScriptAnalyzer makes for each entry,
+  resolves without error (a wildcard that matches is used; one that matches nothing is no error by
+  itself -- but see the next point). PSES
+  runs from the daemon's own working directory, not the repository's, so through the real daemon a
+  relative entry made PSES analyze nothing, `IncludeDefaultRules` or not; a drive-relative entry
+  (`C:rules`) or a root-relative one (`\rules`) depends on the current directory too and is refused the
+  same way;
+- unless `IncludeDefaultRules = $true`, the `CustomRulePath` entries together reach a rule source
+  PSScriptAnalyzer loads (review finding B1b-K01): a `.psm1`, `.psd1` or `.dll` file, a module directory
+  (one holding a module named for it, itself or in a version folder), or a directory holding
+  assemblies -- and, with `RecurseCustomRulePath = $true`, any such directory below it. A wildcard that
+  matches nothing, an empty directory, a `.txt` or `.ps1`, or a directory whose module is named
+  otherwise reaches none; PSScriptAnalyzer then finds no rules ("Cannot find ScriptAnalyzer rules in the
+  specified path") and PSES analyzes nothing. One entry that reaches nothing beside one that does is
+  fine, as it is to PSScriptAnalyzer.
+
+The verdict -- `valid`, `rejected`, `unparsable`, or `none` when no settings file was resolved -- is
+recorded in the daemon's application evidence (`policy.daemon.settings.validation`, with a one-line
+`validationDetail`), which every scan receipt carries. A file that fails is **not handed to PSES**: an
+unmanaged scan says so on stderr and its findings come from PSES's default rules; a managed scan is NOT
+CERTIFIED with `policy-settings-rejected`. **The settings file is validated when a PSES session starts**
+-- the daemon resolves and checks it once per PSES session, at that session's first analyzed file -- and
+**an edit to it during a session is validated at the next session** (owner ruling K08, review finding
+B1b-K08). Until then PSES re-reads the edited file on every pass, unchecked, and the session's evidence
+still carries the verdict it recorded when the session started; rechecking the file at analysis time is
+left to leg B2.
+
+When `RequiredRules` merges, the merged file carries exactly the repository file's **accepted** entries
+-- its `Rules` (each rule's `Enable` flag and arguments, every number keeping its type: `[uint32]`,
+`[byte]`, `[single]`, a decimal and the rest -- review finding B1b-I01) and `Severity` included -- and
+never a rejected one, and it is checked the same way before PSES sees it. Before this release the merge dropped `Rules`
+and `Severity` and carried `Severities`, `RuleArguments` and `FilePath`, which PSScriptAnalyzer rejects:
+a repository's configurable rules (`PSAvoidLongLines` switched on through `Rules`, say) went silent, and
+a repository file already holding one of those keys produced a merged file PSES analyzed nothing with.
+(`Severity` in a settings file has no observable effect under PSES, which passes its own `-Severity`
+beside it -- measured -- so carrying it changes nothing you can see; `Rules` is the one that matters.)
+And the merge narrows nothing the repository runs (owner ruling R03, review finding B1b-R03): when the
+repository's file is one PSScriptAnalyzer accepts and names no `IncludeRules`, the merged file names none
+either, so every rule that file runs -- those its `Rules` entries switch on and its `CustomRulePath`
+rules included -- still runs beside the required ones. Before, the merge wrote PSES's 15 defaults plus
+the required rules as `IncludeRules` there: carrying `Rules` did not make `PSAvoidLongLines` run unless
+the file also named it in its own `IncludeRules`, and a managed scan certified without the repository's
+other rules (measured through the real daemon, both hosts). With no settings file, or one that names its
+own `IncludeRules`, the merged file is byte-for-byte what it was. A
+managed scan over a repository file with a rejected key is refused even though the merged file, without
+that key, was valid and was used: the analysis did not run on the settings the repository declared.
+One entry of `Rules` is not the repository's to keep: every configurable rule `RequiredRules` names is
+written with `Enable = $true` (owner ruling R01, review finding B1b-R01) -- before, a repository's
+`Enable = $false` switched a required rule off while a managed scan certified, and a required rule that
+is off by default never ran ([configuration](configuration.md#requiredrules----forcing-a-rule-onto-the-analysis-surface-dispatch-000294)).
+
+**What the check cannot see.** It reads the settings file and lists the directories a `CustomRulePath`
+reaches, but loads nothing: **a rule source PSScriptAnalyzer cannot load or run, or that holds no rule**,
+passes the check (owner ruling K01b, review finding B1b-K01b). A module directory whose manifest names
+a nested root module is listed by PSScriptAnalyzer but cannot be loaded when it analyzes ("The module
+... could not be loaded"), and a rule that throws cannot run: PSScriptAnalyzer reports the error and
+runs the other rules, so a file that loads only its custom rules analyzes nothing, and a managed scan
+over it can certify an empty result (measured, both hosts). A module that exports no rule function, or
+a `.dll` that is no rule assembly, holds no rule: unless the file also sets `IncludeDefaultRules = $true`,
+PSScriptAnalyzer then refuses the settings ("Cannot find ScriptAnalyzer rules in the specified path") and
+PSES analyzes nothing. That boundary is left to a runtime signal (leg A3); its no-rule case is measured
+and kept visible by a test. Every other way a `CustomRulePath` reaches no rule is
+refused as above (since review finding B1b-K01; before it, `CustomRulePath = @('~/*.nomatch')` alone read
+valid and a managed scan certified an empty result).
+
+**Where the check is stricter than PSScriptAnalyzer.** A few forms PSScriptAnalyzer accepts are refused
+by design -- the safe direction: a managed scan refuses, an unmanaged one warns and uses PSES's default
+rules. A root-relative `CustomRulePath` entry (`\rules`, which follows PSES's current drive) or one on
+another PowerShell drive (`Temp:\` exists under PowerShell 7 only); and a value built with a
+sub-expression (`$('Warning')`) or with `-not`, `!` or `-bnot`. Each is measured and kept visible by a
+test.

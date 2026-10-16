@@ -30,6 +30,80 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **A settings file PSScriptAnalyzer would reject is no longer handed to PSES, and a
+`RequiredRules` merge now carries the repository's `Rules` and `Severity`** (dispatch 000306, leg B1b
+-- review findings B1-K04, B1-K05, B1-K07 and B1-OOB-I01). A `PSScriptAnalyzerSettings.psd1` that
+PSScriptAnalyzer rejects -- a key it does not accept, a value of the wrong shape, a relative (to a
+directory or a drive) or missing `CustomRulePath` entry, a `CustomRulePath` that reaches no rule module or
+assembly (a wildcard matching nothing, an empty directory; review finding B1b-K01) without
+`IncludeDefaultRules = $true`, a file that is not a settings table -- made
+PSES analyze NOTHING while it still
+published a settled, empty result: zero findings that read clean, in an edit and in a scan, unmanaged
+and managed alike (a managed scan CERTIFIED it). Now the daemon reads every settings file it would hand
+PSES the way PSScriptAnalyzer does -- as data, never run (`Read-PssaSettingsFile`) -- against rules
+MEASURED on the vendored PSScriptAnalyzer 1.25.0 under Windows PowerShell 5.1 and PowerShell 7 (the
+same verdicts on both, with and without PSES's `-Severity` argument; a `CustomRulePath` entry goes
+through PowerShell's own path resolver, as it does inside PSScriptAnalyzer, so `~`, `FileSystem::` and
+wildcard entries keep working; a value in parentheses or behind a sign -- `ExcludeRules = ('A', 'B')`,
+`($true)`, `-(5)` -- is data, as it is to PSScriptAnalyzer, review finding B1b-R02), and hands PSES none it
+rejects. The file is checked when a PSES session starts; an edit to it during a session is checked at the
+next session (owner ruling K08; until then PSES reads the edited file unchecked). When it rejects one,
+the session falls back to PSES's default rules and the daemon log says why, an unmanaged scan
+prints a stderr warning naming the problem, and a managed scan is NOT CERTIFIED with the new reason
+code `policy-settings-rejected`. The verdict rides the daemon's application evidence as
+`settings.validation` (`valid`, `none`, `rejected`, `unparsable`, `unresolved`, `pending`) with a
+one-line `validationDetail` -- two required fields of the (still unreleased) receipt schema version 2.
+**The merge carries exactly what PSScriptAnalyzer accepts:** it used to keep a fixed key list that
+dropped `Rules` and `Severity` -- so whenever `RequiredRules` merged, a configurable rule a repository
+switched on through `Rules` (`PSAvoidLongLines`, say) went silent -- and carried `Severities`,
+`RuleArguments` and `FilePath`, which PSScriptAnalyzer rejects, so a repository file holding one of them
+produced a merged file PSES analyzed nothing with. Now every accepted entry of the repository's file is
+carried (its `Rules` with each `Enable` flag and argument -- every number keeping its type and value,
+`[uint32]120`, `120d`, `[byte]`, `[single]`, `[double]` and the rest, where review finding B1b-I01
+found them written `$null` and the merged file then rejected -- and its
+`Severity` -- which, measured, has no observable effect under PSES because PSES passes its own
+`-Severity`), no rejected one is, a merge of `IncludeRules`/`ExcludeRules` alone renders the same text
+and file name as before, and the merged file is checked like any other before PSES sees it (the
+RequiredRules state `settings-rejected` when it fails). A managed scan over a repository file with a
+rejected key is refused even when the merged file that dropped the key was valid and used: the analysis
+did not run on the settings the repository declared. **A required rule is switched on** (owner ruling
+R01, review finding B1b-R01): carrying a repository's `Rules` also carried any `Enable = $false` in
+them, so a repository could switch off a configurable rule the organization requires
+(`PSUseSingularNouns`, say) while a managed scan certified; the merged file now gives every configurable
+rule `RequiredRules` names `Enable = $true`, still carrying the repository's other arguments for it, so a
+required configurable rule that is off by default (`PSAvoidLongLines` and sixteen more) runs too. **A
+required built-in rule runs beside custom rules** (owner ruling K02, review finding B1b-K02): a merged
+file carrying a repository's `CustomRulePath` without `IncludeDefaultRules = $true` made PSScriptAnalyzer
+load only the custom rules, so no required built-in rule ran while a managed scan certified (pre-existing
+since the merge landed); the merge now sets `IncludeDefaultRules = $true` whenever a required rule is
+built-in. **A repository file that names no `IncludeRules` keeps its rules** (owner ruling R03, review
+finding B1b-R03; pre-existing since the merge landed): PSScriptAnalyzer runs every enabled rule for such
+a file, but the merge wrote PSES's 15 defaults plus the required rules as its `IncludeRules`, so whenever
+`RequiredRules` named anything every other rule the repository ran -- `PSAvoidUsingWriteHost`, a
+`PSAvoidLongLines` it switched on through `Rules`, its `CustomRulePath` rules -- stopped running while a
+managed scan certified. When the repository's file is one PSScriptAnalyzer accepts and names no
+`IncludeRules`, the merged file now names none either, so those rules run beside the required ones (a
+required rule still leaves the file's `ExcludeRules` and is switched on, and beside a `CustomRulePath`
+every built-in rule now runs with the custom ones); with no settings file, or one naming its own
+`IncludeRules`, the merged file is byte-for-byte what it was. **A settings resolution that throws is recorded:**
+it used to return before the daemon's evidence was written, so the record stayed `pending` for the
+daemon's whole life (doctor said "not yet applied" forever); it now records the TERMINAL
+`settings-unresolved`, which `doctor -Json` reports as `enforcement.state` `not-observed`, reason
+`settings-unresolved`, and a managed scan refuses as `policy-evidence-missing`. **A PSES re-spawn
+forgets the dead child's evidence:** the daemon's supervised re-spawn kept the previous child's
+application record and settings path, so if the new child's settings resolution threw, a managed scan
+certified files on which `RequiredRules` was not active; the record now returns to `pending` on every
+re-spawn. **Old merged settings files are removed:** after each merge the daemon deletes the merged
+files on its data root that no live daemon's session record names and that are more than ten minutes
+old, and the orphaned `orgpolicy-merged-settings.psd1` from the layout before dispatch 000305 -- never
+anything else, never a directory, and nothing when a session record cannot be read. Not covered, and
+documented (owner ruling K01b): a rule source a `CustomRulePath` reaches that PSScriptAnalyzer cannot
+load or run, or that holds no rule (a module whose manifest names a nested root module, a rule that
+throws, a module that exports no rule function all pass the check; the custom rule then never runs, and
+without `IncludeDefaultRules = $true` PSScriptAnalyzer analyzes nothing or refuses the settings) -- left
+to a runtime signal (leg A3). `doctor -Json`'s `orgPolicy` keys
+keep their names, order and types. No `userConfig` knob, status token or CLI flag is added.
+
 MINOR: **`lsp-scan.ps1 -OrgPolicyPath` now governs the whole analysis, and a new managed mode
 (`-PolicyMode closed`) certifies a scan only with evidence the declared policy was applied**
 (dispatch 000305, leg B1 -- review finding F3; owner ruling O03: managed mode, refuse in managed only,
@@ -49,7 +123,7 @@ thing share one identity), and each party's **application evidence** -- the daem
 version guard, its merged-settings write (re-read and re-hashed) and the settings it handed PSES, and
 the hook's adjudication of each file. The completion receipt (now schema version 2) carries that
 evidence as `policy.state` `observed`; it never certifies anything itself. **`-PolicyMode closed`**
-(precedence: explicit `-PolicyMode`, then `POWERSHELL_LSP_POLICY_MODE`, then `open`) certifies only
+(given explicitly -- nothing else makes a scan managed) certifies only
 when a usable declared policy and agreeing evidence from both parties are present, and otherwise exits
 `4` with `executionSuccessful=false` and fixed reason codes (`policy-not-declared`,
 `policy-file-missing`, `policy-unreadable`, `policy-merge-write-failed`,
@@ -58,10 +132,11 @@ failed (a policy with no required rules needs no merged settings), and a target 
 file is never certified (`analysis-empty`: nothing shows the policy was applied, so a managed gate
 pointed at the wrong directory exits `4`; unmanaged, it is exit `0` as before). Until the declared child
 configuration lands (A3), a managed scan with ambient analysis options in its environment is refused,
-never certified around them. **A host that sets `POWERSHELL_LSP_POLICY_MODE=closed` now runs its scans
-managed** -- including `/powershell-lsp:scan` -- and such a scan without `-OrgPolicyPath` is NOT
-CERTIFIED (exit `4`; its findings are still reported); the interactive hook's unset-policy no-trigger
-is unchanged. The unmanaged scan (the default) certifies and refuses nothing and keeps every 1.x
+never certified around them. **`POWERSHELL_LSP_POLICY_MODE` never makes a scan managed** (owner ruling
+Q03, dispatch 000306): it keeps its interactive fail-closed meaning, so `/powershell-lsp:scan` -- which
+has no policy option -- stays unmanaged on a host that sets it, and a gate that wants certification
+passes `-PolicyMode closed` itself; the interactive hook's unset-policy no-trigger is unchanged. The
+unmanaged scan (the default) certifies and refuses nothing and keeps every 1.x
 behavior, including the documented severity-threshold boundary; without `-OrgPolicyPath` its SARIF is
 byte-identical, with it the SARIF gains `invocations[0].properties.policy`. `doctor -Json`'s `orgPolicy`
 keeps its four keys -- `applied` is still the boolean it was and still means only that the policy parses
@@ -83,7 +158,14 @@ the whole policy as unreadable (`policy-unreadable`, one warning, fail-open as f
 policy), so no code can carry the canonical text's TAB or line-end separators (one forged exclusion
 rendered as another policy's lines and presented its identity), and codes fold ASCII `A`-`Z` only
 (`ToLowerInvariant` folded U+212A KELVIN SIGN to `k` on PowerShell 7 and not on Windows PowerShell
-5.1); ordinary policies keep their identities. And `doctor -Json` reads a daemon whose record is still
+5.1); ordinary policies keep their identities. **Upgrade check for fleet administrators:** a policy
+with ANY entry that is not a rule name -- a wildcard such as `PSAvoidUsingCmdlet*`, a name with a
+space, a non-ASCII name, or a name padded with a non-ASCII space such as U+00A0 (which used to be
+trimmed away and work) -- is now refused as unreadable as a WHOLE: it applies nothing in an interactive
+session (and under `POWERSHELL_LSP_POLICY_MODE=closed` fails every edit closed), reads
+`orgPolicy.applied: false` in `doctor -Json`, and refuses a managed scan -- where before its other
+members applied. The one warning names the entry; fix it (dispatch 000306, review finding B1-OOB-K03).
+And `doctor -Json` reads a daemon whose record is still
 the `pending` one it starts with -- it has analyzed no PowerShell file yet -- as `not-observed` with
 reason `pending`, not as a mismatch (finding B1-I02).
 `docs/configuration.md` now says what `POWERSHELL_LSP_POLICY_MODE=closed` has always done: ANY
