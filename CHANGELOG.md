@@ -45,8 +45,10 @@ MEASURED on the vendored PSScriptAnalyzer 1.25.0 under Windows PowerShell 5.1 an
 same verdicts on both, with and without PSES's `-Severity` argument; a `CustomRulePath` entry goes
 through PowerShell's own path resolver, as it does inside PSScriptAnalyzer, so `~`, `FileSystem::` and
 wildcard entries keep working; a value in parentheses or behind a sign -- `ExcludeRules = ('A', 'B')`,
-`($true)`, `-(5)` -- is data, as it is to PSScriptAnalyzer, review finding B1b-R02), and never hands PSES one it
-rejects: the session falls back to PSES's default rules and the daemon log says why, an unmanaged scan
+`($true)`, `-(5)` -- is data, as it is to PSScriptAnalyzer, review finding B1b-R02), and hands PSES none it
+rejects. The file is checked when a PSES session starts; an edit to it during a session is checked at the
+next session (owner ruling K08; until then PSES reads the edited file unchecked). When it rejects one,
+the session falls back to PSES's default rules and the daemon log says why, an unmanaged scan
 prints a stderr warning naming the problem, and a managed scan is NOT CERTIFIED with the new reason
 code `policy-settings-rejected`. The verdict rides the daemon's application evidence as
 `settings.validation` (`valid`, `none`, `rejected`, `unparsable`, `unresolved`, `pending`) with a

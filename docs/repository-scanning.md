@@ -214,9 +214,14 @@ Windows PowerShell 5.1 and PowerShell 7 alike:
 
 The verdict -- `valid`, `rejected`, `unparsable`, or `none` when no settings file was resolved -- is
 recorded in the daemon's application evidence (`policy.daemon.settings.validation`, with a one-line
-`validationDetail`), which every scan receipt carries. A file that fails is **never handed to PSES**: an
+`validationDetail`), which every scan receipt carries. A file that fails is **not handed to PSES**: an
 unmanaged scan says so on stderr and its findings come from PSES's default rules; a managed scan is NOT
-CERTIFIED with `policy-settings-rejected`.
+CERTIFIED with `policy-settings-rejected`. **The settings file is validated when a PSES session starts**
+-- the daemon resolves and checks it once per PSES session, at that session's first analyzed file -- and
+**an edit to it during a session is validated at the next session** (owner ruling K08, review finding
+B1b-K08). Until then PSES re-reads the edited file on every pass, unchecked, and the session's evidence
+still carries the verdict it recorded when the session started; rechecking the file at analysis time is
+left to leg B2.
 
 When `RequiredRules` merges, the merged file carries exactly the repository file's **accepted** entries
 -- its `Rules` (each rule's `Enable` flag and arguments, every number keeping its type: `[uint32]`,

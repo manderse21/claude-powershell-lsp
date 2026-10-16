@@ -193,15 +193,16 @@ bounded at the project root. The path **must be absolute** -- a relative value i
 the plugin never executes the file; PSES is the trusted consumer. An empty value uses
 auto-discovery.
 
-**A settings file PSScriptAnalyzer would reject is never handed to PSES** (dispatch 000306). Such a
+**A settings file PSScriptAnalyzer would reject is not handed to PSES** (dispatch 000306). Such a
 file -- a key it does not accept, a value of the wrong shape, a `CustomRulePath` entry that is relative
 (to a directory or a drive) or that does not exist, a `CustomRulePath` that reaches no rule module or
 assembly without `IncludeDefaultRules = $true`, a file that is not a settings table -- makes PSES
 analyze *nothing* while it still
 publishes a settled, empty result: zero findings that look clean. So the daemon first reads the file
 the way PSScriptAnalyzer does, as data (parsed, never run), and when PSScriptAnalyzer would refuse it,
-the session falls back to PSES's default rules and the daemon log says why. The rules it checks, and
-what it cannot see, are in
+the session falls back to PSES's default rules and the daemon log says why. The file is checked when a
+PSES session starts; an edit to it during a session is checked at the next session (owner ruling K08).
+The rules it checks, and what it cannot see, are in
 [repository scanning](repository-scanning.md#settings-files-the-analysis-rests-on-dispatch-000306).
 
 ## orgPolicy
