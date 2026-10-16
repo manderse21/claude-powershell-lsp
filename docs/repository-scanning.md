@@ -142,12 +142,16 @@ applies to developer assistance only; a managed scan declares `Hint` and refuses
 
 **What certification does and does not prove.** It proves that, at each file's analysis, the hook and
 the daemon both applied the policy whose identity the scan resolved, that a required rule's merged
-settings were written, verified and handed to PSES, that the settings file PSES reads still hashed to
+settings were written, verified and handed to PSES (naming every required rule and switching every
+configurable one on, so a repository's `Enable = $false` cannot keep one off: review finding B1b-R01),
+that the settings file PSES reads still hashed to
 what was written, and -- since dispatch 000306 -- that the daemon found every settings file the analysis
 rests on, the repository's and the merged one, to be one PSScriptAnalyzer accepts, by the checks
 [below](#settings-files-the-analysis-rests-on-dispatch-000306). It does NOT prove that a rule module
 or assembly a `CustomRulePath` reaches holds a rule (the one boundary that check leaves, described there
-and left to leg A3's runtime signal), and it does
+and left to leg A3's runtime signal), nor that a required rule that needs settings the repository does
+not give it could run (`PSUseCompatibleCommands` and `PSUseCompatibleTypes` need `TargetProfiles`, and
+without them find nothing -- [configuration](configuration.md#requiredrules----forcing-a-rule-onto-the-analysis-surface-dispatch-000294)), and it does
 not make the plugin tamper-proof: a process running as the same user can edit the policy, its sidecar,
 the plugin and its evidence. Run release gates on a protected runner whose policy someone other than the
 change's author controls. Until the declared child configuration lands (leg A3), a managed scan run with
@@ -217,6 +221,10 @@ a repository file already holding one of those keys produced a merged file PSES 
 beside it -- measured -- so carrying it changes nothing you can see; `Rules` is the one that matters.) A
 managed scan over a repository file with a rejected key is refused even though the merged file, without
 that key, was valid and was used: the analysis did not run on the settings the repository declared.
+One entry of `Rules` is not the repository's to keep: every configurable rule `RequiredRules` names is
+written with `Enable = $true` (owner ruling R01, review finding B1b-R01) -- before, a repository's
+`Enable = $false` switched a required rule off while a managed scan certified, and a required rule that
+is off by default never ran ([configuration](configuration.md#requiredrules----forcing-a-rule-onto-the-analysis-surface-dispatch-000294)).
 
 **What the check cannot see.** It reads the settings file and lists the directories a `CustomRulePath`
 reaches, but loads nothing: a rule source that resolves but holds no rule -- a module that exports no

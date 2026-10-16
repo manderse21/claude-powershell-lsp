@@ -1384,6 +1384,56 @@ function Get-PssaSettingsKeyNames {
     return @('CustomRulePath', 'ExcludeRules', 'IncludeRules', 'IncludeDefaultRules', 'RecurseCustomRulePath', 'Rules', 'Severity')
 }
 
+function Get-PssaBuiltinRuleNames {
+    # The vendored PSScriptAnalyzer 1.25.0's built-in rules, in canonical case (dispatch 000306, review
+    # findings B1b-R01 and B1b-K02): MEASURED with Get-ScriptAnalyzerRule under Windows PowerShell 5.1 and
+    # PowerShell 7 -- the same 75 on both -- and re-measured against the vendored analyzer on every CI leg
+    # (tests/PowerShellLsp.PolicySettings.Tests.ps1). A rule not named here is a custom rule (a
+    # CustomRulePath module's 'Module\Measure-Name', or an assembly's).
+    return @(
+        'PSAlignAssignmentStatement', 'PSAvoidAssignmentToAutomaticVariable', 'PSAvoidDefaultValueForMandatoryParameter',
+        'PSAvoidDefaultValueSwitchParameter', 'PSAvoidExclaimOperator', 'PSAvoidGlobalAliases', 'PSAvoidGlobalFunctions',
+        'PSAvoidGlobalVars', 'PSAvoidInvokingEmptyMembers', 'PSAvoidLongLines', 'PSAvoidMultipleTypeAttributes',
+        'PSAvoidNullOrEmptyHelpMessageAttribute', 'PSAvoidOverwritingBuiltInCmdlets', 'PSAvoidReservedWordsAsFunctionNames',
+        'PSAvoidSemicolonsAsLineTerminators', 'PSAvoidShouldContinueWithoutForce', 'PSAvoidTrailingWhitespace',
+        'PSAvoidUsingAllowUnencryptedAuthentication', 'PSAvoidUsingBrokenHashAlgorithms', 'PSAvoidUsingCmdletAliases',
+        'PSAvoidUsingComputerNameHardcoded', 'PSAvoidUsingConvertToSecureStringWithPlainText', 'PSAvoidUsingDeprecatedManifestFields',
+        'PSAvoidUsingDoubleQuotesForConstantString', 'PSAvoidUsingEmptyCatchBlock', 'PSAvoidUsingInvokeExpression',
+        'PSAvoidUsingPlainTextForPassword', 'PSAvoidUsingPositionalParameters', 'PSAvoidUsingUsernameAndPasswordParams',
+        'PSAvoidUsingWMICmdlet', 'PSAvoidUsingWriteHost', 'PSDSCDscExamplesPresent', 'PSDSCDscTestsPresent',
+        'PSDSCReturnCorrectTypesForDSCFunctions', 'PSDSCStandardDSCFunctionsInResource', 'PSDSCUseIdenticalMandatoryParametersForDSC',
+        'PSDSCUseIdenticalParametersForDSC', 'PSDSCUseVerboseMessageInDSCResource', 'PSMisleadingBacktick', 'PSMissingModuleManifestField',
+        'PSPlaceCloseBrace', 'PSPlaceOpenBrace', 'PSPossibleIncorrectComparisonWithNull', 'PSPossibleIncorrectUsageOfAssignmentOperator',
+        'PSPossibleIncorrectUsageOfRedirectionOperator', 'PSProvideCommentHelp', 'PSReservedCmdletChar', 'PSReservedParams',
+        'PSReviewUnusedParameter', 'PSShouldProcess', 'PSUseApprovedVerbs', 'PSUseBOMForUnicodeEncodedFile', 'PSUseCmdletCorrectly',
+        'PSUseCompatibleCmdlets', 'PSUseCompatibleCommands', 'PSUseCompatibleSyntax', 'PSUseCompatibleTypes', 'PSUseConsistentIndentation',
+        'PSUseConsistentParameterSetName', 'PSUseConsistentParametersKind', 'PSUseConsistentWhitespace', 'PSUseConstrainedLanguageMode',
+        'PSUseCorrectCasing', 'PSUseDeclaredVarsMoreThanAssignments', 'PSUseLiteralInitializerForHashtable', 'PSUseOutputTypeCorrectly',
+        'PSUseProcessBlockForPipelineCommand', 'PSUsePSCredentialType', 'PSUseShouldProcessForStateChangingFunctions',
+        'PSUseSingleValueFromPipelineParameter', 'PSUseSingularNouns', 'PSUseSupportsShouldProcess', 'PSUseToExportFieldsInManifest',
+        'PSUseUsingScopeModifierInNewRunspaces', 'PSUseUTF8EncodingForHelpFile'
+    )
+}
+
+function Get-PssaConfigurableRuleNames {
+    # The built-in rules that take settings -- those deriving from PSScriptAnalyzer's ConfigurableRule, whose
+    # Enable flag in a settings file's Rules switches them on or off (dispatch 000306, review finding
+    # B1b-R01). MEASURED like Get-PssaBuiltinRuleNames: 21 on both hosts, four of them on by default
+    # (PSAvoidOverwritingBuiltInCmdlets, PSAvoidUsingPositionalParameters, PSProvideCommentHelp,
+    # PSUseSingularNouns) and seventeen off -- naming one of those in IncludeRules alone does not make it
+    # run. Enable on any other rule is ignored (measured). PSScriptAnalyzer matches a Rules key to a rule
+    # name CASE-SENSITIVELY (a 'psusesingularnouns' entry configures nothing) and a setting's name in any
+    # case ('enable' works) -- measured on both hosts.
+    return @(
+        'PSAlignAssignmentStatement', 'PSAvoidExclaimOperator', 'PSAvoidLongLines', 'PSAvoidOverwritingBuiltInCmdlets',
+        'PSAvoidSemicolonsAsLineTerminators', 'PSAvoidUsingDoubleQuotesForConstantString', 'PSAvoidUsingPositionalParameters',
+        'PSPlaceCloseBrace', 'PSPlaceOpenBrace', 'PSProvideCommentHelp', 'PSUseCompatibleCommands', 'PSUseCompatibleSyntax',
+        'PSUseCompatibleTypes', 'PSUseConsistentIndentation', 'PSUseConsistentParameterSetName', 'PSUseConsistentParametersKind',
+        'PSUseConsistentWhitespace', 'PSUseConstrainedLanguageMode', 'PSUseCorrectCasing', 'PSUseSingleValueFromPipelineParameter',
+        'PSUseSingularNouns'
+    )
+}
+
 function Get-PssaSettingsSeverityNames {
     # PSScriptAnalyzer's severity names, which a settings file's Severity entries must parse as. Measured:
     # any case and surrounding blanks are accepted; 'Hint', '' and any other word are refused
@@ -1799,6 +1849,63 @@ function Read-PssaSettingsFile {
     }
 }
 
+function Set-PssaRequiredRulesEnabled {
+    # The Rules table a RequiredRules merge writes (owner ruling R01, 2026-10-15; review finding B1b-R01):
+    # a COPY of the repository's $Rules (or a new table) in which no rule in $RequiredRules can be switched
+    # off. For each one:
+    #   - a built-in configurable rule (Get-PssaConfigurableRuleNames) gets an entry under its canonical name
+    #     with Enable = $true, carrying the repository's other arguments for it; an entry the repository
+    #     keyed in another case configured nothing (PSScriptAnalyzer matches Rules keys case-sensitively,
+    #     measured), so it is replaced by the canonical one, with Enable alone;
+    #   - any other rule the repository configures WITH an Enable key -- a custom configurable rule -- has
+    #     that Enable set to $true under the repository's own key;
+    #   - a built-in rule that is not configurable is left as written: PSScriptAnalyzer ignores Enable there.
+    # Returns $Rules itself (possibly $null) when nothing needed forcing; never changes $Rules.
+    param($Rules, [string[]]$RequiredRules)
+    $configurable = @{}
+    foreach ($n in @(Get-PssaConfigurableRuleNames)) { $configurable[$n] = $n }
+    $builtin = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($n in @(Get-PssaBuiltinRuleNames)) { [void]$builtin.Add($n) }
+    $out = @{}
+    if ($null -ne $Rules) { foreach ($k in @($Rules.Keys)) { $out[$k] = $Rules[$k] } }
+    $changed = $false
+    foreach ($r in @($RequiredRules | Where-Object { $_ })) {
+        $name = ([string]$r).Trim()
+        if ($configurable.ContainsKey($name)) {
+            $canon = [string]$configurable[$name]
+            $entry = @{}
+            foreach ($k in @($out.Keys)) {
+                if (-not [string]::Equals([string]$k, $canon, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+                if ([string]::Equals([string]$k, $canon, [System.StringComparison]::Ordinal) -and $out[$k] -is [System.Collections.IDictionary]) {
+                    foreach ($a in @($out[$k].Keys)) {
+                        if (-not [string]::Equals([string]$a, 'Enable', [System.StringComparison]::OrdinalIgnoreCase)) { $entry[$a] = $out[$k][$a] }
+                    }
+                }
+                $out.Remove($k)
+            }
+            $entry['Enable'] = $true
+            $out[$canon] = $entry
+            $changed = $true
+        } elseif (-not $builtin.Contains($name)) {
+            foreach ($k in @($out.Keys)) {
+                if (-not [string]::Equals([string]$k, $name, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+                $t = $out[$k]
+                if ($t -isnot [System.Collections.IDictionary]) { continue }
+                if (@(@($t.Keys) | Where-Object { [string]::Equals([string]$_, 'Enable', [System.StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) { continue }
+                $entry = @{}
+                foreach ($a in @($t.Keys)) {
+                    if (-not [string]::Equals([string]$a, 'Enable', [System.StringComparison]::OrdinalIgnoreCase)) { $entry[$a] = $t[$a] }
+                }
+                $entry['Enable'] = $true
+                $out[$k] = $entry
+                $changed = $true
+            }
+        }
+    }
+    if (-not $changed) { return $Rules }
+    return $out
+}
+
 function Merge-RequiredRulesSettings {
     # Compute the MERGED PSSA settings hashtable that forces $RequiredRules onto PSES's analysis
     # pass, or $null when nothing should be merged (the caller then takes the untouched
@@ -1932,6 +2039,21 @@ function Merge-RequiredRulesSettings {
             if ($baseData.Contains($k)) { $merged[$k] = $baseData[$k] }
         }
     }
+    # ...and REQUIRED RULES ARE FORCED ON (owner ruling R01, 2026-10-15; review finding B1b-R01). Carrying
+    # the repository's Rules also carried any Enable = $false in them, which switches a configurable rule
+    # off however IncludeRules names it: a second, unguarded way for the repository to drop a rule the
+    # organization requires (its ExcludeRules, stripped above, is the first), while a managed scan still
+    # certified. And a configurable rule that is off by default (PSAvoidLongLines and sixteen more) never
+    # ran from IncludeRules alone. So every required rule the organization does not also exclude is
+    # switched on in the Rules written (Set-PssaRequiredRulesEnabled); a merge whose required rules are
+    # all non-configurable built-ins writes the Rules it carried, unchanged.
+    $active = New-Object System.Collections.ArrayList
+    foreach ($r in $required) {
+        $rt = ([string]$r).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($rt) -and -not $orgExcSet.Contains($rt)) { [void]$active.Add($rt) }
+    }
+    $rules = Set-PssaRequiredRulesEnabled -Rules $(if ($merged.ContainsKey('Rules')) { $merged['Rules'] } else { $null }) -RequiredRules @($active)
+    if ($null -ne $rules) { $merged['Rules'] = $rules }
     return $merged
 }
 

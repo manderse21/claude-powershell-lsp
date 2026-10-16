@@ -516,6 +516,55 @@ Describe 'The RequiredRules merge carries exactly what PSScriptAnalyzer accepts 
         @($back.Entries['Rules'].Keys) | Should -Contain 'My.Rules\Measure-Thing'
     }
 
+    It 'B1b-R01: a repository Rules entry cannot switch a REQUIRED rule off -- Enable = $false becomes $true, and its other arguments are carried' {
+        $repo = New-PsFile ("@{ Rules = @{ PSUseSingularNouns = @{ Enable = `$false; NounAllowList = @('Data') }; PSAvoidLongLines = @{ Enable = `$false } } }")
+        $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $repo -RequiredRules @('PSUseSingularNouns') -CurrentPsesTag 'v4.6.0'
+        $m.Rules['PSUseSingularNouns']['Enable'] | Should -BeTrue
+        (@($m.Rules['PSUseSingularNouns']['NounAllowList']) -join ',') | Should -BeExactly 'Data'
+        $m.Rules['PSAvoidLongLines']['Enable'] | Should -BeFalse -Because 'a rule the organization does not require keeps the repository''s own setting'
+        $p = Write-MergedPssaSettingsFile -Settings $m -DataRoot (Join-Path $TestDrive ('r01-' + [guid]::NewGuid().ToString('N').Substring(0, 8)))
+        $back = Read-PssaSettingsFile -Path $p
+        $back.Verdict | Should -BeExactly 'valid' -Because ([string]$back.Problem)
+        $back.Entries['Rules']['PSUseSingularNouns']['Enable'] | Should -BeTrue
+    }
+
+    It 'B1b-R01: a required configurable rule that is OFF by default is switched on even when the repository never mentions it' {
+        $m = Merge-RequiredRulesSettings -ResolvedSettingsPath '' -RequiredRules @('PSAvoidLongLines', 'PSAvoidGlobalVars') -CurrentPsesTag 'v4.6.0'
+        (@($m.Keys | Sort-Object) -join ',') | Should -BeExactly 'IncludeRules,Rules'
+        (@($m.Rules.Keys) -join ',') | Should -BeExactly 'PSAvoidLongLines' -Because 'PSAvoidGlobalVars is no configurable rule: Enable means nothing to it'
+        $m.Rules['PSAvoidLongLines']['Enable'] | Should -BeTrue
+    }
+
+    It 'B1b-R01: the canonical key wins -- an entry keyed in another case (which PSScriptAnalyzer ignores), or an Enable spelled in another case, cannot keep a required rule off' {
+        $repo = New-PsFile ("@{ Rules = @{ psusesingularnouns = @{ Enable = `$false; NounAllowList = @('Data') }; PSProvideCommentHelp = @{ enable = `$false; Placement = 'end' } } }")
+        $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $repo -RequiredRules @('psusesingularnouns', 'PSProvideCommentHelp') -CurrentPsesTag 'v4.6.0'
+        (@($m.Rules.Keys) -ccontains 'PSUseSingularNouns') | Should -BeTrue
+        (@($m.Rules.Keys) -ccontains 'psusesingularnouns') | Should -BeFalse
+        (@($m.Rules['PSUseSingularNouns'].Keys) -join ',') | Should -BeExactly 'Enable' -Because 'the entry PSScriptAnalyzer ignored configured nothing, so nothing of it is carried'
+        $m.Rules['PSProvideCommentHelp']['Enable'] | Should -BeTrue
+        @(@($m.Rules['PSProvideCommentHelp'].Keys) | Where-Object { $_ -ceq 'enable' }).Count | Should -Be 0
+        $m.Rules['PSProvideCommentHelp']['Placement'] | Should -BeExactly 'end'
+        $p = Write-MergedPssaSettingsFile -Settings $m -DataRoot (Join-Path $TestDrive ('r01c-' + [guid]::NewGuid().ToString('N').Substring(0, 8)))
+        (Read-PssaSettingsFile -Path $p).Verdict | Should -BeExactly 'valid'
+    }
+
+    It 'B1b-R01: a custom rule the repository configures with an Enable key is switched on under the repository''s own key, its arguments carried' {
+        $repo = New-PsFile ("@{ Rules = @{ 'My.Rules\Measure-Thing' = @{ Enable = `$false; Limit = 3 } } }")
+        $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $repo -RequiredRules @('My.Rules\Measure-Thing') -CurrentPsesTag 'v4.6.0'
+        $m.Rules['My.Rules\Measure-Thing']['Enable'] | Should -BeTrue
+        $m.Rules['My.Rules\Measure-Thing']['Limit'] | Should -Be 3
+    }
+
+    It 'a merge whose required rules are non-configurable built-ins leaves Rules as the repository wrote it -- and writes none when it had none (the R01 control)' {
+        $m = Merge-RequiredRulesSettings -ResolvedSettingsPath '' -RequiredRules @('PSAvoidGlobalVars') -CurrentPsesTag 'v4.6.0'
+        $m.ContainsKey('Rules') | Should -BeFalse
+        $x = Merge-RequiredRulesSettings -ResolvedSettingsPath '' -RequiredRules @('PSAvoidLongLines', 'PSAvoidGlobalVars') -OrgExcludeRules @('PSAvoidLongLines') -CurrentPsesTag 'v4.6.0'
+        $x.ContainsKey('Rules') | Should -BeFalse -Because 'a rule the organization also excludes is not required: exclusion is the stronger verb'
+        $repo = New-PsFile ("@{ Rules = @{ PSAvoidGlobalVars = @{ Enable = `$false } } }")
+        $y = Merge-RequiredRulesSettings -ResolvedSettingsPath $repo -RequiredRules @('PSAvoidGlobalVars') -CurrentPsesTag 'v4.6.0'
+        $y.Rules['PSAvoidGlobalVars']['Enable'] | Should -BeFalse -Because 'PSScriptAnalyzer ignores Enable on a rule that is not configurable (measured): the entry is carried as written'
+    }
+
     It 'B1b-I01: a <Form> rule argument survives the merge with its TYPE and its value (it rendered $null, or another type)' -TestCases @(
         @{ Form = '[uint32]120' }
         @{ Form = '120d' }
@@ -606,28 +655,38 @@ Describe 'The merged settings, judged by the vendored PSScriptAnalyzer: what the
         $script:MjDir = Join-Path $TestDrive 'merged-judged'
         New-Item -ItemType Directory -Force -Path $script:MjDir | Out-Null
         $script:MjCases = [ordered]@{}
-        function Add-MjCase([string]$Name, [string]$RepoText, [string[]]$Required) {
+        function Add-MjCase([string]$Name, [string]$RepoText, [string[]]$Required, [string]$Code = '') {
             $repo = ''
             if ($RepoText -ne '') { $repo = New-PsFile $RepoText }
             $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $repo -RequiredRules $Required -CurrentPsesTag 'v4.6.0'
             $text = ConvertTo-MergedPssaSettingsText -Settings $m
             [System.IO.File]::WriteAllText((Join-Path $script:MjDir ($Name + '.psd1')), $text, (New-Object System.Text.UTF8Encoding($false)))
+            if ($Code -ne '') { [System.IO.File]::WriteAllText((Join-Path $script:MjDir ($Name + '.code.txt')), $Code) }
             $script:MjCases[$Name] = $text
         }
         Add-MjCase 'i01-uint32-line-length' "@{ IncludeRules = @('PSAvoidLongLines'); Rules = @{ PSAvoidLongLines = @{ Enable = `$true; MaximumLineLength = [uint32]40 } } }" @('PSAvoidGlobalVars')
-        # The sample: a plural noun, an alias, a global and a 62-column line.
+        Add-MjCase 'r01-required-rule-disabled' "@{ Rules = @{ PSUseSingularNouns = @{ Enable = `$false } } }" @('PSUseSingularNouns')
+        Add-MjCase 'r01-required-rule-off-by-default' '' @('PSAvoidLongLines') -Code ("gci`n# " + ('x' * 130) + "`n")
+        # The sample (a case may bring its own): a plural noun, an alias, a global and a 62-column line.
         [System.IO.File]::WriteAllText((Join-Path $script:MjDir 'code.txt'), ("function Get-Items { param() 'x' }`ngci`n`$global:mj = 1`n# " + ('x' * 60) + "`n"))
         $driver = Join-Path $TestDrive 'merged-judged-driver.ps1'
         [System.IO.File]::WriteAllText($driver, (@(
                     'param([string]$Manifest, [string]$Dir)'
                     '$ErrorActionPreference = ''Stop'''
                     'Import-Module $Manifest -Force'
-                    '$code = [System.IO.File]::ReadAllText((Join-Path $Dir ''code.txt''))'
+                    '$default = [System.IO.File]::ReadAllText((Join-Path $Dir ''code.txt''))'
                     'foreach ($f in @(Get-ChildItem -LiteralPath $Dir -Filter ''*.psd1'')) {'
+                    '    $own = Join-Path $Dir ($f.BaseName + ''.code.txt'')'
+                    '    $code = if (Test-Path -LiteralPath $own) { [System.IO.File]::ReadAllText($own) } else { $default }'
                     '    $r = ''refused'''
                     '    try { $r = (@(Invoke-ScriptAnalyzer -ScriptDefinition $code -Severity @(''Error'', ''Warning'', ''Information'') -Settings $f.FullName -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.RuleName } | Sort-Object -Unique) -join '','') } catch { $r = ''refused'' }'
                     '    [string]$f.BaseName + ''='' + $r'
-                    '}') -join "`n"))
+                    '}'
+                    '# The built-in rules, and those that take settings (derive from ConfigurableRule), as the analyzer itself lists them.'
+                    '$cfg = [Microsoft.Windows.PowerShell.ScriptAnalyzer.Generic.ConfigurableRule]'
+                    '$all = @(Get-ScriptAnalyzerRule)'
+                    '''!builtin='' + (@($all | ForEach-Object { [string]$_.RuleName }) -join '','')'
+                    '''!configurable='' + (@($all | Where-Object { $null -ne $_.ImplementingType -and $cfg.IsAssignableFrom($_.ImplementingType) } | ForEach-Object { [string]$_.RuleName }) -join '','')') -join "`n"))
         $script:MjResults = @{}
         if (-not [string]::IsNullOrWhiteSpace($script:MjManifest)) {
             $cwd = Join-Path $TestDrive 'merged-judged-cwd'
@@ -648,7 +707,24 @@ Describe 'The merged settings, judged by the vendored PSScriptAnalyzer: what the
 
     It 'the vendored analyzer judged every merged file (this Describe cannot pass vacuously)' {
         $script:MjManifest | Should -Not -BeNullOrEmpty
-        $script:MjResults.Count | Should -Be $script:MjCases.Count
+        @($script:MjResults.Keys | Where-Object { -not ([string]$_).StartsWith('!') }).Count | Should -Be $script:MjCases.Count
+    }
+
+    It 'B1b-R01: the pinned built-in and configurable rule lists are the vendored analyzer''s own, re-measured on this host' {
+        $b = @(([string]$script:MjResults['!builtin']).Split(',') | Where-Object { $_ } | Sort-Object)
+        $c = @(([string]$script:MjResults['!configurable']).Split(',') | Where-Object { $_ } | Sort-Object)
+        $b.Count | Should -Be 75
+        ($b -join ',') | Should -BeExactly (@(Get-PssaBuiltinRuleNames | Sort-Object) -join ',')
+        ($c -join ',') | Should -BeExactly (@(Get-PssaConfigurableRuleNames | Sort-Object) -join ',')
+    }
+
+    It 'B1b-R01: a REQUIRED rule the repository switched off with Enable = $false runs -- PSUseSingularNouns reports Get-Items' {
+        $script:MjCases['r01-required-rule-disabled'] | Should -Match 'Enable = \$true'
+        Get-MjRules 'r01-required-rule-disabled' | Should -Contain 'PSUseSingularNouns' -Because $script:MjResults['r01-required-rule-disabled']
+    }
+
+    It 'B1b-R01: a REQUIRED rule that is off by default runs -- PSAvoidLongLines reports the 132-column line' {
+        Get-MjRules 'r01-required-rule-off-by-default' | Should -Contain 'PSAvoidLongLines' -Because $script:MjResults['r01-required-rule-off-by-default']
     }
 
     It 'B1b-I01: a [uint32] line length the repository sets survives the merge -- PSAvoidLongLines reports the 62-column line under it' {

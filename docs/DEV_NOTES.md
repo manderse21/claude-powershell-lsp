@@ -240,6 +240,16 @@ and never parse it a second way. Things that bite when you change this path:
   `.psd1` or `.dll` (a `.ps1` warns "Cannot find rule extension"). The reader mirrors that
   (`Test-PssaSettingsRulePathYieldsRule`). One thing it cannot see without loading it: whether a rule
   source HOLDS a rule (measured boundary, kept visible by a test).
+- **A required rule is switched on in the merged file, under its canonical name.** Of PSScriptAnalyzer
+  1.25.0's 75 built-in rules, 21 are configurable (derive from `ConfigurableRule`); their `Enable` flag
+  in `Rules` switches them off however `IncludeRules` names them, and 17 of the 21 are off by default --
+  `IncludeRules` alone does not run them. `Enable` on any other rule is ignored. PSScriptAnalyzer
+  matches a `Rules` KEY to a rule name case-sensitively (`psusesingularnouns = @{...}` configures nothing)
+  but a setting name in any case (`enable` works) -- all measured on both hosts. So
+  `Set-PssaRequiredRulesEnabled` writes `Enable = $true` under the canonical key for every required
+  configurable rule (B1b-R01). `Get-PssaBuiltinRuleNames` and `Get-PssaConfigurableRuleNames` are pinned
+  from the vendored analyzer and re-measured by a test on every leg; re-measure them on a PSScriptAnalyzer
+  bump.
 - **A merged settings file writes every number with its type.** PSScriptAnalyzer evaluates a cast only
   to a .NET primitive, so `[decimal]'1.5'` and `[string]'x'` are REFUSED (measured, both hosts):
   `ConvertTo-Psd1Literal` writes a decimal as a `d` literal (`1.5d`), an `[int]` bare, and every other

@@ -82,7 +82,12 @@ found them written `$null` and the merged file then rejected -- and its
 and file name as before, and the merged file is checked like any other before PSES sees it (the
 RequiredRules state `settings-rejected` when it fails). A managed scan over a repository file with a
 rejected key is refused even when the merged file that dropped the key was valid and used: the analysis
-did not run on the settings the repository declared. **A settings resolution that throws is recorded:**
+did not run on the settings the repository declared. **A required rule is switched on** (owner ruling
+R01, review finding B1b-R01): carrying a repository's `Rules` also carried any `Enable = $false` in
+them, so a repository could switch off a configurable rule the organization requires
+(`PSUseSingularNouns`, say) while a managed scan certified; the merged file now gives every configurable
+rule `RequiredRules` names `Enable = $true`, still carrying the repository's other arguments for it, so a
+required configurable rule that is off by default (`PSAvoidLongLines` and sixteen more) runs too. **A settings resolution that throws is recorded:**
 it used to return before the daemon's evidence was written, so the record stayed `pending` for the
 daemon's whole life (doctor said "not yet applied" forever); it now records the TERMINAL
 `settings-unresolved`, which `doctor -Json` reports as `enforcement.state` `not-observed`, reason

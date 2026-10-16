@@ -368,8 +368,8 @@ the plugin's own data root. Nothing in the repository, and no file the user or t
 ever edited to do this.
 
 **What the merged file carries** (dispatch 000306). Every entry of the repository's settings file that
-PSScriptAnalyzer accepts -- its `Rules` (each rule's `Enable` flag and arguments) and `Severity`
-included -- and nothing it rejects. Before this release the merge kept a fixed key list instead: it
+PSScriptAnalyzer accepts -- its `Rules` (each rule's `Enable` flag and arguments, except that a required
+rule is switched on: below) and `Severity` included -- and nothing it rejects. Before this release the merge kept a fixed key list instead: it
 dropped `Rules` and `Severity`, the keys PSScriptAnalyzer reads, and carried `Severities`,
 `RuleArguments` and `FilePath`, which it rejects. So whenever `RequiredRules` merged, a repository's
 rule configuration vanished -- a configurable rule it had switched on with `Enable = $true`, such as
@@ -410,6 +410,19 @@ is dropped from the merge, not forced on -- the same ordering `SeverityOverrides
 against `ExcludeRules`. A rule `RequiredRules` names but only a **repo-local** settings file
 excludes is forced on regardless: the org is the outermost voice on the include side exactly as it
 already is on the exclude side.
+
+**A required rule is switched on, too** (owner ruling R01, review finding B1b-R01). A repository's
+`Rules` can switch a *configurable* rule off with `Enable = $false` however `IncludeRules` names it, and
+a configurable rule that is off by default does not run from `IncludeRules` alone. So the merged file
+gives every configurable rule `RequiredRules` names `Enable = $true` -- overriding a repository's
+`Enable = $false`, and carrying its other arguments for that rule -- and so a required configurable
+rule that is off by default (`PSAvoidLongLines` and sixteen others) runs as well. A custom rule the
+repository configures with an `Enable` key is switched on the same way. PSScriptAnalyzer 1.25.0 has 21
+configurable rules (measured; the list is pinned and re-measured by a test); `Enable` means nothing to
+any other rule. One limit, measured: a configurable rule that cannot run without settings the
+repository does not give it -- `PSUseCompatibleCommands` and `PSUseCompatibleTypes` need
+`TargetProfiles` -- is switched on and finds nothing (PSScriptAnalyzer reports "TargetProfiles cannot
+be empty" and analyzes the rest).
 
 **The boundary, stated plainly.** Exactly like `SeverityOverrides` above: a required rule's finding
 still passes through your local `severityThreshold` once it fires. At the shipped default (`Hint`)
