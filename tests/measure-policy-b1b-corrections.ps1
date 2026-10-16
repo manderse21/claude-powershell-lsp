@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 
-# measure-policy-b1b-corrections.ps1 -- dispatch 000306 (B1b), correction round 1: the review 656a3e78
-# findings measured end to end through the REAL daemon, for ANY tree.
+# measure-policy-b1b-corrections.ps1 -- dispatch 000306 (B1b), correction rounds 1 and 2: the findings of
+# reviews 656a3e78 and 2bd58763 measured end to end through the REAL daemon, for ANY tree.
 #
 # A sibling of measure-policy-b1b-controls.ps1 (whose rows it leaves alone): one fixed set of scans run
 # against the tree it is given, one JSON row per scenario, so the reviewed candidate's wrong answers and
@@ -18,6 +18,10 @@
 #   B1b-R02  (unmanaged) a parenthesized ExcludeRules list: honored, with no settings warning.
 #   B1b-I01  (managed) a [uint32] rule argument under a RequiredRules merge: the merged file is valid and
 #            the configured rule runs.
+#   B1b-R03  (round 2, managed) repository files that name no IncludeRules, under a RequiredRules merge:
+#            the ExcludeRules-plus-Rules shape (its ExcludeRules also names the required rule) and a
+#            CustomRulePath whose rule reports. A scan that certifies must report the repository's own
+#            rules beside the required one.
 #
 # Every scan is a child whose environment has every CLAUDE_PLUGIN_OPTION_* and POWERSHELL_LSP_* variable
 # removed, on a PRIVATE data root: a fresh directory seeded (copied) with the pinned PSES and
@@ -157,6 +161,22 @@ try {
     # B1b-I01: a [uint32] line length under a RequiredRules merge.
     [void](New-MeasureFile 'i01-numeric/thing.ps1' ("gci`n`$global:B1bmGlobal = 1`n# " + ('x' * 60) + "`n"))
     [void](New-MeasureFile 'i01-numeric/PSScriptAnalyzerSettings.psd1' "@{ IncludeRules = @('PSAvoidLongLines', 'PSAvoidUsingCmdletAliases'); Rules = @{ PSAvoidLongLines = @{ Enable = `$true; MaximumLineLength = [uint32]40 } } }`n")
+    # B1b-R03 (correction round 2): repository files that name no IncludeRules. The ExcludeRules-plus-Rules
+    # shape -- its ExcludeRules also names the required rule -- over a plural noun, Write-Host and a 62-column
+    # line; and a CustomRulePath whose rule REPORTS (one finding per file).
+    [void](New-MeasureFile 'r03-exclude-rules/thing.ps1' ("function Get-Items { param() Write-Host 'x' }`ngci`n`$global:B1bmGlobal = 1`n# " + ('x' * 60) + "`n"))
+    [void](New-MeasureFile 'r03-exclude-rules/PSScriptAnalyzerSettings.psd1' "@{ ExcludeRules = @('PSAvoidUsingCmdletAliases', 'PSAvoidGlobalVars'); Rules = @{ PSAvoidLongLines = @{ Enable = `$true; MaximumLineLength = 40 } } }`n")
+    $reporting = New-MeasureFile 'rules-r03/B1bmR03.Rules.psm1' ((@(
+                'function Measure-B1bmR03Reports {'
+                '    [CmdletBinding()]'
+                '    [OutputType([Microsoft.Windows.PowerShell.ScriptAnalyzer.Generic.DiagnosticRecord[]])]'
+                '    param([Parameter(Mandatory = $true)][System.Management.Automation.Language.ScriptBlockAst]$ScriptBlockAst)'
+                '    if ($null -ne $ScriptBlockAst.Parent) { return @() }'
+                '    return @([Microsoft.Windows.PowerShell.ScriptAnalyzer.Generic.DiagnosticRecord]@{ Message = ''the repository rule ran''; Extent = $ScriptBlockAst.Extent; RuleName = $PSCmdlet.MyInvocation.InvocationName; Severity = ''Warning'' })'
+                '}'
+                'Export-ModuleMember -Function Measure-B1bmR03Reports') -join "`n") + "`n")
+    [void](New-MeasureFile 'r03-custom/thing.ps1' $globalCode)
+    [void](New-MeasureFile 'r03-custom/PSScriptAnalyzerSettings.psd1' ("@{ CustomRulePath = @(" + $q + $reporting + $q + ") }`n"))
     $pSingular = New-MeasureFile 'policy-singular.psd1' "@{ RequiredRules = @('PSUseSingularNouns') }`n"
     $pLong = New-MeasureFile 'policy-longlines.psd1' "@{ RequiredRules = @('PSAvoidLongLines') }`n"
     $pGlobal = New-MeasureFile 'policy-global.psd1' "@{ RequiredRules = @('PSAvoidGlobalVars') }`n"
@@ -175,6 +195,8 @@ try {
     Add-Row 'B1b-K02' 'k02-custom-required-managed' (Invoke-MeasureScan -Dir 'k02-custom' -Policy $pGlobal -Mode 'closed')
     Add-Row 'B1b-R02' 'r02-parenthesized-unmanaged' (Invoke-MeasureScan -Dir 'r02-paren')
     Add-Row 'B1b-I01' 'i01-numeric-required-managed' (Invoke-MeasureScan -Dir 'i01-numeric' -Policy $pGlobal -Mode 'closed')
+    Add-Row 'B1b-R03' 'r03-exclude-rules-required-managed' (Invoke-MeasureScan -Dir 'r03-exclude-rules' -Policy $pGlobal -Mode 'closed')
+    Add-Row 'B1b-R03' 'r03-custom-rule-required-managed' (Invoke-MeasureScan -Dir 'r03-custom' -Policy $pGlobal -Mode 'closed')
     ConvertTo-Json -InputObject @($rows) -Depth 5 -Compress
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
