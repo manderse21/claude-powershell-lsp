@@ -74,7 +74,16 @@ required built-in rule runs beside custom rules** (owner ruling K02, review find
 file carrying a repository's `CustomRulePath` without `IncludeDefaultRules = $true` made PSScriptAnalyzer
 load only the custom rules, so no required built-in rule ran while a managed scan certified (pre-existing
 since the merge landed); the merge now sets `IncludeDefaultRules = $true` whenever a required rule is
-built-in. **A settings resolution that throws is recorded:**
+built-in. **A repository file that names no `IncludeRules` keeps its rules** (owner ruling R03, review
+finding B1b-R03; pre-existing since the merge landed): PSScriptAnalyzer runs every enabled rule for such
+a file, but the merge wrote PSES's 15 defaults plus the required rules as its `IncludeRules`, so whenever
+`RequiredRules` named anything every other rule the repository ran -- `PSAvoidUsingWriteHost`, a
+`PSAvoidLongLines` it switched on through `Rules`, its `CustomRulePath` rules -- stopped running while a
+managed scan certified. When the repository's file is one PSScriptAnalyzer accepts and names no
+`IncludeRules`, the merged file now names none either, so those rules run beside the required ones (a
+required rule still leaves the file's `ExcludeRules` and is switched on, and beside a `CustomRulePath`
+every built-in rule now runs with the custom ones); with no settings file, or one naming its own
+`IncludeRules`, the merged file is byte-for-byte what it was. **A settings resolution that throws is recorded:**
 it used to return before the daemon's evidence was written, so the record stayed `pending` for the
 daemon's whole life (doctor said "not yet applied" forever); it now records the TERMINAL
 `settings-unresolved`, which `doctor -Json` reports as `enforcement.state` `not-observed`, reason

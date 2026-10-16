@@ -988,10 +988,12 @@ function Initialize-PssaSettings {
     # purpose -- the most common real deployment (no repo-local settings file, no override) is
     # exactly the $resolved = '' path, and a required rule must still be forceable there, per
     # 000292's measured design (a settings file with no IncludeRules would otherwise flip PSSA
-    # from PSES's curated default to every installed rule, so Merge-RequiredRulesSettings always
-    # pins PSES's own default list alongside the required ones rather than naming ONLY the
-    # required rules). $toSend stays byte-identical to $resolved whenever OrgPolicyPath is unset
-    # or names no required rule -- the overwhelming common case.
+    # from PSES's curated default to every installed rule, so with nothing resolved
+    # Merge-RequiredRulesSettings pins PSES's own default list alongside the required ones rather
+    # than naming ONLY the required rules; a resolved file PSScriptAnalyzer accepts that names no
+    # IncludeRules already runs every enabled rule, and the merge keeps that rule set -- owner
+    # ruling R03, dispatch 000306). $toSend stays byte-identical to $resolved whenever
+    # OrgPolicyPath is unset or names no required rule -- the overwhelming common case.
     #
     # APPLICATION EVIDENCE (dispatch 000305, B1). The policy is read through Resolve-EffectivePolicy --
     # Import-OrgPolicy underneath, so every degrade, the integrity gate and the single warning are

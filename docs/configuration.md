@@ -361,11 +361,29 @@ optional list beside `ExcludeRules`, naming PSScriptAnalyzer rule codes:
 
 **How it reaches PSES.** PSES's own no-settings default is a fixed 15-rule list, pinned from the
 PowerShellEditorServices source at the tag this build verified it against. When `RequiredRules`
-names anything, the daemon merges those rules into whatever `IncludeRules` would otherwise apply --
-the shipped 15-rule default when no repo-local settings file supplies its own `IncludeRules`, or
-that file's own list when it does -- and writes the merged result to a **new** settings file under
-the plugin's own data root. Nothing in the repository, and no file the user or the project owns, is
-ever edited to do this.
+names anything, the daemon writes a **new** settings file under the plugin's own data root that runs
+the required rules beside the rules that would otherwise run (dispatch 000306, owner ruling R03):
+
+- **no settings file** (none in the repository, no `settingsPath` override, `ruleset` left at
+  `pses-default`): its `IncludeRules` is the shipped 15-rule default plus the required rules;
+- **a settings file that names its own `IncludeRules`** (the shipped `ruleset = base` file does): its
+  `IncludeRules` is that list plus the required rules;
+- **a settings file PSScriptAnalyzer accepts that names no `IncludeRules`** -- the usual repository
+  file (or `settingsPath` override), with `ExcludeRules`, `Rules` or a `CustomRulePath`: it names no
+  `IncludeRules` either. PSScriptAnalyzer runs every enabled rule for such a file, and so it does for
+  the merged one: the repository's rules, those its `Rules` entries switch on and its custom rules all
+  still run, and the required rules run because a required rule is taken out of the file's
+  `ExcludeRules`, a required configurable rule is switched on, and `IncludeDefaultRules = $true` is set
+  beside a `CustomRulePath` (all below). Before this release the merge wrote the 15-rule default plus
+  the required rules here too, so whenever `RequiredRules` named anything every other rule the
+  repository ran stopped running -- `PSAvoidUsingWriteHost`, a `PSAvoidLongLines` it switched on
+  through `Rules`, its `CustomRulePath` rules -- while a managed scan certified (review finding
+  B1b-R03; measured, both hosts).
+
+A settings file PSScriptAnalyzer rejects merges as before: its accepted entries are carried, onto its
+own `IncludeRules` when it names one PSScriptAnalyzer accepts and onto the 15-rule default otherwise --
+the session already uses PSES's defaults in place of such a file, and a managed scan refuses it.
+Nothing in the repository, and no file the user or the project owns, is ever edited to do this.
 
 **What the merged file carries** (dispatch 000306). Every entry of the repository's settings file that
 PSScriptAnalyzer accepts -- its `Rules` (each rule's `Enable` flag and arguments, except that a required
@@ -374,7 +392,9 @@ dropped `Rules` and `Severity`, the keys PSScriptAnalyzer reads, and carried `Se
 `RuleArguments` and `FilePath`, which it rejects. So whenever `RequiredRules` merged, a repository's
 rule configuration vanished -- a configurable rule it had switched on with `Enable = $true`, such as
 `PSAvoidLongLines`, went silent -- and a repository file already holding one of those rejected keys
-produced a merged file PSScriptAnalyzer refused, so PSES analyzed nothing at all. (Dropping
+produced a merged file PSScriptAnalyzer refused, so PSES analyzed nothing at all. Carrying `Rules` was
+not enough on its own: in a file that names no `IncludeRules`, the 15-rule `IncludeRules` the merge
+then wrote kept `PSAvoidLongLines` from running anyway, until owner ruling R03 (above). (Dropping
 `Severity` changed nothing observable: PSES passes its own `-Severity` beside the settings file, which
 overrides a settings file's `Severity` -- measured.) Every number a rule argument holds keeps its type
 and value in the merged file (review finding B1b-I01): an `[int]` as itself, a decimal as a `d`
@@ -384,8 +404,9 @@ cast of its text; such an argument used to be written `$null`, the merged file t
 other settings file before PSES sees it.
 
 **Guarded against version drift.** The pinned 15-rule default is trusted only when the running
-PSES's own version tag matches what that list was verified against. On a mismatch, and only when no
-repo-local `IncludeRules` exists to merge onto instead, the daemon **declines to merge** rather than
+PSES's own version tag matches what that list was verified against. On a mismatch, and only when the
+merge would use that list (no settings file, or a rejected one with no accepted `IncludeRules` of its
+own), the daemon **declines to merge** rather than
 risk shipping a stale list as PSES's replacement default -- one warning, `RequiredRules` goes
 unenforced for that session, and every other diagnostic is unaffected. The "running" version is the
 `ModuleVersion` of the PowerShellEditorServices manifest the daemon actually launches, read from disk
@@ -429,7 +450,9 @@ with a `CustomRulePath` and no `IncludeDefaultRules = $true` makes PSScriptAnaly
 custom rules, so no built-in rule `IncludeRules` names runs -- measured, a merged file of that shape
 analyzed nothing at all. When the merge carries a repository's `CustomRulePath` and a required rule is a
 built-in one, the merged file sets `IncludeDefaultRules = $true` (over the repository's `$false`, if it
-wrote one).
+wrote one). When the repository's file names no `IncludeRules` (above), that runs every enabled
+built-in rule beside the custom ones, not only the required one -- more than the repository's file
+runs alone, never less (measured).
 
 **The boundary, stated plainly.** Exactly like `SeverityOverrides` above: a required rule's finding
 still passes through your local `severityThreshold` once it fires. At the shipped default (`Hint`)

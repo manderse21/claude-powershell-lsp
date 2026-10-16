@@ -1323,8 +1323,11 @@ function Select-OrgPolicyFiltered {
 # required rule can be forced on by writing PSES a settings file that names it -- but ONLY if
 # the merged file also preserves every rule PSES would otherwise have run. A settings file with
 # NO IncludeRules key runs every INSTALLED PSSA rule (PSSA's own default), which is a much wider
-# surface than PSES's own curated no-settings default -- so the merge must pin that default
-# explicitly rather than merely appending to whatever IncludeRules already existed.
+# surface than PSES's own curated no-settings default -- so with NO settings file the merge must pin
+# that default explicitly rather than merely appending to whatever IncludeRules already existed. The
+# same fact cuts the other way when the repository's own settings file names no IncludeRules: PSES
+# then runs every enabled rule, and pinning its default would narrow that -- so there the merge writes
+# no IncludeRules at all (owner ruling R03, dispatch 000306; Merge-RequiredRulesSettings).
 
 function Get-PssaDefaultRuleNames {
     # PSES's OWN no-settings default rule set -- read from the PINNED PSES v4.6.0 source
@@ -1930,11 +1933,13 @@ function Merge-RequiredRulesSettings {
     #
     # Returns $null (meaning: do not merge, take the untouched path) when: $RequiredRules is
     # empty (the overwhelmingly common case -- org policy unset or names no required rule); OR
-    # $CurrentPsesTag does not match Get-PssaDefaultRulesVerifiedForPsesTag AND no repo-local
-    # IncludeRules exists to merge onto instead (the guard: a stale default-rule list must never
-    # silently ship as PSES's replacement rule set). A repo-local settings file WITH its own
-    # IncludeRules is trusted as-is regardless of the PSES-tag guard, since in that case the
-    # merge never needs PSES's own default list at all.
+    # $CurrentPsesTag does not match Get-PssaDefaultRulesVerifiedForPsesTag AND the merge would use
+    # PSES's default list -- no repo-local IncludeRules to merge onto, and no accepted settings file
+    # whose own rule set it keeps (the guard: a stale default-rule list must never silently ship as
+    # PSES's replacement rule set). A repo-local settings file WITH its own IncludeRules is trusted
+    # as-is regardless of the PSES-tag guard, since in that case the merge never needs PSES's own
+    # default list at all -- nor does one PSScriptAnalyzer accepts that names no IncludeRules (owner
+    # ruling R03, below).
     #
     # PRECEDENCE, decided and tested here (no prior implementation to match -- new mechanism):
     # a rule named in BOTH $RequiredRules and $OrgExcludeRules (the SAME org policy contradicting
@@ -1951,12 +1956,14 @@ function Merge-RequiredRulesSettings {
     # requires the excluded rule anyway' goes RED; drop the repo-local-exclude-loses branch and
     # 'org required beats repo-local excluded' goes RED; return the repo-local settings verbatim
     # when $RequiredRules is non-empty and 'a required rule not in the repo file is still added'
-    # goes RED.
+    # goes RED; write PSES's default list over an accepted settings file that names no IncludeRules
+    # and the tests named 'B1b-R03:' go RED (dispatch 000306, correction round 2).
     #
     # $GuardOut (dispatch 000305, B1) receives what the version guard decided, as evidence a managed
     # scan can certify on: 'pass' (the pinned default list was used and $CurrentPsesTag matched),
-    # 'refused' (it did not, and there was no repo-local IncludeRules to merge onto), 'not-needed'
-    # (a repo-local IncludeRules made the pinned list unnecessary, or nothing was required).
+    # 'refused' (it did not, and the merge needed that list), 'not-needed' (the pinned list was not
+    # used: a repo-local IncludeRules to merge onto, an accepted settings file whose own rule set the
+    # merge keeps, or nothing was required).
     # Optional. NOTE: the guard is only as honest as $CurrentPsesTag -- its default is the verified
     # tag itself, which always passes; the daemon passes the PSES version it observes on disk.
     param(
@@ -1983,31 +1990,46 @@ function Merge-RequiredRulesSettings {
     if ($null -ne $read -and [string]$read.Verdict -ne 'unparsable') { $baseData = $read.Entries }
 
     $hasRepoInclude = ($null -ne $baseData -and $baseData.Contains('IncludeRules'))
-    if (-not $hasRepoInclude -and $CurrentPsesTag -ne (Get-PssaDefaultRulesVerifiedForPsesTag)) {
-        # No repo-local IncludeRules to merge onto, and the pinned PSES default list is not
-        # verified for the tag actually in use: refuse to guess PSES's real default set. Degrade
-        # to "do not merge" -- the caller logs ONE warning and requiredRules is not enforced this
-        # session, exactly the fail-open-but-never-silent shape every other org-policy degrade in
-        # this file already uses.
+    # A SETTINGS FILE THAT NAMES NO IncludeRules KEEPS ITS OWN RULE SET (owner ruling R03, 2026-10-16;
+    # review finding B1b-R03, pre-existing since dispatch 000294). For such a file PSScriptAnalyzer runs
+    # EVERY enabled rule -- those its Rules entries switch on and its CustomRulePath rules included -- yet
+    # the merge wrote PSES's 15 defaults plus the required rules as IncludeRules, so every other rule the
+    # repository ran stopped running whenever RequiredRules named anything (measured: PSAvoidLongLines
+    # switched on through Rules, PSAvoidUsingWriteHost, PSUseSingularNouns, a custom rule), while a
+    # managed scan certified. So when the file is one PSScriptAnalyzer ACCEPTS and it names no
+    # IncludeRules, the merged file names none either: every rule the repository ran still runs, and the
+    # required ones run through the ExcludeRules strip, the forced Enable (R01) and IncludeDefaultRules
+    # (K02) below. No settings file, a file naming its own IncludeRules, and a REJECTED file (refused by
+    # PSScriptAnalyzer, so the session already falls back to PSES's defaults) merge exactly as before.
+    $keepRuleSet = (-not $hasRepoInclude -and $null -ne $read -and [string]$read.Verdict -eq 'valid')
+    if (-not $hasRepoInclude -and -not $keepRuleSet -and $CurrentPsesTag -ne (Get-PssaDefaultRulesVerifiedForPsesTag)) {
+        # The merge needs the pinned PSES default list (no IncludeRules to merge onto, and no
+        # accepted settings file whose own rule set it keeps), and that list is not verified for
+        # the tag actually in use: refuse to guess PSES's real default set. Degrade to "do not
+        # merge" -- the caller logs ONE warning and requiredRules is not enforced this session,
+        # exactly the fail-open-but-never-silent shape every other org-policy degrade in this
+        # file already uses.
         if ($null -ne $GuardOut) { $GuardOut.Value = 'refused' }
         return $null
     }
-    if ($null -ne $GuardOut) { $GuardOut.Value = $(if ($hasRepoInclude) { 'not-needed' } else { 'pass' }) }
+    if ($null -ne $GuardOut) { $GuardOut.Value = $(if ($hasRepoInclude -or $keepRuleSet) { 'not-needed' } else { 'pass' }) }
 
     $include = New-Object System.Collections.ArrayList
-    $seenInclude = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
-    $baseIncludeList = if ($hasRepoInclude) { @($baseData['IncludeRules']) } else { @(Get-PssaDefaultRuleNames) }
-    foreach ($r in $baseIncludeList) {
-        if ($r -isnot [string]) { continue }
-        $rt = $r.Trim()
-        if ([string]::IsNullOrWhiteSpace($rt)) { continue }
-        if ($seenInclude.Add($rt)) { [void]$include.Add($rt) }
-    }
-    foreach ($r in $required) {
-        $rt = $r.Trim()
-        if ([string]::IsNullOrWhiteSpace($rt)) { continue }
-        if ($orgExcSet.Contains($rt)) { continue }   # org excludes it too: exclusion wins, skip
-        if ($seenInclude.Add($rt)) { [void]$include.Add($rt) }
+    if (-not $keepRuleSet) {
+        $seenInclude = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+        $baseIncludeList = if ($hasRepoInclude) { @($baseData['IncludeRules']) } else { @(Get-PssaDefaultRuleNames) }
+        foreach ($r in $baseIncludeList) {
+            if ($r -isnot [string]) { continue }
+            $rt = $r.Trim()
+            if ([string]::IsNullOrWhiteSpace($rt)) { continue }
+            if ($seenInclude.Add($rt)) { [void]$include.Add($rt) }
+        }
+        foreach ($r in $required) {
+            $rt = $r.Trim()
+            if ([string]::IsNullOrWhiteSpace($rt)) { continue }
+            if ($orgExcSet.Contains($rt)) { continue }   # org excludes it too: exclusion wins, skip
+            if ($seenInclude.Add($rt)) { [void]$include.Add($rt) }
+        }
     }
 
     $exclude = New-Object System.Collections.ArrayList
@@ -2027,7 +2049,8 @@ function Merge-RequiredRulesSettings {
         }
     }
 
-    $merged = @{ IncludeRules = @($include) }
+    $merged = @{}
+    if (-not $keepRuleSet) { $merged['IncludeRules'] = @($include) }
     if ($exclude.Count -gt 0) { $merged['ExcludeRules'] = @($exclude) }
     # Preserve every other ACCEPTED repo-local entry faithfully -- the Rules tables and all -- so the
     # merge changes ONLY which rules run, never how an already-running rule is configured, and writes

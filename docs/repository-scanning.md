@@ -142,15 +142,20 @@ applies to developer assistance only; a managed scan declares `Hint` and refuses
 
 **What certification does and does not prove.** It proves that, at each file's analysis, the hook and
 the daemon both applied the policy whose identity the scan resolved, that a required rule's merged
-settings were written, verified and handed to PSES (naming every required rule and switching every
-configurable one on, so a repository's `Enable = $false` cannot keep one off: review finding B1b-R01),
+settings were written, verified and handed to PSES (running every required rule -- named in
+`IncludeRules` when the merged file has one, taken out of a repository's `ExcludeRules`, and switched
+on when it is configurable, so a repository's `Enable = $false` cannot keep one off: review finding
+B1b-R01 -- while every rule the repository's own settings file runs still runs: a file PSScriptAnalyzer
+accepts that names no `IncludeRules` gets none in the merged file either, where the merge used to narrow
+it to PSES's 15 defaults plus the required rules, and certify: owner ruling R03, review finding B1b-R03),
 that the settings file PSES reads still hashed to
 what was written, and -- since dispatch 000306 -- that the daemon found every settings file the analysis
 rests on, the repository's and the merged one, to be one PSScriptAnalyzer accepts, by the checks
 [below](#settings-files-the-analysis-rests-on-dispatch-000306). Beside a repository's `CustomRulePath`
 the merged settings also set `IncludeDefaultRules = $true` whenever a required rule is a built-in one
 (review finding B1b-K02): without it PSScriptAnalyzer loads only the custom rules, and a required
-built-in rule never ran while the scan certified. It does NOT prove that a rule module
+built-in rule never ran while the scan certified; in a file that names no `IncludeRules` it runs every
+enabled built-in rule beside the custom ones, more than that file runs alone. It does NOT prove that a rule module
 or assembly a `CustomRulePath` reaches holds a rule (the one boundary that check leaves, described there
 and left to leg A3's runtime signal), nor that a required rule that needs settings the repository does
 not give it could run (`PSUseCompatibleCommands` and `PSUseCompatibleTypes` need `TargetProfiles`, and
@@ -221,7 +226,15 @@ and `Severity` and carried `Severities`, `RuleArguments` and `FilePath`, which P
 a repository's configurable rules (`PSAvoidLongLines` switched on through `Rules`, say) went silent, and
 a repository file already holding one of those keys produced a merged file PSES analyzed nothing with.
 (`Severity` in a settings file has no observable effect under PSES, which passes its own `-Severity`
-beside it -- measured -- so carrying it changes nothing you can see; `Rules` is the one that matters.) A
+beside it -- measured -- so carrying it changes nothing you can see; `Rules` is the one that matters.)
+And the merge narrows nothing the repository runs (owner ruling R03, review finding B1b-R03): when the
+repository's file is one PSScriptAnalyzer accepts and names no `IncludeRules`, the merged file names none
+either, so every rule that file runs -- those its `Rules` entries switch on and its `CustomRulePath`
+rules included -- still runs beside the required ones. Before, the merge wrote PSES's 15 defaults plus
+the required rules as `IncludeRules` there: carrying `Rules` did not make `PSAvoidLongLines` run unless
+the file also named it in its own `IncludeRules`, and a managed scan certified without the repository's
+other rules (measured through the real daemon, both hosts). With no settings file, or one that names its
+own `IncludeRules`, the merged file is byte-for-byte what it was. A
 managed scan over a repository file with a rejected key is refused even though the merged file, without
 that key, was valid and was used: the analysis did not run on the settings the repository declared.
 One entry of `Rules` is not the repository's to keep: every configurable rule `RequiredRules` names is
