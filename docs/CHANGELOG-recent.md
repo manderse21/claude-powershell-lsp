@@ -115,9 +115,11 @@ re-spawn. **Old merged settings files are removed:** after each merge the daemon
 files on its data root that no live daemon's session record names and that are more than ten minutes
 old, and the orphaned `orgpolicy-merged-settings.psd1` from the layout before dispatch 000305 -- never
 anything else, never a directory, and nothing when a session record cannot be read. Not covered, and
-documented: whether a rule module or assembly a `CustomRulePath` reaches holds a rule (one that exports
-no rule function still passes the check; without `IncludeDefaultRules = $true` PSScriptAnalyzer then
-refuses the settings) -- left to a runtime signal. `doctor -Json`'s `orgPolicy` keys
+documented (owner ruling K01b): a rule source a `CustomRulePath` reaches that PSScriptAnalyzer cannot
+load or run, or that holds no rule (a module whose manifest names a nested root module, a rule that
+throws, a module that exports no rule function all pass the check; the custom rule then never runs, and
+without `IncludeDefaultRules = $true` PSScriptAnalyzer analyzes nothing or refuses the settings) -- left
+to a runtime signal (leg A3). `doctor -Json`'s `orgPolicy` keys
 keep their names, order and types. No `userConfig` knob, status token or CLI flag is added.
 
 MINOR: **`lsp-scan.ps1 -OrgPolicyPath` now governs the whole analysis, and a new managed mode

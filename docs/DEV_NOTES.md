@@ -238,8 +238,10 @@ and never parse it a second way. Things that bite when you change this path:
   and otherwise loads its `*.dll` files -- a module file under another name in it yields nothing, and
   `RecurseCustomRulePath` walks the directories below for the same; a file loads only as `.psm1`,
   `.psd1` or `.dll` (a `.ps1` warns "Cannot find rule extension"). The reader mirrors that
-  (`Test-PssaSettingsRulePathYieldsRule`). One thing it cannot see without loading it: whether a rule
-  source HOLDS a rule (measured boundary, kept visible by a test).
+  (`Test-PssaSettingsRulePathYieldsRule`). One thing it cannot see without loading it: a rule source
+  PSScriptAnalyzer cannot load or run, or that holds no rule -- a module whose manifest names a nested
+  root module, a rule that throws, a module with no rule function (owner ruling K01b; left to A3's
+  runtime signal; the no-rule case is a measured boundary, kept visible by a test).
 - **A required rule is switched on in the merged file, under its canonical name.** Of PSScriptAnalyzer
   1.25.0's 75 built-in rules, 21 are configurable (derive from `ConfigurableRule`); their `Enable` flag
   in `Rules` switches them off however `IncludeRules` names them, and 17 of the 21 are off by default --

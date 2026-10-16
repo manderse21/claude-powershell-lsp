@@ -155,9 +155,9 @@ rests on, the repository's and the merged one, to be one PSScriptAnalyzer accept
 the merged settings also set `IncludeDefaultRules = $true` whenever a required rule is a built-in one
 (review finding B1b-K02): without it PSScriptAnalyzer loads only the custom rules, and a required
 built-in rule never ran while the scan certified; in a file that names no `IncludeRules` it runs every
-enabled built-in rule beside the custom ones, more than that file runs alone. It does NOT prove that a rule module
-or assembly a `CustomRulePath` reaches holds a rule (the one boundary that check leaves, described there
-and left to leg A3's runtime signal), nor that a required rule that needs settings the repository does
+enabled built-in rule beside the custom ones, more than that file runs alone. It does NOT prove that a rule
+source a `CustomRulePath` reaches is one PSScriptAnalyzer can load and run, or that it holds a rule (the
+one boundary that check leaves, described there and left to leg A3's runtime signal), nor that a required rule that needs settings the repository does
 not give it could run (`PSUseCompatibleCommands` and `PSUseCompatibleTypes` need `TargetProfiles`, and
 without them find nothing -- [configuration](configuration.md#requiredrules----forcing-a-rule-onto-the-analysis-surface-dispatch-000294)), and it does
 not make the plugin tamper-proof: a process running as the same user can edit the policy, its sidecar,
@@ -248,11 +248,16 @@ written with `Enable = $true` (owner ruling R01, review finding B1b-R01) -- befo
 is off by default never ran ([configuration](configuration.md#requiredrules----forcing-a-rule-onto-the-analysis-surface-dispatch-000294)).
 
 **What the check cannot see.** It reads the settings file and lists the directories a `CustomRulePath`
-reaches, but loads nothing: a rule source that resolves but holds no rule -- a module that exports no
-rule function, a `.dll` that is no rule assembly -- passes the check, and unless the file also sets
-`IncludeDefaultRules = $true` PSScriptAnalyzer then refuses the settings ("Cannot find ScriptAnalyzer
-rules in the specified path") and PSES analyzes nothing. That one boundary is left to a runtime signal
-(leg A3); it is measured and kept visible by a test. Every other way a `CustomRulePath` reaches no rule is
+reaches, but loads nothing: **a rule source PSScriptAnalyzer cannot load or run, or that holds no rule**,
+passes the check (owner ruling K01b, review finding B1b-K01b). A module directory whose manifest names
+a nested root module is listed by PSScriptAnalyzer but cannot be loaded when it analyzes ("The module
+... could not be loaded"), and a rule that throws cannot run: PSScriptAnalyzer reports the error and
+runs the other rules, so a file that loads only its custom rules analyzes nothing, and a managed scan
+over it can certify an empty result (measured, both hosts). A module that exports no rule function, or
+a `.dll` that is no rule assembly, holds no rule: unless the file also sets `IncludeDefaultRules = $true`,
+PSScriptAnalyzer then refuses the settings ("Cannot find ScriptAnalyzer rules in the specified path") and
+PSES analyzes nothing. That boundary is left to a runtime signal (leg A3); its no-rule case is measured
+and kept visible by a test. Every other way a `CustomRulePath` reaches no rule is
 refused as above (since review finding B1b-K01; before it, `CustomRulePath = @('~/*.nomatch')` alone read
 valid and a managed scan certified an empty result).
 

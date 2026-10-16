@@ -1655,8 +1655,10 @@ function Test-PssaSettingsRulePathYieldsRule {
     # hosts: settings whose entries TOGETHER reach none -- a wildcard matching nothing, an empty directory,
     # a directory or file holding no module or assembly (a .txt, a .ps1) -- are refused ("Cannot find
     # ScriptAnalyzer rules in the specified path", and PSES analyzes nothing) unless IncludeDefaultRules
-    # is $true; a dead entry beside one that reaches a rule source is not. What stays out of sight: a rule
-    # source that holds no rule (a module exporting no rule function, an assembly with no rule in it).
+    # is $true; a dead entry beside one that reaches a rule source is not. What stays out of sight (owner
+    # ruling K01b, left to A3's runtime signal): a rule source PSScriptAnalyzer cannot load or run, or that
+    # holds no rule -- a module whose manifest names a nested root module, a rule that throws, a module
+    # exporting no rule function, an assembly with no rule in it.
     param([string[]]$Entries, [bool]$Recurse = $false)
     foreach ($e in @($Entries)) {
         $paths = @()
@@ -1694,9 +1696,10 @@ function Get-PssaSettingsEntryProblem {
     #                            with $RecurseCustomRulePath), or PSScriptAnalyzer finds no rules at all;
     #   IncludeDefaultRules / RecurseCustomRulePath  a boolean;
     #   Rules                    a table whose every value is a table (one rule's settings).
-    # What this cannot see -- whether a module or an assembly a CustomRulePath reaches holds a rule
+    # What this cannot see -- a rule source PSScriptAnalyzer cannot load or run, or that holds no rule
     # (without IncludeDefaultRules = $true, PSScriptAnalyzer refuses settings whose custom paths yield
-    # none) -- is a documented boundary (docs/repository-scanning.md), left to a runtime signal.
+    # none) -- is a documented boundary (docs/repository-scanning.md; owner ruling K01b), left to A3's
+    # runtime signal.
     param([string]$Key, $Value, [bool]$IncludeDefaultRules = $false, [bool]$RecurseCustomRulePath = $false)
     switch ($Key) {
         'Severity' {
