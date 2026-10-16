@@ -147,7 +147,10 @@ configurable one on, so a repository's `Enable = $false` cannot keep one off: re
 that the settings file PSES reads still hashed to
 what was written, and -- since dispatch 000306 -- that the daemon found every settings file the analysis
 rests on, the repository's and the merged one, to be one PSScriptAnalyzer accepts, by the checks
-[below](#settings-files-the-analysis-rests-on-dispatch-000306). It does NOT prove that a rule module
+[below](#settings-files-the-analysis-rests-on-dispatch-000306). Beside a repository's `CustomRulePath`
+the merged settings also set `IncludeDefaultRules = $true` whenever a required rule is a built-in one
+(review finding B1b-K02): without it PSScriptAnalyzer loads only the custom rules, and a required
+built-in rule never ran while the scan certified. It does NOT prove that a rule module
 or assembly a `CustomRulePath` reaches holds a rule (the one boundary that check leaves, described there
 and left to leg A3's runtime signal), nor that a required rule that needs settings the repository does
 not give it could run (`PSUseCompatibleCommands` and `PSUseCompatibleTypes` need `TargetProfiles`, and

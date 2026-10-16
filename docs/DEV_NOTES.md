@@ -249,7 +249,9 @@ and never parse it a second way. Things that bite when you change this path:
   `Set-PssaRequiredRulesEnabled` writes `Enable = $true` under the canonical key for every required
   configurable rule (B1b-R01). `Get-PssaBuiltinRuleNames` and `Get-PssaConfigurableRuleNames` are pinned
   from the vendored analyzer and re-measured by a test on every leg; re-measure them on a PSScriptAnalyzer
-  bump.
+  bump. A settings file with a `CustomRulePath` and without `IncludeDefaultRules = $true` loads ONLY the
+  custom rules -- no built-in rule runs, whatever `IncludeRules` says -- so a merge carrying one sets
+  `IncludeDefaultRules = $true` when a required rule is built-in (B1b-K02).
 - **A merged settings file writes every number with its type.** PSScriptAnalyzer evaluates a cast only
   to a .NET primitive, so `[decimal]'1.5'` and `[string]'x'` are REFUSED (measured, both hosts):
   `ConvertTo-Psd1Literal` writes a decimal as a `d` literal (`1.5d`), an `[int]` bare, and every other

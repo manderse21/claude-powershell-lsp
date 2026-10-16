@@ -69,7 +69,12 @@ R01, review finding B1b-R01): carrying a repository's `Rules` also carried any `
 them, so a repository could switch off a configurable rule the organization requires
 (`PSUseSingularNouns`, say) while a managed scan certified; the merged file now gives every configurable
 rule `RequiredRules` names `Enable = $true`, still carrying the repository's other arguments for it, so a
-required configurable rule that is off by default (`PSAvoidLongLines` and sixteen more) runs too. **A settings resolution that throws is recorded:**
+required configurable rule that is off by default (`PSAvoidLongLines` and sixteen more) runs too. **A
+required built-in rule runs beside custom rules** (owner ruling K02, review finding B1b-K02): a merged
+file carrying a repository's `CustomRulePath` without `IncludeDefaultRules = $true` made PSScriptAnalyzer
+load only the custom rules, so no required built-in rule ran while a managed scan certified (pre-existing
+since the merge landed); the merge now sets `IncludeDefaultRules = $true` whenever a required rule is
+built-in. **A settings resolution that throws is recorded:**
 it used to return before the daemon's evidence was written, so the record stayed `pending` for the
 daemon's whole life (doctor said "not yet applied" forever); it now records the TERMINAL
 `settings-unresolved`, which `doctor -Json` reports as `enforcement.state` `not-observed`, reason

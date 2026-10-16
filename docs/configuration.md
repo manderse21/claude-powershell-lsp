@@ -424,6 +424,13 @@ repository does not give it -- `PSUseCompatibleCommands` and `PSUseCompatibleTyp
 `TargetProfiles` -- is switched on and finds nothing (PSScriptAnalyzer reports "TargetProfiles cannot
 be empty" and analyzes the rest).
 
+**And beside a repository's custom rules** (owner ruling K02, review finding B1b-K02). A settings file
+with a `CustomRulePath` and no `IncludeDefaultRules = $true` makes PSScriptAnalyzer load *only* the
+custom rules, so no built-in rule `IncludeRules` names runs -- measured, a merged file of that shape
+analyzed nothing at all. When the merge carries a repository's `CustomRulePath` and a required rule is a
+built-in one, the merged file sets `IncludeDefaultRules = $true` (over the repository's `$false`, if it
+wrote one).
+
 **The boundary, stated plainly.** Exactly like `SeverityOverrides` above: a required rule's finding
 still passes through your local `severityThreshold` once it fires. At the shipped default (`Hint`)
 nothing is dropped; a site that raises the threshold can still hide a rule the organization

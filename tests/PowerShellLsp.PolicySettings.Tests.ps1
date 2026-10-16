@@ -565,6 +565,26 @@ Describe 'The RequiredRules merge carries exactly what PSScriptAnalyzer accepts 
         $y.Rules['PSAvoidGlobalVars']['Enable'] | Should -BeFalse -Because 'PSScriptAnalyzer ignores Enable on a rule that is not configurable (measured): the entry is carried as written'
     }
 
+    It 'B1b-K02: a required BUILT-IN rule beside a carried CustomRulePath sets IncludeDefaultRules = $true -- over a repository''s $false too' {
+        $module = New-PsFile "function Measure-B1bK02 { param([System.Management.Automation.Language.ScriptBlockAst]`$ScriptBlockAst) return @() }`nExport-ModuleMember -Function Measure-B1bK02`n" -Name 'B1b.K02.psm1'
+        foreach ($idr in @('', '; IncludeDefaultRules = $false')) {
+            $repo = New-PsFile ("@{ CustomRulePath = @('" + $module + "')" + $idr + ' }')
+            $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $repo -RequiredRules @('PSAvoidGlobalVars') -CurrentPsesTag 'v4.6.0'
+            (@($m.CustomRulePath) -join ',') | Should -BeExactly $module -Because 'the repository''s custom rules are carried'
+            $m['IncludeDefaultRules'] | Should -BeTrue -Because ('repository file: ' + $idr)
+            (ConvertTo-MergedPssaSettingsText -Settings $m) | Should -Match 'IncludeDefaultRules = \$true'
+        }
+    }
+
+    It 'IncludeDefaultRules is left alone when no required rule is built-in, or nothing custom is carried (the K02 control)' {
+        $module = New-PsFile "function Measure-B1bK02c { param([System.Management.Automation.Language.ScriptBlockAst]`$ScriptBlockAst) return @() }`nExport-ModuleMember -Function Measure-B1bK02c`n" -Name 'B1b.K02c.psm1'
+        $repo = New-PsFile ("@{ CustomRulePath = @('" + $module + "') }")
+        $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $repo -RequiredRules @('B1b.K02c\Measure-B1bK02c') -CurrentPsesTag 'v4.6.0'
+        $m.ContainsKey('IncludeDefaultRules') | Should -BeFalse -Because 'a required CUSTOM rule needs no built-in one'
+        $n = Merge-RequiredRulesSettings -ResolvedSettingsPath '' -RequiredRules @('PSAvoidGlobalVars') -CurrentPsesTag 'v4.6.0'
+        $n.ContainsKey('IncludeDefaultRules') | Should -BeFalse -Because 'without a CustomRulePath the built-in rules load anyway'
+    }
+
     It 'B1b-I01: a <Form> rule argument survives the merge with its TYPE and its value (it rendered $null, or another type)' -TestCases @(
         @{ Form = '[uint32]120' }
         @{ Form = '120d' }
@@ -667,6 +687,9 @@ Describe 'The merged settings, judged by the vendored PSScriptAnalyzer: what the
         Add-MjCase 'i01-uint32-line-length' "@{ IncludeRules = @('PSAvoidLongLines'); Rules = @{ PSAvoidLongLines = @{ Enable = `$true; MaximumLineLength = [uint32]40 } } }" @('PSAvoidGlobalVars')
         Add-MjCase 'r01-required-rule-disabled' "@{ Rules = @{ PSUseSingularNouns = @{ Enable = `$false } } }" @('PSUseSingularNouns')
         Add-MjCase 'r01-required-rule-off-by-default' '' @('PSAvoidLongLines') -Code ("gci`n# " + ('x' * 130) + "`n")
+        $script:MjModule = New-PsFile ("function Measure-B1bJudged {`n    param([Parameter(Mandatory = `$true)][System.Management.Automation.Language.ScriptBlockAst]`$ScriptBlockAst)`n    return @()`n}`n" +
+            "Export-ModuleMember -Function Measure-B1bJudged`n") -Name 'B1b.Judged.psm1'
+        Add-MjCase 'k02-custom-rule-path-beside-required' ("@{ CustomRulePath = @('" + $script:MjModule + "') }") @('PSAvoidGlobalVars')
         # The sample (a case may bring its own): a plural noun, an alias, a global and a 62-column line.
         [System.IO.File]::WriteAllText((Join-Path $script:MjDir 'code.txt'), ("function Get-Items { param() 'x' }`ngci`n`$global:mj = 1`n# " + ('x' * 60) + "`n"))
         $driver = Join-Path $TestDrive 'merged-judged-driver.ps1'
@@ -725,6 +748,11 @@ Describe 'The merged settings, judged by the vendored PSScriptAnalyzer: what the
 
     It 'B1b-R01: a REQUIRED rule that is off by default runs -- PSAvoidLongLines reports the 132-column line' {
         Get-MjRules 'r01-required-rule-off-by-default' | Should -Contain 'PSAvoidLongLines' -Because $script:MjResults['r01-required-rule-off-by-default']
+    }
+
+    It 'B1b-K02: a REQUIRED built-in rule runs beside the repository''s CustomRulePath -- PSAvoidGlobalVars reports the global' {
+        $script:MjCases['k02-custom-rule-path-beside-required'] | Should -Match 'IncludeDefaultRules = \$true'
+        Get-MjRules 'k02-custom-rule-path-beside-required' | Should -Contain 'PSAvoidGlobalVars' -Because $script:MjResults['k02-custom-rule-path-beside-required']
     }
 
     It 'B1b-I01: a [uint32] line length the repository sets survives the merge -- PSAvoidLongLines reports the 62-column line under it' {

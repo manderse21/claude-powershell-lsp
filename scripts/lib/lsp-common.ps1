@@ -2054,6 +2054,19 @@ function Merge-RequiredRulesSettings {
     }
     $rules = Set-PssaRequiredRulesEnabled -Rules $(if ($merged.ContainsKey('Rules')) { $merged['Rules'] } else { $null }) -RequiredRules @($active)
     if ($null -ne $rules) { $merged['Rules'] = $rules }
+    # ...and a required BUILT-IN rule runs beside a carried CustomRulePath (owner ruling K02, 2026-10-15;
+    # review finding B1b-K02, pre-existing since dispatch 000294). With a CustomRulePath and no
+    # IncludeDefaultRules = $true, PSScriptAnalyzer loads ONLY the custom rules, so no built-in rule
+    # IncludeRules names -- a required one included -- ever ran (measured: such a merged file analyzed
+    # nothing at all, and a managed scan certified). So whenever one of them is a built-in rule
+    # (Get-PssaBuiltinRuleNames), the merge sets IncludeDefaultRules = $true, over a repository's $false.
+    if ($merged.ContainsKey('CustomRulePath')) {
+        $builtin = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($n in @(Get-PssaBuiltinRuleNames)) { [void]$builtin.Add($n) }
+        foreach ($rt in @($active)) {
+            if ($builtin.Contains([string]$rt)) { $merged['IncludeDefaultRules'] = $true; break }
+        }
+    }
     return $merged
 }
 
