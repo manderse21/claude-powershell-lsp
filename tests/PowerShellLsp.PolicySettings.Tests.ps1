@@ -655,7 +655,7 @@ Describe 'The RequiredRules merge carries exactly what PSScriptAnalyzer accepts 
     }
 }
 
-Describe 'The merged settings, judged by the vendored PSScriptAnalyzer: what the repository configures and the organization requires runs (dispatch 000306 B1b, review findings B1b-R01, B1b-K02, B1b-I01)' -Skip:$script:PsUnsupported {
+Describe 'The merged settings, judged by the vendored PSScriptAnalyzer: what the repository configures and the organization requires runs (dispatch 000306 B1b, correction round 1)' -Skip:$script:PsUnsupported {
 
     BeforeAll {
         $script:MjData = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) { $env:PSLS_TEST_DATA_DIR } else { Join-Path ([System.IO.Path]::GetTempPath()) 'psls-sarifscan-test-data' }
