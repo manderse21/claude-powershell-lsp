@@ -376,8 +376,8 @@ the required rules beside the rules that would otherwise run (dispatch 000306, o
   runs every enabled rule for such a file, and so it does for
   the merged one: the repository's rules, those its `Rules` entries switch on and its custom rules all
   still run, and the required rules run because a required rule is taken out of the file's
-  `ExcludeRules` (by name, in any case, and from under a pattern -- below), a required configurable
-  rule is switched on, and `IncludeDefaultRules = $true` is set
+  `ExcludeRules` (by name, in any case, and -- when the file carries no `CustomRulePath` -- from under a
+  pattern: below), a required configurable rule is switched on, and `IncludeDefaultRules = $true` is set
   beside a `CustomRulePath` (all below). Before this release the merge wrote the 15-rule default plus
   the required rules here too, so whenever `RequiredRules` named anything every other rule the
   repository ran stopped running -- `PSAvoidUsingWriteHost`, a `PSAvoidLongLines` it switched on
@@ -461,7 +461,9 @@ findings carry (all measured, the same on Windows PowerShell 5.1 and PowerShell 
   wherever the merged file named `IncludeRules` -- a repository naming its own, with or without
   `IncludeDefaultRules` -- it never ran, and a repository's exclusion of its bare name kept it off, while
   a managed scan certified. Now the merge writes the bare name into `IncludeRules` and takes the
-  repository's exclusion of that name out; `RequiredRules` may name the rule either way.
+  repository's exclusion of that name out; `RequiredRules` may name the rule either way. A pattern over
+  the bare name is the open case above: a custom rule needs a `CustomRulePath`, so such a pattern is
+  kept and the rule is named as one that cannot run.
 - **`IncludeRules = @()` is no `IncludeRules`** (review finding B1b-OOB2-R03), as the list above says. A
   list of blank entries (`@('')`) selects nothing in PSScriptAnalyzer and is still merged onto.
 

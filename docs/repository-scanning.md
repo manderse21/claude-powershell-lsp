@@ -159,9 +159,10 @@ required rule is this: it is named in `IncludeRules` when the merged file has on
 PSScriptAnalyzer matches, the bare `Measure-Name` for a custom rule written `Module\Measure-Name` in
 `RequiredRules` (dispatch 000307, review finding B1b-OOB2-R02); it is taken out of a repository's
 `ExcludeRules` wherever an entry names it the way PSScriptAnalyzer reads that entry -- by name in any
-case, and from under a pattern such as `'PSAvoid*'` or `'*'`, which is written as the built-in rules it
-matches minus the required ones, so every other rule it excluded stays excluded (review finding
-B1b-OOB2-R01); and it is switched on when it is configurable, so a repository's `Enable = $false` cannot
+case, and, where the merged settings carry no `CustomRulePath`, from under a pattern such as `'PSAvoid*'`
+or `'*'`, which is written as the built-in rules it matches minus the required ones, so every other rule
+it excluded stays excluded (review finding B1b-OOB2-R01; beside a `CustomRulePath` the pattern is kept,
+below); and it is switched on when it is configurable, so a repository's `Enable = $false` cannot
 keep one off (review finding B1b-R01). Every rule the repository's own settings file runs still runs: a
 file PSScriptAnalyzer accepts that names no `IncludeRules`, or whose `IncludeRules` has no entry, gets
 none in the merged file either (owner ruling R03, review findings B1b-R03 and B1b-OOB2-R03). Beside a

@@ -66,7 +66,8 @@ rules it matches minus the required ones, so every other rule it excluded stays 
 written until the owner rules (dispatch 000307, open question R01). **A required custom rule runs however
 `RequiredRules` spells it:** named `Module\Measure-Name` -- as its findings name it -- it matched no
 `IncludeRules` entry, so it never ran wherever the merged file named `IncludeRules`, nor where the
-repository excluded its bare name; the merge now writes and strips the bare name. **`IncludeRules = @()`
+repository excluded its bare name; the merge now writes the bare name and takes the repository's exclusion
+of it out (a pattern over it is the open case above: a custom rule needs a `CustomRulePath`). **`IncludeRules = @()`
 keeps the repository's rule set** (owner ruling R03's path): the merge read it as the repository's own
 list and named the required rules alone, so every other rule the repository ran stopped running; a list
 of blank entries, which selects nothing, and a rejected file merge as before. **A required rule the merged
