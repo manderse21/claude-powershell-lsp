@@ -284,12 +284,17 @@ Describe 'How PSScriptAnalyzer names and matches a rule (dispatch 000307 B1c, re
             $w = 'B1c.Parity\Measure-B1cParity'
             @($script:Py['o-control']) | Should -Contain $w -Because 'CONTROL: two working sources both run'
             @($script:Py['o-control']) | Should -Contain 'B1c.Parity2\Measure-B1cParity2'
-            foreach ($k in @('o-unloadable-first', 'o-throw-first')) {
+            # The unloadable fixture -- a manifest whose RootModule sits in a subfolder -- was MEASURED unloadable
+            # on Windows (both hosts); whether PowerShell elsewhere loads it was not measured, so that half is
+            # asserted on Windows. A rule that throws is the same on every platform.
+            $onWindows = if (Test-Path 'Variable:\IsWindows') { [bool]$IsWindows } else { $true }
+            $faulty = @('o-throw') + $(if ($onWindows) { @('o-unloadable') } else { @() })
+            foreach ($k in @($faulty | ForEach-Object { $_ + '-first' })) {
                 @($script:Py[$k]) | Should -Not -Contain $w -Because ($k + ': the working source is listed after the faulty one')
                 @($script:Py[$k + '-idr']) | Should -Not -Contain $w -Because ($k + '-idr')
                 @($script:Py[$k + '-idr']) | Should -Contain 'PSAvoidGlobalVars' -Because 'the built-in rules still run'
             }
-            foreach ($k in @('o-unloadable-last', 'o-throw-last')) {
+            foreach ($k in @($faulty | ForEach-Object { $_ + '-last' })) {
                 @($script:Py[$k]) | Should -Contain $w -Because ($k + ': listed before the faulty source, it runs')
                 @($script:Py[$k + '-idr']) | Should -Contain $w -Because ($k + '-idr')
             }
