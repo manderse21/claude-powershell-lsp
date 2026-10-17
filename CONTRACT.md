@@ -448,6 +448,14 @@ cold. None is a contract change; each is banked here deliberately.
   one `doctor -Json` `orgPolicy.enforcement.reason` value (`settings-unresolved`). The `orgPolicy` keys
   keep their names, order and types. **No knob, no status token and no CLI flag is added**; exit codes are
   unchanged. Recorded here as a **note, not an amendment**.
+- **The RequiredRules merge reads rule lists as PSScriptAnalyzer does (NOT a Tier-1 frozen surface) --
+  dispatch 000307.** A `RequiredRules` merge now reads the repository's `IncludeRules` and `ExcludeRules`
+  the way PSScriptAnalyzer matches them (a `*` pattern, any case, a custom rule's bare name,
+  `IncludeRules = @()` as none) -- behavior changes recorded in the CHANGELOG. Additive and outside the
+  frozen surface: one optional field on the daemon's application evidence in the still-unreleased receipt
+  schema version 2 (`requiredRules.cannotRun`) and one stderr warning line from `lsp-scan.ps1`. **No knob,
+  no status token, no CLI flag and no reason code is added**; exit codes are unchanged, and `doctor -Json`'s
+  `orgPolicy` keys keep their names, order and types. Recorded here as a **note, not an amendment**.
 
 ---
 

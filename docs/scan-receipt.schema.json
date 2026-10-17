@@ -148,7 +148,12 @@
                       }
                     },
                     "mergedSettingsPath": { "type": "string" },
-                    "mergedSettingsSha256": { "type": "string", "pattern": "^([0-9a-f]{64})?$" }
+                    "mergedSettingsSha256": { "type": "string", "pattern": "^([0-9a-f]{64})?$" },
+                    "cannotRun": {
+                      "description": "The required rules the merged settings file cannot run, by the daemon's static check of that file as read back (dispatch 000307): one 'code: why' string each -- 'no rule of that name' (not a PSScriptAnalyzer built-in rule, and no CustomRulePath that could supply it), 'excluded by <entry>', 'not in IncludeRules' or 'built-in rules not loaded'. Empty when there is none or nothing was merged. Optional: a daemon before dispatch 000307 records none.",
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
                   }
                 },
                 "settings": {
@@ -160,7 +165,7 @@
                     "sha256": { "type": "string", "pattern": "^([0-9a-f]{64})?$" },
                     "delivered": { "type": "boolean" },
                     "validation": {
-                      "description": "The daemon's verdict, made before PSES saw them, on the settings files the analysis rests on (dispatch 000306): whether PSScriptAnalyzer accepts the repository's and the merged one. Only valid and none let a managed scan certify.",
+                      "description": "The daemon's verdict on the settings files the analysis rests on (dispatch 000306): whether PSScriptAnalyzer accepts the repository's and the merged one. They are validated when a PSES session starts, at its first analyzed file, before PSES is handed them; an edit to a settings file during a session is validated at the next session (owner ruling K08), and until then this is the verdict recorded when the session started, while PSES reads the edited file unchecked. Only valid and none let a managed scan certify.",
                       "enum": ["pending", "none", "valid", "rejected", "unparsable", "unresolved"]
                     },
                     "validationDetail": { "type": "string" }

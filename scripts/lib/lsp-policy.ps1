@@ -424,7 +424,10 @@ function New-PolicyApplicationEvidence {
     #                  (verifiedFor = the tag the pinned default list was verified against, observed =
     #                  the PSES version the daemon read from the manifest it launches, result = pass |
     #                  refused | not-needed, '' when not evaluated), and the merged settings file it
-    #                  wrote and verified (path, SHA-256 as re-read);
+    #                  wrote and verified (path, SHA-256 as re-read); and, since dispatch 000307,
+    #                  cannotRun -- each required rule that merged file cannot run by the daemon's static
+    #                  check (Get-RequiredRulesNotRunnable, lsp-common.ps1), one 'code: why' string each,
+    #                  @() when none or when nothing was merged;
     #   settings       the settings file PSES was told to use (path; source = merged | resolved |
     #                  none; SHA-256 as read when this record was made) and whether the push to PSES
     #                  was sent (delivered); and, since dispatch 000306, validation -- what the daemon
@@ -443,6 +446,7 @@ function New-PolicyApplicationEvidence {
         [string]$GuardResult = '',
         [string]$MergedPath = '',
         [string]$MergedSha256 = '',
+        [string[]]$RequiredCannotRun = @(),
         [string]$SettingsPath = '',
         [string]$SettingsSource = 'none',
         [string]$SettingsSha256 = '',
@@ -460,6 +464,7 @@ function New-PolicyApplicationEvidence {
             guard                = [ordered]@{ verifiedFor = [string]$GuardVerifiedFor; observed = [string]$GuardObserved; result = [string]$GuardResult }
             mergedSettingsPath   = [string]$MergedPath
             mergedSettingsSha256 = [string]$MergedSha256
+            cannotRun            = @(@($RequiredCannotRun) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { Format-PssaSettingsText ([string]$_) 160 })
         }
         settings      = [ordered]@{ path = [string]$SettingsPath; source = [string]$SettingsSource; sha256 = [string]$SettingsSha256; delivered = $Delivered
             validation = $SettingsValidation; validationDetail = (Format-PssaSettingsText $SettingsValidationDetail 200)
@@ -868,6 +873,26 @@ function Get-ScanSettingsRejection {
         }
     }
     return ''
+}
+
+function Get-ScanRequiredRulesCannotRun {
+    # What a scan warns about, managed or not (dispatch 000307, review finding B1b-OOB2-R04): the required
+    # rules a daemon record among $Files says its merged settings cannot run (requiredRules.cannotRun), each
+    # named once, as one ASCII line ('code: why; code: why'), or '' when no record names one. Pure over the
+    # receipts the scan already holds. A managed scan is not refused over them until the owner rules the
+    # reason code (dispatch 000307, open question R04).
+    param([object[]]$Files = @())
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    $out = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($f in @($Files)) {
+        if ($null -eq $f) { continue }
+        $pol = Get-PolicyField -Object (Get-PolicyField -Object $f -Name 'Receipt') -Name 'policy'
+        $rr = Get-PolicyField -Object (Get-PolicyField -Object $pol -Name 'daemon') -Name 'requiredRules'
+        $list = Get-PolicyStringList -Object $rr -Name 'cannotRun'
+        foreach ($c in $list) { if ($seen.Add($c)) { $out.Add($c) } }
+    }
+    if ($out.Count -eq 0) { return '' }
+    return (Format-PssaSettingsText ($out.ToArray() -join '; ') 400)
 }
 
 # --- doctor ----------------------------------------------------------------------

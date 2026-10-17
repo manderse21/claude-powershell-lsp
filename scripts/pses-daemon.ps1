@@ -1024,6 +1024,7 @@ function Initialize-PssaSettings {
     $guardResult = ''
     $mergedPath = ''
     $mergedSha = ''
+    $cannotRun = @()
     if (-not [string]::IsNullOrWhiteSpace($OrgPolicyPath)) {
         $state = 'policy-unusable'
         try {
@@ -1069,6 +1070,16 @@ function Initialize-PssaSettings {
                                 $source = 'merged'
                                 $state = 'not-delivered'   # until the push below is actually sent
                                 Write-DLog ('PSSA settings: requiredRules merged (' + $count + ' rule(s)) -> ' + $mergedPath)
+                                # A REQUIRED RULE THE MERGED SETTINGS CANNOT RUN IS RECORDED (dispatch 000307, review
+                                # finding B1b-OOB2-R04, and R01 where the merge cannot narrow a pattern). A required
+                                # code with no rule behind it -- a misspelled built-in name, a custom rule no
+                                # CustomRulePath supplies -- was written into the merged file, matched nothing and
+                                # never ran, while a managed scan certified. The merged file as read back is checked
+                                # statically (Get-RequiredRulesNotRunnable); each such rule is named here, in the
+                                # record (requiredRules.cannotRun) and by every scan on stderr. Refusing a managed
+                                # scan over it needs a reason code the owner has not ruled yet (open question R04).
+                                $cannotRun = @(Get-RequiredRulesNotRunnable -Settings $mergedRead.Entries -RequiredRules $reqRules -OrgExcludeRules $orgExcl)
+                                foreach ($c in $cannotRun) { Write-DLog ('PSSA settings: WARNING -- a required rule cannot run under the merged settings: ' + $c) }
                             }
                         }
                     }
@@ -1099,7 +1110,7 @@ function Initialize-PssaSettings {
         $script:policyApplication = New-PolicyApplicationEvidence -Resolution $res -Path $OrgPolicyPath `
             -RequiredState $state -RequiredCount $count `
             -GuardVerifiedFor (Get-PssaDefaultRulesVerifiedForPsesTag) -GuardObserved $guardObserved -GuardResult $guardResult `
-            -MergedPath $mergedPath -MergedSha256 $mergedSha `
+            -MergedPath $mergedPath -MergedSha256 $mergedSha -RequiredCannotRun $cannotRun `
             -SettingsPath $script:settingsPathInUse -SettingsSource $(if ($delivered) { $source } else { 'none' }) `
             -SettingsSha256 (Get-PolicyFileSha256 -Path $script:settingsPathInUse) -Delivered $delivered `
             -SettingsValidation $validation -SettingsValidationDetail $validationDetail

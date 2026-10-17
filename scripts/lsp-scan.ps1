@@ -280,6 +280,14 @@ if (-not $managed) {
             '); it was not handed to PSES as written, so these findings do not rest on it. See docs/repository-scanning.md.')
     }
 }
+# A required rule the merged settings cannot run (dispatch 000307, review finding B1b-OOB2-R04) -- a misspelled
+# built-in name, a custom rule no CustomRulePath supplies -- is named on stderr by every scan, managed or not.
+# A managed scan is not refused over it until the owner rules the reason code (dispatch 000307, open question R04).
+$cannotRunLine = Get-ScanRequiredRulesCannotRun -Files @($fileEvidence)
+if ($cannotRunLine -ne '') {
+    [Console]::Error.WriteLine('lsp-scan: warning: a rule the policy requires cannot run under the settings PSES was handed (' + $cannotRunLine +
+        '), so these findings do not show it ran. See docs/repository-scanning.md.')
+}
 
 # --- the managed verdict (dispatch 000305) -----------------------------------------------------------
 # Unmanaged: Managed=$false and nothing changes. Managed: certified only on a usable declared policy AND

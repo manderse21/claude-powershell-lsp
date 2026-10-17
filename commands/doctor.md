@@ -131,7 +131,10 @@ The envelope:
     `merge-write-failed`, `not-delivered`, `settings-rejected` -- the merged settings file was one
     PSScriptAnalyzer would reject, so it was not handed to PSES -- or `policy-unusable` /
     `not-configured`) and the `settingsSha256` of the file it handed PSES. Read `requiredRules`, not
-    `matchesParsed` alone, to know whether a required rule is running.
+    `matchesParsed` alone, to know whether a required rule is running -- and know that `activated`
+    says the merged settings reached PSES, not that every required rule exists in the analysis: a
+    required code with no rule behind it (a misspelled name, a custom rule no `CustomRulePath`
+    supplies) is named in the daemon log and by every scan's stderr warning (dispatch 000307).
   - `not-observed` with a `reason`: `no-daemon`, `several-daemons`, `data-root-unknown`; `pending` --
     NOT YET applied, never a mismatch: a daemon writes its record from startup, and again whenever it
     re-spawns PSES, and keeps it `pending` until its next analyzed PowerShell file resolves the
