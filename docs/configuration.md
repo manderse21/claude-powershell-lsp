@@ -370,16 +370,19 @@ the required rules beside the rules that would otherwise run (dispatch 000306, o
 - **a settings file that names its own `IncludeRules`** (the shipped `ruleset = base` file does): its
   `IncludeRules` is that list plus the required rules;
 - **a settings file PSScriptAnalyzer accepts that names no `IncludeRules`** -- the usual repository
-  file (or `settingsPath` override), with `ExcludeRules`, `Rules` or a `CustomRulePath`: it names no
-  `IncludeRules` either. PSScriptAnalyzer runs every enabled rule for such a file, and so it does for
+  file (or `settingsPath` override), with `ExcludeRules`, `Rules` or a `CustomRulePath` -- or whose
+  `IncludeRules` has no entry (`IncludeRules = @()`, which PSScriptAnalyzer reads exactly as none:
+  dispatch 000307, review finding B1b-OOB2-R03): it names no `IncludeRules` either. PSScriptAnalyzer
+  runs every enabled rule for such a file, and so it does for
   the merged one: the repository's rules, those its `Rules` entries switch on and its custom rules all
   still run, and the required rules run because a required rule is taken out of the file's
-  `ExcludeRules`, a required configurable rule is switched on, and `IncludeDefaultRules = $true` is set
+  `ExcludeRules` (by name, in any case, and from under a pattern -- below), a required configurable
+  rule is switched on, and `IncludeDefaultRules = $true` is set
   beside a `CustomRulePath` (all below). Before this release the merge wrote the 15-rule default plus
   the required rules here too, so whenever `RequiredRules` named anything every other rule the
   repository ran stopped running -- `PSAvoidUsingWriteHost`, a `PSAvoidLongLines` it switched on
   through `Rules`, its `CustomRulePath` rules -- while a managed scan certified (review finding
-  B1b-R03; measured, both hosts).
+  B1b-R03; measured, both hosts); and for `IncludeRules = @()` it wrote the required rules alone.
 
 A settings file PSScriptAnalyzer rejects merges as before: its accepted entries are carried, onto its
 own `IncludeRules` when it names one PSScriptAnalyzer accepts and onto the 15-rule default otherwise --
@@ -432,6 +435,50 @@ is dropped from the merge, not forced on -- the same ordering `SeverityOverrides
 against `ExcludeRules`. A rule `RequiredRules` names but only a **repo-local** settings file
 excludes is forced on regardless: the org is the outermost voice on the include side exactly as it
 already is on the exclude side.
+
+**The repository's rule lists are read the way PSScriptAnalyzer reads them** (dispatch 000307, leg
+B1c). PSScriptAnalyzer 1.25.0 matches an `IncludeRules` or `ExcludeRules` entry against the whole rule
+name, ignoring case, with `*` standing for any run of characters; every other character is literal --
+`?`, `[s]`, `.`, a backslash and surrounding blanks included (`' PSAvoidGlobalVars '` names no rule) --
+and it matches a custom rule by its bare name, `Measure-Name`, never by the `Module\Measure-Name` its
+findings carry (all measured, the same on Windows PowerShell 5.1 and PowerShell 7). An exclusion beats
+`IncludeRules` and an `Enable = $true`. So:
+
+- **A pattern in the repository's `ExcludeRules` no longer keeps a required rule off** (review finding
+  B1b-OOB2-R01). The merge used to take out only an entry spelled like the required rule, so
+  `ExcludeRules = @('PSAvoid*')` or `@('*')` kept `PSAvoidGlobalVars` from running -- beside the
+  repository's own `IncludeRules`, and over a required configurable rule the merge switched on, alike --
+  while a managed scan certified. Now an entry PSScriptAnalyzer reads as naming a required rule is taken
+  out when it has no `*`, and a pattern is written instead as the built-in rules it matches, minus the
+  required ones: with no `CustomRulePath` those are the only rules the analysis has, so every other rule
+  the repository's pattern excluded stays excluded. **Not yet closed:** beside a `CustomRulePath` the
+  pattern may also match custom rules that no static read can list, and narrowing it to the built-in
+  rules would run custom rules the repository excluded; it is kept as written until the owner rules
+  (dispatch 000307, open question R01), and the required rule it shuts out is named as one that cannot
+  run (below).
+- **A required custom rule runs however `RequiredRules` spells it** (review finding B1b-OOB2-R02).
+  Written into `IncludeRules` as `Module\Measure-Name`, a required custom rule matched nothing, so
+  wherever the merged file named `IncludeRules` -- a repository naming its own, with or without
+  `IncludeDefaultRules` -- it never ran, and a repository's exclusion of its bare name kept it off, while
+  a managed scan certified. Now the merge writes the bare name into `IncludeRules` and takes the
+  repository's exclusion of that name out; `RequiredRules` may name the rule either way.
+- **`IncludeRules = @()` is no `IncludeRules`** (review finding B1b-OOB2-R03), as the list above says. A
+  list of blank entries (`@('')`) selects nothing in PSScriptAnalyzer and is still merged onto.
+
+**A required rule the merged settings cannot run is named** (review finding B1b-OOB2-R04). A
+`RequiredRules` code with no rule behind it -- a misspelled built-in name, a rule only another analyzer
+version has, or a custom rule whose module no `CustomRulePath` loads -- was written into the merged file,
+matched nothing (PSScriptAnalyzer says nothing about an unknown name: measured) and never ran, while a
+managed scan certified. The daemon now checks the merged file it hands PSES for every required rule it
+cannot run: a code that is none of PSScriptAnalyzer's 75 built-in rules while the settings carry no
+`CustomRulePath`, a rule an `ExcludeRules` entry still matches, one a non-empty `IncludeRules` does not
+select, and a built-in rule beside a `CustomRulePath` without `IncludeDefaultRules = $true`. Each is
+named in the daemon log and in its application evidence (`requiredRules.cannotRun`), and every scan,
+managed or not, names it on stderr. **Not yet refused:** refusing a managed scan over such a rule needs
+a reason code that none of the existing ones fits, and the dispatch reserves that code to the owner
+(dispatch 000307, open question R04) -- until it is ruled, a managed scan warns and still certifies.
+Beside a `CustomRulePath`, whether a required custom rule is in the modules it loads cannot be seen
+without loading them: that is left to a runtime signal (leg A3, owner ruling K01b).
 
 **A required rule is switched on, too** (owner ruling R01, review finding B1b-R01). A repository's
 `Rules` can switch a *configurable* rule off with `Enable = $false` however `IncludeRules` names it, and
@@ -528,7 +575,7 @@ verb, a TAB and the rule code with ASCII `A`-`Z` folded to `a`-`z` and nothing e
 override adds a TAB and the canonical severity), sorted ordinally within its section. Rule codes are
 folded because they match case-insensitively everywhere the policy is applied. **A rule code must be
 a rule name** -- ASCII letters, digits, `_`, `-`, `.` and `\` (a custom rule reports itself as
-`Module\Measure-Name`), padded only by ASCII whitespace -- in every member and every
+`Module\Measure-Name`; `RequiredRules` may name it that way or bare, dispatch 000307), padded only by ASCII whitespace -- in every member and every
 `SeverityOverrides` key; a policy naming anything else (a TAB or line end inside a code, a space, a
 wildcard, a non-ASCII character) is refused as unreadable (`policy-unreadable`, one warning, fail-open
 as for any unreadable policy). So no code can carry the text's separators, two different effective

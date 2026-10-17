@@ -30,6 +30,46 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **A `RequiredRules` merge reads the repository's rule lists the way PSScriptAnalyzer reads them,
+and a required rule with no rule behind it is named** (dispatch 000307, leg B1c -- B1b's out-of-band
+review findings B1b-OOB2-R01 to R04, I05 and I06; all pre-existing since the merge landed in dispatch
+000294, and each let a managed scan certify while a rule the organization requires, or one the
+repository declared, did not run -- measured through the real daemon on Windows PowerShell 5.1 and
+PowerShell 7). PSScriptAnalyzer 1.25.0 matches an `IncludeRules` or `ExcludeRules` entry against the
+whole rule name ignoring case, with `*` as a wildcard and every other character literal, matches a custom
+rule by its bare name, and reads `IncludeRules = @()` as no `IncludeRules` (measured, the same on both
+hosts); the merge read them as exact names. **A pattern in the repository's `ExcludeRules` no longer
+keeps a required rule off:** `ExcludeRules = @('PSAvoid*')` or `@('*')` excluded `PSAvoidGlobalVars`
+however `RequiredRules` named it -- beside the repository's own `IncludeRules` and over a configurable
+rule the merge switched on, alike. An entry that names a required rule is now taken out when it has no
+`*` (the Kelvin sign, which the analyzer folds to `k`, included), and a pattern is written as the built-in
+rules it matches minus the required ones, so every other rule it excluded stays excluded; beside a
+`CustomRulePath` the pattern may also match custom rules no static read can list, and it is kept as
+written until the owner rules (dispatch 000307, open question R01). **A required custom rule runs however
+`RequiredRules` spells it:** named `Module\Measure-Name` -- as its findings name it -- it matched no
+`IncludeRules` entry, so it never ran wherever the merged file named `IncludeRules`, nor where the
+repository excluded its bare name; the merge now writes and strips the bare name. **`IncludeRules = @()`
+keeps the repository's rule set** (owner ruling R03's path): the merge read it as the repository's own
+list and named the required rules alone, so every other rule the repository ran stopped running; a list
+of blank entries, which selects nothing, and a rejected file merge as before. **A required rule the merged
+settings cannot run is named:** a code with no rule behind it -- a misspelled built-in name, a custom rule
+no `CustomRulePath` supplies -- matched nothing and never ran (PSScriptAnalyzer says nothing about an
+unknown name). The daemon now checks the merged file it hands PSES and names every required rule it
+cannot run in its log and in its application evidence (`requiredRules.cannotRun`, an optional field of
+the still-unreleased receipt schema version 2), and every scan, managed or not, warns on stderr. **Not
+yet refused:** a managed scan over such a rule still certifies, because the reason code it is to refuse
+with fits none of the existing ones and the dispatch reserves it to the owner (open question R04).
+Documentation: a rule source PSScriptAnalyzer cannot load, or whose rule throws, also stops every custom
+rule source listed after it (review finding B1b-OOB2-I05, measured, both hosts; the earlier sentence said
+it "runs the other rules"); the receipt schema's `settings.validation` now says the file is validated when
+a PSES session starts (owner ruling K08, review finding B1b-OOB2-I06); and one settings file governs a
+scan root -- a settings file nested inside a scanned tree is not used, and scanning that directory as its
+own root uses it (owner ruling Q07). With no settings file, a file naming its own `IncludeRules`, or a
+rejected one, the merged file is byte-for-byte what it was unless a required custom rule is named
+`Module\Measure-Name` or the file's `ExcludeRules` names a required rule other than by its exact name.
+`doctor -Json`'s `orgPolicy` keys keep their names, order and types. No `userConfig` knob, status token,
+CLI flag or reason code is added; exit codes are unchanged.
+
 MINOR: **A settings file PSScriptAnalyzer would reject is no longer handed to PSES, and a
 `RequiredRules` merge now carries the repository's `Rules` and `Severity`** (dispatch 000306, leg B1b
 -- review findings B1-K04, B1-K05, B1-K07 and B1-OOB-I01). A `PSScriptAnalyzerSettings.psd1` that
