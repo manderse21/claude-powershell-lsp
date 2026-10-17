@@ -1437,6 +1437,94 @@ function Get-PssaConfigurableRuleNames {
     )
 }
 
+# --- how PSScriptAnalyzer names and matches a rule (dispatch 000307, B1c) ---
+# MEASURED on the vendored PSScriptAnalyzer 1.25.0 under Windows PowerShell 5.1 and PowerShell 7, called as
+# PSES calls it -- the same on both hosts (review findings B1b-OOB2-R01 to R03):
+#   - an IncludeRules or ExcludeRules entry is matched against the WHOLE rule name, ignoring case; '*' stands
+#     for any run of characters, none included ('PSAvoidGlobalVars*' names PSAvoidGlobalVars), and every other
+#     character is literal: '?', '[s]', '.', '.*', '+', '|', '(...)', '^...$', '(?i)', a backslash, a TAB and
+#     surrounding blanks (' PSAvoidGlobalVars ' names no rule);
+#   - case is folded the way .NET's regular expressions fold it, not ASCII's way: 'PSMisleadingBac' + U+212A
+#     KELVIN SIGN + '*' excludes PSMisleadingBacktick;
+#   - a custom rule is matched by its BARE name: a module rule whose findings read 'Module\Measure-Name' is
+#     selected and excluded by 'Measure-Name' (or a pattern over it), never by 'Module\Measure-Name';
+#   - an exclusion beats IncludeRules and an Enable = $true in Rules;
+#   - IncludeRules = @() is no IncludeRules (every enabled rule runs); @('') and @(' ') select nothing.
+
+function Get-PssaRuleMatchName {
+    # The name PSScriptAnalyzer matches the rule code $Code by in IncludeRules and ExcludeRules (dispatch 000307,
+    # review finding B1b-OOB2-R02): the text after the last '\' -- a custom rule's 'Module\Measure-Name', the
+    # way its findings and so RequiredRules name it, is matched as 'Measure-Name' -- and a built-in or bare
+    # code as itself; trimmed. '' when nothing follows the last '\'.
+    param([string]$Code)
+    $t = ([string]$Code).Trim()
+    $i = $t.LastIndexOf('\')
+    if ($i -ge 0) { return $t.Substring($i + 1) }
+    return $t
+}
+
+function Test-PssaRuleNameMatch {
+    # Does PSScriptAnalyzer read the IncludeRules or ExcludeRules entry $Entry, exactly as written, as naming
+    # the rule whose match name (Get-PssaRuleMatchName) is $Name? Built the way the measured behavior above
+    # reads: the entry escaped as a regular expression with each '*' then standing for '.*', anchored at both
+    # ends and matched ignoring case -- so every measured form agrees with the analyzer, the Kelvin sign
+    # included, on both hosts.
+    param([string]$Entry, [string]$Name)
+    if ([string]::IsNullOrEmpty($Entry) -or [string]::IsNullOrEmpty($Name)) { return $false }
+    $pattern = '^' + [regex]::Escape($Entry).Replace('\*', '.*') + '$'
+    return [regex]::IsMatch($Name, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+}
+
+function Get-RequiredRulesNotRunnable {
+    # Which of $RequiredRules the settings table $Settings -- what the daemon hands PSES, as read back
+    # (Read-PssaSettingsFile's Entries) -- CANNOT run, by a static read of that table and the measured matching
+    # above (dispatch 000307, review findings B1b-OOB2-R04 and B1b-OOB2-R01). One 'code: why' line per such
+    # rule, in the order given; @() when none:
+    #   'no rule of that name'      its match name (Get-PssaRuleMatchName) is none of PSScriptAnalyzer's
+    #                               built-in rules and the settings carry no CustomRulePath that could supply
+    #                               it -- a misspelled built-in name, a rule only another analyzer version has,
+    #                               or a custom rule whose module nothing loads -- or it names nothing at all;
+    #   'excluded by <entry>'       an ExcludeRules entry matches it, and an exclusion wins (measured);
+    #   'not in IncludeRules'       the settings name IncludeRules and no entry selects it;
+    #   'built-in rules not loaded' it is a built-in rule, beside a CustomRulePath without
+    #                               IncludeDefaultRules = $true, which loads only the custom rules.
+    # A rule the organization also excludes is not required (exclusion is the stronger verb) and is not
+    # reported. Beside a CustomRulePath, whether a custom rule is in the modules that path loads, and whether
+    # they load and run at all, is not something a static read can see (owner ruling K01b: leg A3's runtime
+    # signal), so a code that is not a built-in rule is not reported there.
+    param($Settings, [string[]]$RequiredRules = @(), [string[]]$OrgExcludeRules = @())
+    $out = New-Object 'System.Collections.Generic.List[string]'
+    $orgExc = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($e in @($OrgExcludeRules | Where-Object { $_ })) { [void]$orgExc.Add(([string]$e).Trim()) }
+    $builtin = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($n in @(Get-PssaBuiltinRuleNames)) { [void]$builtin.Add($n) }
+    $has = { param($k) $null -ne $Settings -and $Settings -is [System.Collections.IDictionary] -and $Settings.Contains($k) }
+    $customPath = (& $has 'CustomRulePath') -and @(@($Settings['CustomRulePath']) | Where-Object { $_ -is [string] -and -not [string]::IsNullOrWhiteSpace($_) }).Count -gt 0
+    $defaultsLoaded = (-not $customPath) -or ((& $has 'IncludeDefaultRules') -and $Settings['IncludeDefaultRules'] -is [bool] -and [bool]$Settings['IncludeDefaultRules'])
+    $include = @()
+    if (& $has 'IncludeRules') { $include = @(@($Settings['IncludeRules']) | Where-Object { $_ -is [string] }) }
+    $exclude = @()
+    if (& $has 'ExcludeRules') { $exclude = @(@($Settings['ExcludeRules']) | Where-Object { $_ -is [string] }) }
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($r in @($RequiredRules | Where-Object { $_ })) {
+        $code = ([string]$r).Trim()
+        if ($code -eq '' -or $orgExc.Contains($code) -or -not $seen.Add($code)) { continue }
+        $name = Get-PssaRuleMatchName $code
+        $why = ''
+        if ($name -eq '' -or (-not $builtin.Contains($name) -and -not $customPath)) {
+            $why = 'no rule of that name'
+        } else {
+            foreach ($x in $exclude) {
+                if (Test-PssaRuleNameMatch -Entry $x -Name $name) { $why = ("excluded by '" + (Format-PssaSettingsText $x 60) + "'"); break }
+            }
+            if ($why -eq '' -and $include.Count -gt 0 -and @($include | Where-Object { Test-PssaRuleNameMatch -Entry $_ -Name $name }).Count -eq 0) { $why = 'not in IncludeRules' }
+            if ($why -eq '' -and $builtin.Contains($name) -and -not $defaultsLoaded) { $why = 'built-in rules not loaded' }
+        }
+        if ($why -ne '') { $out.Add(($code + ': ' + $why)) }
+    }
+    return $out.ToArray()   # an ordinary pipeline return: wrap the call in @(...) -- an empty result is nothing
+}
+
 function Get-PssaSettingsSeverityNames {
     # PSScriptAnalyzer's severity names, which a settings file's Severity entries must parse as. Measured:
     # any case and surrounding blanks are accepted; 'Hint', '' and any other word are refused
@@ -1960,7 +2048,10 @@ function Merge-RequiredRulesSettings {
     # 'org required beats repo-local excluded' goes RED; return the repo-local settings verbatim
     # when $RequiredRules is non-empty and 'a required rule not in the repo file is still added'
     # goes RED; write PSES's default list over an accepted settings file that names no IncludeRules
-    # and the tests named 'B1b-R03:' go RED (dispatch 000306, correction round 2).
+    # and the tests named 'B1b-R03:' go RED (dispatch 000306, correction round 2); strip only exact
+    # names from the repository's ExcludeRules, write a required custom rule as 'Module\Name', or take
+    # IncludeRules = @() for the repository's own list, and the tests named 'B1c-R01:', 'B1c-R02:' and
+    # 'B1c-R03:' go RED (dispatch 000307).
     #
     # $GuardOut (dispatch 000305, B1) receives what the version guard decided, as evidence a managed
     # scan can certify on: 'pass' (the pinned default list was used and $CurrentPsesTag matched),
@@ -2004,7 +2095,16 @@ function Merge-RequiredRulesSettings {
     # required ones run through the ExcludeRules strip, the forced Enable (R01) and IncludeDefaultRules
     # (K02) below. No settings file, a file naming its own IncludeRules, and a REJECTED file (refused by
     # PSScriptAnalyzer, so the session already falls back to PSES's defaults) merge exactly as before.
-    $keepRuleSet = (-not $hasRepoInclude -and $null -ne $read -and [string]$read.Verdict -eq 'valid')
+    #
+    # AN IncludeRules WITH NO ENTRY IS NO IncludeRules (dispatch 000307, review finding B1b-OOB2-R03). To
+    # PSScriptAnalyzer IncludeRules = @() reads exactly like a file that names none -- every enabled rule runs
+    # (measured, both hosts) -- but the merge took it for the repository's own list, so the merged file named
+    # the required rules ALONE as IncludeRules: every other rule the repository ran stopped running while a
+    # managed scan certified. An accepted file whose IncludeRules has no entry now keeps its rule set as
+    # above. A list of blank entries (@(''), which selects nothing) is still a list, and a rejected file with
+    # an empty one still merges as before.
+    $repoIncludeNone = ($hasRepoInclude -and @($baseData['IncludeRules']).Count -eq 0)
+    $keepRuleSet = ((-not $hasRepoInclude -or $repoIncludeNone) -and $null -ne $read -and [string]$read.Verdict -eq 'valid')
     if (-not $hasRepoInclude -and -not $keepRuleSet -and $CurrentPsesTag -ne (Get-PssaDefaultRulesVerifiedForPsesTag)) {
         # The merge needs the pinned PSES default list (no IncludeRules to merge onto, and no
         # accepted settings file whose own rule set it keeps), and that list is not verified for
@@ -2017,6 +2117,18 @@ function Merge-RequiredRulesSettings {
     }
     if ($null -ne $GuardOut) { $GuardOut.Value = $(if ($hasRepoInclude -or $keepRuleSet) { 'not-needed' } else { 'pass' }) }
 
+    # The required rules the organization does not also exclude, as written, and the names PSScriptAnalyzer
+    # matches them by (Get-PssaRuleMatchName: a custom rule's 'Module\Measure-Name' is 'Measure-Name').
+    $active = New-Object System.Collections.ArrayList
+    $activeNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($r in $required) {
+        $rt = ([string]$r).Trim()
+        if ([string]::IsNullOrWhiteSpace($rt) -or $orgExcSet.Contains($rt)) { continue }
+        [void]$active.Add($rt)
+        $mn = Get-PssaRuleMatchName $rt
+        if (-not [string]::IsNullOrWhiteSpace($mn)) { [void]$activeNames.Add($mn) }
+    }
+
     $include = New-Object System.Collections.ArrayList
     if (-not $keepRuleSet) {
         $seenInclude = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
@@ -2027,11 +2139,18 @@ function Merge-RequiredRulesSettings {
             if ([string]::IsNullOrWhiteSpace($rt)) { continue }
             if ($seenInclude.Add($rt)) { [void]$include.Add($rt) }
         }
+        # A required rule is named the way PSScriptAnalyzer matches it (dispatch 000307, review finding
+        # B1b-OOB2-R02): a custom rule's 'Module\Measure-Name' -- how its findings, and so RequiredRules, name
+        # it -- selects nothing in IncludeRules, so wherever the merged file named IncludeRules a required
+        # custom rule never ran while a managed scan certified; its bare 'Measure-Name' selects it (measured,
+        # both hosts). A built-in or bare code is written as before.
         foreach ($r in $required) {
             $rt = $r.Trim()
             if ([string]::IsNullOrWhiteSpace($rt)) { continue }
             if ($orgExcSet.Contains($rt)) { continue }   # org excludes it too: exclusion wins, skip
-            if ($seenInclude.Add($rt)) { [void]$include.Add($rt) }
+            $mn = Get-PssaRuleMatchName $rt
+            if ([string]::IsNullOrWhiteSpace($mn)) { continue }
+            if ($seenInclude.Add($mn)) { [void]$include.Add($mn) }
         }
     }
 
@@ -2039,6 +2158,9 @@ function Merge-RequiredRulesSettings {
     if ($null -ne $baseData -and $baseData.Contains('ExcludeRules')) {
         $reqSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
         foreach ($r in $required) { [void]$reqSet.Add(([string]$r).Trim()) }
+        $hasCustomPath = $baseData.Contains('CustomRulePath')
+        $written = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+        $expanded = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
         foreach ($r in @($baseData['ExcludeRules'])) {
             if ($r -isnot [string]) { continue }
             $rt = $r.Trim()
@@ -2048,7 +2170,31 @@ function Merge-RequiredRulesSettings {
             # of $include in that case, so leaving it excluded here is consistent, not double
             # logic: $include and $exclude are asserted never to intersect on a required rule).
             if ($reqSet.Contains($rt) -and -not $orgExcSet.Contains($rt)) { continue }
-            [void]$exclude.Add($rt)
+            # ...and so is every entry PSScriptAnalyzer reads as naming one (dispatch 000307, review findings
+            # B1b-OOB2-R01 and B1b-OOB2-R02). The strip compared exact names only, but the analyzer matches an
+            # entry as a pattern ('*' is a wildcard), ignoring case, against a custom rule's BARE name -- so
+            # 'PSAvoid*', '*' or a required custom rule's bare name kept a required rule excluded, beside the
+            # repository's own IncludeRules and over a forced Enable alike (an exclusion wins), while a managed
+            # scan certified. The entry is judged as it is written into the merged file (trimmed). One without
+            # '*' names the rule itself and is taken out. A pattern is written instead as the built-in rules it
+            # matches, minus the required ones: with no CustomRulePath those are the only rules the analysis
+            # has, so the merged file still excludes every rule the repository's pattern did, a required one
+            # aside. Beside a CustomRulePath the pattern may also match custom rules no static read can list,
+            # so it is kept as written -- the required rule it shuts out is then reported as one that cannot
+            # run (Get-RequiredRulesNotRunnable), pending the owner's ruling (dispatch 000307, open question R01).
+            $hit = $false
+            foreach ($n in $activeNames) { if (Test-PssaRuleNameMatch -Entry $rt -Name $n) { $hit = $true; break } }
+            if (-not $hit -or ($rt.Contains('*') -and $hasCustomPath)) {
+                if ($expanded.Contains($rt)) { continue }   # a pattern above already wrote it
+                [void]$written.Add($rt)
+                [void]$exclude.Add($rt)
+                continue
+            }
+            if (-not $rt.Contains('*')) { continue }
+            foreach ($b in @(Get-PssaBuiltinRuleNames)) {
+                if ($activeNames.Contains($b) -or -not (Test-PssaRuleNameMatch -Entry $rt -Name $b)) { continue }
+                if ($written.Add($b)) { [void]$expanded.Add($b); [void]$exclude.Add($b) }
+            }
         }
     }
 
@@ -2073,11 +2219,6 @@ function Merge-RequiredRulesSettings {
     # ran from IncludeRules alone. So every required rule the organization does not also exclude is
     # switched on in the Rules written (Set-PssaRequiredRulesEnabled); a merge whose required rules are
     # all non-configurable built-ins writes the Rules it carried, unchanged.
-    $active = New-Object System.Collections.ArrayList
-    foreach ($r in $required) {
-        $rt = ([string]$r).Trim()
-        if (-not [string]::IsNullOrWhiteSpace($rt) -and -not $orgExcSet.Contains($rt)) { [void]$active.Add($rt) }
-    }
     $rules = Set-PssaRequiredRulesEnabled -Rules $(if ($merged.ContainsKey('Rules')) { $merged['Rules'] } else { $null }) -RequiredRules @($active)
     if ($null -ne $rules) { $merged['Rules'] = $rules }
     # ...and a required BUILT-IN rule runs beside a carried CustomRulePath (owner ruling K02, 2026-10-15;
@@ -2090,7 +2231,7 @@ function Merge-RequiredRulesSettings {
         $builtin = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
         foreach ($n in @(Get-PssaBuiltinRuleNames)) { [void]$builtin.Add($n) }
         foreach ($rt in @($active)) {
-            if ($builtin.Contains([string]$rt)) { $merged['IncludeDefaultRules'] = $true; break }
+            if ($builtin.Contains((Get-PssaRuleMatchName ([string]$rt)))) { $merged['IncludeDefaultRules'] = $true; break }
         }
     }
     return $merged
