@@ -2051,7 +2051,8 @@ function Merge-RequiredRulesSettings {
     # and the tests named 'B1b-R03:' go RED (dispatch 000306, correction round 2); strip only exact
     # names from the repository's ExcludeRules, write a required custom rule as 'Module\Name', or take
     # IncludeRules = @() for the repository's own list, and the tests named 'B1c-R01:', 'B1c-R02:' and
-    # 'B1c-R03:' go RED (dispatch 000307).
+    # 'B1c-R03:' go RED (dispatch 000307); match or write an ExcludeRules entry trimmed and the tests named
+    # 'B1c-RV04:' go RED (dispatch 000307, correction round 1).
     #
     # $GuardOut (dispatch 000305, B1) receives what the version guard decided, as evidence a managed
     # scan can certify on: 'pass' (the pinned default list was used and $CurrentPsesTag matched),
@@ -2175,24 +2176,36 @@ function Merge-RequiredRulesSettings {
             # entry as a pattern ('*' is a wildcard), ignoring case, against a custom rule's BARE name -- so
             # 'PSAvoid*', '*' or a required custom rule's bare name kept a required rule excluded, beside the
             # repository's own IncludeRules and over a forced Enable alike (an exclusion wins), while a managed
-            # scan certified. The entry is judged as it is written into the merged file (trimmed). One without
+            # scan certified. The entry is judged as it is written into the merged file -- exactly as the
+            # repository gave it (below). One without
             # '*' names the rule itself and is taken out. A pattern is written instead as the built-in rules it
             # matches, minus the required ones: with no CustomRulePath those are the only rules the analysis
             # has, so the merged file still excludes every rule the repository's pattern did, a required one
             # aside. Beside a CustomRulePath the pattern may also match custom rules no static read can list,
             # so it is kept as written -- the required rule it shuts out is then reported as one that cannot
             # run (Get-RequiredRulesNotRunnable), pending the owner's ruling (dispatch 000307, open question R01).
+            #
+            # EVERY ENTRY IS WRITTEN EXACTLY AS THE REPOSITORY GAVE IT, NEVER TRIMMED (dispatch 000307, correction
+            # round 1; owner ruling RV-04, review finding B1c-RV-04, pre-existing since dispatch 000294). The merge
+            # wrote each entry trimmed, while PSScriptAnalyzer reads one literally -- a surrounding blank is a
+            # character to match -- so ExcludeRules = @(' PSAvoidUsingWriteHost '), which excludes nothing alone,
+            # excluded PSAvoidUsingWriteHost once merged, and ' PSAvoid* ' was narrowed to every non-required
+            # PSAvoid rule: rules the repository runs stopped running while a managed scan certified (measured,
+            # both hosts). Now an entry is matched and written as given, so a padded one still names no rule once
+            # merged. The trimmed form serves only the exact-name strip above, which still takes out an entry
+            # spelled like a required code (a padded one names no rule, so that changes nothing that runs), and
+            # the drop of a blank entry, which names none: every entry the merge took out before is still out.
             $hit = $false
-            foreach ($n in $activeNames) { if (Test-PssaRuleNameMatch -Entry $rt -Name $n) { $hit = $true; break } }
-            if (-not $hit -or ($rt.Contains('*') -and $hasCustomPath)) {
-                if ($expanded.Contains($rt)) { continue }   # a pattern above already wrote it
-                [void]$written.Add($rt)
-                [void]$exclude.Add($rt)
+            foreach ($n in $activeNames) { if (Test-PssaRuleNameMatch -Entry $r -Name $n) { $hit = $true; break } }
+            if (-not $hit -or ($r.Contains('*') -and $hasCustomPath)) {
+                if ($expanded.Contains($r)) { continue }   # a pattern above already wrote it
+                [void]$written.Add($r)
+                [void]$exclude.Add($r)
                 continue
             }
-            if (-not $rt.Contains('*')) { continue }
+            if (-not $r.Contains('*')) { continue }
             foreach ($b in @(Get-PssaBuiltinRuleNames)) {
-                if ($activeNames.Contains($b) -or -not (Test-PssaRuleNameMatch -Entry $rt -Name $b)) { continue }
+                if ($activeNames.Contains($b) -or -not (Test-PssaRuleNameMatch -Entry $r -Name $b)) { continue }
                 if ($written.Add($b)) { [void]$expanded.Add($b); [void]$exclude.Add($b) }
             }
         }
