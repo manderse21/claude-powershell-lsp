@@ -20,6 +20,14 @@
 #   B1b-OOB2-R04  a required code with no rule behind it: a misspelled built-in name and a custom rule no
 #                 CustomRulePath supplies, managed; and the misspelled name unmanaged.
 #
+# Correction round 1 (review 6656dadf4a4b; owner rulings 2026-10-17) adds, and flips nothing above but the
+# expected head outcome of the R04 rows and of R01 beside a CustomRulePath (now refused):
+#   B1c-RV-01     a PSScriptAnalyzerSettings.psd1 nested below the scan root: under lib\, which sorts before
+#                 the root's own file, managed and unmanaged; under zz\, which sorts after it; a HIDDEN one
+#                 under lib\, which the target list omits; and one in a hidden directory the scan does not
+#                 enter (the boundary: nothing in it is analyzed, so it governs nothing).
+#   B1c-RV-04     a padded ExcludeRules entry: an exact name and a pattern, each naming no rule as written.
+#
 # Every scan is a child whose environment has every CLAUDE_PLUGIN_OPTION_* and POWERSHELL_LSP_* variable
 # removed, on a PRIVATE data root: a fresh directory seeded (copied) with the pinned PSES and
 # PSScriptAnalyzer from -SeedRoot, so no other session's daemon, merged file or session record is in it
@@ -139,10 +147,13 @@ function Invoke-MeasureScan {
     if ($Policy -ne '') { $a += @('-OrgPolicyPath', $Policy) }
     if ($Mode -ne '') { $a += @('-PolicyMode', $Mode) }
     $run = Invoke-MeasureChild -ArgumentList $a -ExtraEnv @{ CLAUDE_PLUGIN_DATA = $dataRoot }
-    $results = @(); $exec = $null; $cert = ''; $reasons = @(); $mode = ''; $na = @()
+    $results = @(); $fileResults = @(); $exec = $null; $cert = ''; $reasons = @(); $mode = ''; $na = @()
     if (Test-Path -LiteralPath $out) {
         $sarif = [System.IO.File]::ReadAllText($out) | ConvertFrom-Json
-        $results = @(@($sarif.runs[0].results) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_.ruleId + ':' + [string]$_.level } | Sort-Object -Unique)
+        $res = @(@($sarif.runs[0].results) | Where-Object { $null -ne $_ })
+        $results = @($res | ForEach-Object { [string]$_.ruleId + ':' + [string]$_.level } | Sort-Object -Unique)
+        # Per file ('<uri>|<ruleId>'), so a row over a nested settings file shows which file governed which file.
+        $fileResults = @($res | ForEach-Object { [string]$_.locations[0].physicalLocation.artifactLocation.uri + '|' + [string]$_.ruleId } | Sort-Object -Unique)
         $inv = $sarif.runs[0].invocations[0]
         $exec = [bool]$inv.executionSuccessful
         if ($null -ne $inv.PSObject.Properties['properties']) {
@@ -160,7 +171,7 @@ function Invoke-MeasureScan {
     }
     $row = [ordered]@{
         exit = [int]$run.ExitCode; executionSuccessful = $exec; certification = $cert; reasons = @($reasons); mode = $mode
-        results = @($results); notAnalyzedReasons = @($na | Sort-Object -Unique)
+        results = @($results); fileResults = @($fileResults); notAnalyzedReasons = @($na | Sort-Object -Unique)
         settingsWarning = ([string]$run.Err -match 'would reject a settings file')
         cannotRunWarning = ([string]$run.Err -match 'a rule the policy requires cannot run')
     }
@@ -203,6 +214,23 @@ try {
     New-MeasureRepo 'r03-empty-include' "@{ IncludeRules = @(); Rules = @{ PSAvoidLongLines = @{ Enable = `$true; MaximumLineLength = 40 } } }"
     # B1b-OOB2-R04: no repository settings file.
     New-MeasureRepo 'r04-none' ''
+    # B1c-RV-01: the root's file excludes PSAvoidUsingWriteHost, a nested one PSAvoidUsingCmdletAliases, and both
+    # directories hold the same sample -- so each file's findings show which settings file governed it.
+    $rootSet = "@{ ExcludeRules = @('PSAvoidUsingWriteHost') }`n"
+    $subSet = "@{ ExcludeRules = @('PSAvoidUsingCmdletAliases') }`n"
+    foreach ($t in @(@('rv01-first', 'z.ps1', 'lib'), @('rv01-last', 'a.ps1', 'zz'), @('rv01-hidden', 'z.ps1', 'lib'), @('rv01-hidden-dir', 'z.ps1', 'hid'))) {
+        [void](New-MeasureFile ($t[0] + '/PSScriptAnalyzerSettings.psd1') $rootSet)
+        [void](New-MeasureFile ($t[0] + '/' + $t[1]) $sample)
+        [void](New-MeasureFile ($t[0] + '/' + $t[2] + '/PSScriptAnalyzerSettings.psd1') $subSet)
+        [void](New-MeasureFile ($t[0] + '/' + $t[2] + '/b.ps1') $sample)
+    }
+    foreach ($h in @('rv01-hidden/lib/PSScriptAnalyzerSettings.psd1', 'rv01-hidden-dir/hid')) {
+        $p = Join-Path $work $h
+        [System.IO.File]::SetAttributes($p, ([System.IO.File]::GetAttributes($p) -bor [System.IO.FileAttributes]::Hidden))
+    }
+    # B1c-RV-04: padded ExcludeRules entries, which name no rule to PSScriptAnalyzer.
+    New-MeasureRepo 'rv04-padded-exact' "@{ ExcludeRules = @(' PSAvoidUsingWriteHost ') }"
+    New-MeasureRepo 'rv04-padded-pattern' "@{ ExcludeRules = @(' PSAvoid* ') }"
     $pGlobal = New-MeasureFile 'policy-global.psd1' "@{ RequiredRules = @('PSAvoidGlobalVars') }`n"
     $pLong = New-MeasureFile 'policy-longlines.psd1' "@{ RequiredRules = @('PSAvoidLongLines') }`n"
     $pQualified = New-MeasureFile 'policy-qualified.psd1' "@{ RequiredRules = @('B1cm.Rules\Measure-B1cmReports') }`n"
@@ -230,6 +258,13 @@ try {
     Add-Row 'B1b-OOB2-R04' 'r04-unknown-builtin-managed' (Invoke-MeasureScan -Dir 'r04-none' -Policy $pTypo -Mode 'closed')
     Add-Row 'B1b-OOB2-R04' 'r04-custom-not-supplied-managed' (Invoke-MeasureScan -Dir 'r04-none' -Policy $pQualified -Mode 'closed')
     Add-Row 'B1b-OOB2-R04' 'r04-unknown-builtin-unmanaged' (Invoke-MeasureScan -Dir 'r04-none' -Policy $pTypo)
+    Add-Row 'B1c-RV-01' 'rv01-nested-first-managed' (Invoke-MeasureScan -Dir 'rv01-first' -Policy $pGlobal -Mode 'closed')
+    Add-Row 'B1c-RV-01' 'rv01-nested-last-managed' (Invoke-MeasureScan -Dir 'rv01-last' -Policy $pGlobal -Mode 'closed')
+    Add-Row 'B1c-RV-01' 'rv01-nested-first-unmanaged' (Invoke-MeasureScan -Dir 'rv01-first' -Policy $pGlobal)
+    Add-Row 'B1c-RV-01' 'rv01-hidden-nested-managed' (Invoke-MeasureScan -Dir 'rv01-hidden' -Policy $pGlobal -Mode 'closed')
+    Add-Row 'B1c-RV-01' 'rv01-hidden-dir-managed' (Invoke-MeasureScan -Dir 'rv01-hidden-dir' -Policy $pGlobal -Mode 'closed')
+    Add-Row 'B1c-RV-04' 'rv04-padded-exact-managed' (Invoke-MeasureScan -Dir 'rv04-padded-exact' -Policy $pGlobal -Mode 'closed')
+    Add-Row 'B1c-RV-04' 'rv04-padded-pattern-managed' (Invoke-MeasureScan -Dir 'rv04-padded-pattern' -Policy $pGlobal -Mode 'closed')
     ConvertTo-Json -InputObject @($rows) -Depth 5 -Compress
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue

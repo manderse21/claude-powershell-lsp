@@ -2,7 +2,8 @@
 
 # The routes where a managed scan certified while a rule the organization requires, or one the repository
 # declared, did not run (Pester 5) -- dispatch 000307, B1c: B1b's out-of-band review findings B1b-OOB2-R01
-# to R04 and I05.
+# to R04 and I05; and B1c's correction round 1, the owner's rulings (2026-10-17) on review 6656dadf4a4b's
+# findings B1c-RV-01 to B1c-RV-04.
 #
 # SIX LAYERS:
 #   1. How PSScriptAnalyzer names and matches a rule: Get-PssaRuleMatchName and Test-PssaRuleNameMatch over
@@ -11,21 +12,24 @@
 #      the IncludeRules = @() reading (R03) and the rule-source order the documentation states (I05).
 #   2. The merge (no daemon): a pattern in the repository's ExcludeRules no longer keeps a required rule off
 #      (R01), a required custom rule reaches the analyzer by its bare name (R02), IncludeRules = @() keeps the
-#      repository's rule set (R03) -- and the shapes these routes do not touch merge byte for byte as before.
+#      repository's rule set (R03), every ExcludeRules entry is written as the repository gave it (RV-04) --
+#      and the shapes these routes do not touch merge byte for byte as before.
 #   3. The merged settings judged by the vendored analyzer: every rule the repository's file runs alone still
 #      runs, the required one beside it, and every rule the repository's pattern excluded stays excluded.
 #   4. The static check (Get-RequiredRulesNotRunnable): a required code with no rule behind it, and one the
-#      merged settings still exclude, are reported; nothing else is (R04, and R01's open case).
+#      merged settings still exclude, are reported; nothing else is (R04, and R01's case beside a CustomRulePath).
 #   5. The daemon and the evidence consumers: the record carries cannotRun, the receipt types it, the scan
-#      warns -- and, until the owner rules a reason code (dispatch 000307, open question R04), a managed
-#      verdict still certifies.
-#   6. The real daemon, every ambient plugin variable cleared: R01, R03 and R04 end to end.
+#      warns, and a managed verdict over such a record is refused (policy-required-rule-cannot-run: RV-02,
+#      RV-03); so is one over a tree holding a settings file below the scan root (policy-settings-nested: RV-01),
+#      which is found the way the settings lookup finds one.
+#   6. The real daemon, every ambient plugin variable cleared: R01, R03 and R04 end to end, and RV-01 to RV-04.
 #
 # The tests named 'B1c-R01:' to 'B1c-R04:' fail with f5b46ec's scripts (the base); the controls ('B1c
 # controls:', 'B1c-R01 control:', 'B1c-R02 control:') pass there too -- they pin the text f5b46ec writes for
 # the shapes these routes do not touch (captured from its own functions on both hosts). 'B1c-R03 measured:'
-# and 'B1c-I05:' measure the analyzer itself and pass on any tree; 'OPEN' and 'INTERIM' pin what waits for
-# the owner's rulings (dispatch 000307, open questions R01 and R04) and flip when they land.
+# and 'B1c-I05:' measure the analyzer itself and pass on any tree. The tests named 'B1c-RV01:' to 'B1c-RV04:'
+# fail with 491ecb5's scripts (the head review 6656dadf4a4b read); the controls named 'B1c-RV01 control:' to
+# 'B1c-RV04 control:' pass there too.
 #
 # ASCII-only (PS 5.1 em-dash trap); StrictMode-safe.
 
@@ -359,9 +363,10 @@ Describe 'The RequiredRules merge reads the repository''s settings the way PSScr
         (@($r2.Merged.ExcludeRules) -join ',') | Should -BeExactly ($script:MgGlobals -join ',')
     }
 
-    It 'B1c-R01 OPEN (owner ruling pending, dispatch 000307 open question R01): beside a CustomRulePath the pattern is kept as written, and the static check names the rule it shuts out' {
+    It 'B1c-RV03 control: beside a CustomRulePath the pattern is still kept as written -- the owner ruled refusal, not narrowing (RV-03) -- and the static check names the rule it shuts out' {
         # A pattern may match custom rules no static read can list; narrowing it to the built-in rules would
-        # run custom rules the repository excluded. Until the owner rules, it is kept -- and reported.
+        # run custom rules the repository excluded. So it is kept and reported, and a managed scan refuses it
+        # (policy-required-rule-cannot-run: the tests named 'B1c-RV03:' below).
         $r = Invoke-RtMerge (New-RtFile ("@{ " + $script:MgCustom + "; ExcludeRules = @('PSAvoidGlobal*') }")) @('PSAvoidGlobalVars')
         (@($r.Merged.ExcludeRules) -join ',') | Should -BeExactly 'PSAvoidGlobal*'
         (@(Get-RequiredRulesNotRunnable -Settings $r.Merged -RequiredRules @('PSAvoidGlobalVars')) -join '|') | Should -BeExactly "PSAvoidGlobalVars: excluded by 'PSAvoidGlobal*'"
@@ -414,6 +419,44 @@ Describe 'The RequiredRules merge reads the repository''s settings the way PSScr
         (@($r.Merged.Keys | Sort-Object) -join ',') | Should -BeExactly 'CustomRulePath,IncludeDefaultRules'
     }
 
+    It 'B1c-RV04: a padded ExcludeRules entry is written exactly as the repository gave it, so it still names no rule once merged (<Name>)' -TestCases @(
+        @{ Name = 'blanks on both sides'; Entry = ' PSAvoidUsingWriteHost ' }
+        @{ Name = 'a blank before'; Entry = ' PSAvoidUsingWriteHost' }
+        @{ Name = 'a blank after'; Entry = 'PSAvoidUsingWriteHost ' }
+        @{ Name = 'a TAB after'; Entry = ('PSAvoidUsingWriteHost' + [char]9) }
+    ) {
+        param($Name, $Entry)
+        # PSScriptAnalyzer reads a surrounding blank as a character to match (measured, both hosts): the entry
+        # names no rule alone, and the merge wrote it trimmed -- PSAvoidUsingWriteHost then stopped running.
+        $r = Invoke-RtMerge (New-RtFile ("@{ ExcludeRules = @('" + $Entry + "') }")) @('PSAvoidGlobalVars')
+        @($r.Merged.ExcludeRules).Count | Should -Be 1
+        [string]@($r.Merged.ExcludeRules)[0] | Should -BeExactly $Entry
+        $r.Text | Should -Match ([regex]::Escape("ExcludeRules = @('" + $Entry + "')"))
+    }
+
+    It 'B1c-RV04: a padded pattern names no required rule as written, so it is written as given -- not narrowed to the built-in rules' {
+        $r = Invoke-RtMerge (New-RtFile "@{ ExcludeRules = @(' PSAvoid* ', 'PSUse*') }") @('PSAvoidGlobalVars')
+        (@($r.Merged.ExcludeRules) | ForEach-Object { '[' + $_ + ']' }) -join ',' | Should -BeExactly '[ PSAvoid* ],[PSUse*]'
+    }
+
+    It 'B1c-RV04: beside the repository''s own IncludeRules, and beside a CustomRulePath, a padded entry is written as given and shuts nothing out' {
+        $o = Invoke-RtMerge (New-RtFile "@{ IncludeRules = @('PSAvoidUsingCmdletAliases'); ExcludeRules = @(' PSAvoidUsingCmdletAliases ') }") @('PSAvoidGlobalVars')
+        (@($o.Merged.ExcludeRules) | ForEach-Object { '[' + $_ + ']' }) -join ',' | Should -BeExactly '[ PSAvoidUsingCmdletAliases ]'
+        $c = Invoke-RtMerge (New-RtFile ("@{ " + $script:MgCustom + "; ExcludeRules = @(' PSAvoidGlobal* ') }")) @('PSAvoidGlobalVars')
+        (@($c.Merged.ExcludeRules) | ForEach-Object { '[' + $_ + ']' }) -join ',' | Should -BeExactly '[ PSAvoidGlobal* ]'
+        (@(Get-RequiredRulesNotRunnable -Settings $c.Merged -RequiredRules @('PSAvoidGlobalVars')) -join '|') | Should -BeExactly '' -Because 'the padded pattern names no rule, so the required one runs'
+    }
+
+    It 'B1c-RV04 control: an entry spelled like a required code is still taken out, padded or not, and blank entries are still dropped -- byte for byte as 491ecb5 and f5b46ec merged them (<Name>)' -TestCases @(
+        @{ Name = 'a padded required name'; Text = "@{ ExcludeRules = @(' PSAvoidGlobalVars ', 'PSAvoidUsingWriteHost') }" }
+        @{ Name = 'blank entries'; Text = "@{ ExcludeRules = @('', ' ', 'PSAvoidUsingWriteHost') }" }
+    ) {
+        param($Name, $Text)
+        # Both name no rule to PSScriptAnalyzer, so taking them out changes nothing that runs; the text is the
+        # one the exact-name control below pins (captured from 491ecb5's and f5b46ec's own functions, both hosts).
+        Get-RtSha (Invoke-RtMerge (New-RtFile $Text) @('PSAvoidGlobalVars')).Text | Should -BeExactly '0cfc858e3bad2114c4afb4441945c87729a105497868cb66f6e18b11f65808a9' -Because $Name
+    }
+
     It 'B1c controls: the shapes these routes do not touch merge byte for byte as f5b46ec did (<Name>)' -TestCases @(
         @{ Name = 'an exact required name in ExcludeRules'; Text = "@{ ExcludeRules = @('PSAvoidGlobalVars', 'PSAvoidUsingWriteHost') }"; Required = @('PSAvoidGlobalVars'); Sha = '0cfc858e3bad2114c4afb4441945c87729a105497868cb66f6e18b11f65808a9' }
         @{ Name = 'the same in lower case'; Text = "@{ ExcludeRules = @('psavoidglobalvars', 'PSAvoidUsingCmdletAliases') }"; Required = @('PSAvoidGlobalVars'); Sha = 'd963b7292ad9a4dbfb848552345a90e173e69988d659d2931a240b0f0d21be78' }
@@ -456,6 +499,10 @@ Describe 'The merged settings, judged by the vendored PSScriptAnalyzer: the repo
             'r03-empty'          = @("@{ IncludeRules = @(); Rules = @{ PSAvoidLongLines = @{ Enable = `$true; MaximumLineLength = 40 } } }", @('PSAvoidGlobalVars'))
             'r03-empty-custom'   = @(("@{ IncludeRules = @(); " + $cp + ' }'), @('PSAvoidGlobalVars'))
             'open-custom-path'   = @(("@{ " + $cp + "; ExcludeRules = @('PSAvoidGlobal*') }"), @('PSAvoidGlobalVars'))
+            # B1c-RV-04: padded entries, which name no rule to PSScriptAnalyzer.
+            'rv04-padded-exact'  = @("@{ ExcludeRules = @(' PSAvoidUsingWriteHost ') }", @('PSAvoidGlobalVars'))
+            'rv04-padded-pattern' = @("@{ ExcludeRules = @(' PSAvoid* ') }", @('PSAvoidGlobalVars'))
+            'rv04-padded-own-include' = @("@{ IncludeRules = @('PSAvoidUsingCmdletAliases'); ExcludeRules = @(' PSAvoidUsingCmdletAliases ') }", @('PSAvoidGlobalVars'))
         }
         $encBom = New-Object System.Text.UTF8Encoding($true)
         foreach ($k in @($script:JgCases.Keys)) {
@@ -524,10 +571,19 @@ Describe 'The merged settings, judged by the vendored PSScriptAnalyzer: the repo
         @($script:Jg['r03-empty-custom']) | Should -Contain 'PSAvoidGlobalVars'
     }
 
-    It 'B1c-R01 OPEN (owner ruling pending): beside a CustomRulePath the kept pattern still shuts the required rule out -- and the static check says so' {
+    It 'B1c-RV03 control: judged -- beside a CustomRulePath the kept pattern still shuts the required rule out, and the static check says so (so a managed scan refuses it)' {
         @($script:Jg['open-custom-path']) | Should -Not -Contain 'PSAvoidGlobalVars'
         $m = Read-PssaSettingsFile -Path (Join-Path $script:JgDir 'open-custom-path.psd1')
         @(Get-RequiredRulesNotRunnable -Settings $m.Entries -RequiredRules @('PSAvoidGlobalVars')).Count | Should -Be 1
+    }
+
+    It 'B1c-RV04: judged -- a padded ExcludeRules entry excluded nothing alone, and merged it still excludes nothing: the merged file runs exactly what the file runs, the required rule included' {
+        @($script:Jg['rv04-padded-exact.alone']) | Should -Contain 'PSAvoidUsingWriteHost' -Because 'CONTROL: the padded entry names no rule alone'
+        @($script:Jg['rv04-padded-pattern.alone']) | Should -Contain 'PSAvoidUsingCmdletAliases' -Because 'CONTROL: the padded pattern names no rule alone'
+        @($script:Jg['rv04-padded-own-include.alone']) | Should -Contain 'PSAvoidUsingCmdletAliases' -Because 'CONTROL: the padded exclusion does not beat the repository''s own IncludeRules'
+        Test-RtExactlyAloneAnd 'rv04-padded-exact' @('PSAvoidGlobalVars')
+        Test-RtExactlyAloneAnd 'rv04-padded-pattern' @('PSAvoidGlobalVars')
+        Test-RtExactlyAloneAnd 'rv04-padded-own-include' @('PSAvoidGlobalVars')
     }
 }
 
@@ -584,7 +640,7 @@ Describe 'A required rule the merged settings cannot run is named (dispatch 0003
     }
 }
 
-Describe 'The daemon records a required rule it cannot run, and the evidence consumers carry it (dispatch 000307 B1c, review finding B1b-OOB2-R04)' {
+Describe 'The daemon records a required rule it cannot run, the evidence consumers carry it, and a managed verdict refuses it (dispatch 000307 B1c, review finding B1b-OOB2-R04; correction round 1, B1c-RV-01 to RV-03)' {
 
     BeforeAll {
         # The daemon's OWN functions, lifted from scripts/pses-daemon.ps1 by AST, PSES stubbed -- as the B1b
@@ -626,9 +682,10 @@ Describe 'The daemon records a required rule it cannot run, and the evidence con
         $script:DcTypo = New-RtFile "@{ RequiredRules = @('PSAvoidGlobalVarz', 'PSAvoidGlobalVars') }" -Name 'org-typo.psd1'
         $script:DcGood = New-RtFile "@{ RequiredRules = @('PSAvoidGlobalVars') }" -Name 'org-good.psd1'
         $script:DcDeclared = Resolve-EffectivePolicy -Path $script:DcTypo -Source 'cli'
-        function New-DcFile($Daemon) {
+        $script:DcGoodDeclared = Resolve-EffectivePolicy -Path $script:DcGood -Source 'cli'
+        function New-DcFile($Daemon, $Declared = $script:DcDeclared, [string]$PolicyPath = $script:DcTypo) {
             # One file's evidence as the scan reads it back: the daemon record given, a client agreeing.
-            $client = New-PolicyAdjudicationEvidence -Resolution $script:DcDeclared -Path $script:DcTypo -Mode 'closed'
+            $client = New-PolicyAdjudicationEvidence -Resolution $Declared -Path $PolicyPath -Mode 'closed'
             $receipt = [ordered]@{
                 engine = [ordered]@{ pses = '4.6.0'; pssa = '1.25.0' }
                 config = [ordered]@{ state = 'unbound'; observed = [ordered]@{ severityThreshold = 'Hint'; ruleInclude = ''; ruleExclude = ''; perFileCap = 0 } }
@@ -647,11 +704,16 @@ Describe 'The daemon records a required rule it cannot run, and the evidence con
         (@($script:DcLog) -join "`n") | Should -Match 'WARNING -- a required rule cannot run under the merged settings: PSAvoidGlobalVarz: no rule of that name'
     }
 
-    It 'B1c-R01 OPEN: a repository pattern the merge keeps beside a CustomRulePath is recorded as excluding the required rule' {
+    It 'B1c-RV03: a repository pattern the merge keeps beside a CustomRulePath is recorded as excluding the required rule, and a managed verdict over that record is NOT CERTIFIED (policy-required-rule-cannot-run; it certified)' {
+        # Owner ruling RV-03 (dispatch 000307, correction round 1): refuse with the R04 code, rather than narrow.
         Reset-DcDaemon -Policy $script:DcGood
         $repo = New-DcRepo ("@{ CustomRulePath = @('" + $script:DcModule + "'); ExcludeRules = @('PSAvoidGlobal*') }")
         Initialize-PssaSettings -FilePath (Join-Path $repo 'thing.ps1') -ProjectRoot $repo
         (@($script:policyApplication.requiredRules.cannotRun) -join '|') | Should -BeExactly "PSAvoidGlobalVars: excluded by 'PSAvoidGlobal*'"
+        $daemon = Copy-PolicyApplicationEvidence -Evidence $script:policyApplication -SettingsSha256 (Get-PolicyFileSha256 -Path ([string]$script:settingsPathInUse))
+        $c = Test-ScanPolicyCertification -Mode 'closed' -Declared $script:DcGoodDeclared -Files @((New-DcFile $daemon $script:DcGoodDeclared $script:DcGood))
+        $c.Certified | Should -BeFalse -Because 'the required rule never ran'
+        (@($c.Files[0].Reasons) -join ',') | Should -BeExactly 'policy-required-rule-cannot-run'
     }
 
     It 'THE CONTROL: a required rule the merged settings can run leaves cannotRun empty, and the startup and re-spawn records carry an empty list' {
@@ -700,17 +762,101 @@ Describe 'The daemon records a required rule it cannot run, and the evidence con
         Get-ScanRequiredRulesCannotRun -Files @($none, $a, $b, $null) | Should -BeExactly "PSAvoidGlobalVarz: no rule of that name; X\Y: excluded by 'Y*'"
     }
 
-    It 'B1c-R04 INTERIM (owner ruling pending, dispatch 000307 open question R04): a managed verdict over such a record still certifies, and no reason code was added' {
-        # Refusing needs a reason code no existing one fits; the dispatch requires the owner to rule it first.
-        # When the code lands, this test flips: the record below must then refuse.
+    It 'B1c-RV02: a managed verdict over a record naming a required rule that cannot run is NOT CERTIFIED, with the application-stage code policy-required-rule-cannot-run (the INTERIM test it replaces asserted that it certified)' {
+        # Owner ruling RV-02 (dispatch 000307, correction round 1): the code is approved, and a managed scan refuses.
         Reset-DcDaemon -Policy $script:DcTypo
         $repo = New-DcRepo
         Initialize-PssaSettings -FilePath (Join-Path $repo 'thing.ps1') -ProjectRoot $repo
         $daemon = Copy-PolicyApplicationEvidence -Evidence $script:policyApplication -SettingsSha256 (Get-PolicyFileSha256 -Path ([string]$script:settingsPathInUse))
         $c = Test-ScanPolicyCertification -Mode 'closed' -Declared $script:DcDeclared -Files @((New-DcFile $daemon))
+        $c.Certified | Should -BeFalse -Because 'PSAvoidGlobalVarz has no rule behind it, so it never ran'
+        (@($c.Files[0].Reasons) -join ',') | Should -BeExactly 'policy-required-rule-cannot-run'
+        @($c.Reasons).Count | Should -Be 0 -Because 'a per-file reason: each file''s daemon record names the rule'
+        $t = Get-PolicyReasonTable
+        $t.Contains('policy-required-rule-cannot-run') | Should -BeTrue
+        [string]$t['policy-required-rule-cannot-run'].Stage | Should -BeExactly 'application'
+        (Get-ScanRequiredRulesCannotRun -Files @((New-DcFile $daemon))) | Should -BeExactly 'PSAvoidGlobalVarz: no rule of that name' -Because 'the warning line still names it'
+        (Test-ScanPolicyCertification -Mode 'open' -Declared $script:DcDeclared -Files @((New-DcFile $daemon))).Managed | Should -BeFalse -Because 'an unmanaged verdict refuses nothing'
+    }
+
+    It 'B1c-RV02 control: the same verdict over a record whose required rules all run still certifies' {
+        Reset-DcDaemon -Policy $script:DcGood
+        $repo = New-DcRepo
+        Initialize-PssaSettings -FilePath (Join-Path $repo 'thing.ps1') -ProjectRoot $repo
+        @($script:policyApplication.requiredRules.cannotRun).Count | Should -Be 0
+        $daemon = Copy-PolicyApplicationEvidence -Evidence $script:policyApplication -SettingsSha256 (Get-PolicyFileSha256 -Path ([string]$script:settingsPathInUse))
+        $c = Test-ScanPolicyCertification -Mode 'closed' -Declared $script:DcGoodDeclared -Files @((New-DcFile $daemon $script:DcGoodDeclared $script:DcGood))
         $c.Certified | Should -BeTrue -Because (@($c.AllReasons) -join ',')
-        @((Get-PolicyReasonTable).Keys | Where-Object { $_ -like '*required-rule*' }).Count | Should -Be 0
-        (Get-ScanRequiredRulesCannotRun -Files @((New-DcFile $daemon))) | Should -BeExactly 'PSAvoidGlobalVarz: no rule of that name'
+    }
+
+    It 'B1c-RV01: a managed verdict over a tree holding a settings file below the scan root is NOT CERTIFIED, with the run-level certification code policy-settings-nested; an unmanaged verdict refuses nothing' {
+        # Owner ruling RV-01 (dispatch 000307, correction round 1). The scan hands the verdict the settings files
+        # below its root (Get-ScanNestedSettingsFiles); this record is otherwise the control above, which certifies.
+        Reset-DcDaemon -Policy $script:DcGood
+        $repo = New-DcRepo
+        Initialize-PssaSettings -FilePath (Join-Path $repo 'thing.ps1') -ProjectRoot $repo
+        $daemon = Copy-PolicyApplicationEvidence -Evidence $script:policyApplication -SettingsSha256 (Get-PolicyFileSha256 -Path ([string]$script:settingsPathInUse))
+        $f = New-DcFile $daemon $script:DcGoodDeclared $script:DcGood
+        $nested = @((Join-Path $repo 'lib/PSScriptAnalyzerSettings.psd1'))
+        $c = Test-ScanPolicyCertification -Mode 'closed' -Declared $script:DcGoodDeclared -Files @($f) -NestedSettings $nested
+        $c.Certified | Should -BeFalse
+        (@($c.Reasons) -join ',') | Should -BeExactly 'policy-settings-nested'
+        @($c.Files).Count | Should -Be 0 -Because 'a run-level reason: it is the tree, not one file''s evidence'
+        [string](Get-PolicyReasonTable)['policy-settings-nested'].Stage | Should -BeExactly 'certification'
+        (Test-ScanPolicyCertification -Mode 'closed' -Declared $script:DcGoodDeclared -Files @($f) -NestedSettings @('', ' ')).Certified | Should -BeTrue -Because 'a blank entry names no file'
+        (Test-ScanPolicyCertification -Mode 'open' -Declared $script:DcGoodDeclared -Files @($f) -NestedSettings $nested).Managed | Should -BeFalse -Because 'an unmanaged verdict refuses nothing'
+    }
+}
+
+Describe 'The settings files below a scan root are found the way the settings lookup finds them (dispatch 000307 B1c correction round 1, review finding B1c-RV-01)' {
+
+    BeforeAll {
+        function New-NsTree([string[]]$Files) {
+            $d = Join-Path $TestDrive ('ns-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            foreach ($f in $Files) {
+                $p = Join-Path $d $f
+                New-Item -ItemType Directory -Force -Path ([System.IO.Path]::GetDirectoryName($p)) | Out-Null
+                [System.IO.File]::WriteAllText($p, '@{}')
+            }
+            return [System.IO.Path]::GetFullPath($d)
+        }
+        function Get-NsNested([string]$Path, [bool]$Recurse = $true) {
+            # The scan's own two steps: its targets, then the settings files below its root -- as root-relative paths.
+            $t = Get-ScanTargets -Path $Path -Recurse $Recurse
+            $root = [string]$t['Root']
+            return (@(@(Get-ScanNestedSettingsFiles -Files @($t['Files']) -Root $root) | ForEach-Object { ([string]$_).Substring($root.Length + 1).Replace('\', '/') }) -join ' ; ')
+        }
+    }
+
+    It 'B1c-RV01: a settings file in a subdirectory, one further up an analyzed file''s walk, and one alone in its directory are found; the scan root''s own is not' {
+        $root = New-NsTree @('PSScriptAnalyzerSettings.psd1', 'z.ps1', 'lib/PSScriptAnalyzerSettings.psd1', 'lib/b.ps1', 'a/PSScriptAnalyzerSettings.psd1',
+            'a/b/c/deep.ps1', 'docs/PSScriptAnalyzerSettings.psd1', 'zz/b.ps1')
+        Get-NsNested $root | Should -BeExactly 'a/PSScriptAnalyzerSettings.psd1 ; docs/PSScriptAnalyzerSettings.psd1 ; lib/PSScriptAnalyzerSettings.psd1'
+    }
+
+    It 'B1c-RV01: a HIDDEN settings file beside an analyzed file is found -- the target list omits it, the settings lookup resolves it' -Skip:(-not $script:RtOnWindows) {
+        $root = New-NsTree @('PSScriptAnalyzerSettings.psd1', 'z.ps1', 'lib/PSScriptAnalyzerSettings.psd1', 'lib/b.ps1')
+        $hf = [System.IO.Path]::GetFullPath((Join-Path $root 'lib/PSScriptAnalyzerSettings.psd1'))
+        [System.IO.File]::SetAttributes($hf, ([System.IO.File]::GetAttributes($hf) -bor [System.IO.FileAttributes]::Hidden))
+        @((Get-ScanTargets -Path $root -Recurse $true)['Files']) | Should -Not -Contain $hf -Because 'CONTROL: the target list omits a hidden file (measured, both hosts)'
+        Resolve-PssaSettingsPath -EditedFilePath ([System.IO.Path]::GetFullPath((Join-Path $root 'lib/b.ps1'))) -ProjectRoot $root | Should -BeExactly $hf -Because 'CONTROL: the lookup resolves it'
+        Get-NsNested $root | Should -BeExactly 'lib/PSScriptAnalyzerSettings.psd1'
+    }
+
+    It 'B1c-RV01: nothing is found for a single-file scan, a -NoRecurse scan, a tree whose only settings file is the root''s, or no root -- and a hidden directory, which the scan does not enter, is not looked into' {
+        $root = New-NsTree @('PSScriptAnalyzerSettings.psd1', 'z.ps1', 'lib/b.ps1', 'lib/PSScriptAnalyzerSettings.psd1')
+        Get-NsNested (Join-Path $root 'lib/b.ps1') | Should -BeExactly '' -Because 'a single-file scan: its root is the file''s own directory'
+        Get-NsNested $root $false | Should -BeExactly '' -Because '-NoRecurse: no analyzed file lies below the root'
+        Get-NsNested (New-NsTree @('PSScriptAnalyzerSettings.psd1', 'z.ps1', 'lib/b.ps1')) | Should -BeExactly '' -Because 'the root''s own settings file is not nested'
+        $t = Get-ScanTargets -Path $root -Recurse $true
+        @(Get-ScanNestedSettingsFiles -Files @($t['Files']) -Root '').Count | Should -Be 0
+        if ($script:RtOnWindows) {
+            $hidden = New-NsTree @('PSScriptAnalyzerSettings.psd1', 'z.ps1', 'hid/PSScriptAnalyzerSettings.psd1', 'hid/c.ps1')
+            $hd = Join-Path $hidden 'hid'
+            [System.IO.File]::SetAttributes($hd, ([System.IO.File]::GetAttributes($hd) -bor [System.IO.FileAttributes]::Hidden))
+            @((Get-ScanTargets -Path $hidden -Recurse $true)['Files']).Count | Should -Be 2 -Because 'CONTROL: nothing in the hidden directory is a target (measured, both hosts)'
+            Get-NsNested $hidden | Should -BeExactly '' -Because 'nothing in it is analyzed, so its settings file governs nothing'
+        }
     }
 }
 
@@ -751,6 +897,17 @@ Describe 'The routes through the real daemon, every ambient plugin variable clea
         [System.IO.File]::WriteAllText($script:RdGlobal, "@{ RequiredRules = @('PSAvoidGlobalVars') }`n")
         $script:RdTypo = Join-Path $script:RdWork 'typo.psd1'
         [System.IO.File]::WriteAllText($script:RdTypo, ("@{ RequiredRules = @('PSAvoidGlobalVarz', '" + $unique + "') }`n"))
+        # Correction round 1 (review 6656dadf4a4b): a settings file nested under lib\, which sorts before the root's
+        # own file (RV-01); a required custom rule no CustomRulePath supplies (RV-02); a pattern beside a
+        # CustomRulePath that still excludes the required rule (RV-03); a padded ExcludeRules entry (RV-04).
+        $script:RdNested = New-RdDir 'rv01-nested' @{ 'z.ps1' = $thing; 'PSScriptAnalyzerSettings.psd1' = ("@{ ExcludeRules = @('PSAvoidUsingWriteHost', '" + $unique + "') }`n") }
+        [void](New-RdDir 'rv01-nested/lib' @{ 'b.ps1' = $thing; 'PSScriptAnalyzerSettings.psd1' = ("@{ ExcludeRules = @('PSAvoidUsingCmdletAliases', '" + $unique + "') }`n") })
+        $script:RdBare = New-RdDir 'rv02-not-supplied' @{ 'thing.ps1' = $thing; 'PSScriptAnalyzerSettings.psd1' = ("@{ ExcludeRules = @('" + $unique + "') }`n") }
+        $script:RdQualified = Join-Path $script:RdWork 'qualified.psd1'
+        [System.IO.File]::WriteAllText($script:RdQualified, "@{ RequiredRules = @('B1cRd.Rules\Measure-B1cRdNone') }`n")
+        $rdModule = New-RtRuleModule 'B1cRd.Rules' 'Measure-B1cRdReports'
+        $script:RdCustom = New-RdDir 'rv03-custom' @{ 'thing.ps1' = $thing; 'PSScriptAnalyzerSettings.psd1' = ("@{ CustomRulePath = @('" + $rdModule + "'); ExcludeRules = @('PSAvoidGlobal*', '" + $unique + "') }`n") }
+        $script:RdPadded = New-RdDir 'rv04-padded' @{ 'thing.ps1' = $thing; 'PSScriptAnalyzerSettings.psd1' = ("@{ ExcludeRules = @(' PSAvoidUsingWriteHost ', '" + $unique + "') }`n") }
 
         function Invoke-RdScan {
             param([string]$Target, [string]$Policy = '', [string]$Mode = '')
@@ -761,14 +918,16 @@ Describe 'The routes through the real daemon, every ambient plugin variable clea
             $run = Invoke-SvChildProcess -HostExe $script:RdHost -CapMs 300000 -ArgumentList $a -ExtraEnv @{ CLAUDE_PLUGIN_DATA = $script:RdData } `
                 -RemoveEnvPrefix @('CLAUDE_PLUGIN_OPTION_', 'POWERSHELL_LSP_')
             $text = Read-SvTextFile -Path $out
-            $sarif = $null; $results = @(); $pol = $null
+            $sarif = $null; $results = @(); $fileResults = @(); $pol = $null
             if (-not [string]::IsNullOrWhiteSpace($text)) {
                 $sarif = $text | ConvertFrom-Json
-                $results = @(@($sarif.runs[0].results) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_.ruleId } | Sort-Object -Unique)
+                $res = @(@($sarif.runs[0].results) | Where-Object { $null -ne $_ })
+                $results = @($res | ForEach-Object { [string]$_.ruleId } | Sort-Object -Unique)
+                $fileResults = @($res | ForEach-Object { [string]$_.locations[0].physicalLocation.artifactLocation.uri + '|' + [string]$_.ruleId } | Sort-Object -Unique)
                 $inv = $sarif.runs[0].invocations[0]
                 if ($null -ne $inv.PSObject.Properties['properties']) { $pol = $inv.properties.policy }
             }
-            return @{ Exit = [int]$run.ExitCode; Err = [string]$run.Err; Sarif = $sarif; Results = $results; Policy = $pol; TimedOut = [bool]$run.TimedOut }
+            return @{ Exit = [int]$run.ExitCode; Err = [string]$run.Err; Sarif = $sarif; Results = $results; FileResults = $fileResults; Policy = $pol; TimedOut = [bool]$run.TimedOut }
         }
 
         $script:Rd = @{}
@@ -776,6 +935,11 @@ Describe 'The routes through the real daemon, every ambient plugin variable clea
         $script:Rd.Own = Invoke-RdScan -Target $script:RdOwn -Policy $script:RdGlobal -Mode 'closed'
         $script:Rd.Empty = Invoke-RdScan -Target $script:RdEmpty -Policy $script:RdGlobal -Mode 'closed'
         $script:Rd.Typo = Invoke-RdScan -Target $script:RdNone -Policy $script:RdTypo -Mode 'closed'
+        $script:Rd.Nested = Invoke-RdScan -Target $script:RdNested -Policy $script:RdGlobal -Mode 'closed'
+        $script:Rd.NestedOpen = Invoke-RdScan -Target $script:RdNested -Policy $script:RdGlobal
+        $script:Rd.Bare = Invoke-RdScan -Target $script:RdBare -Policy $script:RdQualified -Mode 'closed'
+        $script:Rd.Custom = Invoke-RdScan -Target $script:RdCustom -Policy $script:RdGlobal -Mode 'closed'
+        $script:Rd.Padded = Invoke-RdScan -Target $script:RdPadded -Policy $script:RdGlobal -Mode 'closed'
     }
 
     AfterAll {
@@ -808,9 +972,50 @@ Describe 'The routes through the real daemon, every ambient plugin variable clea
         foreach ($r in @('PSAvoidGlobalVars', 'PSAvoidLongLines', 'PSAvoidUsingCmdletAliases', 'PSAvoidUsingWriteHost', 'PSUseSingularNouns')) { $m.Results | Should -Contain $r }
     }
 
-    It 'B1c-R04: a misspelled required rule is named on stderr; the managed scan still certifies until the owner rules the reason code (open question R04)' {
+    It 'B1c-R04: a misspelled required rule is named on stderr, and the managed scan is NOT CERTIFIED with policy-required-rule-cannot-run (owner ruling RV-02; it certified)' {
         $m = $script:Rd.Typo
         $m.Err | Should -Match 'a rule the policy requires cannot run under the settings PSES was handed \(PSAvoidGlobalVarz: no rule of that name'
-        $m.Policy.certification | Should -BeExactly 'certified' -Because 'INTERIM: this flips to not-certified when the reason code lands'
+        $m.Exit | Should -Be 4
+        $m.Policy.certification | Should -BeExactly 'not-certified'
+        @($m.Policy.reasons) | Should -Contain 'policy-required-rule-cannot-run'
+    }
+
+    It 'B1c-RV01: a settings file nested under a subdirectory that sorts first -- the managed scan is NOT CERTIFIED with policy-settings-nested (it certified lib''s file governing every file, the root''s own unused)' {
+        $m = $script:Rd.Nested
+        $m.Exit | Should -Be 4 -Because ('stderr: ' + $m.Err)
+        $m.Policy.certification | Should -BeExactly 'not-certified'
+        @($m.Policy.reasons) | Should -Contain 'policy-settings-nested'
+        $m.Err | Should -Match 'policy-settings-nested'
+        @($m.FileResults) | Should -Contain 'z.ps1|PSAvoidUsingWriteHost' -Because 'the findings are still reported -- lib''s settings governed z.ps1 too, as measured'
+    }
+
+    It 'B1c-RV01 control: the same tree scanned unmanaged is unchanged -- exit 0, nothing refused' {
+        $m = $script:Rd.NestedOpen
+        $m.Exit | Should -Be 0 -Because ('stderr: ' + $m.Err)
+        $m.Policy.certification | Should -BeExactly 'not-requested'
+        @($m.Policy.reasons).Count | Should -Be 0
+    }
+
+    It 'B1c-RV02: a required custom rule no CustomRulePath supplies -- the managed scan is NOT CERTIFIED with policy-required-rule-cannot-run (it certified)' {
+        $m = $script:Rd.Bare
+        $m.Exit | Should -Be 4 -Because ('stderr: ' + $m.Err)
+        $m.Policy.certification | Should -BeExactly 'not-certified'
+        @($m.Policy.reasons) | Should -Contain 'policy-required-rule-cannot-run'
+        $m.Err | Should -Match 'B1cRd\.Rules\\Measure-B1cRdNone: no rule of that name'
+    }
+
+    It 'B1c-RV03: a repository pattern beside a CustomRulePath that still excludes the required rule -- the managed scan is NOT CERTIFIED with policy-required-rule-cannot-run (it certified)' {
+        $m = $script:Rd.Custom
+        $m.Exit | Should -Be 4 -Because ('stderr: ' + $m.Err)
+        $m.Policy.certification | Should -BeExactly 'not-certified'
+        @($m.Policy.reasons) | Should -Contain 'policy-required-rule-cannot-run'
+        $m.Results | Should -Not -Contain 'PSAvoidGlobalVars' -Because 'the kept pattern shut it out (measured): the refusal says so'
+    }
+
+    It 'B1c-RV04: a padded ExcludeRules entry -- the managed scan certifies with every rule the repository runs, Write-Host included (it dropped PSAvoidUsingWriteHost)' {
+        $m = $script:Rd.Padded
+        $m.Exit | Should -Be 0 -Because ('stderr: ' + $m.Err)
+        $m.Policy.certification | Should -BeExactly 'certified'
+        ($m.Results -join ',') | Should -BeExactly 'PSAvoidGlobalVars,PSAvoidUsingCmdletAliases,PSAvoidUsingWriteHost,PSUseSingularNouns'
     }
 }
