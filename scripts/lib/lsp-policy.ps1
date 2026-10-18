@@ -125,6 +125,7 @@ function Get-PolicyReasonTable {
     $t['engine-unknown'] = [ordered]@{ Stage = 'certification'; Meaning = 'the analysis engine versions could not be observed' }
     $t['analysis-incomplete'] = [ordered]@{ Stage = 'certification'; Meaning = 'the file has no complete completion receipt' }
     $t['analysis-empty'] = [ordered]@{ Stage = 'certification'; Meaning = 'the scan analyzed no PowerShell file, so nothing shows the policy was applied' }
+    $t['policy-settings-nested'] = [ordered]@{ Stage = 'certification'; Meaning = 'the scanned tree holds a PSScriptAnalyzerSettings.psd1 below the scan root; the settings that govern a scan are the ones nearest the first file it analyzes in sorted path order, so a nested file can govern every file and the root''s own file can go unused' }
     return $t
 }
 
@@ -641,7 +642,9 @@ function Test-ScanPolicyCertification {
     #               suppression pass ran (policy-suppression-pass-failed); at least one file was
     #               analyzed (analysis-empty) -- with no file there is no evidence the policy was
     #               applied, and O03 certifies only on that proof, so a managed gate pointed at a
-    #               directory with no PowerShell in it never reads CERTIFIED;
+    #               directory with no PowerShell in it never reads CERTIFIED; the scanned tree holds no
+    #               PSScriptAnalyzerSettings.psd1 below the scan root ($NestedSettings, from
+    #               Get-ScanNestedSettingsFiles: policy-settings-nested, dispatch 000307 correction round 1);
     #   per file    the file's receipt is complete (analysis-incomplete); it carries application
     #               evidence (policy-evidence-missing -- also when the daemon's record is still the
     #               'pending' one it starts with, which has resolved nothing yet and so cannot
@@ -668,7 +671,9 @@ function Test-ScanPolicyCertification {
         $Declared = $null,
         [string[]]$Ambient = @(),
         [string]$SuppressionPass = 'not-required',
-        [object[]]$Files = @()
+        [object[]]$Files = @(),
+        # The PSScriptAnalyzerSettings.psd1 files below the scan root (Get-ScanNestedSettingsFiles).
+        [string[]]$NestedSettings = @()
     )
     if ($Mode -ne 'closed') {
         return [pscustomobject]@{ Mode = $Mode; Managed = $false; Certified = $null; Reasons = @(); Files = @(); AllReasons = @() }
@@ -689,6 +694,12 @@ function Test-ScanPolicyCertification {
     if (@($Ambient | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) { $run.Add('config-ambient') }
     if ($SuppressionPass -eq 'failed') { $run.Add('policy-suppression-pass-failed') }
     if (@($Files | Where-Object { $null -ne $_ }).Count -eq 0) { $run.Add('analysis-empty') }
+    # A SETTINGS FILE NESTED BELOW THE SCAN ROOT IS REFUSED (dispatch 000307, correction round 1; owner ruling RV-01,
+    # review finding B1c-RV-01). The settings that govern a scan are the ones nearest the first file it analyzes in
+    # sorted path order, so a nested file can govern every file and the root's own file can go unused -- and a nested
+    # file that does not govern is not used for its own directory's files. Either way the analysis did not run on the
+    # settings the repository declared for every file, and a managed scan certified (measured, both hosts).
+    if (@($NestedSettings | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) { $run.Add('policy-settings-nested') }
     $want = Get-ScanDeclaredAnalysisConfiguration
 
     $fileOut = New-Object System.Collections.ArrayList

@@ -173,6 +173,12 @@ if ($managed) {
     $ambientOptions = @(Get-ScanAmbientAnalysisOptions -Environment ([System.Environment]::GetEnvironmentVariables()) `
             -PolicyDeclared ($null -ne $declaredPolicy))
 }
+# A settings file nested below the scan root (dispatch 000307, correction round 1; owner ruling RV-01): the settings
+# that govern a scan are the ones nearest the first file it analyzes in sorted path order, so a nested file can govern
+# every file and the root's own file can go unused. A managed scan refuses such a tree (policy-settings-nested); an
+# unmanaged scan is unchanged and does not look.
+$nestedSettings = @()
+if ($managed) { $nestedSettings = @(Get-ScanNestedSettingsFiles -Files $files -Root $root) }
 $childPolicyPath = $(if ($null -ne $declaredPolicy) { $OrgPolicyPath } else { '' })
 $childPolicyMode = $(if ([string]$policyModeInfo.source -eq 'cli') { [string]$policyModeInfo.resolved } else { '' })
 $policyReported = ($managed -or $null -ne $declaredPolicy)
@@ -295,7 +301,7 @@ if ($cannotRunLine -ne '') {
 # agreeing application evidence for every file (Test-ScanPolicyCertification); otherwise the scan is NOT
 # CERTIFIED -- executionSuccessful=false and exit 4, with every reason named.
 $policyCert = Test-ScanPolicyCertification -Mode ([string]$policyModeInfo.resolved) -Declared $declaredPolicy `
-    -Ambient $ambientOptions -SuppressionPass $suppressionPass -Files @($fileEvidence)
+    -Ambient $ambientOptions -SuppressionPass $suppressionPass -Files @($fileEvidence) -NestedSettings $nestedSettings
 $certOk = (-not [bool]$policyCert.Managed) -or [bool]$policyCert.Certified
 $policyReport = $null
 if ($policyReported) {
