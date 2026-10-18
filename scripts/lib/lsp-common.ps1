@@ -1487,7 +1487,14 @@ function Get-RequiredRulesNotRunnable {
     #   'excluded by <entry>'       an ExcludeRules entry matches it, and an exclusion wins (measured);
     #   'not in IncludeRules'       the settings name IncludeRules and no entry selects it;
     #   'built-in rules not loaded' it is a built-in rule, beside a CustomRulePath without
-    #                               IncludeDefaultRules = $true, which loads only the custom rules.
+    #                               IncludeDefaultRules = $true, which loads only the custom rules;
+    #   'not enabled in Rules'      it is a configurable built-in rule (Get-PssaConfigurableRuleNames, by its match
+    #                               name) and the settings' Rules entry under its canonical name -- the key
+    #                               PSScriptAnalyzer matches, case-sensitively -- does not set Enable = $true: off
+    #                               by default it never runs, and Enable = $false keeps it off. The merge switches
+    #                               every required one on, so its own output never shows this; it is a backstop
+    #                               (owner ruling RR-01, dispatch 000307 correction round 2, review finding
+    #                               B1c-RR-01).
     # A rule the organization also excludes is not required (exclusion is the stronger verb) and is not
     # reported. Beside a CustomRulePath, whether a custom rule is in the modules that path loads, and whether
     # they load and run at all, is not something a static read can see (owner ruling K01b: leg A3's runtime
@@ -1505,6 +1512,10 @@ function Get-RequiredRulesNotRunnable {
     if (& $has 'IncludeRules') { $include = @(@($Settings['IncludeRules']) | Where-Object { $_ -is [string] }) }
     $exclude = @()
     if (& $has 'ExcludeRules') { $exclude = @(@($Settings['ExcludeRules']) | Where-Object { $_ -is [string] }) }
+    $configurable = @{}
+    foreach ($n in @(Get-PssaConfigurableRuleNames)) { $configurable[$n] = $n }
+    $ruleTable = $null
+    if (& $has 'Rules') { $ruleTable = $Settings['Rules'] }
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($r in @($RequiredRules | Where-Object { $_ })) {
         $code = ([string]$r).Trim()
@@ -1519,6 +1530,21 @@ function Get-RequiredRulesNotRunnable {
             }
             if ($why -eq '' -and $include.Count -gt 0 -and @($include | Where-Object { Test-PssaRuleNameMatch -Entry $_ -Name $name }).Count -eq 0) { $why = 'not in IncludeRules' }
             if ($why -eq '' -and $builtin.Contains($name) -and -not $defaultsLoaded) { $why = 'built-in rules not loaded' }
+            if ($why -eq '' -and $configurable.ContainsKey($name)) {
+                # The entry PSScriptAnalyzer reads -- the canonical key, matched case-sensitively, with a setting's
+                # name in any case (measured, dispatch 000306) -- must set Enable = $true.
+                $canon = [string]$configurable[$name]
+                $on = $false
+                if ($ruleTable -is [System.Collections.IDictionary]) {
+                    foreach ($k in @($ruleTable.Keys)) {
+                        if (-not [string]::Equals([string]$k, $canon, [System.StringComparison]::Ordinal) -or $ruleTable[$k] -isnot [System.Collections.IDictionary]) { continue }
+                        foreach ($a in @($ruleTable[$k].Keys)) {
+                            if ([string]::Equals([string]$a, 'Enable', [System.StringComparison]::OrdinalIgnoreCase) -and $ruleTable[$k][$a] -is [bool] -and [bool]$ruleTable[$k][$a]) { $on = $true }
+                        }
+                    }
+                }
+                if (-not $on) { $why = 'not enabled in Rules' }
+            }
         }
         if ($why -ne '') { $out.Add(($code + ': ' + $why)) }
     }
