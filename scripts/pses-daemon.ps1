@@ -1076,8 +1076,8 @@ function Initialize-PssaSettings {
                                 # CustomRulePath supplies -- was written into the merged file, matched nothing and
                                 # never ran, while a managed scan certified. The merged file as read back is checked
                                 # statically (Get-RequiredRulesNotRunnable); each such rule is named here, in the
-                                # record (requiredRules.cannotRun) and by every scan on stderr. Refusing a managed
-                                # scan over it needs a reason code the owner has not ruled yet (open question R04).
+                                # record (requiredRules.cannotRun) and by every scan on stderr, and a managed scan
+                                # refuses it (policy-required-rule-cannot-run; dispatch 000307 correction round 1).
                                 $cannotRun = @(Get-RequiredRulesNotRunnable -Settings $mergedRead.Entries -RequiredRules $reqRules -OrgExcludeRules $orgExcl)
                                 foreach ($c in $cannotRun) { Write-DLog ('PSSA settings: WARNING -- a required rule cannot run under the merged settings: ' + $c) }
                             }

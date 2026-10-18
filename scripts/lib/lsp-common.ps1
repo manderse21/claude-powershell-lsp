@@ -2183,7 +2183,8 @@ function Merge-RequiredRulesSettings {
             # has, so the merged file still excludes every rule the repository's pattern did, a required one
             # aside. Beside a CustomRulePath the pattern may also match custom rules no static read can list,
             # so it is kept as written -- the required rule it shuts out is then reported as one that cannot
-            # run (Get-RequiredRulesNotRunnable), pending the owner's ruling (dispatch 000307, open question R01).
+            # run (Get-RequiredRulesNotRunnable), and a managed scan refuses it (owner ruling RV-03, dispatch
+            # 000307 correction round 1: refuse with policy-required-rule-cannot-run rather than narrow).
             #
             # EVERY ENTRY IS WRITTEN EXACTLY AS THE REPOSITORY GAVE IT, NEVER TRIMMED (dispatch 000307, correction
             # round 1; owner ruling RV-04, review finding B1c-RV-04, pre-existing since dispatch 000294). The merge

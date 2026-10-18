@@ -281,8 +281,9 @@ if (-not $managed) {
     }
 }
 # A required rule the merged settings cannot run (dispatch 000307, review finding B1b-OOB2-R04) -- a misspelled
-# built-in name, a custom rule no CustomRulePath supplies -- is named on stderr by every scan, managed or not.
-# A managed scan is not refused over it until the owner rules the reason code (dispatch 000307, open question R04).
+# built-in name, a custom rule no CustomRulePath supplies -- is named on stderr by every scan, managed or not,
+# and a managed scan is NOT CERTIFIED over it (policy-required-rule-cannot-run; owner rulings RV-02 and RV-03,
+# dispatch 000307 correction round 1).
 $cannotRunLine = Get-ScanRequiredRulesCannotRun -Files @($fileEvidence)
 if ($cannotRunLine -ne '') {
     [Console]::Error.WriteLine('lsp-scan: warning: a rule the policy requires cannot run under the settings PSES was handed (' + $cannotRunLine +

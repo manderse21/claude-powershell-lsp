@@ -117,6 +117,7 @@ function Get-PolicyReasonTable {
     $t['policy-disagreement'] = [ordered]@{ Stage = 'application'; Meaning = 'a party applied a policy whose identity differs from the declared one' }
     $t['policy-evidence-missing'] = [ordered]@{ Stage = 'application'; Meaning = 'no application evidence for this file, so whether the policy was applied is unprovable' }
     $t['policy-settings-rejected'] = [ordered]@{ Stage = 'application'; Meaning = 'PSScriptAnalyzer would reject or could not read a settings file this analysis rests on (the repository''s, or the merged one), so the analysis did not run on the settings as declared' }
+    $t['policy-required-rule-cannot-run'] = [ordered]@{ Stage = 'application'; Meaning = 'a rule the policy requires cannot run under the merged settings handed to PSES, by the daemon''s static check (requiredRules.cannotRun)' }
     $t['policy-suppression-pass-failed'] = [ordered]@{ Stage = 'application'; Meaning = 'the ProhibitedSuppressions pass could not run' }
     # certification -- the managed scan's other preconditions (until A3 binds the declared environment)
     $t['config-ambient'] = [ordered]@{ Stage = 'certification'; Meaning = 'an ambient plugin option that changes analysis reached the scan' }
@@ -651,7 +652,9 @@ function Test-ScanPolicyCertification {
     #               merged settings file, the daemon activated it -- guard passed, written and
     #               verified, delivered, and the file PSES reads still hashes to what was written
     #               (policy-activation-unsupported / policy-merge-write-failed /
-    #               policy-activation-not-delivered); PSScriptAnalyzer accepts every settings file the
+    #               policy-activation-not-delivered), and that merged file can run every required rule
+    #               by the daemon's static check (policy-required-rule-cannot-run, dispatch 000307
+    #               correction round 1); PSScriptAnalyzer accepts every settings file the
     #               analysis rests on, the repository's and the merged one, by the daemon's own check
     #               before PSES saw them (policy-settings-rejected, dispatch 000306); the daemon's
     #               observed analysis configuration is the declared one (config-observed-mismatch); the
@@ -735,6 +738,15 @@ function Test-ScanPolicyCertification {
                                     [string](Get-PolicyField -Object $st -Name 'sha256') -cne $merged) {
                                     $r.Add('policy-activation-not-delivered')
                                 }
+                                # A REQUIRED RULE THE MERGED SETTINGS CANNOT RUN IS REFUSED (dispatch 000307, correction
+                                # round 1; owner rulings RV-02 and RV-03 on review findings B1c-RV-02 and B1c-RV-03). The
+                                # daemon checks the merged file it hands PSES (Get-RequiredRulesNotRunnable) and names in
+                                # requiredRules.cannotRun each required rule that file cannot run -- a code with no rule
+                                # behind it (a misspelled built-in name, a custom rule no CustomRulePath supplies) or one
+                                # a repository pattern beside a CustomRulePath still excludes. Such a rule never ran, and
+                                # a managed scan certified anyway; an unmanaged scan keeps its warning (lsp-scan.ps1).
+                                $cannot = Get-PolicyStringList -Object $rr -Name 'cannotRun'
+                                if ($cannot.Count -gt 0) { $r.Add('policy-required-rule-cannot-run') }
                             }
                             'activation-unsupported' { $r.Add('policy-activation-unsupported') }
                             'merge-write-failed' { $r.Add('policy-merge-write-failed') }
@@ -879,8 +891,8 @@ function Get-ScanRequiredRulesCannotRun {
     # What a scan warns about, managed or not (dispatch 000307, review finding B1b-OOB2-R04): the required
     # rules a daemon record among $Files says its merged settings cannot run (requiredRules.cannotRun), each
     # named once, as one ASCII line ('code: why; code: why'), or '' when no record names one. Pure over the
-    # receipts the scan already holds. A managed scan is not refused over them until the owner rules the
-    # reason code (dispatch 000307, open question R04).
+    # receipts the scan already holds. A managed scan is also refused over them (policy-required-rule-cannot-run,
+    # Test-ScanPolicyCertification; owner rulings RV-02 and RV-03, dispatch 000307 correction round 1).
     param([object[]]$Files = @())
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
     $out = New-Object 'System.Collections.Generic.List[string]'
