@@ -362,10 +362,11 @@ plugin accepts is unchanged and still not derived.
 from running, while a managed scan certified, in forms the merge did not read the way PSScriptAnalyzer
 does -- a pattern in `ExcludeRules` (`'*'`), the bare name of a required custom rule, `IncludeRules =
 @()` -- and a required code with no rule behind it certified too. The merge now matches the file's
-entries as PSScriptAnalyzer does (measured on both hosts) and the daemon names every required rule its
-merged settings cannot run; two residues stay open for the owner (a pattern beside a `CustomRulePath`,
-kept as written; and the managed refusal's reason code), both warned about on stderr. The read is still
-data-only.
+entries as PSScriptAnalyzer does (measured on both hosts), writes each as given, and the daemon names every
+required rule its merged settings cannot run, which a managed scan refuses (`policy-required-rule-cannot-run`,
+a pattern beside a `CustomRulePath` included); so does a tree holding a settings file below the scan root,
+which can govern every file (`policy-settings-nested`) -- the owner's correction-round-1 rulings. The read
+is still data-only.
 
 **T3.3 Hostile module manifest.** *Mitigated.* Manifests are read with `Import-PowerShellDataFile`
 (`scripts/lib/lsp-common.ps1:2799,2850,2879`), the restricted-language data-only parser. This path

@@ -134,7 +134,8 @@ The envelope:
     `matchesParsed` alone, to know whether a required rule is running -- and know that `activated`
     says the merged settings reached PSES, not that every required rule exists in the analysis: a
     required code with no rule behind it (a misspelled name, a custom rule no `CustomRulePath`
-    supplies) is named in the daemon log and by every scan's stderr warning (dispatch 000307).
+    supplies) is named in the daemon log and by every scan's stderr warning, and a managed scan refuses
+    it (`policy-required-rule-cannot-run`; dispatch 000307).
   - `not-observed` with a `reason`: `no-daemon`, `several-daemons`, `data-root-unknown`; `pending` --
     NOT YET applied, never a mismatch: a daemon writes its record from startup, and again whenever it
     re-spawns PSES, and keeps it `pending` until its next analyzed PowerShell file resolves the

@@ -451,21 +451,28 @@ findings carry (all measured, the same on Windows PowerShell 5.1 and PowerShell 
   while a managed scan certified. Now an entry PSScriptAnalyzer reads as naming a required rule is taken
   out when it has no `*`, and a pattern is written instead as the built-in rules it matches, minus the
   required ones: with no `CustomRulePath` those are the only rules the analysis has, so every other rule
-  the repository's pattern excluded stays excluded. **Not yet closed:** beside a `CustomRulePath` the
-  pattern may also match custom rules that no static read can list, and narrowing it to the built-in
-  rules would run custom rules the repository excluded; it is kept as written until the owner rules
-  (dispatch 000307, open question R01), and the required rule it shuts out is named as one that cannot
-  run (below).
+  the repository's pattern excluded stays excluded. **Refused beside a `CustomRulePath`** (owner ruling
+  RV-03, dispatch 000307 correction round 1): there the pattern may also match custom rules that no static
+  read can list, and narrowing it to the built-in rules would run custom rules the repository excluded; so
+  it is kept as written, the required rule it shuts out is named as one that cannot run, and a managed
+  scan refuses (below).
 - **A required custom rule runs however `RequiredRules` spells it** (review finding B1b-OOB2-R02).
   Written into `IncludeRules` as `Module\Measure-Name`, a required custom rule matched nothing, so
   wherever the merged file named `IncludeRules` -- a repository naming its own, with or without
   `IncludeDefaultRules` -- it never ran, and a repository's exclusion of its bare name kept it off, while
   a managed scan certified. Now the merge writes the bare name into `IncludeRules` and takes the
   repository's exclusion of that name out; `RequiredRules` may name the rule either way. A pattern over
-  the bare name is the open case above: a custom rule needs a `CustomRulePath`, so such a pattern is
-  kept and the rule is named as one that cannot run.
+  the bare name is the case above: a custom rule needs a `CustomRulePath`, so such a pattern is kept, the
+  rule is named as one that cannot run, and a managed scan refuses.
 - **`IncludeRules = @()` is no `IncludeRules`** (review finding B1b-OOB2-R03), as the list above says. A
   list of blank entries (`@('')`) selects nothing in PSScriptAnalyzer and is still merged onto.
+- **Every `ExcludeRules` entry is written exactly as the repository gave it** (owner ruling RV-04, review
+  finding B1c-RV-04; dispatch 000307 correction round 1). The merge wrote each entry trimmed, so
+  `ExcludeRules = @(' PSAvoidUsingWriteHost ')` -- which names no rule, and so excludes nothing -- excluded
+  `PSAvoidUsingWriteHost` once merged, and `' PSAvoid* '` was narrowed to every non-required `PSAvoid`
+  rule: rules the repository runs stopped running while a managed scan certified. Now an entry is matched
+  and written as given, so a padded one still names no rule once merged. An entry spelled like a required
+  code is still taken out, padded or not, and a blank one is still dropped; neither names a rule.
 
 **A required rule the merged settings cannot run is named** (review finding B1b-OOB2-R04). A
 `RequiredRules` code with no rule behind it -- a misspelled built-in name, a rule only another analyzer
@@ -476,9 +483,9 @@ cannot run: a code that is none of PSScriptAnalyzer's 75 built-in rules while th
 `CustomRulePath`, a rule an `ExcludeRules` entry still matches, one a non-empty `IncludeRules` does not
 select, and a built-in rule beside a `CustomRulePath` without `IncludeDefaultRules = $true`. Each is
 named in the daemon log and in its application evidence (`requiredRules.cannotRun`), and every scan,
-managed or not, names it on stderr. **Not yet refused:** refusing a managed scan over such a rule needs
-a reason code that none of the existing ones fits, and the dispatch reserves that code to the owner
-(dispatch 000307, open question R04) -- until it is ruled, a managed scan warns and still certifies.
+managed or not, names it on stderr. **A managed scan refuses it** (owner rulings RV-02 and RV-03,
+dispatch 000307 correction round 1): it is NOT CERTIFIED, with `policy-required-rule-cannot-run`. An
+unmanaged scan only warns, and the in-agent edit hook stays silent.
 Beside a `CustomRulePath`, whether a required custom rule is in the modules it loads cannot be seen
 without loading them: that is left to a runtime signal (leg A3, owner ruling K01b).
 
