@@ -28,6 +28,12 @@
 #                 enter (the boundary: nothing in it is analyzed, so it governs nothing).
 #   B1c-RV-04     a padded ExcludeRules entry: an exact name and a pattern, each naming no rule as written.
 #
+# Correction round 2 (review 4ae359b10fe5; owner rulings 2026-10-18, RR-01 as amended) adds two rows and flips
+# no expected outcome above:
+#   B1c-RR-01     a required configurable built-in rule written Module\Name: 'Foo\PSAvoidLongLines', off by
+#                 default, with no repository settings file; and 'X\PSUseSingularNouns', on by default, over a
+#                 repository Rules entry with Enable = $false.
+#
 # Every scan is a child whose environment has every CLAUDE_PLUGIN_OPTION_* and POWERSHELL_LSP_* variable
 # removed, on a PRIVATE data root: a fresh directory seeded (copied) with the pinned PSES and
 # PSScriptAnalyzer from -SeedRoot, so no other session's daemon, merged file or session record is in it
@@ -231,12 +237,17 @@ try {
     # B1c-RV-04: padded ExcludeRules entries, which name no rule to PSScriptAnalyzer.
     New-MeasureRepo 'rv04-padded-exact' "@{ ExcludeRules = @(' PSAvoidUsingWriteHost ') }"
     New-MeasureRepo 'rv04-padded-pattern' "@{ ExcludeRules = @(' PSAvoid* ') }"
+    # B1c-RR-01: a required configurable built-in rule written Module\Name.
+    New-MeasureRepo 'rr01-none' '' $long
+    New-MeasureRepo 'rr01-disabled' "@{ Rules = @{ PSUseSingularNouns = @{ Enable = `$false } } }"
     $pGlobal = New-MeasureFile 'policy-global.psd1' "@{ RequiredRules = @('PSAvoidGlobalVars') }`n"
     $pLong = New-MeasureFile 'policy-longlines.psd1' "@{ RequiredRules = @('PSAvoidLongLines') }`n"
     $pQualified = New-MeasureFile 'policy-qualified.psd1' "@{ RequiredRules = @('B1cm.Rules\Measure-B1cmReports') }`n"
     $pQualifiedGlobal = New-MeasureFile 'policy-qualified-global.psd1' "@{ RequiredRules = @('B1cm.Rules\Measure-B1cmReports', 'PSAvoidGlobalVars') }`n"
     $pBare = New-MeasureFile 'policy-bare.psd1' "@{ RequiredRules = @('Measure-B1cmReports') }`n"
     $pTypo = New-MeasureFile 'policy-typo.psd1' "@{ RequiredRules = @('PSAvoidGlobalVarz') }`n"
+    $pQualifiedLong = New-MeasureFile 'policy-qualified-longlines.psd1' "@{ RequiredRules = @('Foo\PSAvoidLongLines') }`n"
+    $pQualifiedNouns = New-MeasureFile 'policy-qualified-nouns.psd1' "@{ RequiredRules = @('X\PSUseSingularNouns') }`n"
 
     $rows = New-Object System.Collections.ArrayList
     function Add-Row([string]$Finding, [string]$Name, $Facts) {
@@ -265,6 +276,8 @@ try {
     Add-Row 'B1c-RV-01' 'rv01-hidden-dir-managed' (Invoke-MeasureScan -Dir 'rv01-hidden-dir' -Policy $pGlobal -Mode 'closed')
     Add-Row 'B1c-RV-04' 'rv04-padded-exact-managed' (Invoke-MeasureScan -Dir 'rv04-padded-exact' -Policy $pGlobal -Mode 'closed')
     Add-Row 'B1c-RV-04' 'rv04-padded-pattern-managed' (Invoke-MeasureScan -Dir 'rv04-padded-pattern' -Policy $pGlobal -Mode 'closed')
+    Add-Row 'B1c-RR-01' 'rr01-qualified-off-by-default-managed' (Invoke-MeasureScan -Dir 'rr01-none' -Policy $pQualifiedLong -Mode 'closed')
+    Add-Row 'B1c-RR-01' 'rr01-qualified-disabled-managed' (Invoke-MeasureScan -Dir 'rr01-disabled' -Policy $pQualifiedNouns -Mode 'closed')
     ConvertTo-Json -InputObject @($rows) -Depth 5 -Compress
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue

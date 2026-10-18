@@ -2,8 +2,9 @@
 
 # The routes where a managed scan certified while a rule the organization requires, or one the repository
 # declared, did not run (Pester 5) -- dispatch 000307, B1c: B1b's out-of-band review findings B1b-OOB2-R01
-# to R04 and I05; and B1c's correction round 1, the owner's rulings (2026-10-17) on review 6656dadf4a4b's
-# findings B1c-RV-01 to B1c-RV-04.
+# to R04 and I05; B1c's correction round 1, the owner's rulings (2026-10-17) on review 6656dadf4a4b's
+# findings B1c-RV-01 to B1c-RV-04; and its correction round 2, the owner's rulings (2026-10-18, RR-01 as
+# amended) on review 4ae359b10fe5's findings B1c-RR-01 and B1c-RR-04.
 #
 # SIX LAYERS:
 #   1. How PSScriptAnalyzer names and matches a rule: Get-PssaRuleMatchName and Test-PssaRuleNameMatch over
@@ -30,6 +31,13 @@
 # and 'B1c-I05:' measure the analyzer itself and pass on any tree. The tests named 'B1c-RV01:' to 'B1c-RV04:'
 # fail with 491ecb5's scripts (the head review 6656dadf4a4b read); the controls named 'B1c-RV01 control:' to
 # 'B1c-RV04 control:' pass there too.
+#
+# Correction round 2 adds, in layer 1, a run of '*' matched as one (RR-04), and a Describe of its own for RR-01
+# spanning layers 2 to 4: a required configurable built-in rule named Module\Name is switched on by its match
+# name, the merged settings are judged by the analyzer, and the static check names one the merged Rules do not
+# switch on. The tests named 'B1c-RR01:' fail with d7cf111's scripts (the head review 4ae359b10fe5 read), and
+# 'B1c-RR04:' fails there under Windows PowerShell 5.1, where a run of '*' backtracked; the controls named
+# 'B1c-RR01 control:' and 'B1c-RR04 control:' pass there too.
 #
 # ASCII-only (PS 5.1 em-dash trap); StrictMode-safe.
 
@@ -177,6 +185,39 @@ Describe 'How PSScriptAnalyzer names and matches a rule (dispatch 000307 B1c, re
         Test-PssaRuleNameMatch -Entry 'Measure-B1*' -Name 'Measure-B1c' | Should -BeTrue
         Test-PssaRuleNameMatch -Entry 'B1c.Rules\Measure-B1c' -Name 'Measure-B1c' | Should -BeFalse
         Test-PssaRuleNameMatch -Entry 'B1c.Rules\*' -Name 'Measure-B1c' | Should -BeFalse
+    }
+
+    It 'B1c-RR04: an entry with a run of eight ''*'' and a tail no rule name ends in answers at once (under Windows PowerShell 5.1 it backtracked for tens of seconds)' {
+        # Owner ruling RR-04 (dispatch 000307, correction round 2): a run of '*' is matched as one. Measured on
+        # d7cf111's matcher under Windows PowerShell 5.1: six stars about half a second, eight over 40 seconds.
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $m = Test-PssaRuleNameMatch -Entry (('*' * 8) + 'Z') -Name 'PSAvoidUsingConvertToSecureStringWithPlainText'
+        $sw.Stop()
+        $m | Should -BeFalse
+        $sw.Elapsed.TotalSeconds | Should -BeLessThan 5 -Because ('it took ' + [int]$sw.Elapsed.TotalMilliseconds + ' ms')
+    }
+
+    It 'B1c-RR04 control: a run of ''*'' matches exactly what one ''*'' matches -- every entry with a run gives the answer the uncollapsed construction gives' {
+        function Test-RtUncollapsed([string]$Entry, [string]$Name) {
+            # d7cf111's construction: each '*' its own '.*'.
+            $p = '^' + [regex]::Escape($Entry).Replace('\*', '.*') + '$'
+            return [regex]::IsMatch($Name, $p, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        }
+        $names = @(Get-PssaBuiltinRuleNames) + @('Measure-B1c', 'xy', 'x*y', 'x**y')
+        $entries = @('**', '***', '**Vars', 'PSAvoid**', 'PSAvoid***Vars', '**Global**', 'PS**Global***Vars', ' PSAvoid** ', '***Z', 'Measure-**',
+            'x**y', '**Parity', ('PSMisleadingBac' + [char]0x212A + '**'))
+        $diff = New-Object System.Collections.Generic.List[string]
+        $hits = 0
+        foreach ($e in $entries) {
+            foreach ($n in $names) {
+                $a = Test-PssaRuleNameMatch -Entry $e -Name $n
+                if ($a) { $hits++ }
+                if ($a -ne (Test-RtUncollapsed $e $n)) { $diff.Add(("'" + $e + "' vs '" + $n + "'")) }
+            }
+        }
+        ($diff.ToArray() -join '; ') | Should -BeExactly ''
+        $hits | Should -BeGreaterThan 100 -Because 'the corpus must match something, or agreeing proves nothing'
+        Test-PssaRuleNameMatch -Entry (('*' * 8) + 'Text') -Name 'PSAvoidUsingConvertToSecureStringWithPlainText' | Should -BeTrue
     }
 
     Context 'PARITY with the vendored PSScriptAnalyzer on this host' -Skip:$script:RtUnsupported {
@@ -636,6 +677,119 @@ Describe 'A required rule the merged settings cannot run is named (dispatch 0003
             $back = Read-PssaSettingsFile -Path $p
             $back.Verdict | Should -BeExactly 'valid' -Because $t
             Get-RtNr $back.Entries @('PSAvoidGlobalVars', 'PSAvoidLongLines') | Should -BeExactly '' -Because ('repository file: ' + $t)
+        }
+    }
+}
+
+Describe 'A required configurable built-in rule is switched on however RequiredRules spells it, and the static check names one the merged Rules do not switch on (dispatch 000307 B1c correction round 2, review finding B1c-RR-01)' {
+
+    BeforeAll {
+        # Owner ruling RR-01 as amended (2026-10-18): the merge hands the Enable step a code's match name where that
+        # names a configurable built-in rule, and every other code as written; the static check names a required
+        # configurable built-in rule whose Rules entry under its canonical name does not set Enable = $true.
+        function Invoke-RrMerge([string]$Repo, [string[]]$Required) {
+            $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $Repo -RequiredRules $Required -CurrentPsesTag 'v4.6.0'
+            return @{ Merged = $m; Text = (Get-RtText $m) }
+        }
+        function Get-RrNr($Settings, [string[]]$Required) {
+            return (@(Get-RequiredRulesNotRunnable -Settings $Settings -RequiredRules $Required) -join '|')
+        }
+        $script:RrDisabled = "@{ Rules = @{ PSUseSingularNouns = @{ Enable = `$false } } }"
+    }
+
+    It 'B1c-RR01: off by default and named Module\Name with no settings file, the rule is switched on by its match name -- byte for byte as its bare spelling (it was named in IncludeRules and never switched on)' {
+        $q = Invoke-RrMerge '' @('Foo\PSAvoidLongLines')
+        $q.Text | Should -BeExactly (Invoke-RrMerge '' @('PSAvoidLongLines')).Text
+        $q.Merged.Rules['PSAvoidLongLines']['Enable'] | Should -BeTrue
+        $l = Invoke-RrMerge '' @('Foo\psavoidlonglines')
+        (@($l.Merged.Rules.Keys) -ccontains 'PSAvoidLongLines') | Should -BeTrue -Because 'under its canonical key, the one PSScriptAnalyzer matches (case-sensitively)'
+    }
+
+    It 'B1c-RR01: on by default and named Module\Name over a repository Rules entry with Enable = $false, the rule is switched on -- byte for byte as its bare spelling (the repository''s $false was kept)' {
+        $repo = New-RtFile $script:RrDisabled
+        $q = Invoke-RrMerge $repo @('X\PSUseSingularNouns')
+        $q.Text | Should -BeExactly (Invoke-RrMerge $repo @('PSUseSingularNouns')).Text
+        $q.Merged.Rules['PSUseSingularNouns']['Enable'] | Should -BeTrue
+    }
+
+    It 'B1c-RR01 control: the bare spellings, and a required custom rule''s Enable (owner amendment: still forced only under the key the repository wrote), merge byte for byte as d7cf111 did (<Name>)' -TestCases @(
+        @{ Name = 'PSAvoidLongLines, no settings file'; Text = ''; Required = @('PSAvoidLongLines'); Sha = 'dc1e694887b1aedab1b1fbd9667aef79737c2c30552666cbe91139a673590c6e' }
+        @{ Name = 'PSUseSingularNouns over Enable = $false'; Text = "@{ Rules = @{ PSUseSingularNouns = @{ Enable = `$false } } }"; Required = @('PSUseSingularNouns'); Sha = 'c57939f1d54d85494afe6a4b838beeb935c184813810341a9bedbe089367a90b' }
+        @{ Name = 'a custom rule keyed Module\Name: switched on'; Text = "@{ Rules = @{ 'My.Rules\Measure-Thing' = @{ Enable = `$false; Limit = 3 } } }"; Required = @('My.Rules\Measure-Thing'); Sha = 'd63dce93fab4b67bb1d3f0af6c0bc6fb18806926f2621db8ddaa8446a48704d4' }
+        @{ Name = 'a custom rule keyed by its bare name: left as written'; Text = "@{ Rules = @{ 'Measure-Thing' = @{ Enable = `$false; Limit = 3 } } }"; Required = @('My.Rules\Measure-Thing'); Sha = '78a2ff2278c413877a11b67b75735816aaf87fe81be821059f270d38c488e30a' }
+    ) {
+        param($Name, $Text, $Required, $Sha)
+        # Captured from d7cf111's own functions and from this head's, on both hosts (identical).
+        $repo = if ($Text -ne '') { New-RtFile $Text } else { '' }
+        Get-RtSha (Invoke-RrMerge $repo $Required).Text | Should -BeExactly $Sha -Because $Name
+    }
+
+    It 'B1c-RR01: the static check names a required configurable built-in rule the Rules do not switch on, however RequiredRules spells it -- no entry, Enable = $false, an entry keyed in another case' {
+        Get-RrNr @{} @('Foo\PSAvoidLongLines') | Should -BeExactly 'Foo\PSAvoidLongLines: not enabled in Rules'
+        Get-RrNr @{ Rules = @{ PSUseSingularNouns = @{ Enable = $false } } } @('X\PSUseSingularNouns', 'PSUseSingularNouns') |
+            Should -BeExactly 'X\PSUseSingularNouns: not enabled in Rules|PSUseSingularNouns: not enabled in Rules'
+        Get-RrNr @{ Rules = @{ psavoidlonglines = @{ Enable = $true } } } @('PSAvoidLongLines') | Should -BeExactly 'PSAvoidLongLines: not enabled in Rules' -Because 'PSScriptAnalyzer matches a Rules key case-sensitively (measured, dispatch 000306): that entry configures nothing'
+    }
+
+    It 'B1c-RR01 control: Enable = $true under the canonical key -- the setting named in any case -- is not named, nor a rule the organization also excludes, nor one that is not configurable' {
+        Get-RrNr @{ Rules = @{ PSAvoidLongLines = @{ Enable = $true; MaximumLineLength = 40 } } } @('Foo\PSAvoidLongLines', 'PSAvoidLongLines') | Should -BeExactly ''
+        Get-RrNr @{ Rules = @{ PSUseSingularNouns = @{ enable = $true } } } @('X\PSUseSingularNouns') | Should -BeExactly ''
+        @(Get-RequiredRulesNotRunnable -Settings @{} -RequiredRules @('PSAvoidLongLines') -OrgExcludeRules @('PSAvoidLongLines')).Count | Should -Be 0
+        Get-RrNr @{} @('PSAvoidGlobalVars', 'Foo\PSAvoidGlobalVars') | Should -BeExactly ''
+    }
+
+    It 'B1c-RR01 control: every merge of a required configurable rule, however RequiredRules spells it, can run it -- the merge''s own output, written and read back, names nothing' {
+        $module = New-RtRuleModule 'B1c.RR01' 'Measure-B1cRR01'
+        $custom = "CustomRulePath = @('" + $module + "')"
+        $req = @('Foo\PSAvoidLongLines', 'X\PSUseSingularNouns', 'PSAvoidGlobalVars')
+        foreach ($t in @('', $script:RrDisabled, "@{ Rules = @{ psavoidlonglines = @{ Enable = `$false; MaximumLineLength = 40 } } }", "@{ ExcludeRules = @('PSAvoidLong*') }",
+                "@{ IncludeRules = @('PSAvoidUsingCmdletAliases') }", "@{ IncludeRules = @() }", ('@{ ' + $custom + ' }'), ('@{ ' + $custom + '; IncludeDefaultRules = $false }'))) {
+            $repo = if ($t -ne '') { New-RtFile $t } else { '' }
+            $m = Merge-RequiredRulesSettings -ResolvedSettingsPath $repo -RequiredRules $req -CurrentPsesTag 'v4.6.0'
+            $p = Write-MergedPssaSettingsFile -Settings $m -DataRoot (Join-Path $TestDrive ('rr-' + [guid]::NewGuid().ToString('N').Substring(0, 8)))
+            $back = Read-PssaSettingsFile -Path $p
+            $back.Verdict | Should -BeExactly 'valid' -Because $t
+            Get-RrNr $back.Entries $req | Should -BeExactly '' -Because ('repository file: ' + $t)
+        }
+    }
+
+    Context 'judged by the vendored PSScriptAnalyzer' -Skip:$script:RtUnsupported {
+
+        BeforeAll {
+            $script:RjManifest = Get-RtVendoredManifest
+            $script:RjDir = Join-Path $TestDrive 'rr01-judged'
+            New-Item -ItemType Directory -Force -Path $script:RjDir | Out-Null
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            # The sample draws PSUseSingularNouns (a plural noun), PSAvoidUsingCmdletAliases and, with the rule on,
+            # PSAvoidLongLines (a 132-column line; the default limit is 120).
+            [System.IO.File]::WriteAllText((Join-Path $script:RjDir 'code.txt'), ("function Get-Items { param() Write-Host 'x' }`ngci`n# " + ('x' * 130) + "`n"), $enc)
+            $repo = New-RtFile $script:RrDisabled
+            [System.IO.File]::WriteAllText((Join-Path $script:RjDir 'rr01-nouns.alone.psd1'), $script:RrDisabled, $enc)
+            foreach ($c in @(@('rr01-qual-long', '', 'Foo\PSAvoidLongLines'), @('rr01-canon-long', '', 'PSAvoidLongLines'),
+                    @('rr01-qual-nouns', $repo, 'X\PSUseSingularNouns'), @('rr01-canon-nouns', $repo, 'PSUseSingularNouns'))) {
+                [System.IO.File]::WriteAllText((Join-Path $script:RjDir ($c[0] + '.psd1')), (Invoke-RrMerge $c[1] @($c[2])).Text, $enc)
+            }
+            $script:Rj = @{}
+            if (-not [string]::IsNullOrWhiteSpace($script:RjManifest)) { $script:Rj = Invoke-RtJudge -Manifest $script:RjManifest -Dir $script:RjDir }
+        }
+
+        It 'the vendored analyzer judged every file (this Context cannot pass vacuously)' {
+            $script:RjManifest | Should -Not -BeNullOrEmpty
+            $script:Rj.Count | Should -Be 5
+        }
+
+        It 'B1c-RR01: judged -- named Module\Name, PSAvoidLongLines runs with no settings file and PSUseSingularNouns over the repository''s Enable = $false, exactly as their bare spellings do (neither ran)' {
+            @($script:Rj['rr01-qual-long']) | Should -Contain 'PSAvoidLongLines'
+            (@($script:Rj['rr01-qual-long']) -join ',') | Should -BeExactly (@($script:Rj['rr01-canon-long']) -join ',')
+            @($script:Rj['rr01-qual-nouns']) | Should -Contain 'PSUseSingularNouns'
+            (@($script:Rj['rr01-qual-nouns']) -join ',') | Should -BeExactly (@($script:Rj['rr01-canon-nouns']) -join ',')
+        }
+
+        It 'B1c-RR01 control: judged -- the bare spellings run the rule, and the repository''s file alone keeps PSUseSingularNouns off' {
+            @($script:Rj['rr01-canon-long']) | Should -Contain 'PSAvoidLongLines'
+            @($script:Rj['rr01-canon-nouns']) | Should -Contain 'PSUseSingularNouns'
+            @($script:Rj['rr01-nouns.alone']) | Should -Not -Contain 'PSUseSingularNouns'
+            @($script:Rj['rr01-nouns.alone']) | Should -Contain 'PSAvoidUsingCmdletAliases' -Because 'CONTROL: the file alone runs the other rules'
         }
     }
 }
