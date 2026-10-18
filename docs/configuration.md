@@ -481,7 +481,10 @@ matched nothing (PSScriptAnalyzer says nothing about an unknown name: measured) 
 managed scan certified. The daemon now checks the merged file it hands PSES for every required rule it
 cannot run: a code that is none of PSScriptAnalyzer's 75 built-in rules while the settings carry no
 `CustomRulePath`, a rule an `ExcludeRules` entry still matches, one a non-empty `IncludeRules` does not
-select, and a built-in rule beside a `CustomRulePath` without `IncludeDefaultRules = $true`. Each is
+select, a built-in rule beside a `CustomRulePath` without `IncludeDefaultRules = $true`, and -- a
+backstop to the switch-on below (owner ruling RR-01, dispatch 000307 correction round 2) -- a
+configurable rule, however `RequiredRules` spells it, whose `Rules` entry under its canonical name (the
+key PSScriptAnalyzer matches, case-sensitively) does not set `Enable = $true`. Each is
 named in the daemon log and in its application evidence (`requiredRules.cannotRun`), and every scan,
 managed or not, names it on stderr. **A managed scan refuses it** (owner rulings RV-02 and RV-03,
 dispatch 000307 correction round 1): it is NOT CERTIFIED, with `policy-required-rule-cannot-run`. An

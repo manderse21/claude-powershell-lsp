@@ -126,7 +126,7 @@ scan exits `4` with `executionSuccessful=false`:
 | `policy-merge-write-failed` | the merged settings file could not be written and read back intact |
 | `policy-activation-not-delivered` | the merged settings were not pushed to PSES, or the settings file changed after they were |
 | `policy-settings-rejected` | PSScriptAnalyzer would reject, or could not read, a settings file the analysis rests on -- the repository's, or the merged one ([below](#settings-files-the-analysis-rests-on-dispatch-000306)) |
-| `policy-required-rule-cannot-run` | a rule the policy requires cannot run under the merged settings handed to PSES, by the daemon's static check (`requiredRules.cannotRun`): a code with no rule behind it, or one a repository pattern beside a `CustomRulePath` still excludes |
+| `policy-required-rule-cannot-run` | a rule the policy requires cannot run under the merged settings handed to PSES, by the daemon's static check (`requiredRules.cannotRun`): a code with no rule behind it (decided only while the settings carry no `CustomRulePath`; see below), one a repository pattern beside a `CustomRulePath` still excludes, or a configurable rule whose entry in the merged `Rules` does not set `Enable = $true` |
 | `policy-suppression-pass-failed` | the `ProhibitedSuppressions` re-surfacing pass could not run |
 | `config-observed-mismatch` | the daemon reports an analysis configuration other than the scan's declared one |
 | `engine-unknown` | the engine versions could not be observed |
@@ -135,13 +135,19 @@ scan exits `4` with `executionSuccessful=false`:
 prohibitions needs no suppression pass; the daemon reports `not-required` and the scan certifies.
 
 **A required rule that cannot run is refused** (dispatch 000307, review finding B1b-OOB2-R04; owner
-rulings RV-02 and RV-03, correction round 1). When the daemon finds the merged settings it hands PSES
-cannot run a required rule -- a code with no rule behind it, such as a misspelled built-in name or a custom
-rule no `CustomRulePath` supplies, or one a repository pattern beside a `CustomRulePath` still excludes --
-its evidence names it (`requiredRules.cannotRun`) and its log says so, every scan says so on stderr
-(`lsp-scan: warning: a rule the policy requires cannot run under the settings PSES was handed
-(PSAvoidGlobalVarz: no rule of that name), ...`), and a managed scan is NOT CERTIFIED with
-`policy-required-rule-cannot-run`. An unmanaged scan only warns; the edit hook stays silent.
+rulings RV-02 and RV-03, correction round 1, and RR-01, correction round 2). When the daemon finds the
+merged settings it hands PSES cannot run a required rule -- a code with no rule behind it, such as a
+misspelled built-in name or a custom rule no `CustomRulePath` supplies; one a repository pattern beside a
+`CustomRulePath` still excludes; or a configurable rule, however `RequiredRules` spells it, whose entry in
+the merged `Rules` under its canonical name does not set `Enable = $true` (a backstop: the merge switches
+every required one on) -- its evidence names it (`requiredRules.cannotRun`) and its log says so, every scan
+says so on stderr (`lsp-scan: warning: a rule the policy requires cannot run under the settings PSES was
+handed (PSAvoidGlobalVarz: no rule of that name), ...`), and a managed scan is NOT CERTIFIED with
+`policy-required-rule-cannot-run`. An unmanaged scan only warns; the edit hook stays silent. **A code with
+no rule behind it is refused only while the settings carry no `CustomRulePath`:** beside one, any code that
+is not a built-in rule name, a misspelled built-in name included, is treated as a possible custom rule and
+is not refused (leg A3; measured on Windows PowerShell 5.1 and PowerShell 7: `PSAvoidGlobalVarz` beside a
+`CustomRulePath` certifies).
 
 **Unmanaged stays unmanaged.** Without `-PolicyMode closed` nothing is certified or refused: an unusable
 `-OrgPolicyPath` is a warning on stderr and the findings are reported without it (fail-open, as
@@ -186,7 +192,14 @@ It does NOT prove:
   holds a rule, nor that a faulty source has not stopped the custom rule sources listed after it (the
   boundary that check leaves, described [there](#settings-files-the-analysis-rests-on-dispatch-000306)
   and left to leg A3's runtime signal); nor, beside a `CustomRulePath`, that a required custom rule is in
-  the modules it loads;
+  the modules it loads, or that a required code names any rule at all: there any code that is not a
+  built-in rule name, a misspelled built-in name included, is treated as a possible custom rule and is not
+  refused (leg A3);
+- on a Windows PowerShell 5.1 host, that a non-ASCII entry in a repository's own `IncludeRules` still
+  selects its rule once merged: the merged settings file is written as UTF-8 without a BOM, which Windows
+  PowerShell 5.1 reads as Windows-1252, so such an entry selects nothing and a managed scan can certify
+  without that rule (measured: an entry spelling `PSMisleadingBacktick` with the Kelvin sign certified
+  without it under 5.1 and with it under PowerShell 7; owner ruling RR-02, a follow-up);
 - that a required rule that needs settings the repository does not give it could run
   (`PSUseCompatibleCommands` and `PSUseCompatibleTypes` need `TargetProfiles`, and without them find
   nothing -- [configuration](configuration.md#requiredrules----forcing-a-rule-onto-the-analysis-surface-dispatch-000294));
