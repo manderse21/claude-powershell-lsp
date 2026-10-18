@@ -2052,7 +2052,9 @@ function Merge-RequiredRulesSettings {
     # names from the repository's ExcludeRules, write a required custom rule as 'Module\Name', or take
     # IncludeRules = @() for the repository's own list, and the tests named 'B1c-R01:', 'B1c-R02:' and
     # 'B1c-R03:' go RED (dispatch 000307); match or write an ExcludeRules entry trimmed and the tests named
-    # 'B1c-RV04:' go RED (dispatch 000307, correction round 1).
+    # 'B1c-RV04:' go RED (dispatch 000307, correction round 1); hand a module-qualified configurable built-in
+    # rule to the Enable step as written and the tests named 'B1c-RR01:' go RED (dispatch 000307, correction
+    # round 2).
     #
     # $GuardOut (dispatch 000305, B1) receives what the version guard decided, as evidence a managed
     # scan can certify on: 'pass' (the pinned default list was used and $CurrentPsesTag matched),
@@ -2233,7 +2235,20 @@ function Merge-RequiredRulesSettings {
     # ran from IncludeRules alone. So every required rule the organization does not also exclude is
     # switched on in the Rules written (Set-PssaRequiredRulesEnabled); a merge whose required rules are
     # all non-configurable built-ins writes the Rules it carried, unchanged.
-    $rules = Set-PssaRequiredRulesEnabled -Rules $(if ($merged.ContainsKey('Rules')) { $merged['Rules'] } else { $null }) -RequiredRules @($active)
+    #
+    # A CONFIGURABLE BUILT-IN RULE REACHES THAT STEP BY ITS MATCH NAME (dispatch 000307, correction round 2;
+    # review finding B1c-RR-01, owner ruling RR-01 as amended 2026-10-18). A required code that module-qualifies
+    # a configurable built-in rule -- 'Foo\PSAvoidLongLines', 'X\PSUseSingularNouns' -- was named in IncludeRules
+    # by its bare name but handed to that step as written, where it matched no configurable rule: off by default
+    # it never ran, and over a repository's Enable = $false it stayed off, while a managed scan certified
+    # (measured through the real daemon, both hosts). Such a code now reaches the step by its match name
+    # (Get-PssaRuleMatchName), looked up as the step looks it up, and is switched on exactly as its bare spelling
+    # is. Every other code goes as written, as before: a custom rule's Enable is still forced only under the key
+    # the repository wrote.
+    $configurable = @{}
+    foreach ($n in @(Get-PssaConfigurableRuleNames)) { $configurable[$n] = $n }
+    $enable = @($active | ForEach-Object { $en = Get-PssaRuleMatchName ([string]$_); if ($configurable.ContainsKey($en)) { $en } else { [string]$_ } })
+    $rules = Set-PssaRequiredRulesEnabled -Rules $(if ($merged.ContainsKey('Rules')) { $merged['Rules'] } else { $null }) -RequiredRules $enable
     if ($null -ne $rules) { $merged['Rules'] = $rules }
     # ...and a required BUILT-IN rule runs beside a carried CustomRulePath (owner ruling K02, 2026-10-15;
     # review finding B1b-K02, pre-existing since dispatch 000294). With a CustomRulePath and no
