@@ -1469,9 +1469,16 @@ function Test-PssaRuleNameMatch {
     # reads: the entry escaped as a regular expression with each '*' then standing for '.*', anchored at both
     # ends and matched ignoring case -- so every measured form agrees with the analyzer, the Kelvin sign
     # included, on both hosts.
+    #
+    # A RUN OF '*' IS BUILT AS ONE (dispatch 000307, correction round 2; owner ruling RR-04, review finding
+    # B1c-RR-04). '.*.*' matches exactly what '.*' matches, but on Windows PowerShell 5.1 (.NET Framework) a run
+    # of them before a tail no name ends in backtracks combinatorially: eight stars and a 'Z' took over 40
+    # seconds against a 46-character rule name, PowerShell 7 under a millisecond (measured). So the run is
+    # collapsed first. That changes no answer (measured against the uncollapsed construction on both hosts) and
+    # nothing the merge writes: an entry is still written exactly as the repository gave it.
     param([string]$Entry, [string]$Name)
     if ([string]::IsNullOrEmpty($Entry) -or [string]::IsNullOrEmpty($Name)) { return $false }
-    $pattern = '^' + [regex]::Escape($Entry).Replace('\*', '.*') + '$'
+    $pattern = '^' + [regex]::Escape([regex]::Replace($Entry, '\*{2,}', '*')).Replace('\*', '.*') + '$'
     return [regex]::IsMatch($Name, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
 }
 
