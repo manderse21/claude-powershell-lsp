@@ -173,6 +173,12 @@ if ($managed) {
     $ambientOptions = @(Get-ScanAmbientAnalysisOptions -Environment ([System.Environment]::GetEnvironmentVariables()) `
             -PolicyDeclared ($null -ne $declaredPolicy))
 }
+# A settings file nested below the scan root (dispatch 000307, correction round 1; owner ruling RV-01): the settings
+# that govern a scan are the ones nearest the first file it analyzes in sorted path order, so a nested file can govern
+# every file and the root's own file can go unused. A managed scan refuses such a tree (policy-settings-nested); an
+# unmanaged scan is unchanged and does not look.
+$nestedSettings = @()
+if ($managed) { $nestedSettings = @(Get-ScanNestedSettingsFiles -Files $files -Root $root) }
 $childPolicyPath = $(if ($null -ne $declaredPolicy) { $OrgPolicyPath } else { '' })
 $childPolicyMode = $(if ([string]$policyModeInfo.source -eq 'cli') { [string]$policyModeInfo.resolved } else { '' })
 $policyReported = ($managed -or $null -ne $declaredPolicy)
@@ -280,13 +286,22 @@ if (-not $managed) {
             '); it was not handed to PSES as written, so these findings do not rest on it. See docs/repository-scanning.md.')
     }
 }
+# A required rule the merged settings cannot run (dispatch 000307, review finding B1b-OOB2-R04) -- a misspelled
+# built-in name, a custom rule no CustomRulePath supplies -- is named on stderr by every scan, managed or not,
+# and a managed scan is NOT CERTIFIED over it (policy-required-rule-cannot-run; owner rulings RV-02 and RV-03,
+# dispatch 000307 correction round 1).
+$cannotRunLine = Get-ScanRequiredRulesCannotRun -Files @($fileEvidence)
+if ($cannotRunLine -ne '') {
+    [Console]::Error.WriteLine('lsp-scan: warning: a rule the policy requires cannot run under the settings PSES was handed (' + $cannotRunLine +
+        '), so these findings do not show it ran. See docs/repository-scanning.md.')
+}
 
 # --- the managed verdict (dispatch 000305) -----------------------------------------------------------
 # Unmanaged: Managed=$false and nothing changes. Managed: certified only on a usable declared policy AND
 # agreeing application evidence for every file (Test-ScanPolicyCertification); otherwise the scan is NOT
 # CERTIFIED -- executionSuccessful=false and exit 4, with every reason named.
 $policyCert = Test-ScanPolicyCertification -Mode ([string]$policyModeInfo.resolved) -Declared $declaredPolicy `
-    -Ambient $ambientOptions -SuppressionPass $suppressionPass -Files @($fileEvidence)
+    -Ambient $ambientOptions -SuppressionPass $suppressionPass -Files @($fileEvidence) -NestedSettings $nestedSettings
 $certOk = (-not [bool]$policyCert.Managed) -or [bool]$policyCert.Certified
 $policyReport = $null
 if ($policyReported) {

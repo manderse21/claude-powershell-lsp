@@ -711,6 +711,13 @@ function Get-ScanReceiptPolicyEvidenceProblems {
             }
             if (-not (Test-ScanReceiptInt (Get-ScanReceiptField $rr 'count') 0)) { $p.Add('policy.daemon.requiredRules.count is not a non-negative integer') }
             if ([string](Get-ScanReceiptField $rr 'mergedSettingsSha256') -cnotmatch $hex) { $p.Add('policy.daemon.requiredRules.mergedSettingsSha256 is not empty or 64 lower-case hex') }
+            # cannotRun (dispatch 000307): the required rules the daemon found the merged settings cannot run --
+            # optional, and when present an array of strings; what it means is the scan's to report.
+            if (Test-ScanReceiptHasField -Object $rr -Name 'cannotRun') {
+                $cr = Get-ScanReceiptField $rr 'cannotRun'
+                if (-not ($cr -is [System.Array] -or $cr -is [System.Collections.IList])) { $p.Add('policy.daemon.requiredRules.cannotRun is not an array') }
+                elseif (@(@($cr) | Where-Object { $_ -isnot [string] }).Count -gt 0) { $p.Add('policy.daemon.requiredRules.cannotRun holds a value that is not a string') }
+            }
             $g = Get-ScanReceiptField $rr 'guard'
             if ($null -eq $g) { $p.Add('policy.daemon.requiredRules.guard is missing') }
             else {

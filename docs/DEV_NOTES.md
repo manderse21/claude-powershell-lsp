@@ -254,6 +254,30 @@ and never parse it a second way. Things that bite when you change this path:
   bump. A settings file with a `CustomRulePath` and without `IncludeDefaultRules = $true` loads ONLY the
   custom rules -- no built-in rule runs, whatever `IncludeRules` says -- so a merge carrying one sets
   `IncludeDefaultRules = $true` when a required rule is built-in (B1b-K02).
+- **Read a settings file's rule lists the way PSScriptAnalyzer reads them** (dispatch 000307, B1c). An
+  `IncludeRules` or `ExcludeRules` entry matches the WHOLE rule name, ignoring case the way .NET regular
+  expressions fold it (U+212A KELVIN SIGN matches `k`), with `*` the one wildcard: `?`, `[s]`, `.`,
+  regex syntax and surrounding blanks are literal. A custom rule is matched by its BARE name
+  (`Measure-Name`), never by the `Module\Measure-Name` its findings carry. `IncludeRules = @()` is no
+  `IncludeRules`; `@('')` selects nothing. An unknown name selects nothing and PSScriptAnalyzer says
+  nothing about it. A rule source it cannot load, or whose rule throws, stops every custom rule source
+  listed AFTER it (built-in rules still run). All measured on both hosts and re-judged on every leg by the
+  parity Context in `tests/PowerShellLsp.PolicyRoutes.Tests.ps1`: `Test-PssaRuleNameMatch` and
+  `Get-PssaRuleMatchName` are the one mirror -- never compare rule entries with `-eq`, `-like` or a
+  HashSet. So the merge takes out an entry that names a required rule and narrows a pattern that does to
+  the built-in rules it matches minus the required ones (exact only with no `CustomRulePath`: beside one a
+  pattern may match custom rules no static read lists, and it is kept), and
+  `Get-RequiredRulesNotRunnable` names, in the daemon's `requiredRules.cannotRun`, every required rule the
+  merged file cannot run -- which a managed scan refuses (`policy-required-rule-cannot-run`, correction
+  round 1). Match and write every entry exactly as the repository gave it, never trimmed: a trimmed padded
+  entry names a rule the repository's did not (owner ruling RV-04).
+- **One settings file governs a scan: the one nearest its FIRST analyzed file** (dispatch 000307,
+  correction round 1, owner rulings Q07 and RV-01). The daemon resolves settings once per PSES session, from
+  the first file in `Get-ScanTargets`' sorted order, walking up to the scan root, so a nested
+  `PSScriptAnalyzerSettings.psd1` (under `lib\`, which sorts first) can govern every file. A managed scan
+  refuses a tree holding one below its root (`policy-settings-nested`); `Get-ScanNestedSettingsFiles` finds
+  them as `Resolve-PssaSettingsPath` looks -- `Test-Path` in each directory between an analyzed file and the
+  root -- because the target list itself omits a hidden file the lookup still resolves (measured).
 - **A merged settings file writes every number with its type.** PSScriptAnalyzer evaluates a cast only
   to a .NET primitive, so `[decimal]'1.5'` and `[string]'x'` are REFUSED (measured, both hosts):
   `ConvertTo-Psd1Literal` writes a decimal as a `d` literal (`1.5d`), an `[int]` bare, and every other

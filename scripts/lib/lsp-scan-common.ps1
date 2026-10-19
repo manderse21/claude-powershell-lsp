@@ -76,6 +76,48 @@ function Get-ScanTargets {
     return $result   # path does not exist -> empty set; the caller surfaces a loud error
 }
 
+function Get-ScanNestedSettingsFiles {
+    # The PSScriptAnalyzerSettings.psd1 files BELOW the scan root $Root that the settings lookup could resolve
+    # for a file this scan analyzes (dispatch 000307, correction round 1; owner ruling RV-01, review finding
+    # B1c-RV-01). The daemon resolves settings ONCE per PSES session, from the first file a scan analyzes (the
+    # targets' sorted order), as the nearest PSScriptAnalyzerSettings.psd1 walking up from it
+    # (Resolve-PssaSettingsPath), and analyzes every file under that one file -- so a nested file can govern
+    # every file of the scan, the root's own going unused, and a nested file that does not govern is not used
+    # for its own directory's files either (measured through the real daemon, both hosts). A managed scan
+    # refuses either (policy-settings-nested). Found the way the lookup finds one: for each of $Files, every
+    # directory from its own up to -- not including -- $Root is probed for PSScriptAnalyzerSettings.psd1
+    # (Join-Path, Test-Path -PathType Leaf), so one the target list omits -- a hidden file, measured -- is found
+    # too. Nothing is read or loaded. Distinct full paths, ordinal-sorted; none for a single-file scan or
+    # -NoRecurse, where no target lies below $Root.
+    param([string[]]$Files = @(), [string]$Root = '')
+    $found = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $alt = [System.IO.Path]::AltDirectorySeparatorChar
+    $rootFull = ''
+    if (-not [string]::IsNullOrWhiteSpace($Root)) {
+        try { $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd($sep, $alt) } catch { $rootFull = '' }
+    }
+    if ($rootFull -ne '') {
+        $probed = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($f in @($Files)) {
+            if ([string]::IsNullOrWhiteSpace($f)) { continue }
+            $dir = ''
+            try { $dir = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($f)) } catch { $dir = '' }
+            while (-not [string]::IsNullOrWhiteSpace($dir)) {
+                $d = $dir.TrimEnd($sep, $alt)
+                if ($d -eq $rootFull -or -not $d.StartsWith($rootFull + $sep, [System.StringComparison]::OrdinalIgnoreCase)) { break }
+                if (-not $probed.Add($d)) { break }   # this directory, and so every one above it, was probed already
+                $candidate = Join-Path $d 'PSScriptAnalyzerSettings.psd1'
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) { [void]$found.Add([System.IO.Path]::GetFullPath($candidate)) }
+                $dir = [System.IO.Path]::GetDirectoryName($d)
+            }
+        }
+    }
+    $arr = [string[]]@($found)
+    [System.Array]::Sort($arr, [System.StringComparer]::Ordinal)
+    return $arr   # an ordinary pipeline return: wrap the call in @(...) -- an empty result is nothing
+}
+
 function Get-ScanRelativeUri {
     # A SARIF artifactLocation.uri: the file path relative to the scan root, with forward
     # slashes (the SARIF + GitHub code-scanning convention). A file under the root yields a

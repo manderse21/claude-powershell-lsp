@@ -117,6 +117,7 @@ function Get-PolicyReasonTable {
     $t['policy-disagreement'] = [ordered]@{ Stage = 'application'; Meaning = 'a party applied a policy whose identity differs from the declared one' }
     $t['policy-evidence-missing'] = [ordered]@{ Stage = 'application'; Meaning = 'no application evidence for this file, so whether the policy was applied is unprovable' }
     $t['policy-settings-rejected'] = [ordered]@{ Stage = 'application'; Meaning = 'PSScriptAnalyzer would reject or could not read a settings file this analysis rests on (the repository''s, or the merged one), so the analysis did not run on the settings as declared' }
+    $t['policy-required-rule-cannot-run'] = [ordered]@{ Stage = 'application'; Meaning = 'a rule the policy requires cannot run under the merged settings handed to PSES, by the daemon''s static check (requiredRules.cannotRun)' }
     $t['policy-suppression-pass-failed'] = [ordered]@{ Stage = 'application'; Meaning = 'the ProhibitedSuppressions pass could not run' }
     # certification -- the managed scan's other preconditions (until A3 binds the declared environment)
     $t['config-ambient'] = [ordered]@{ Stage = 'certification'; Meaning = 'an ambient plugin option that changes analysis reached the scan' }
@@ -124,6 +125,7 @@ function Get-PolicyReasonTable {
     $t['engine-unknown'] = [ordered]@{ Stage = 'certification'; Meaning = 'the analysis engine versions could not be observed' }
     $t['analysis-incomplete'] = [ordered]@{ Stage = 'certification'; Meaning = 'the file has no complete completion receipt' }
     $t['analysis-empty'] = [ordered]@{ Stage = 'certification'; Meaning = 'the scan analyzed no PowerShell file, so nothing shows the policy was applied' }
+    $t['policy-settings-nested'] = [ordered]@{ Stage = 'certification'; Meaning = 'the scanned tree holds a PSScriptAnalyzerSettings.psd1 below the scan root; the settings that govern a scan are the ones nearest the first file it analyzes in sorted path order, so a nested file can govern every file and the root''s own file can go unused' }
     return $t
 }
 
@@ -424,7 +426,10 @@ function New-PolicyApplicationEvidence {
     #                  (verifiedFor = the tag the pinned default list was verified against, observed =
     #                  the PSES version the daemon read from the manifest it launches, result = pass |
     #                  refused | not-needed, '' when not evaluated), and the merged settings file it
-    #                  wrote and verified (path, SHA-256 as re-read);
+    #                  wrote and verified (path, SHA-256 as re-read); and, since dispatch 000307,
+    #                  cannotRun -- each required rule that merged file cannot run by the daemon's static
+    #                  check (Get-RequiredRulesNotRunnable, lsp-common.ps1), one 'code: why' string each,
+    #                  @() when none or when nothing was merged;
     #   settings       the settings file PSES was told to use (path; source = merged | resolved |
     #                  none; SHA-256 as read when this record was made) and whether the push to PSES
     #                  was sent (delivered); and, since dispatch 000306, validation -- what the daemon
@@ -443,6 +448,7 @@ function New-PolicyApplicationEvidence {
         [string]$GuardResult = '',
         [string]$MergedPath = '',
         [string]$MergedSha256 = '',
+        [string[]]$RequiredCannotRun = @(),
         [string]$SettingsPath = '',
         [string]$SettingsSource = 'none',
         [string]$SettingsSha256 = '',
@@ -460,6 +466,7 @@ function New-PolicyApplicationEvidence {
             guard                = [ordered]@{ verifiedFor = [string]$GuardVerifiedFor; observed = [string]$GuardObserved; result = [string]$GuardResult }
             mergedSettingsPath   = [string]$MergedPath
             mergedSettingsSha256 = [string]$MergedSha256
+            cannotRun            = @(@($RequiredCannotRun) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { Format-PssaSettingsText ([string]$_) 160 })
         }
         settings      = [ordered]@{ path = [string]$SettingsPath; source = [string]$SettingsSource; sha256 = [string]$SettingsSha256; delivered = $Delivered
             validation = $SettingsValidation; validationDetail = (Format-PssaSettingsText $SettingsValidationDetail 200)
@@ -635,7 +642,9 @@ function Test-ScanPolicyCertification {
     #               suppression pass ran (policy-suppression-pass-failed); at least one file was
     #               analyzed (analysis-empty) -- with no file there is no evidence the policy was
     #               applied, and O03 certifies only on that proof, so a managed gate pointed at a
-    #               directory with no PowerShell in it never reads CERTIFIED;
+    #               directory with no PowerShell in it never reads CERTIFIED; the scanned tree holds no
+    #               PSScriptAnalyzerSettings.psd1 below the scan root ($NestedSettings, from
+    #               Get-ScanNestedSettingsFiles: policy-settings-nested, dispatch 000307 correction round 1);
     #   per file    the file's receipt is complete (analysis-incomplete); it carries application
     #               evidence (policy-evidence-missing -- also when the daemon's record is still the
     #               'pending' one it starts with, which has resolved nothing yet and so cannot
@@ -646,7 +655,9 @@ function Test-ScanPolicyCertification {
     #               merged settings file, the daemon activated it -- guard passed, written and
     #               verified, delivered, and the file PSES reads still hashes to what was written
     #               (policy-activation-unsupported / policy-merge-write-failed /
-    #               policy-activation-not-delivered); PSScriptAnalyzer accepts every settings file the
+    #               policy-activation-not-delivered), and that merged file can run every required rule
+    #               by the daemon's static check (policy-required-rule-cannot-run, dispatch 000307
+    #               correction round 1); PSScriptAnalyzer accepts every settings file the
     #               analysis rests on, the repository's and the merged one, by the daemon's own check
     #               before PSES saw them (policy-settings-rejected, dispatch 000306); the daemon's
     #               observed analysis configuration is the declared one (config-observed-mismatch); the
@@ -660,7 +671,9 @@ function Test-ScanPolicyCertification {
         $Declared = $null,
         [string[]]$Ambient = @(),
         [string]$SuppressionPass = 'not-required',
-        [object[]]$Files = @()
+        [object[]]$Files = @(),
+        # The PSScriptAnalyzerSettings.psd1 files below the scan root (Get-ScanNestedSettingsFiles).
+        [string[]]$NestedSettings = @()
     )
     if ($Mode -ne 'closed') {
         return [pscustomobject]@{ Mode = $Mode; Managed = $false; Certified = $null; Reasons = @(); Files = @(); AllReasons = @() }
@@ -681,6 +694,12 @@ function Test-ScanPolicyCertification {
     if (@($Ambient | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) { $run.Add('config-ambient') }
     if ($SuppressionPass -eq 'failed') { $run.Add('policy-suppression-pass-failed') }
     if (@($Files | Where-Object { $null -ne $_ }).Count -eq 0) { $run.Add('analysis-empty') }
+    # A SETTINGS FILE NESTED BELOW THE SCAN ROOT IS REFUSED (dispatch 000307, correction round 1; owner ruling RV-01,
+    # review finding B1c-RV-01). The settings that govern a scan are the ones nearest the first file it analyzes in
+    # sorted path order, so a nested file can govern every file and the root's own file can go unused -- and a nested
+    # file that does not govern is not used for its own directory's files. Either way the analysis did not run on the
+    # settings the repository declared for every file, and a managed scan certified (measured, both hosts).
+    if (@($NestedSettings | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) { $run.Add('policy-settings-nested') }
     $want = Get-ScanDeclaredAnalysisConfiguration
 
     $fileOut = New-Object System.Collections.ArrayList
@@ -730,6 +749,15 @@ function Test-ScanPolicyCertification {
                                     [string](Get-PolicyField -Object $st -Name 'sha256') -cne $merged) {
                                     $r.Add('policy-activation-not-delivered')
                                 }
+                                # A REQUIRED RULE THE MERGED SETTINGS CANNOT RUN IS REFUSED (dispatch 000307, correction
+                                # round 1; owner rulings RV-02 and RV-03 on review findings B1c-RV-02 and B1c-RV-03). The
+                                # daemon checks the merged file it hands PSES (Get-RequiredRulesNotRunnable) and names in
+                                # requiredRules.cannotRun each required rule that file cannot run -- a code with no rule
+                                # behind it (a misspelled built-in name, a custom rule no CustomRulePath supplies) or one
+                                # a repository pattern beside a CustomRulePath still excludes. Such a rule never ran, and
+                                # a managed scan certified anyway; an unmanaged scan keeps its warning (lsp-scan.ps1).
+                                $cannot = Get-PolicyStringList -Object $rr -Name 'cannotRun'
+                                if ($cannot.Count -gt 0) { $r.Add('policy-required-rule-cannot-run') }
                             }
                             'activation-unsupported' { $r.Add('policy-activation-unsupported') }
                             'merge-write-failed' { $r.Add('policy-merge-write-failed') }
@@ -868,6 +896,26 @@ function Get-ScanSettingsRejection {
         }
     }
     return ''
+}
+
+function Get-ScanRequiredRulesCannotRun {
+    # What a scan warns about, managed or not (dispatch 000307, review finding B1b-OOB2-R04): the required
+    # rules a daemon record among $Files says its merged settings cannot run (requiredRules.cannotRun), each
+    # named once, as one ASCII line ('code: why; code: why'), or '' when no record names one. Pure over the
+    # receipts the scan already holds. A managed scan is also refused over them (policy-required-rule-cannot-run,
+    # Test-ScanPolicyCertification; owner rulings RV-02 and RV-03, dispatch 000307 correction round 1).
+    param([object[]]$Files = @())
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    $out = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($f in @($Files)) {
+        if ($null -eq $f) { continue }
+        $pol = Get-PolicyField -Object (Get-PolicyField -Object $f -Name 'Receipt') -Name 'policy'
+        $rr = Get-PolicyField -Object (Get-PolicyField -Object $pol -Name 'daemon') -Name 'requiredRules'
+        $list = Get-PolicyStringList -Object $rr -Name 'cannotRun'
+        foreach ($c in $list) { if ($seen.Add($c)) { $out.Add($c) } }
+    }
+    if ($out.Count -eq 0) { return '' }
+    return (Format-PssaSettingsText ($out.ToArray() -join '; ') 400)
 }
 
 # --- doctor ----------------------------------------------------------------------
