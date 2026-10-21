@@ -17,6 +17,11 @@
 #               byte for byte what it was.
 #   boundary    the Kelvin IncludeRules entry in a repository file saved WITHOUT a BOM, managed and with no
 #               policy: Windows PowerShell 5.1 reads such a file itself as Windows-1252, merged or not.
+#   B1d-RV-01   (correction round 1) ONE repository ExcludeRules entry holding U+2019 twice -- 'PSAvoidUsingWriteHost'
+#               + U+2019 + ',' + U+2019 + 'PSAvoidUsingCmdletAliases', which excludes nothing alone -- managed and with
+#               no policy, a control; and a repository CustomRulePath whose directory is named O + U+2019 + Brien,
+#               managed. PowerShell also ends a single-quoted string at U+2018-U+201B, so the merged file must double
+#               them as it doubles U+0027 (owner ruling RV-01).
 #
 # Repository settings files are saved WITH a UTF-8 BOM unless the row says otherwise, so each host reads the
 # repository's own file the same way and any difference between hosts is the merged file's.
@@ -126,11 +131,13 @@ function ConvertTo-MeasureShown([string]$Text) {
 
 function Get-MeasureListEntries($Ast) {
     # IncludeRules, ExcludeRules and CustomRulePath of the first table in $Ast, each entry shown (above) and
-    # joined by '|', or '-' when the key is absent; '(no table)' when there is none.
+    # joined by '|', or '-' when the key is absent; '(no table)' when there is none, '(not data)' when the table
+    # does not read as data (a typographic quote that ended a string early, before correction round 1).
     $facts = [ordered]@{ include = '-'; exclude = '-'; customRulePath = '-' }
     $tables = @($Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.HashtableAst] }, $false))
     if ($tables.Count -eq 0) { $facts.include = '(no table)'; return $facts }
-    $data = $tables[0].SafeGetValue()
+    $data = $null
+    try { $data = $tables[0].SafeGetValue() } catch { $facts.include = '(not data)'; return $facts }
     foreach ($pair in @(@('IncludeRules', 'include'), @('ExcludeRules', 'exclude'), @('CustomRulePath', 'customRulePath'))) {
         foreach ($k in @($data.Keys)) {
             if ([string]::Equals([string]$k, $pair[0], [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -225,6 +232,12 @@ try {
     New-MeasureRepo 'ascii' "@{ IncludeRules = @('PSAvoidUsingCmdletAliases', 'PSMisleadingBacktick'); ExcludeRules = @('PSAvoidUsingWriteHost') }" -NoBom
     New-MeasureRepo 'none' ''
     New-MeasureRepo 'kelvin-include-nobom' ("@{ IncludeRules = @('PSAvoidUsingCmdletAliases', " + $q + $kelvinTick + $q + ') }') -NoBom
+    # B1d-RV-01: written in double quotes, where a typographic single quote is not special, so each file is valid alone.
+    $dq = [string][char]34
+    $rq = [string][char]0x2019
+    $moduleQuote = New-MeasureFile ('O' + $rq + 'Brien/B1dm.Rules.psm1') $ruleText
+    New-MeasureRepo 'split-exclude' ('@{ ExcludeRules = @(' + $dq + 'PSAvoidUsingWriteHost' + $rq + ',' + $rq + 'PSAvoidUsingCmdletAliases' + $dq + ') }')
+    New-MeasureRepo 'quote-custom-path' ('@{ CustomRulePath = @(' + $dq + $moduleQuote + $dq + '); IncludeDefaultRules = $true }')
     $pGlobal = New-MeasureFile 'policy-global.psd1' "@{ RequiredRules = @('PSAvoidGlobalVars') }`n"
 
     $rows = New-Object System.Collections.ArrayList
@@ -244,6 +257,9 @@ try {
     Add-Row 'control' 'ctl-no-settings-managed' (Invoke-MeasureScan -Dir 'none' -Policy $pGlobal -Mode 'closed')
     Add-Row 'boundary' 'bnd-kelvin-include-nobom-managed' (Invoke-MeasureScan -Dir 'kelvin-include-nobom' -Policy $pGlobal -Mode 'closed')
     Add-Row 'boundary' 'bnd-kelvin-include-nobom-no-policy' (Invoke-MeasureScan -Dir 'kelvin-include-nobom')
+    Add-Row 'B1d-RV-01' 'rv01-split-exclude-managed' (Invoke-MeasureScan -Dir 'split-exclude' -Policy $pGlobal -Mode 'closed')
+    Add-Row 'B1d-RV-01' 'rv01-split-exclude-no-policy' (Invoke-MeasureScan -Dir 'split-exclude')
+    Add-Row 'B1d-RV-01' 'rv01-obrien-custom-path-managed' (Invoke-MeasureScan -Dir 'quote-custom-path' -Policy $pGlobal -Mode 'closed')
     ConvertTo-Json -InputObject @($rows) -Depth 5 -Compress
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue

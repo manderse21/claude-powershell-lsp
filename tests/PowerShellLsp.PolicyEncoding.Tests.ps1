@@ -5,14 +5,15 @@
 # on a 5.1 host once merged, so a managed scan certified without that rule) and B1c-RX-12 (a non-ASCII
 # ExcludeRules entry stopped excluding there), with B1c's found-on-the-way encoding item 1/3 (a CustomRulePath
 # directory named with an accent read as a path that does not exist, a false policy-settings-rejected), and
-# review finding B1c-RX-09 (the receipt schema's cannotRun description).
+# review finding B1c-RX-09 (the receipt schema's cannotRun description). Correction round 1: owner ruling RV-01
+# on review finding B1d-RV-01 (a string holding a typographic single quote re-parsed once merged).
 #
 # Windows PowerShell 5.1 reads a settings file that has no byte order mark as Windows-1252; PowerShell 7 reads
 # it as UTF-8. The merged file is now written with the UTF-8 byte order mark exactly when it holds a character
 # outside ASCII (ConvertTo-MergedPssaSettingsBytes), so every all-ASCII merged file keeps its bytes and its
 # content-addressed name.
 #
-# FIVE LAYERS:
+# SIX LAYERS:
 #   1. The bytes (pure): the mark exactly when a character is outside ASCII.
 #   2. The writer: a non-ASCII merged file opens with the mark, is named by the SHA-256 of the bytes written, is
 #      read back by THIS host as written, and never reuses a file an earlier daemon wrote without the mark; every
@@ -20,13 +21,21 @@
 #   3. The merged files, as written, judged by the vendored PSScriptAnalyzer in a child of this host.
 #   4. The receipt schema names every reason the daemon's static check can record (RX-09).
 #   5. The real daemon, on THIS host (scanner, daemon and PSES alike), every ambient plugin variable cleared.
+#   6. Typographic single quotes (correction round 1): PowerShell also ends a single-quoted string at U+2018,
+#      U+2019, U+201A and U+201B, so the merged file doubles each as it doubles U+0027 -- an ExcludeRules entry, an
+#      IncludeRules entry, a Rules argument string and a quoted Rules key holding one read back from the merged
+#      file (Read-PssaSettingsFile) exactly as the repository wrote them.
 #
 # Run against f0a8ec0 (the base) -- its scripts/ and its docs/scan-receipt.schema.json -- the bytes' and the
 # writer's own tests (layers 1 and 2: the mark, the name, no reuse) and 'B1d-RX09:' fail on both hosts; the
 # tests that read or judge a merged file on this host ('B1d-R02:', 'B1d-RX12:', 'B1d-ENC1:' in layers 2 and 3)
 # and those of layer 5 fail under Windows PowerShell 5.1 only -- PowerShell 7 reads a merged file the same with
 # or without the mark, so they pass there on both trees. The controls ('B1d control:') pass on both trees and
-# both hosts.
+# both hosts. The tests named 'B1d-RV01:' (layer 6) fail there on both hosts too.
+#
+# Run against eb7b419 (B1d's head before correction round 1) -- its scripts/ -- exactly the 'B1d-RV01:' tests
+# fail, on both hosts: each typographic quote ended the string once merged, so the entry, the argument or the key
+# read back as other data or as none. Every other test passes there.
 #
 # ASCII-only (PS 5.1 em-dash trap; each non-ASCII character is built with [char]); StrictMode-safe.
 
@@ -446,5 +455,70 @@ Describe 'Through the real daemon on this host, every ambient plugin variable cl
         $m.Policy.certification | Should -BeExactly 'certified'
         $m.Err | Should -Not -Match 'would reject a settings file'
         ($m.Results -join ',') | Should -BeExactly 'B1dRd.Rules\Measure-B1dRdReports,PSAvoidGlobalVars,PSAvoidUsingCmdletAliases'
+    }
+}
+
+Describe 'Typographic single quotes reach the merged settings file as the repository wrote them (dispatch 000308 B1d correction round 1, owner ruling RV-01)' {
+
+    BeforeAll {
+        function Get-QtValue {
+            # The strings the Read-PssaSettingsFile result $Read holds where a case puts its string: a rule list's
+            # entries, the Placement argument Rules gives PSProvideCommentHelp (a value that did not read as a string
+            # is shown by its type first, so it never equals one), or the Rules keys.
+            param($Read, [string]$Where)
+            $e = $Read.Entries
+            switch ($Where) {
+                'an ExcludeRules entry' { if ($e.Contains('ExcludeRules')) { return , @(@($e['ExcludeRules']) | ForEach-Object { [string]$_ }) } }
+                'an IncludeRules entry' { if ($e.Contains('IncludeRules')) { return , @(@($e['IncludeRules']) | ForEach-Object { [string]$_ }) } }
+                'a Rules argument string' {
+                    if ($e.Contains('Rules') -and $e['Rules'].Contains('PSProvideCommentHelp')) {
+                        $v = $e['Rules']['PSProvideCommentHelp']['Placement']
+                        if ($v -is [string]) { return , @($v) }
+                        return , @(@('(not a string)') + @(@($v) | ForEach-Object { [string]$_ }))
+                    }
+                }
+                'a quoted Rules key' { if ($e.Contains('Rules')) { return , @(@($e['Rules'].Keys) | ForEach-Object { [string]$_ }) } }
+            }
+            return , @('(absent)')
+        }
+    }
+
+    It '<Class>: <Quote> in <Where> reads back from the merged file exactly as the repository wrote it' -ForEach @(
+        foreach ($qc in @(
+                @{ Class = 'B1d-RV01'; Quote = 'U+2018'; Code = 0x2018 }
+                @{ Class = 'B1d-RV01'; Quote = 'U+2019'; Code = 0x2019 }
+                @{ Class = 'B1d-RV01'; Quote = 'U+201A'; Code = 0x201A }
+                @{ Class = 'B1d-RV01'; Quote = 'U+201B'; Code = 0x201B }
+                @{ Class = 'B1d control'; Quote = 'U+0027'; Code = 0x27 }
+                @{ Class = 'B1d control'; Quote = 'no quote'; Code = 0 })) {
+            foreach ($where in @('an ExcludeRules entry', 'an IncludeRules entry', 'a Rules argument string', 'a quoted Rules key')) {
+                @{ Class = $qc.Class; Quote = $qc.Quote; Code = $qc.Code; Where = $where }
+            }
+        }
+    ) {
+        # The quote twice around a comma, the review's reproducer: ONE string that would re-parse as two were each
+        # quote read as the end of the string. The repository's file writes it in double quotes, where none of these
+        # characters is special, and is saved with a byte order mark, so this host reads it as written.
+        $q = $(if ($Code -eq 0) { '' } else { [string][char]$Code })
+        $dq = [string][char]34
+        switch ($Where) {
+            'an ExcludeRules entry' { $s = 'PSAvoidUsingWriteHost' + $q + ',' + $q + 'PSAvoidUsingCmdletAliases'; $text = '@{ ExcludeRules = @(' + $dq + $s + $dq + ') }'; $want = @($s) }
+            'an IncludeRules entry' { $s = 'PSAvoidUsingCmdletAliases' + $q + ',' + $q + 'PSAvoidUsingWriteHost'; $text = '@{ IncludeRules = @(' + $dq + $s + $dq + ') }'; $want = @($s, 'PSAvoidGlobalVars') }
+            'a Rules argument string' { $s = 'before' + $q + ',' + $q + 'end'; $text = '@{ Rules = @{ PSProvideCommentHelp = @{ Enable = $true; Placement = ' + $dq + $s + $dq + ' } } }'; $want = @($s) }
+            'a quoted Rules key' { $s = 'B1dQt.Rules\Measure' + $q + ',' + $q + 'Thing'; $text = '@{ Rules = @{ ' + $dq + $s + $dq + ' = @{ Enable = $true } } }'; $want = @($s) }
+        }
+        $repo = New-EnFile $text -Bom
+        $alone = Read-PssaSettingsFile -Path $repo
+        $alone.Verdict | Should -BeExactly 'valid' -Because ('CONTROL: the repository file alone; ' + [string]$alone.Problem)
+        $a = Get-QtValue $alone $Where
+        ($a -join ' | ') -ceq $s | Should -BeTrue -Because ('CONTROL: the repository file alone reads ' + (Get-EnShown ($a -join ' | ')))
+        $p = Write-MergedPssaSettingsFile -Settings (Invoke-EnMerge $repo @('PSAvoidGlobalVars')) -DataRoot (New-EnDataRoot)
+        $p | Should -Not -BeNullOrEmpty
+        $r = Read-PssaSettingsFile -Path $p
+        $r.Verdict | Should -BeExactly 'valid' -Because ([string]$r.Problem)
+        $got = Get-QtValue $r $Where
+        $shown = Get-EnShown ($got -join ' | ')
+        $got.Count | Should -Be $want.Count -Because ('read back: ' + $shown)
+        for ($i = 0; $i -lt $want.Count; $i++) { $got[$i] -ceq $want[$i] | Should -BeTrue -Because ('read back: ' + $shown) }
     }
 }
