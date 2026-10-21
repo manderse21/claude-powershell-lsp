@@ -2556,6 +2556,16 @@ function ConvertTo-Psd1Literal {
     # double and 9 for a single, which always round-trip, where .NET Framework's 'R' format may not; NaN
     # and 1E+300 survive too). Each form was measured accepted by PSScriptAnalyzer and read back with its
     # type on both hosts. A [char] or a BigInteger is no primitive number and still renders $null.
+    # EVERY CHARACTER POWERSHELL READS AS A SINGLE QUOTE IS DOUBLED (dispatch 000308, B1d correction round 1;
+    # owner ruling RV-01, review finding B1d-RV-01). PowerShell's parser ends a single-quoted string at U+2018,
+    # U+2019, U+201A and U+201B as it does at U+0027, and reads any of them doubled as one of itself (measured,
+    # both hosts). Only U+0027 was doubled, so a string holding one of the other four re-parsed once merged as
+    # other data or as none: one ExcludeRules entry 'PSAvoidUsingWriteHost' + U+2019 + ',' + U+2019 +
+    # 'PSAvoidUsingCmdletAliases', which excludes nothing alone, excluded both rules once merged and a managed
+    # scan certified with their findings hidden, and a CustomRulePath whose directory name holds one made the
+    # merged file unparsable, a false policy-settings-rejected (measured through the real daemon, both hosts).
+    # Each of the five is now doubled, in a string value and in a quoted Rules key alike; a text holding none of
+    # them is written byte for byte as before.
     param($Value)
     if ($null -eq $Value) { return '$null' }
     if ($Value -is [bool]) { return $(if ($Value) { '$true' } else { '$false' }) }
@@ -2576,13 +2586,13 @@ function ConvertTo-Psd1Literal {
         $text = if ($Value -is [double]) { $Value.ToString('G17', $inv) } elseif ($Value -is [single]) { $Value.ToString('G9', $inv) } else { $Value.ToString($inv) }
         return ('[' + $cast + "]'" + $text + "'")
     }
-    if ($Value -is [string]) { return "'" + $Value.Replace("'", "''") + "'" }
+    if ($Value -is [string]) { return "'" + [regex]::Replace($Value, '[''\u2018-\u201B]', '$0$0') + "'" }
     if ($Value -is [System.Collections.IDictionary]) {
         $parts = New-Object System.Collections.ArrayList
         $keys = @(@($Value.Keys) | ForEach-Object { [string]$_ })
         [System.Array]::Sort($keys, [System.StringComparer]::OrdinalIgnoreCase)
         foreach ($k in $keys) {
-            $shown = $(if ([regex]::IsMatch($k, '\A[A-Za-z_][A-Za-z0-9_]*\z')) { $k } else { "'" + $k.Replace("'", "''") + "'" })
+            $shown = $(if ([regex]::IsMatch($k, '\A[A-Za-z_][A-Za-z0-9_]*\z')) { $k } else { "'" + [regex]::Replace($k, '[''\u2018-\u201B]', '$0$0') + "'" })
             [void]$parts.Add('        ' + $shown + ' = ' + (ConvertTo-Psd1Literal $Value[$k]))
         }
         return "@{`n" + ($parts -join "`n") + "`n    }"
