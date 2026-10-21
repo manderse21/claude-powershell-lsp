@@ -419,8 +419,10 @@ With the pinned bundle the two agree and nothing changes; an unreadable manifest
 the guard declines.
 
 **Where the merged file lives.** Under `orgpolicy-settings/` in the plugin's data root, named by the
-SHA-256 of its exact text (`merged-settings-<16 hex>.psd1`), written to a temporary file and renamed
-into place, then read back and re-hashed before the daemon uses it. PSES hands that path to
+SHA-256 of its exact bytes (`merged-settings-<16 hex>.psd1`) -- its text as UTF-8, opened with a UTF-8 byte
+order mark when the text holds a character outside ASCII, so Windows PowerShell 5.1 reads it as PowerShell 7
+does (dispatch 000308; an all-ASCII file is written, and named, exactly as before) -- written to a temporary
+file and renamed into place, then read back and re-hashed before the daemon uses it. PSES hands that path to
 PSScriptAnalyzer on every pass, so two daemons sharing a data root with different policies (a scan
 beside an interactive session, say) must never rewrite one file; identical settings share one file
 and different settings never do. **Old files are removed** (dispatch 000306): after each merge the

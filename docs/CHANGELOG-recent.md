@@ -48,6 +48,32 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **The merged settings file reads the same on Windows PowerShell 5.1 as on PowerShell 7** (dispatch
+000308, leg B1d -- owner ruling RR-02 on review findings B1c-RR-02 and B1c-RX-12, and B1c's found-on-the-way
+encoding item; pre-existing since the `RequiredRules` merge landed in dispatch 000294). Windows PowerShell
+5.1 reads a settings file that has no byte order mark as Windows-1252, PowerShell 7 as UTF-8, and
+PSScriptAnalyzer and the daemon's own check read the merged file that way -- which was written as UTF-8
+without a mark. So on a 5.1 host a character outside ASCII in an entry the merge carried reached the
+analysis as two or three other characters: **an `IncludeRules` entry** spelling `PSMisleadingBacktick` with
+the Kelvin sign (which PSScriptAnalyzer folds to `k`) selected nothing, and a managed scan CERTIFIED without
+that rule; **the same entry in `ExcludeRules`** stopped excluding it, so a rule the repository excluded ran;
+and **a `CustomRulePath`** whose directory is named with an accented letter read as a path that does not
+exist, so a managed scan over a valid repository file was refused with `policy-settings-rejected` and an
+unmanaged one warned that PSScriptAnalyzer would reject a settings file (all measured through the real
+daemon on both hosts; PowerShell 7 read every one as written). The merged file now opens with a UTF-8 byte
+order mark whenever its text holds a character outside ASCII, and is named by the SHA-256 of the bytes
+written: under Windows PowerShell 5.1 each of the three now runs as it does under PowerShell 7 -- the rule
+selected, the rule excluded, the custom rule loaded and the scan certified. A merged file whose text is all
+ASCII is written byte for byte as before, under the same name -- every merged text dispatches 000306 and
+000307 pinned is among them -- and PowerShell 7 reads every merged file as it did. Still not covered, and
+documented: a repository's OWN settings file saved without a byte order mark is read by Windows PowerShell
+5.1 as Windows-1252 by PSScriptAnalyzer itself, merged or not (save one that holds such a character with a
+mark). Documentation: the receipt schema's `requiredRules.cannotRun` description now names all five reasons
+the daemon records, `not enabled in Rules` included (review finding B1c-RX-09), and the entry below no
+longer says a custom rule named `Module\Name` always merges byte for byte as its bare spelling (review
+finding B1c-RX-10). No `userConfig` knob, status token, CLI flag, reason code or exit code is added or
+changed, and `doctor -Json`'s `orgPolicy` keys keep their names, order and types.
+
 MINOR: **A `RequiredRules` merge reads the repository's rule lists the way PSScriptAnalyzer reads them,
 and a managed scan refuses a required rule the merged settings cannot run, or a settings file nested
 below the scan root** (dispatch 000307, leg B1c -- B1b's out-of-band review findings B1b-OOB2-R01 to R04,
@@ -104,9 +130,14 @@ is not used, was wrong -- review finding B1c-RV-01). **A managed scan refuses a 
 reason code `policy-settings-nested`, found the way the settings lookup finds one, a hidden one included
 (owner ruling RV-01); an unmanaged scan and the edit hook are unchanged, and scanning that subdirectory as
 its own root uses its file. With no settings file, a file naming its own `IncludeRules`, or a rejected
-one, the merged file is byte-for-byte what it was unless a required rule is named `Module\Name` -- a custom
-rule, or a built-in one, whose merged file is now byte for byte its bare spelling's -- the file's
-`ExcludeRules` names a required rule other than by its exact name, or it holds a padded entry. `doctor -Json`'s `orgPolicy` keys keep their names, order and types. No
+one, the merged file is byte-for-byte what it was unless a required rule is named `Module\Name` -- a
+built-in rule, whose merged file is now byte for byte its bare spelling's, or a custom rule, whose merged
+file is its bare spelling's only while the repository's `Rules` give that rule no `Enable` entry (a custom
+rule's `Enable` is set only under the key the repository wrote, so where its `Rules` configure it with
+`Enable` the two spellings merge to different files -- measured, both hosts, review finding B1c-RX-10,
+corrected by dispatch 000308; PSScriptAnalyzer ignores `Enable` on a script-module rule, measured, and
+compiled custom rules were not measured) -- the file's `ExcludeRules` names a required rule other than by
+its exact name, or it holds a padded entry. `doctor -Json`'s `orgPolicy` keys keep their names, order and types. No
 `userConfig` knob, status token or CLI flag is added; two managed-scan reason codes are
 (`policy-required-rule-cannot-run`, `policy-settings-nested`), and exit codes are unchanged (a managed
 scan that is not certified exits `4`, as before).

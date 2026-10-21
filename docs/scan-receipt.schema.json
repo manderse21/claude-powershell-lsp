@@ -150,7 +150,7 @@
                     "mergedSettingsPath": { "type": "string" },
                     "mergedSettingsSha256": { "type": "string", "pattern": "^([0-9a-f]{64})?$" },
                     "cannotRun": {
-                      "description": "The required rules the merged settings file cannot run, by the daemon's static check of that file as read back (dispatch 000307): one 'code: why' string each -- 'no rule of that name' (not a PSScriptAnalyzer built-in rule, and no CustomRulePath that could supply it), 'excluded by <entry>', 'not in IncludeRules' or 'built-in rules not loaded'. Empty when there is none or nothing was merged. Optional: a daemon before dispatch 000307 records none.",
+                      "description": "The required rules the merged settings file cannot run, by the daemon's static check of that file as read back (dispatch 000307): one 'code: why' string each, the why one of five -- 'no rule of that name' (not a PSScriptAnalyzer built-in rule, and no CustomRulePath that could supply it), 'excluded by '<entry>'' (the ExcludeRules entry that matches it, quoted), 'not in IncludeRules', 'built-in rules not loaded' (a built-in rule beside a CustomRulePath without IncludeDefaultRules = $true) or 'not enabled in Rules' (a configurable built-in rule whose Rules entry under its canonical name does not set Enable = $true; dispatch 000307 correction round 2). Empty when there is none or nothing was merged. Optional: a daemon before dispatch 000307 records none.",
                       "type": "array",
                       "items": { "type": "string" }
                     }
