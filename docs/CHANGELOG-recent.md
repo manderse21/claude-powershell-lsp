@@ -51,7 +51,8 @@ security/patch re-pin with no behavior change ships as a PATCH.
 PATCH: **The merged settings file reads the same on Windows PowerShell 5.1 as on PowerShell 7** (dispatch
 000308, leg B1d -- owner ruling RR-02 on review findings B1c-RR-02 and B1c-RX-12, and B1c's found-on-the-way
 encoding item; pre-existing since the `RequiredRules` merge landed in dispatch 000294). Windows PowerShell
-5.1 reads a settings file that has no byte order mark as Windows-1252, PowerShell 7 as UTF-8, and
+5.1 reads a settings file that has no byte order mark in the system ANSI code page (Windows-1252 on a US or
+Western-European system), PowerShell 7 as UTF-8, and
 PSScriptAnalyzer and the daemon's own check read the merged file that way -- which was written as UTF-8
 without a mark. So on a 5.1 host a character outside ASCII in an entry the merge carried reached the
 analysis as two or three other characters: **an `IncludeRules` entry** spelling `PSMisleadingBacktick` with
@@ -79,7 +80,8 @@ PowerShell 7, and under Windows PowerShell 5.1 once the byte order mark let it r
 certifies with their findings, and the custom rule loads and the scan certifies, on both hosts (measured
 through the real daemon). Still not covered, and
 documented: a repository's OWN settings file saved without a byte order mark is read by Windows PowerShell
-5.1 as Windows-1252 by PSScriptAnalyzer itself, merged or not (save one that holds such a character with a
+5.1 in the system ANSI code page (Windows-1252 on a US or Western-European system) by PSScriptAnalyzer
+itself, merged or not (save one that holds such a character with a
 mark). Documentation: the receipt schema's `requiredRules.cannotRun` description now names all five reasons
 the daemon records, `not enabled in Rules` included (review finding B1c-RX-09), and the entry below no
 longer says a custom rule named `Module\Name` always merges byte for byte as its bare spelling (review

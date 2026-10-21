@@ -196,7 +196,8 @@ It does NOT prove:
   built-in rule name, a misspelled built-in name included, is treated as a possible custom rule and is not
   refused (leg A3);
 - on a Windows PowerShell 5.1 host, that a repository's own settings file saved WITHOUT a byte order mark
-  is read as the repository wrote it: 5.1 reads such a file as Windows-1252 -- PSScriptAnalyzer itself,
+  is read as the repository wrote it: 5.1 reads such a file in the system ANSI code page (Windows-1252 on a
+  US or Western-European system) -- PSScriptAnalyzer itself,
   with or without a merge -- so a character outside ASCII in it reaches the analysis as other characters,
   and an `IncludeRules` entry spelling `PSMisleadingBacktick` with the Kelvin sign selects nothing there
   while a managed scan certifies (measured, dispatch 000308: under PowerShell 7, which reads the file as
@@ -318,7 +319,8 @@ is off by default never ran ([configuration](configuration.md#requiredrules----f
 
 **The merged file reads the same on both hosts** (dispatch 000308, leg B1d; owner ruling RR-02, review
 findings B1c-RR-02 and B1c-RX-12). Windows PowerShell 5.1 reads a settings file that has no byte order
-mark as Windows-1252, PowerShell 7 as UTF-8, and PSScriptAnalyzer and the daemon's check read the merged
+mark in the system ANSI code page (Windows-1252 on a US or Western-European system), PowerShell 7 as UTF-8,
+and PSScriptAnalyzer and the daemon's check read the merged
 file the same way. It was written as UTF-8 without a mark (since the merge landed, dispatch 000294), so on a
 5.1 host a character outside ASCII in an entry the merge carried reached the analysis as two or three other
 characters: an `IncludeRules` entry spelling `PSMisleadingBacktick` with the Kelvin sign selected nothing,
@@ -329,8 +331,9 @@ warned. The merged file now opens with a UTF-8 byte order mark whenever it holds
 and under Windows PowerShell 5.1 each of the three runs as it does under PowerShell 7 -- the rule selected,
 the rule excluded, the custom rule loaded and the scan certified (measured through the real daemon on both
 hosts). A merged file whose text is all ASCII is written byte for byte as before, under the same name. The
-repository's own file is read as each host reads it -- one saved without a mark is read by 5.1 as
-Windows-1252, merged or not, and the merged file carries what the host read (above, under what
+repository's own file is read as each host reads it -- one saved without a mark is read by 5.1 in the
+system ANSI code page (Windows-1252 on a US or Western-European system), merged or not, and the merged
+file carries what the host read (above, under what
 certification does not prove).
 
 **What the check cannot see.** It reads the settings file and lists the directories a `CustomRulePath`
