@@ -2387,7 +2387,7 @@ function Write-MergedPssaSettingsFile {
     #
     # A LOST RENAME IS NOT A FAILED WRITE. Two daemons on one data root that write the same NEW text
     # can both find no file, and then the second rename throws because the first one's file is already
-    # in place. The name is the text's digest, so that file is accepted -- but only as a FILE, and only
+    # in place. The name is the digest of the bytes written, so that file is accepted -- but only as a FILE, and only
     # when it re-hashes to the intended text below; a directory or any other failure still returns ''.
     #
     # OLD FILES ARE SWEPT, NEVER ONE IN USE (dispatch 000306, B1b, review finding B1-K07). One file per
@@ -2545,7 +2545,7 @@ function ConvertTo-Psd1Literal {
     # $null fails the daemon's validation instead of reaching PSES: PSScriptAnalyzer refuses a $null
     # in a table).
     # A nested table renders in SORTED key order (dispatch 000305): a [hashtable]'s own order is
-    # not stable across processes, and the merged-settings file is named by its text's SHA-256.
+    # not stable across processes, and the merged-settings file is named by the SHA-256 of the bytes written.
     # Since dispatch 000306 the Rules tables are carried, so a nested key that is not a plain
     # identifier (a custom rule's 'Module\Measure-Name') is single-quoted rather than written bare, and
     # -- review finding B1b-I01 -- every primitive NUMBER a rule argument can hold keeps its type and its
