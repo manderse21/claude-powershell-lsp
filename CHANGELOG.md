@@ -47,7 +47,19 @@ order mark whenever its text holds a character outside ASCII, and is named by th
 written: under Windows PowerShell 5.1 each of the three now runs as it does under PowerShell 7 -- the rule
 selected, the rule excluded, the custom rule loaded and the scan certified. A merged file whose text is all
 ASCII is written byte for byte as before, under the same name -- every merged text dispatches 000306 and
-000307 pinned is among them -- and PowerShell 7 reads every merged file as it did. Still not covered, and
+000307 pinned is among them -- and PowerShell 7 reads every merged file as it did, but one holding a
+typographic single quote. **A typographic single quote reaches the analysis as the repository wrote it**
+(correction round 1: owner ruling RV-01 on review finding B1d-RV-01; pre-existing under PowerShell 7 since
+dispatch 000294). PowerShell also ends a single-quoted string at U+2018, U+2019, U+201A and U+201B, and the
+merged file doubled only U+0027, so a string holding one of them re-parsed once merged: one `ExcludeRules`
+entry `PSAvoidUsingWriteHost` + U+2019 + `,` + U+2019 + `PSAvoidUsingCmdletAliases`, which excludes nothing
+alone, excluded both rules once merged, and a managed scan CERTIFIED with their findings hidden -- under
+PowerShell 7, and under Windows PowerShell 5.1 once the byte order mark let it read the quote -- and a
+`CustomRulePath` under a directory whose name holds one made a managed scan refuse with
+`policy-settings-rejected`. Each of the four is now doubled as U+0027 is, in a string value and in a quoted
+`Rules` key, so the merged file reads back exactly as the repository wrote it: both rules run and the scan
+certifies with their findings, and the custom rule loads and the scan certifies, on both hosts (measured
+through the real daemon). Still not covered, and
 documented: a repository's OWN settings file saved without a byte order mark is read by Windows PowerShell
 5.1 as Windows-1252 by PSScriptAnalyzer itself, merged or not (save one that holds such a character with a
 mark). Documentation: the receipt schema's `requiredRules.cannotRun` description now names all five reasons
