@@ -195,11 +195,15 @@ It does NOT prove:
   the modules it loads, or that a required code names any rule at all: there any code that is not a
   built-in rule name, a misspelled built-in name included, is treated as a possible custom rule and is not
   refused (leg A3);
-- on a Windows PowerShell 5.1 host, that a non-ASCII entry in a repository's own `IncludeRules` still
-  selects its rule once merged: the merged settings file is written as UTF-8 without a BOM, which Windows
-  PowerShell 5.1 reads as Windows-1252, so such an entry selects nothing and a managed scan can certify
-  without that rule (measured: an entry spelling `PSMisleadingBacktick` with the Kelvin sign certified
-  without it under 5.1 and with it under PowerShell 7; owner ruling RR-02, a follow-up);
+- on a Windows PowerShell 5.1 host, that a repository's own settings file saved WITHOUT a byte order mark
+  is read as the repository wrote it: 5.1 reads such a file in the system ANSI code page (Windows-1252 on a
+  US or Western-European system) -- PSScriptAnalyzer itself,
+  with or without a merge -- so a character outside ASCII in it reaches the analysis as other characters,
+  and an `IncludeRules` entry spelling `PSMisleadingBacktick` with the Kelvin sign selects nothing there
+  while a managed scan certifies (measured, dispatch 000308: under PowerShell 7, which reads the file as
+  UTF-8, it selects the rule). The merged settings file itself reads the same on both hosts since dispatch
+  000308 ([below](#settings-files-the-analysis-rests-on-dispatch-000306)); save a settings file that holds
+  such a character with a byte order mark;
 - that a required rule that needs settings the repository does not give it could run
   (`PSUseCompatibleCommands` and `PSUseCompatibleTypes` need `TargetProfiles`, and without them find
   nothing -- [configuration](configuration.md#requiredrules----forcing-a-rule-onto-the-analysis-surface-dispatch-000294));
@@ -312,6 +316,25 @@ One entry of `Rules` is not the repository's to keep: every configurable rule `R
 written with `Enable = $true` (owner ruling R01, review finding B1b-R01) -- before, a repository's
 `Enable = $false` switched a required rule off while a managed scan certified, and a required rule that
 is off by default never ran ([configuration](configuration.md#requiredrules----forcing-a-rule-onto-the-analysis-surface-dispatch-000294)).
+
+**The merged file reads the same on both hosts** (dispatch 000308, leg B1d; owner ruling RR-02, review
+findings B1c-RR-02 and B1c-RX-12). Windows PowerShell 5.1 reads a settings file that has no byte order
+mark in the system ANSI code page (Windows-1252 on a US or Western-European system), PowerShell 7 as UTF-8,
+and PSScriptAnalyzer and the daemon's check read the merged
+file the same way. It was written as UTF-8 without a mark (since the merge landed, dispatch 000294), so on a
+5.1 host a character outside ASCII in an entry the merge carried reached the analysis as two or three other
+characters: an `IncludeRules` entry spelling `PSMisleadingBacktick` with the Kelvin sign selected nothing,
+and a managed scan certified without that rule; the same entry in `ExcludeRules` stopped excluding it; and a
+`CustomRulePath` whose directory is named with an accented letter read as a path that does not exist, so a
+managed scan over a valid repository file was refused with `policy-settings-rejected` and an unmanaged one
+warned. The merged file now opens with a UTF-8 byte order mark whenever it holds a character outside ASCII,
+and under Windows PowerShell 5.1 each of the three runs as it does under PowerShell 7 -- the rule selected,
+the rule excluded, the custom rule loaded and the scan certified (measured through the real daemon on both
+hosts). A merged file whose text is all ASCII is written byte for byte as before, under the same name. The
+repository's own file is read as each host reads it -- one saved without a mark is read by 5.1 in the
+system ANSI code page (Windows-1252 on a US or Western-European system), merged or not, and the merged
+file carries what the host read (above, under what
+certification does not prove).
 
 **What the check cannot see.** It reads the settings file and lists the directories a `CustomRulePath`
 reaches, but loads nothing: **a rule source PSScriptAnalyzer cannot load or run, or that holds no rule**,

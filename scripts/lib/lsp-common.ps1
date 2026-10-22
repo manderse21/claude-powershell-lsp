@@ -2302,8 +2302,9 @@ function Merge-RequiredRulesSettings {
 function ConvertTo-MergedPssaSettingsText {
     # The exact .psd1 text Write-MergedPssaSettingsFile writes, as a PURE function (dispatch 000305,
     # B1): the same settings always render the same text -- fixed key order, LF line ends, and
-    # nested tables in sorted key order (ConvertTo-Psd1Literal) -- so its SHA-256 can name the file
-    # and identify, as evidence, the settings PSES was handed.
+    # nested tables in sorted key order (ConvertTo-Psd1Literal) -- so the SHA-256 of the bytes written
+    # for it (ConvertTo-MergedPssaSettingsBytes) can name the file and identify, as evidence, the
+    # settings PSES was handed.
     # ONLY KEYS PSSCRIPTANALYZER ACCEPTS are rendered (dispatch 000306): the old list wrote Severities,
     # RuleArguments and FilePath, which it rejects, and never Severity or Rules, which it reads. The
     # order keeps IncludeRules and ExcludeRules first, so a merge of those two alone -- the common one
@@ -2319,6 +2320,40 @@ function ConvertTo-MergedPssaSettingsText {
     }
     [void]$sb.Append('}').Append("`n")
     return $sb.ToString()
+}
+
+function ConvertTo-MergedPssaSettingsBytes {
+    # The exact BYTES Write-MergedPssaSettingsFile writes for $Text (ConvertTo-MergedPssaSettingsText's output),
+    # as a PURE function (dispatch 000308, B1d): the text as UTF-8, opened with the UTF-8 byte order mark
+    # (EF BB BF) exactly when it holds a character outside ASCII.
+    #
+    # WHY THE MARK (owner ruling RR-02; review findings B1c-RR-02 and B1c-RX-12). Windows PowerShell 5.1 reads a
+    # settings file that has no byte order mark as Windows-1252 -- PSScriptAnalyzer, and the daemon's own check,
+    # parse it with the host's parser, which falls back to the system code page there, where PowerShell 7 falls
+    # back to UTF-8 -- so a non-ASCII character a repository wrote in a rule list reached a 5.1 analysis as two
+    # or three other characters once merged: an IncludeRules entry spelling PSMisleadingBacktick with the Kelvin
+    # sign selected nothing (a managed scan certified without that rule), the same entry in ExcludeRules stopped
+    # excluding, and a CustomRulePath directory named with an accent read as a path that does not exist (a false
+    # policy-settings-rejected). With the mark both hosts read the file as UTF-8 (measured, both hosts, through
+    # the real daemon).
+    #
+    # WHY ONLY THEN. An all-ASCII text reads the same on both hosts with the mark or without it (measured), so it
+    # is written exactly as before: its bytes, and so its content-addressed name, are unchanged -- and every
+    # merged text B1b and B1c pinned is ASCII. Each character is compared by its code (above 0x7F), never by a
+    # case-insensitive match, which lets the Kelvin sign through as a 'k'.
+    param([string]$Text)
+    if ($null -eq $Text) { $Text = '' }
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    $body = $utf8.GetBytes($Text)
+    $outside = $false
+    foreach ($ch in $Text.ToCharArray()) {
+        if ([int]$ch -gt 0x7F) { $outside = $true; break }
+    }
+    if (-not $outside) { return , $body }
+    $bytes = New-Object byte[] ($body.Length + 3)
+    $bytes[0] = 0xEF; $bytes[1] = 0xBB; $bytes[2] = 0xBF
+    [System.Array]::Copy($body, 0, $bytes, 3, $body.Length)
+    return , $bytes
 }
 
 function Get-MergedPssaSettingsDir {
@@ -2340,15 +2375,19 @@ function Write-MergedPssaSettingsFile {
     # data root, which every daemon sharing that root rewrote -- and PSES hands the settings PATH to
     # PSScriptAnalyzer on every analysis, so a second daemon with a different policy (a scan run
     # beside an interactive session, say) silently changed what the first one enforced. The name now
-    # carries the SHA-256 of the exact text, so two different settings can never share a file and
-    # the same settings always do; the text is written to a temp file and renamed into place, and
+    # carries the SHA-256 of the exact bytes written (ConvertTo-MergedPssaSettingsBytes: the text, opened
+    # with a UTF-8 byte order mark when it holds a character outside ASCII -- dispatch 000308, B1d -- so an
+    # all-ASCII text keeps the name it always had), so two different settings can never share a file and
+    # the same settings always do; the bytes are written to a temp file and renamed into place, and
     # the file is read back and re-hashed before its path is returned. A path is therefore returned
     # only when the bytes on disk are the bytes this call meant to write -- which is what lets the
-    # daemon report a successful merged-settings write as evidence rather than as a hope.
+    # daemon report a successful merged-settings write as evidence rather than as a hope. A text
+    # outside ASCII that a daemon before dispatch 000308 wrote without the mark has another name, so
+    # neither writer ever rewrites the other's file.
     #
     # A LOST RENAME IS NOT A FAILED WRITE. Two daemons on one data root that write the same NEW text
     # can both find no file, and then the second rename throws because the first one's file is already
-    # in place. The name is the text's digest, so that file is accepted -- but only as a FILE, and only
+    # in place. The name is the digest of the bytes written, so that file is accepted -- but only as a FILE, and only
     # when it re-hashes to the intended text below; a directory or any other failure still returns ''.
     #
     # OLD FILES ARE SWEPT, NEVER ONE IN USE (dispatch 000306, B1b, review finding B1-K07). One file per
@@ -2367,7 +2406,7 @@ function Write-MergedPssaSettingsFile {
     try {
         $dir = Get-MergedPssaSettingsDir -DataRoot $DataRoot
         New-ContainedDirectory -Path $dir
-        $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes((ConvertTo-MergedPssaSettingsText -Settings $Settings))
+        $bytes = ConvertTo-MergedPssaSettingsBytes -Text (ConvertTo-MergedPssaSettingsText -Settings $Settings)
         $sha = Get-Sha256HexFromBytes -Bytes $bytes
         $target = Join-Path $dir ('merged-settings-' + $sha.Substring(0, 16) + '.psd1')
         $reused = $false
@@ -2506,7 +2545,7 @@ function ConvertTo-Psd1Literal {
     # $null fails the daemon's validation instead of reaching PSES: PSScriptAnalyzer refuses a $null
     # in a table).
     # A nested table renders in SORTED key order (dispatch 000305): a [hashtable]'s own order is
-    # not stable across processes, and the merged-settings file is named by its text's SHA-256.
+    # not stable across processes, and the merged-settings file is named by the SHA-256 of the bytes written.
     # Since dispatch 000306 the Rules tables are carried, so a nested key that is not a plain
     # identifier (a custom rule's 'Module\Measure-Name') is single-quoted rather than written bare, and
     # -- review finding B1b-I01 -- every primitive NUMBER a rule argument can hold keeps its type and its
@@ -2517,6 +2556,16 @@ function ConvertTo-Psd1Literal {
     # double and 9 for a single, which always round-trip, where .NET Framework's 'R' format may not; NaN
     # and 1E+300 survive too). Each form was measured accepted by PSScriptAnalyzer and read back with its
     # type on both hosts. A [char] or a BigInteger is no primitive number and still renders $null.
+    # EVERY CHARACTER POWERSHELL READS AS A SINGLE QUOTE IS DOUBLED (dispatch 000308, B1d correction round 1;
+    # owner ruling RV-01, review finding B1d-RV-01). PowerShell's parser ends a single-quoted string at U+2018,
+    # U+2019, U+201A and U+201B as it does at U+0027, and reads any of them doubled as one of itself (measured,
+    # both hosts). Only U+0027 was doubled, so a string holding one of the other four re-parsed once merged as
+    # other data or as none: one ExcludeRules entry 'PSAvoidUsingWriteHost' + U+2019 + ',' + U+2019 +
+    # 'PSAvoidUsingCmdletAliases', which excludes nothing alone, excluded both rules once merged and a managed
+    # scan certified with their findings hidden, and a CustomRulePath whose directory name holds one made the
+    # merged file unparsable, a false policy-settings-rejected (measured through the real daemon, both hosts).
+    # Each of the five is now doubled, in a string value and in a quoted Rules key alike; a text holding none of
+    # them is written byte for byte as before.
     param($Value)
     if ($null -eq $Value) { return '$null' }
     if ($Value -is [bool]) { return $(if ($Value) { '$true' } else { '$false' }) }
@@ -2537,13 +2586,13 @@ function ConvertTo-Psd1Literal {
         $text = if ($Value -is [double]) { $Value.ToString('G17', $inv) } elseif ($Value -is [single]) { $Value.ToString('G9', $inv) } else { $Value.ToString($inv) }
         return ('[' + $cast + "]'" + $text + "'")
     }
-    if ($Value -is [string]) { return "'" + $Value.Replace("'", "''") + "'" }
+    if ($Value -is [string]) { return "'" + [regex]::Replace($Value, '[''\u2018-\u201B]', '$0$0') + "'" }
     if ($Value -is [System.Collections.IDictionary]) {
         $parts = New-Object System.Collections.ArrayList
         $keys = @(@($Value.Keys) | ForEach-Object { [string]$_ })
         [System.Array]::Sort($keys, [System.StringComparer]::OrdinalIgnoreCase)
         foreach ($k in $keys) {
-            $shown = $(if ([regex]::IsMatch($k, '\A[A-Za-z_][A-Za-z0-9_]*\z')) { $k } else { "'" + $k.Replace("'", "''") + "'" })
+            $shown = $(if ([regex]::IsMatch($k, '\A[A-Za-z_][A-Za-z0-9_]*\z')) { $k } else { "'" + [regex]::Replace($k, '[''\u2018-\u201B]', '$0$0') + "'" })
             [void]$parts.Add('        ' + $shown + ' = ' + (ConvertTo-Psd1Literal $Value[$k]))
         }
         return "@{`n" + ($parts -join "`n") + "`n    }"

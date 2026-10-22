@@ -194,6 +194,17 @@ and never parse it a second way. Things that bite when you change this path:
   path only after re-hashing the bytes on disk. Keep its catch around the rename: two daemons writing the
   same new text race to it, and the loser must accept the winner's file (same name, same digest) rather
   than report `merge-write-failed` -- which a managed scan refuses and an unmanaged session runs without.
+- **The merged settings file opens with a UTF-8 BOM exactly when its text holds a character outside
+  ASCII** (dispatch 000308, B1d; owner ruling RR-02). Windows PowerShell 5.1's parser -- which both
+  PSScriptAnalyzer and `Read-PssaSettingsFile` use -- reads a file with no BOM in the system code page
+  (Windows-1252 here), PowerShell 7's in UTF-8, so a Kelvin-sign rule-list entry or an accented
+  `CustomRulePath` written without the mark reached a 5.1 analysis as other characters (measured through
+  the real daemon). `ConvertTo-MergedPssaSettingsBytes` makes the bytes and the file is named by their
+  SHA-256, so an all-ASCII text keeps the bytes and the name it always had (every pinned merged text is
+  ASCII) and a non-ASCII text gets a name an earlier daemon's BOM-less file never had. Never add the mark
+  unconditionally -- it renames every merged file -- and never test "outside ASCII" with `-match`, whose
+  IgnoreCase lets U+212A through as `k`; compare each character's code. A repository's OWN settings file is
+  read as each host reads it: saved without a BOM, 5.1 reads it as Windows-1252, merged or not.
 - **No file, no proof.** A managed verdict over zero files is `analysis-empty`, never certified: O03
   certifies only on evidence the policy was applied, and an empty target produces none.
 - **A rule code is a rule name, and the identity folds ASCII `A`-`Z` only.** `Test-OrgPolicyRuleCode`
