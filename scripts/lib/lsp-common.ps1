@@ -2328,14 +2328,14 @@ function ConvertTo-MergedPssaSettingsBytes {
     # (EF BB BF) exactly when it holds a character outside ASCII.
     #
     # WHY THE MARK (owner ruling RR-02; review findings B1c-RR-02 and B1c-RX-12). Windows PowerShell 5.1 reads a
-    # settings file that has no byte order mark as Windows-1252 -- PSScriptAnalyzer, and the daemon's own check,
-    # parse it with the host's parser, which falls back to the system code page there, where PowerShell 7 falls
-    # back to UTF-8 -- so a non-ASCII character a repository wrote in a rule list reached a 5.1 analysis as two
-    # or three other characters once merged: an IncludeRules entry spelling PSMisleadingBacktick with the Kelvin
-    # sign selected nothing (a managed scan certified without that rule), the same entry in ExcludeRules stopped
-    # excluding, and a CustomRulePath directory named with an accent read as a path that does not exist (a false
-    # policy-settings-rejected). With the mark both hosts read the file as UTF-8 (measured, both hosts, through
-    # the real daemon).
+    # settings file that has no byte order mark in the system ANSI code page (Windows-1252 on a US or
+    # Western-European system) -- PSScriptAnalyzer, and the daemon's own check, parse it with the host's parser,
+    # which falls back to the system code page there, where PowerShell 7 falls back to UTF-8 -- so a non-ASCII
+    # character a repository wrote in a rule list reached a 5.1 analysis as two or three other characters once
+    # merged: an IncludeRules entry spelling PSMisleadingBacktick with the Kelvin sign selected nothing (a managed
+    # scan certified without that rule), the same entry in ExcludeRules stopped excluding, and a CustomRulePath
+    # directory named with an accent read as a path that does not exist (a false policy-settings-rejected). With
+    # the mark both hosts read the file as UTF-8 (measured, both hosts, through the real daemon).
     #
     # WHY ONLY THEN. An all-ASCII text reads the same on both hosts with the mark or without it (measured), so it
     # is written exactly as before: its bytes, and so its content-addressed name, are unchanged -- and every
