@@ -330,11 +330,14 @@ managed scan over a valid repository file was refused with `policy-settings-reje
 warned. The merged file now opens with a UTF-8 byte order mark whenever it holds a character outside ASCII,
 and under Windows PowerShell 5.1 each of the three runs as it does under PowerShell 7 -- the rule selected,
 the rule excluded, the custom rule loaded and the scan certified (measured through the real daemon on both
-hosts). A merged file whose text is all ASCII is written byte for byte as before, under the same name. The
-repository's own file is read as each host reads it -- one saved without a mark is read by 5.1 in the
-system ANSI code page (Windows-1252 on a US or Western-European system), merged or not, and the merged
-file carries what the host read (above, under what
-certification does not prove).
+hosts, for those three; a lone surrogate is the exception below). A merged file whose text is all ASCII is
+written byte for byte as before, under the same name. The repository's own file is read as each host reads
+it -- one saved without a mark is read by 5.1 in the system ANSI code page (Windows-1252 on a US or
+Western-European system), merged or not -- and the merged file carries what the host read (above, under
+what certification does not prove), except a lone UTF-16 surrogate: only PowerShell 7 can write one in a
+settings string (the `` `u{D800} `` escape in a double-quoted string), and the merged file holds U+FFFD in
+its place, so once merged an `ExcludeRules` or `CustomRulePath` entry holding one names that spelling
+instead (measured through the real daemon; dispatch 000309, leg B1e, review finding B1d-RV2-01).
 
 **What the check cannot see.** It reads the settings file and lists the directories a `CustomRulePath`
 reaches, but loads nothing: **a rule source PSScriptAnalyzer cannot load or run, or that holds no rule**,
