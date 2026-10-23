@@ -435,15 +435,30 @@ function Get-IntegrationDaemonLeak {
     # contaminated environment) and the suite-final backstop (PROVE zero suite daemons
     # survived). Returns objects with .Id, .SessionId and .DataRoot so a caller can
     # verify-before-kill a straggler if it chooses.
+    #
+    # ONE QUERY ON WINDOWS (dispatch 000309, B1e item T1). The census used to look up each
+    # pwsh and powershell process's command line in its own Win32_Process query. On 2026-10-22
+    # this host's WMI answered each in about 3.6 s, so one census took 72 to 98 s -- long enough
+    # to reach dispatch 000293's fake daemon after it had exited, and that test read 0 for 1.
+    # Windows now answers for every process in ONE query, so a census costs one round trip
+    # however many PowerShell processes are running. Elsewhere Get-ProcessCommandLine reads
+    # /proc or ps per process, which involves no WMI, and is unchanged.
     param(
         [string]$DataRootLeafPattern = '^psls'
     )
     $tempRoot = [System.IO.Path]::GetTempPath().TrimEnd('\', '/')
     $leaks = New-Object System.Collections.ArrayList
     try {
-        $procs = @(Get-Process -Name 'pwsh', 'powershell' -ErrorAction SilentlyContinue)
+        $procs = if (Test-OnWindows) {
+            @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'pwsh.exe' OR Name = 'powershell.exe'" `
+                    -Property ProcessId, CommandLine -ErrorAction SilentlyContinue |
+                    ForEach-Object { [pscustomobject]@{ Id = [int]$_.ProcessId; CommandLine = [string]$_.CommandLine } })
+        } else {
+            @(Get-Process -Name 'pwsh', 'powershell' -ErrorAction SilentlyContinue |
+                    ForEach-Object { [pscustomobject]@{ Id = $_.Id; CommandLine = (Get-ProcessCommandLine $_.Id) } })
+        }
         foreach ($p in $procs) {
-            $cl = Get-ProcessCommandLine $p.Id
+            $cl = $p.CommandLine
             if ([string]::IsNullOrWhiteSpace($cl)) { continue }
             if ($cl -notmatch 'pses-daemon\.ps1') { continue }
             $dm = [regex]::Match($cl, '-DataRoot\s+"?([^"\s]+)"?')

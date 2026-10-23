@@ -3453,9 +3453,18 @@ Describe 'Integration: Get-IntegrationDaemonLeak recognizes a daemon by DATA ROO
     # unlisted prefix, but a DataRoot that is NOT a suite-minted temp root must NOT be
     # flagged, proving the new gate is the data root and not "any pses-daemon.ps1 process".
     #
-    # Both cases use a FAKE script merely NAMED pses-daemon.ps1 (accepting the same flags,
-    # doing nothing but sleep) so the census's command-line match fires without paying for
+    # Every case uses a FAKE script merely NAMED pses-daemon.ps1 (accepting the same flags,
+    # doing nothing but wait) so the census's command-line match fires without paying for
     # a real PSES child.
+    #
+    # THE FAKE LIVES UNTIL AfterAll STOPS IT (dispatch 000309, B1e item T1). It used to sleep
+    # 60 s and exit, so a census slower than that reached it after it had gone and case 1 read
+    # 0 for 1: B1d's first F2 (2026-10-22), when this host's WMI took about 3.6 s a process and
+    # a census 72 to 98 s. Reproduced deterministically by holding a census's first
+    # Win32_Process answer 90 s, never by waiting for slow WMI (see the dispatch's outbox). It
+    # now reads its stdin to the end, and only this test host holds that pipe open: AfterAll
+    # stops it, and a host that dies first closes the pipe and takes the fake with it, so it
+    # cannot be left behind.
     BeforeAll {
         . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-common.ps1')
         . (Join-Path $PSScriptRoot 'Integration.Common.ps1')
@@ -3465,7 +3474,8 @@ Describe 'Integration: Get-IntegrationDaemonLeak recognizes a daemon by DATA ROO
         $script:Db_FakeScript = Join-Path $script:Db_FakeDir 'pses-daemon.ps1'
         Set-Content -LiteralPath $script:Db_FakeScript -Encoding ASCII -Value @(
             'param($SessionId, $PsHost, $DataRoot, $SeverityThreshold, $DebounceMs, $IdleTtlMin, $PerFileCap)',
-            'Start-Sleep -Seconds 60'
+            '$in = [Console]::OpenStandardInput(); $buf = New-Object byte[] 64',
+            'while ($in.Read($buf, 0, $buf.Length) -gt 0) { }'
         )
         $script:Db_Procs = New-Object System.Collections.ArrayList
 
@@ -3474,6 +3484,7 @@ Describe 'Integration: Get-IntegrationDaemonLeak recognizes a daemon by DATA ROO
             New-Item -ItemType Directory -Force -Path $DataRoot | Out-Null
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true
             $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
             Add-ProcessArguments $psi @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
                 $script:Db_FakeScript, '-SessionId', $SessionId, '-PsHost', 'pwsh', '-DataRoot', $DataRoot,
@@ -3516,6 +3527,24 @@ Describe 'Integration: Get-IntegrationDaemonLeak recognizes a daemon by DATA ROO
         $found = @(Get-IntegrationDaemonLeak | Where-Object { $_.Id -eq $fake.Id })
 
         $found.Count | Should -Be 0 -Because 'a DataRoot that is not a suite-minted psls* temp root must never be treated as ours, even with an unlisted SessionId prefix'
+    }
+
+    It 'asks Windows for every PowerShell process''s command line in ONE Win32_Process query (dispatch 000309, T1)' -Skip:(-not $script:OnWindows) {
+        # The census's cost must not grow with the number of pwsh and powershell processes: at
+        # be1f38e it made one query per process (this It counts at least two there: this host and
+        # the fake). Only the count is mocked; every query still reaches the real cmdlet, through
+        # its CommandInfo -- Pester mocks the module-qualified name too, so CimCmdlets\Get-CimInstance
+        # would call the mock again.
+        $sid = 't1query-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $fake = Start-DbFakeDaemon -SessionId $sid -DataRoot (Join-Path $script:Db_FakeDir 'case3')
+        $script:Db_RealGetCim = Get-Command -Name 'Get-CimInstance' -CommandType Cmdlet
+        Mock Get-CimInstance { & $script:Db_RealGetCim @PesterBoundParameters }
+
+        $found = @(Get-IntegrationDaemonLeak | Where-Object { $_.Id -eq $fake.Id })
+
+        $found.Count | Should -Be 1 -Because 'the one query still finds the suite daemon by its DataRoot'
+        $found[0].SessionId | Should -BeExactly $sid
+        Should -Invoke Get-CimInstance -Times 1 -Exactly -Scope It -Because 'one census is one Win32_Process query, however many PowerShell processes are running'
     }
 }
 
