@@ -30,6 +30,26 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **The suite's daemon census no longer races slow WMI, and a documentation sentence about the merged
+settings file now states only what was measured** (dispatch 000309, leg B1e -- the dispatch 000293 test, and
+B1d's review findings B1d-RV2-01 and B1d-RV-05; tests, one code comment and documentation only; no shipped
+behaviour changes). **The census:** `Get-IntegrationDaemonLeak` (`tests/Integration.Common.ps1`) looked up
+each `pwsh` and `powershell` process's command line in its own `Win32_Process` query, and dispatch 000293's
+fake daemon slept 60 seconds and exited. When this host's WMI took about 3.6 s a query, one census took 72 to
+98 s, reached the fake after it had gone, and the test read 0 for 1. On Windows the census now makes ONE
+query for both process names, and the fake lives until its `AfterAll` stops it -- it reads its stdin to the
+end, which only the test host holds open, so a host that dies first takes it along. Reproduced
+deterministically, by holding a census's first `Win32_Process` answer 90 s, never by waiting for slow WMI:
+RED at be1f38e and GREEN now, under Windows PowerShell 5.1 and PowerShell 7; a new test pins the one query.
+**Documentation:** `docs/repository-scanning.md` no longer says without exception that the merged settings
+file carries what the host read: a lone UTF-16 surrogate, which only PowerShell 7 can write in a settings
+string (the `` `u{D800} `` escape in a double-quoted string), is written to the merged file as U+FFFD, so
+once merged an `ExcludeRules` or `CustomRulePath` entry holding one names that spelling instead (measured
+through the real daemon; pre-existing since dispatch 000294). A comment in `scripts/lib/lsp-common.ps1` now
+says Windows PowerShell 5.1 reads a settings file without a byte order mark in the system ANSI code page
+(Windows-1252 on a US or Western-European system), as the documentation does. No `userConfig` knob, status
+token, CLI flag, reason code or exit code is added or changed.
+
 PATCH: **The merged settings file reads the same on Windows PowerShell 5.1 as on PowerShell 7** (dispatch
 000308, leg B1d -- owner ruling RR-02 on review findings B1c-RR-02 and B1c-RX-12, and B1c's found-on-the-way
 encoding item; pre-existing since the `RequiredRules` merge landed in dispatch 000294). Windows PowerShell
