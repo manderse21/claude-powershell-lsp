@@ -982,6 +982,19 @@ function Initialize-PssaSettings {
         }
     }
 
+    # A SETTINGS FILE THIS HOST READS IN THE ANSI CODE PAGE IS RECORDED (dispatch 000309, B1e; owner ruling RV-02,
+    # design a, on review finding B1d-RV-02). Windows PowerShell 5.1 reads a settings file that has no byte order mark
+    # in the system ANSI code page -- PSScriptAnalyzer and Read-PssaSettingsFile alike -- so a byte above 0x7F in it
+    # does not reach the analysis as the repository wrote it in UTF-8: a Kelvin-sign IncludeRules entry selected
+    # nothing and a managed scan certified without that rule (measured through the real daemon). It is recorded
+    # (settings.ansiDecoded), every scan warns, and a managed scan refuses it (policy-settings-ansi-decoded); what PSES
+    # is handed is unchanged, so the edit hook still reads such a file as 5.1 does.
+    $ansiDecoded = $false
+    if (-not [string]::IsNullOrWhiteSpace($resolved) -and (Test-PssaSettingsAnsiDecoded -Path $resolved)) {
+        $ansiDecoded = $true
+        Write-DLog ('PSSA settings: ' + $resolved + ' has no byte order mark and holds a byte above 0x7F; Windows PowerShell 5.1 reads it in the system ANSI code page')
+    }
+
     # requiredRules (P1-5 remainder, R23=D, dispatch 000294): the ONE place the daemon's
     # session-start threading is touched, and ONLY when $OrgPolicyPath is set AND org policy
     # names at least one RequiredRules entry. Computed BEFORE the empty-$resolved check below on
@@ -1113,7 +1126,7 @@ function Initialize-PssaSettings {
             -MergedPath $mergedPath -MergedSha256 $mergedSha -RequiredCannotRun $cannotRun `
             -SettingsPath $script:settingsPathInUse -SettingsSource $(if ($delivered) { $source } else { 'none' }) `
             -SettingsSha256 (Get-PolicyFileSha256 -Path $script:settingsPathInUse) -Delivered $delivered `
-            -SettingsValidation $validation -SettingsValidationDetail $validationDetail
+            -SettingsValidation $validation -SettingsValidationDetail $validationDetail -SettingsAnsiDecoded $ansiDecoded
     }
 }
 

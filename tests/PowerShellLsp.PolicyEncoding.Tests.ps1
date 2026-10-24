@@ -6,14 +6,16 @@
 # ExcludeRules entry stopped excluding there), with B1c's found-on-the-way encoding item 1/3 (a CustomRulePath
 # directory named with an accent read as a path that does not exist, a false policy-settings-rejected), and
 # review finding B1c-RX-09 (the receipt schema's cannotRun description). Correction round 1: owner ruling RV-01
-# on review finding B1d-RV-01 (a string holding a typographic single quote re-parsed once merged).
+# on review finding B1d-RV-01 (a string holding a typographic single quote re-parsed once merged). Dispatch 000309,
+# B1e, correction round 1: owner ruling RV-02, design a, on review finding B1d-RV-02 (a repository's own settings
+# file saved without a byte order mark is read by Windows PowerShell 5.1 in the system ANSI code page).
 #
 # Windows PowerShell 5.1 reads a settings file that has no byte order mark as Windows-1252; PowerShell 7 reads
 # it as UTF-8. The merged file is now written with the UTF-8 byte order mark exactly when it holds a character
 # outside ASCII (ConvertTo-MergedPssaSettingsBytes), so every all-ASCII merged file keeps its bytes and its
 # content-addressed name.
 #
-# SIX LAYERS:
+# SEVEN LAYERS:
 #   1. The bytes (pure): the mark exactly when a character is outside ASCII.
 #   2. The writer: a non-ASCII merged file opens with the mark, is named by the SHA-256 of the bytes written, is
 #      read back by THIS host as written, and never reuses a file an earlier daemon wrote without the mark; every
@@ -25,6 +27,12 @@
 #      U+2019, U+201A and U+201B, so the merged file doubles each as it doubles U+0027 -- an ExcludeRules entry, an
 #      IncludeRules entry, a Rules argument string and a quoted Rules key holding one read back from the merged
 #      file (Read-PssaSettingsFile) exactly as the repository wrote them.
+#   7. A repository's own settings file on Windows PowerShell 5.1 (dispatch 000309, owner ruling RV-02, design a):
+#      one with no byte order mark that holds a byte above 0x7F is read there in the system ANSI code page. The
+#      classifier (Get-PssaSettingsFileEncoding), the 5.1-only trigger (Test-PssaSettingsAnsiDecoded), the daemon's
+#      record of it (settings.ansiDecoded, written only when it applies; what PSES is handed is unchanged), the
+#      scan's copy, the managed refusal (policy-settings-ansi-decoded), every scan's warning line, and the receipt's
+#      type check and schema.
 #
 # Run against f0a8ec0 (the base) -- its scripts/ and its docs/scan-receipt.schema.json -- the bytes' and the
 # writer's own tests (layers 1 and 2: the mark, the name, no reuse) and 'B1d-RX09:' fail on both hosts; the
@@ -36,6 +44,13 @@
 # Run against eb7b419 (B1d's head before correction round 1) -- its scripts/ -- exactly the 'B1d-RV01:' tests
 # fail, on both hosts: each typographic quote ended the string once merged, so the entry, the argument or the key
 # read back as other data or as none. Every other test passes there.
+#
+# Run against 978bd5e (B1e's head before its correction round 1) -- its scripts/ and docs/ -- the 'B1e-RV02:' tests
+# fail: the classifier, the trigger, the warning line and the record's parameter do not exist there, the managed
+# verdict certifies over a record that carries settings.ansiDecoded, and the receipt check passes a value that is
+# not a boolean. The daemon-record cases fail there under Windows PowerShell 5.1 exactly for the two files 5.1 reads
+# in the ANSI code page; every other daemon-record case, and every one under PowerShell 7, passes on both trees --
+# there they assert that nothing is recorded.
 #
 # ASCII-only (PS 5.1 em-dash trap; each non-ASCII character is built with [char]); StrictMode-safe.
 
@@ -520,5 +535,248 @@ Describe 'Typographic single quotes reach the merged settings file as the reposi
         $shown = Get-EnShown ($got -join ' | ')
         $got.Count | Should -Be $want.Count -Because ('read back: ' + $shown)
         for ($i = 0; $i -lt $want.Count; $i++) { $got[$i] -ceq $want[$i] | Should -BeTrue -Because ('read back: ' + $shown) }
+    }
+}
+
+Describe 'A repository settings file Windows PowerShell 5.1 reads in the system ANSI code page (dispatch 000309 B1e, owner ruling RV-02, design a)' {
+
+    BeforeAll {
+        $script:AnOn51 = ($PSVersionTable.PSEdition -ne 'Core')
+        function Get-AnBytes {
+            # The bytes of one repository settings file: an IncludeRules entry holding the Kelvin sign, encoded as $Shape
+            # says; for 'ansi' an accented letter saved in the ANSI code page instead (Windows-1252 and Latin-1 agree on
+            # U+00E9, the byte E9), and for 'ascii' an all-ASCII text. Each '-bom' or UTF-16/32 shape opens with its mark.
+            param([string]$Shape)
+            $kelvin = "@{ IncludeRules = @('PSAvoidUsingCmdletAliases', '" + $script:EnKelvinTick + "') }`n"
+            $enc = $null
+            switch ($Shape) {
+                'utf8' { return , $script:EnUtf8.GetBytes($kelvin) }
+                'ascii' { return , $script:EnUtf8.GetBytes("@{ IncludeRules = @('PSAvoidUsingCmdletAliases', 'PSMisleadingBacktick') }`n") }
+                'ansi' {
+                    $t = "@{ IncludeRules = @('PSAvoidUsingCmdletAliases', 'PSCaf" + [string][char]0x00E9 + "') }`n"
+                    $b = New-Object byte[] $t.Length
+                    for ($i = 0; $i -lt $t.Length; $i++) { $b[$i] = [byte][int]$t[$i] }
+                    return , $b
+                }
+                'utf8-bom' { $enc = $script:EnUtf8Bom }
+                'utf16le' { $enc = New-Object System.Text.UnicodeEncoding($false, $true) }
+                'utf16be' { $enc = New-Object System.Text.UnicodeEncoding($true, $true) }
+                'utf32le' { $enc = New-Object System.Text.UTF32Encoding($false, $true) }
+                'utf32be' { $enc = New-Object System.Text.UTF32Encoding($true, $true) }
+            }
+            if ($null -eq $enc) { throw ('no such shape: ' + $Shape) }
+            return , [byte[]](@($enc.GetPreamble()) + @($enc.GetBytes($kelvin)))
+        }
+        function New-AnRepoFile {
+            # A PSScriptAnalyzerSettings.psd1 holding exactly $Bytes, in a fresh directory under $TestDrive.
+            param([byte[]]$Bytes)
+            $d = Join-Path $TestDrive ('an-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+            $p = Join-Path $d 'PSScriptAnalyzerSettings.psd1'
+            [System.IO.File]::WriteAllBytes($p, $Bytes)
+            return $p
+        }
+
+        # The daemon's OWN Initialize-PssaSettings, lifted from scripts/pses-daemon.ps1 by AST with PSES stubbed -- as the
+        # B1b and B1c daemon layers do (PowerShellLsp.PolicySettings.Tests.ps1, PowerShellLsp.PolicyRoutes.Tests.ps1).
+        $daemonAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:EnScripts 'pses-daemon.ps1'), [ref]$null, [ref]$null)
+        $fn = $daemonAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Initialize-PssaSettings' }, $true)
+        if ($null -eq $fn) { throw 'pses-daemon.ps1 has no Initialize-PssaSettings' }
+        . ([scriptblock]::Create([string]$fn.Extent.Text))
+        function Write-DLog { param([string]$m) [void]$script:AnLog.Add($m) }
+        function Send-Lsp { param($obj) [void]$script:AnSent.Add($obj) }
+        function Get-DaemonPsesVersionTag { return 'v4.6.0' }
+        $script:AnPolicy = New-EnFile "@{ RequiredRules = @('PSAvoidGlobalVars') }`n" -Name 'org.psd1'
+        function Invoke-AnDaemon {
+            # One session start of the daemon's settings resolution over a repository whose settings file holds $Bytes,
+            # with the RequiredRules policy or with none: the daemon's record, its log and every path it handed PSES.
+            param([byte[]]$Bytes, [bool]$WithPolicy)
+            $settings = New-AnRepoFile $Bytes
+            $repo = Split-Path -Parent $settings
+            [System.IO.File]::WriteAllText((Join-Path $repo 'thing.ps1'), "gci`n")
+            $script:OrgPolicyPath = $(if ($WithPolicy) { $script:AnPolicy } else { '' })
+            $script:SettingsPath = ''
+            $script:Ruleset = 'pses-default'
+            $script:DataRoot = New-EnDataRoot
+            New-Item -ItemType Directory -Force -Path $script:DataRoot | Out-Null
+            $script:settingsResolved = $false
+            $script:settingsPathInUse = ''
+            $script:AnLog = New-Object System.Collections.ArrayList
+            $script:AnSent = New-Object System.Collections.ArrayList
+            Initialize-PssaSettings -FilePath (Join-Path $repo 'thing.ps1') -ProjectRoot $repo
+            $handed = @(@($script:AnSent) | ForEach-Object { [string]$_.params.settings.powershell.scriptAnalysis.settingsPath })
+            return @{ Record = $script:policyApplication; Log = @($script:AnLog); Handed = $handed; Settings = $settings }
+        }
+
+        $script:AnReq = Resolve-EffectivePolicy -Path (New-EnFile "@{ RequiredRules = @('PSAvoidGlobalVars') }" -Name 'org.psd1') -Source 'cli'
+        $script:AnExc = Resolve-EffectivePolicy -Path (New-EnFile "@{ ExcludeRules = @('PSUseApprovedVerbs') }" -Name 'org.psd1') -Source 'cli'
+        function New-AnEvFile {
+            # One file's evidence as the scan reads it back -- both parties agreeing on $Declared, the settings valid --
+            # with settings.ansiDecoded = $true added by hand when asked, so the verdict is judged on the receipt alone.
+            param($Declared, [bool]$AnsiDecoded)
+            $needs = ([string]$Declared.obligations.mergedSettings -eq 'required')
+            $sha = ('c' * 64)
+            $daemon = New-PolicyApplicationEvidence -RequiredState $(if ($needs) { 'activated' } else { 'not-required' }) -RequiredCount 1 `
+                -GuardVerifiedFor 'v4.6.0' -GuardObserved 'v4.6.0' -GuardResult 'pass' -MergedPath 'm' -MergedSha256 $(if ($needs) { $sha } else { '' }) `
+                -SettingsPath 'm' -SettingsSource $(if ($needs) { 'merged' } else { 'resolved' }) -SettingsSha256 $sha -Delivered $true -SettingsValidation 'valid'
+            $daemon.resolution = [ordered]@{ path = 'p'; configured = $true; usable = $true; reason = ''; effectiveSha256 = [string]$Declared.identity.sha256 }
+            if ($AnsiDecoded) { $daemon.settings['ansiDecoded'] = $true }
+            $client = New-PolicyAdjudicationEvidence -Mode 'closed'
+            $client.resolution = [ordered]@{ path = 'p'; configured = $true; usable = $true; reason = ''; effectiveSha256 = [string]$Declared.identity.sha256 }
+            $receipt = [ordered]@{
+                engine = [ordered]@{ pses = '4.6.0'; pssa = '1.25.0' }
+                config = [ordered]@{ state = 'unbound'; observed = [ordered]@{ severityThreshold = 'Hint'; ruleInclude = ''; ruleExclude = ''; perFileCap = 0 } }
+                policy = [ordered]@{ state = 'observed'; client = $client; daemon = $daemon }
+            }
+            return [pscustomobject]@{ File = 'C:\x.ps1'; Completeness = 'complete'; Pass = 'pssa'; Receipt = (($receipt | ConvertTo-Json -Depth 8) | ConvertFrom-Json) }
+        }
+    }
+
+    It 'B1e-RV02: the classifier reads a settings file <Name> as <Want>' -ForEach @(
+        @{ Shape = 'utf8'; Name = 'saved as UTF-8 without a byte order mark, holding the Kelvin sign'; Want = 'unmarked-non-ascii' }
+        @{ Shape = 'ansi'; Name = 'saved in the ANSI code page without a byte order mark (the byte E9)'; Want = 'unmarked-non-ascii' }
+        @{ Shape = 'utf8-bom'; Name = 'saved as UTF-8 with a byte order mark'; Want = 'bom' }
+        @{ Shape = 'utf16le'; Name = 'saved as UTF-16 little-endian with a byte order mark'; Want = 'bom' }
+        @{ Shape = 'utf16be'; Name = 'saved as UTF-16 big-endian with a byte order mark'; Want = 'bom' }
+        @{ Shape = 'utf32le'; Name = 'saved as UTF-32 little-endian with a byte order mark'; Want = 'bom' }
+        @{ Shape = 'utf32be'; Name = 'saved as UTF-32 big-endian with a byte order mark'; Want = 'bom' }
+        @{ Shape = 'ascii'; Name = 'all ASCII, without a byte order mark'; Want = 'ascii' }
+    ) {
+        Get-PssaSettingsFileEncoding -Path (New-AnRepoFile (Get-AnBytes $Shape)) | Should -BeExactly $Want
+    }
+
+    It 'B1e-RV02: the classifier reads a file that cannot be read as the empty string, without throwing' {
+        Get-PssaSettingsFileEncoding -Path (Join-Path $TestDrive ('an-missing-' + [guid]::NewGuid().ToString('N') + '.psd1')) | Should -BeExactly ''
+    }
+
+    It 'B1e-RV02: a settings file <Name> is one this host reads in the ANSI code page only under Windows PowerShell 5.1 (<On51> there), never under PowerShell 7' -ForEach @(
+        @{ Shape = 'utf8'; Name = 'saved as UTF-8 without a byte order mark, holding the Kelvin sign'; On51 = $true }
+        @{ Shape = 'ansi'; Name = 'saved in the ANSI code page without a byte order mark'; On51 = $true }
+        @{ Shape = 'utf8-bom'; Name = 'saved as UTF-8 with a byte order mark'; On51 = $false }
+        @{ Shape = 'utf16le'; Name = 'saved as UTF-16 little-endian with a byte order mark'; On51 = $false }
+        @{ Shape = 'utf16be'; Name = 'saved as UTF-16 big-endian with a byte order mark'; On51 = $false }
+        @{ Shape = 'utf32le'; Name = 'saved as UTF-32 little-endian with a byte order mark'; On51 = $false }
+        @{ Shape = 'utf32be'; Name = 'saved as UTF-32 big-endian with a byte order mark'; On51 = $false }
+        @{ Shape = 'ascii'; Name = 'all ASCII, without a byte order mark'; On51 = $false }
+    ) {
+        Test-PssaSettingsAnsiDecoded -Path (New-AnRepoFile (Get-AnBytes $Shape)) | Should -Be ($script:AnOn51 -and $On51)
+        Test-PssaSettingsAnsiDecoded -Path '' | Should -BeFalse -Because 'no settings file is resolved'
+    }
+
+    It 'B1e-RV02 control: this host reads the Kelvin-sign entry of the file without a mark as written exactly when it is not one it reads in the ANSI code page, and the file with a mark as written always' {
+        $plain = New-AnRepoFile (Get-AnBytes 'utf8')
+        $marked = New-AnRepoFile (Get-AnBytes 'utf8-bom')
+        $want = 'PSAvoidUsingCmdletAliases|' + $script:EnKelvinTick
+        $read = @((Read-PssaSettingsFile -Path $plain).Entries['IncludeRules']) -join '|'
+        ($read -ceq $want) | Should -Be (-not (Test-PssaSettingsAnsiDecoded -Path $plain)) -Because ('read: ' + (Get-EnShown $read))
+        $readMarked = @((Read-PssaSettingsFile -Path $marked).Entries['IncludeRules']) -join '|'
+        ($readMarked -ceq $want) | Should -BeTrue -Because ('read: ' + (Get-EnShown $readMarked))
+    }
+
+    It 'B1e-RV02: the daemon records settings.ansiDecoded for <Name>, <Policy>, exactly when this host reads it in the ANSI code page (<On51> under Windows PowerShell 5.1, never under PowerShell 7), and hands PSES the same file either way' -ForEach @(
+        foreach ($s in @(
+                @{ Shape = 'utf8'; Name = 'a repository file without a byte order mark holding the Kelvin sign'; On51 = $true }
+                @{ Shape = 'ansi'; Name = 'one saved in the ANSI code page'; On51 = $true }
+                @{ Shape = 'utf8-bom'; Name = 'one saved with a byte order mark'; On51 = $false }
+                @{ Shape = 'ascii'; Name = 'an all-ASCII one without a mark'; On51 = $false })) {
+            foreach ($p in @(@{ Policy = 'with no policy'; WithPolicy = $false }, @{ Policy = 'with RequiredRules merged'; WithPolicy = $true })) {
+                @{ Shape = $s.Shape; Name = $s.Name; On51 = $s.On51; Policy = $p.Policy; WithPolicy = $p.WithPolicy }
+            }
+        }
+    ) {
+        $want = ($script:AnOn51 -and $On51)
+        $d = Invoke-AnDaemon -Bytes (Get-AnBytes $Shape) -WithPolicy $WithPolicy
+        $st = $d.Record.settings
+        ((@($st.Keys) | ForEach-Object { [string]$_ }) -join ',') | Should -BeExactly ('path,source,sha256,delivered,validation,validationDetail' + $(if ($want) { ',ansiDecoded' } else { '' })) -Because 'the key is written only when it applies, so every other record is what it was'
+        if ($want) {
+            $st['ansiDecoded'] | Should -BeOfType [bool]
+            $st['ansiDecoded'] | Should -BeTrue
+        }
+        @($d.Log | Where-Object { $_ -match 'reads it in the system ANSI code page' }).Count | Should -Be $(if ($want) { 1 } else { 0 })
+        [string]$st['validation'] | Should -BeExactly 'valid' -Because 'the record changes no verdict'
+        @($d.Handed).Count | Should -Be 1
+        [string]$st['path'] | Should -BeExactly $d.Handed[0]
+        if ($WithPolicy) {
+            [string]$d.Record.requiredRules.state | Should -BeExactly 'activated'
+            [string]$st['source'] | Should -BeExactly 'merged'
+            [System.IO.Path]::GetFileName($d.Handed[0]) | Should -Match '\Amerged-settings-[0-9a-f]{16}\.psd1\z'
+        } else {
+            [string]$st['source'] | Should -BeExactly 'resolved'
+            $d.Handed[0] | Should -BeExactly $d.Settings -Because 'PSES is handed the repository file itself, as it was'
+        }
+    }
+
+    It 'B1e-RV02: the evidence builder writes settings.ansiDecoded = $true only when told to, as the last settings key, and a record without it is byte for byte what it was' {
+        $plain = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid'
+        $off = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid' -SettingsAnsiDecoded $false
+        $on = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid' -SettingsAnsiDecoded $true
+        (@($plain.settings.Keys) -join ',') | Should -BeExactly 'path,source,sha256,delivered,validation,validationDetail'
+        ($off | ConvertTo-Json -Depth 8 -Compress) | Should -BeExactly ($plain | ConvertTo-Json -Depth 8 -Compress)
+        (@($on.settings.Keys) -join ',') | Should -BeExactly 'path,source,sha256,delivered,validation,validationDetail,ansiDecoded'
+        $on.settings['ansiDecoded'] | Should -BeOfType [bool]
+        $on.settings['ansiDecoded'] | Should -BeTrue
+    }
+
+    It 'B1e-RV02: the scan''s copy of a daemon record carries settings.ansiDecoded exactly when the record does, read in memory or from its JSON' {
+        $on = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid' -SettingsAnsiDecoded $true
+        $off = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid'
+        foreach ($rec in @($on, (($on | ConvertTo-Json -Depth 8) | ConvertFrom-Json))) {
+            $c = Copy-PolicyApplicationEvidence -Evidence $rec -SettingsSha256 ('a' * 64)
+            (@($c.settings.Keys) -join ',') | Should -BeExactly 'path,source,sha256,delivered,validation,validationDetail,ansiDecoded'
+            $c.settings['ansiDecoded'] | Should -BeTrue
+        }
+        foreach ($rec in @($off, (($off | ConvertTo-Json -Depth 8) | ConvertFrom-Json))) {
+            (@((Copy-PolicyApplicationEvidence -Evidence $rec -SettingsSha256 ('a' * 64)).settings.Keys) -join ',') | Should -BeExactly 'path,source,sha256,delivered,validation,validationDetail'
+        }
+    }
+
+    It 'B1e-RV02: a managed verdict over a daemon record carrying settings.ansiDecoded is NOT CERTIFIED, with the application-stage code policy-settings-ansi-decoded -- RequiredRules activated or none required; the same record without it certifies; an unmanaged verdict refuses nothing' {
+        foreach ($decl in @($script:AnReq, $script:AnExc)) {
+            foreach ($ansi in @($false, $true)) {
+                $f = New-AnEvFile -Declared $decl -AnsiDecoded $ansi
+                $c = Test-ScanPolicyCertification -Mode 'closed' -Declared $decl -Files @($f)
+                if ($ansi) {
+                    $c.Certified | Should -BeFalse -Because 'Windows PowerShell 5.1 read the repository''s settings file in the ANSI code page'
+                    (@($c.Files[0].Reasons) -join ',') | Should -BeExactly 'policy-settings-ansi-decoded'
+                    @($c.Reasons).Count | Should -Be 0 -Because 'a per-file reason: each file''s daemon record says it'
+                } else {
+                    $c.Certified | Should -BeTrue -Because ('CONTROL: ' + (@($c.AllReasons) -join ','))
+                }
+                (Test-ScanPolicyCertification -Mode 'open' -Declared $decl -Files @($f)).Managed | Should -BeFalse -Because 'an unmanaged verdict refuses nothing'
+            }
+        }
+        $t = Get-PolicyReasonTable
+        $t.Contains('policy-settings-ansi-decoded') | Should -BeTrue
+        [string]$t['policy-settings-ansi-decoded'].Stage | Should -BeExactly 'application'
+    }
+
+    It 'B1e-RV02: every scan''s warning is one line naming the fix when any file''s daemon record carries settings.ansiDecoded, and none otherwise; lsp-scan.ps1 asks for it once' {
+        $none = New-AnEvFile -Declared $script:AnReq -AnsiDecoded $false
+        $one = New-AnEvFile -Declared $script:AnReq -AnsiDecoded $true
+        Get-ScanSettingsAnsiDecodedWarning -Files @($none, $null) | Should -BeExactly ''
+        Get-ScanSettingsAnsiDecodedWarning -Files @() | Should -BeExactly ''
+        Get-ScanSettingsAnsiDecodedWarning -Files @($none, $one, $one) | Should -BeExactly ('lsp-scan: warning: Windows PowerShell 5.1 read the repository''s settings file in the system ANSI code page (it has no byte order mark and holds a byte above 0x7F), so these findings may not rest on the settings as the repository wrote them. Save it with a byte order mark. See docs/repository-scanning.md.')
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:EnScripts 'lsp-scan.ps1'), [ref]$null, [ref]$null)
+        @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-ScanSettingsAnsiDecodedWarning' }, $true)).Count | Should -Be 1
+    }
+
+    It 'B1e-RV02: the receipt types settings.ansiDecoded -- $true is well formed, a value that is not a boolean is not, and a record without it is still well formed' {
+        $daemon = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid'
+        $policy = (([ordered]@{ client = (New-PolicyAdjudicationEvidence); daemon = $daemon }) | ConvertTo-Json -Depth 8) | ConvertFrom-Json
+        @(Get-ScanReceiptPolicyEvidenceProblems -Policy $policy).Count | Should -Be 0 -Because 'CONTROL: a record without the key, as every daemon before dispatch 000309 writes'
+        $policy.daemon.settings | Add-Member -NotePropertyName 'ansiDecoded' -NotePropertyValue $true
+        @(Get-ScanReceiptPolicyEvidenceProblems -Policy $policy).Count | Should -Be 0
+        foreach ($bad in @('true', 1, $null)) {
+            $policy.daemon.settings.ansiDecoded = $bad
+            @(Get-ScanReceiptPolicyEvidenceProblems -Policy $policy) | Should -Contain 'policy.daemon.settings.ansiDecoded is not a boolean' -Because ('a ' + $(if ($null -eq $bad) { 'null' } else { $bad.GetType().Name }) + ' is not a boolean')
+        }
+    }
+
+    It 'B1e-RV02: docs/scan-receipt.schema.json declares settings.ansiDecoded as an optional boolean' {
+        $schema = [System.IO.File]::ReadAllText((Join-Path $script:EnRepo 'docs/scan-receipt.schema.json')) | ConvertFrom-Json
+        $st = $schema.properties.policy.properties.daemon.oneOf[1].properties.settings
+        [string]$st.properties.ansiDecoded.type | Should -BeExactly 'boolean'
+        @($st.required) | Should -Not -Contain 'ansiDecoded'
+        [string]$st.properties.ansiDecoded.description | Should -Match 'policy-settings-ansi-decoded'
     }
 }

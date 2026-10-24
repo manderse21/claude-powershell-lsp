@@ -168,7 +168,11 @@
                       "description": "The daemon's verdict on the settings files the analysis rests on (dispatch 000306): whether PSScriptAnalyzer accepts the repository's and the merged one. They are validated when a PSES session starts, at its first analyzed file, before PSES is handed them; an edit to a settings file during a session is validated at the next session (owner ruling K08), and until then this is the verdict recorded when the session started, while PSES reads the edited file unchecked. Only valid and none let a managed scan certify.",
                       "enum": ["pending", "none", "valid", "rejected", "unparsable", "unresolved"]
                     },
-                    "validationDetail": { "type": "string" }
+                    "validationDetail": { "type": "string" },
+                    "ansiDecoded": {
+                      "description": "Present, and true, only when the daemon ran under Windows PowerShell 5.1 and the settings file it resolved has no byte order mark and holds a byte above 0x7F, which 5.1 reads in the system ANSI code page (dispatch 000309, owner ruling RV-02): a managed scan refuses it (policy-settings-ansi-decoded) and every scan warns. Optional: absent otherwise, and from a daemon before dispatch 000309.",
+                      "type": "boolean"
+                    }
                   }
                 }
               }

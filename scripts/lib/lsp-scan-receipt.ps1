@@ -736,6 +736,11 @@ function Get-ScanReceiptPolicyEvidenceProblems {
             }
             if (-not ((Get-ScanReceiptField $st 'delivered') -is [bool])) { $p.Add('policy.daemon.settings.delivered is not a boolean') }
             if ([string](Get-ScanReceiptField $st 'sha256') -cnotmatch $hex) { $p.Add('policy.daemon.settings.sha256 is not empty or 64 lower-case hex') }
+            # ansiDecoded (dispatch 000309): optional -- a daemon writes it, true, only when Windows PowerShell 5.1 read
+            # the settings file it resolved in the system ANSI code page -- and a boolean when present.
+            if ((Test-ScanReceiptHasField -Object $st -Name 'ansiDecoded') -and -not ((Get-ScanReceiptField $st 'ansiDecoded') -is [bool])) {
+                $p.Add('policy.daemon.settings.ansiDecoded is not a boolean')
+            }
         }
     }
     return @($p.ToArray())

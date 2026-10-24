@@ -1869,6 +1869,37 @@ function Get-PssaSettingsEntryProblem {
     return ($Key + ' is not a key PSScriptAnalyzer accepts')
 }
 
+function Get-PssaSettingsFileEncoding {
+    # How a settings file's bytes open (dispatch 000309, B1e; owner ruling RV-02, design a): 'bom' when they start
+    # with a byte order mark PowerShell honors (UTF-8, UTF-16 little- or big-endian -- the first also opens UTF-32
+    # little-endian -- or UTF-32 big-endian), 'ascii' when no byte is above 0x7F, else 'unmarked-non-ascii': the
+    # file Windows PowerShell 5.1 reads in the system ANSI code page and PowerShell 7 as UTF-8. '' when it cannot be
+    # read. Pure over the bytes on disk; never throws.
+    param([string]$Path)
+    try {
+        $b = [System.IO.File]::ReadAllBytes($Path)
+        if ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF) { return 'bom' }
+        if ($b.Length -ge 2 -and (($b[0] -eq 0xFF -and $b[1] -eq 0xFE) -or ($b[0] -eq 0xFE -and $b[1] -eq 0xFF))) { return 'bom' }
+        if ($b.Length -ge 4 -and $b[0] -eq 0 -and $b[1] -eq 0 -and $b[2] -eq 0xFE -and $b[3] -eq 0xFF) { return 'bom' }
+        foreach ($x in $b) { if ($x -gt 0x7F) { return 'unmarked-non-ascii' } }
+        return 'ascii'
+    } catch { return '' }
+}
+
+function Test-PssaSettingsAnsiDecoded {
+    # Whether THIS host reads the settings file at $Path in the system ANSI code page (dispatch 000309, B1e; owner
+    # ruling RV-02, design a, on review finding B1d-RV-02): only Windows PowerShell 5.1 does, and only for a file
+    # that has no byte order mark and holds a byte above 0x7F (Get-PssaSettingsFileEncoding) -- so a character
+    # outside ASCII a repository wrote in UTF-8 reaches the analysis as other characters there. PowerShell 7 reads
+    # every such file as UTF-8, so this is never true under it. The daemon records the answer
+    # (settings.ansiDecoded) and a managed scan refuses it (policy-settings-ansi-decoded); what PSES is handed does
+    # not change.
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    if ($PSVersionTable.PSEdition -eq 'Core') { return $false }
+    return ((Get-PssaSettingsFileEncoding -Path $Path) -ceq 'unmarked-non-ascii')
+}
+
 function Read-PssaSettingsFile {
     # Read the PSScriptAnalyzer settings file at $Path the way PSScriptAnalyzer reads it, as DATA, and
     # say whether PSScriptAnalyzer -- run by PSES as this plugin runs it -- would accept it. Never throws.
