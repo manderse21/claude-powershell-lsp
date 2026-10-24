@@ -126,6 +126,7 @@ scan exits `4` with `executionSuccessful=false`:
 | `policy-merge-write-failed` | the merged settings file could not be written and read back intact |
 | `policy-activation-not-delivered` | the merged settings were not pushed to PSES, or the settings file changed after they were |
 | `policy-settings-rejected` | PSScriptAnalyzer would reject, or could not read, a settings file the analysis rests on -- the repository's, or the merged one ([below](#settings-files-the-analysis-rests-on-dispatch-000306)) |
+| `policy-settings-ansi-decoded` | the daemon ran under Windows PowerShell 5.1, and the settings file it resolved has no byte order mark and holds a byte above 0x7F, which 5.1 reads in the system ANSI code page -- so the analysis may not rest on the settings as the repository wrote them ([below](#settings-files-the-analysis-rests-on-dispatch-000306)); save the file with a byte order mark |
 | `policy-required-rule-cannot-run` | a rule the policy requires cannot run under the merged settings handed to PSES, by the daemon's static check (`requiredRules.cannotRun`): a code with no rule behind it (decided only while the settings carry no `CustomRulePath`; see below), one a repository pattern beside a `CustomRulePath` still excludes, or a configurable rule whose entry in the merged `Rules` does not set `Enable = $true` |
 | `policy-suppression-pass-failed` | the `ProhibitedSuppressions` re-surfacing pass could not run |
 | `config-observed-mismatch` | the daemon reports an analysis configuration other than the scan's declared one |
@@ -165,7 +166,10 @@ rests on, the repository's and the merged one, to be one PSScriptAnalyzer accept
 [below](#settings-files-the-analysis-rests-on-dispatch-000306); and -- since dispatch 000307's
 correction round 1 -- that the merged settings can run every required rule by the daemon's static check,
 and that the scanned tree held no `PSScriptAnalyzerSettings.psd1` below the scan root
-([below](#which-settings-file-governs-a-scan-owner-rulings-q07-and-rv-01)). What the merged settings do for a
+([below](#which-settings-file-governs-a-scan-owner-rulings-q07-and-rv-01)); and -- since dispatch 000309 -- that under
+Windows PowerShell 5.1 the settings file the daemon resolved is not one 5.1 reads in the system ANSI code page, and
+that the merged file holds the merge's text exactly, a text that cannot be written as UTF-8 never being written
+([below](#settings-files-the-analysis-rests-on-dispatch-000306)). What the merged settings do for a
 required rule is this: it is named in `IncludeRules` when the merged file has one -- by the name
 PSScriptAnalyzer matches, the bare `Measure-Name` for a custom rule written `Module\Measure-Name` in
 `RequiredRules` (dispatch 000307, review finding B1b-OOB2-R02); it is taken out of a repository's
@@ -195,14 +199,15 @@ It does NOT prove:
   the modules it loads, or that a required code names any rule at all: there any code that is not a
   built-in rule name, a misspelled built-in name included, is treated as a possible custom rule and is not
   refused (leg A3);
-- on a Windows PowerShell 5.1 host, that a repository's own settings file saved WITHOUT a byte order mark
-  is read as the repository wrote it: 5.1 reads such a file in the system ANSI code page (Windows-1252 on a
-  US or Western-European system) -- PSScriptAnalyzer itself,
-  with or without a merge -- so a character outside ASCII in it reaches the analysis as other characters,
-  and an `IncludeRules` entry spelling `PSMisleadingBacktick` with the Kelvin sign selects nothing there
-  while a managed scan certifies (measured, dispatch 000308: under PowerShell 7, which reads the file as
-  UTF-8, it selects the rule). The merged settings file itself reads the same on both hosts since dispatch
-  000308 ([below](#settings-files-the-analysis-rests-on-dispatch-000306)); save a settings file that holds
+- that PowerShell 7 reads a settings file saved WITHOUT a byte order mark in the system ANSI code page as its
+  author wrote it: PowerShell 7 reads every such file as UTF-8, and the refusal
+  [below](#settings-files-the-analysis-rests-on-dispatch-000306) is Windows PowerShell 5.1's alone (measured: a
+  `CustomRulePath` under a directory named with an accent, in a file saved in Windows-1252, is refused under
+  PowerShell 7 as a path that does not exist, `policy-settings-rejected`, as it was before). Under 5.1 a managed
+  scan no longer certifies over a settings file saved without a mark that holds a byte above 0x7F -- 5.1 reads one
+  in the system ANSI code page (Windows-1252 on a US or Western-European system), PSScriptAnalyzer itself, so an
+  `IncludeRules` entry spelling `PSMisleadingBacktick` with the Kelvin sign selected nothing while a managed scan
+  certified -- it is refused with `policy-settings-ansi-decoded` (dispatch 000309). Save a settings file that holds
   such a character with a byte order mark;
 - that a required rule that needs settings the repository does not give it could run
   (`PSUseCompatibleCommands` and `PSUseCompatibleTypes` need `TargetProfiles`, and without them find
@@ -330,14 +335,42 @@ managed scan over a valid repository file was refused with `policy-settings-reje
 warned. The merged file now opens with a UTF-8 byte order mark whenever it holds a character outside ASCII,
 and under Windows PowerShell 5.1 each of the three runs as it does under PowerShell 7 -- the rule selected,
 the rule excluded, the custom rule loaded and the scan certified (measured through the real daemon on both
-hosts, for those three; a lone surrogate is the exception below). A merged file whose text is all ASCII is
+hosts, for those three). A merged file whose text is all ASCII is
 written byte for byte as before, under the same name. The repository's own file is read as each host reads
 it -- one saved without a mark is read by 5.1 in the system ANSI code page (Windows-1252 on a US or
-Western-European system), merged or not -- and the merged file carries what the host read (above, under
-what certification does not prove), except a lone UTF-16 surrogate: only PowerShell 7 can write one in a
-settings string (the `` `u{D800} `` escape in a double-quoted string), and the merged file holds U+FFFD in
-its place, so once merged an `ExcludeRules` or `CustomRulePath` entry holding one names that spelling
-instead (measured through the real daemon; dispatch 000309, leg B1e, review finding B1d-RV2-01).
+Western-European system), merged or not, which a managed scan now refuses (below) -- and the merged file
+carries what the host read. **A lone UTF-16 surrogate makes the merge fail** (dispatch 000309, leg B1e; owner
+ruling D2 on review finding B1d-RV2-01). Only PowerShell 7 can write one in a settings string (the
+`` `u{D800} `` escape in a double-quoted string), and the merged text is encoded strictly: a merge that would
+carry one -- in an `IncludeRules` or `ExcludeRules` entry, a `CustomRulePath`, a string a `Rules` entry gives a
+rule, or a `Rules` key -- writes no merged file, so the daemon records `merge-write-failed`, a managed scan is NOT
+CERTIFIED with `policy-merge-write-failed`, and an unmanaged scan falls back to the repository's own file, which
+PSES reads as written (measured at the writer for all five, on both hosts, and through the real daemon under
+PowerShell 7 for an `ExcludeRules` entry and a `CustomRulePath`). Before, the merged file held U+FFFD in its
+place, so once merged such an entry named that spelling instead -- something a repository can create -- and a
+managed scan certified while the settings the repository declared did not govern: a `CustomRulePath` whose U+FFFD
+spelling named another directory that exists, and an `ExcludeRules` entry whose U+FFFD spelling named a custom
+rule, which was hidden (measured). A valid surrogate pair is written byte for byte as before.
+
+**A settings file Windows PowerShell 5.1 reads in the ANSI code page is refused** (dispatch 000309, leg B1e; owner
+ruling RV-02, design (a), on review finding B1d-RV-02). PSScriptAnalyzer and the daemon's check read the
+repository's own file as each host reads it, and 5.1 reads one saved without a byte order mark in the system ANSI
+code page, so on a 5.1 host a character outside ASCII in it reached the analysis as other characters, merged or
+not: an `IncludeRules` entry spelling `PSMisleadingBacktick` with the Kelvin sign selected nothing, and a managed
+scan certified without that rule (measured through the real daemon; PowerShell 7, which reads the file as UTF-8,
+ran it). When the daemon runs under Windows PowerShell 5.1 and the settings file it resolved has no byte order mark
+(UTF-8, UTF-16 or UTF-32) and holds a byte above 0x7F -- anywhere in it, a comment included -- it records so
+(`policy.daemon.settings.ansiDecoded`, present only then), every scan says so on stderr (`lsp-scan: warning:
+Windows PowerShell 5.1 read the repository's settings file in the system ANSI code page (...). Save it with a byte
+order mark. ...`), and a managed scan is NOT CERTIFIED with `policy-settings-ansi-decoded`. Nothing else changes:
+PSES is handed the file it was handed before, so on 5.1 the edit hook -- which says nothing about it -- and an
+unmanaged scan still read such a file in the ANSI code page, and a file with a mark, or all ASCII, is read and
+recorded as before. **The refusal is decided from the file's bytes, not from what its author meant**, so it also
+refuses a file saved without a mark in the ANSI code page itself, which 5.1 reads as written (measured: a
+`CustomRulePath` under a directory named with an accent, saved in Windows-1252, certified under 5.1 before and is
+refused now). Saving the file with a byte order mark, the fix the warning names, lets both hosts read it as written
+and nothing is refused (measured: every row whose file has a mark). PowerShell 7 is unchanged (measured: all 24
+rows).
 
 **What the check cannot see.** It reads the settings file and lists the directories a `CustomRulePath`
 reaches, but loads nothing: **a rule source PSScriptAnalyzer cannot load or run, or that holds no rule**,

@@ -48,25 +48,46 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
-PATCH: **The suite's daemon census no longer races slow WMI, and a documentation sentence about the merged
-settings file now states only what was measured** (dispatch 000309, leg B1e -- the dispatch 000293 test, and
-B1d's review findings B1d-RV2-01 and B1d-RV-05; tests, one code comment and documentation only; no shipped
-behaviour changes). **The census:** `Get-IntegrationDaemonLeak` (`tests/Integration.Common.ps1`) looked up
-each `pwsh` and `powershell` process's command line in its own `Win32_Process` query, and dispatch 000293's
-fake daemon slept 60 seconds and exited. When this host's WMI took about 3.6 s a query, one census took 72 to
-98 s, reached the fake after it had gone, and the test read 0 for 1. On Windows the census now makes ONE
-query for both process names, and the fake lives until its `AfterAll` stops it -- it reads its stdin to the
-end, which only the test host holds open, so a host that dies first takes it along. Reproduced
-deterministically, by holding a census's first `Win32_Process` answer 90 s, never by waiting for slow WMI:
-RED at be1f38e and GREEN now, under Windows PowerShell 5.1 and PowerShell 7; a new test pins the one query.
-**Documentation:** `docs/repository-scanning.md` no longer says without exception that the merged settings
-file carries what the host read: a lone UTF-16 surrogate, which only PowerShell 7 can write in a settings
-string (the `` `u{D800} `` escape in a double-quoted string), is written to the merged file as U+FFFD, so
-once merged an `ExcludeRules` or `CustomRulePath` entry holding one names that spelling instead (measured
-through the real daemon; pre-existing since dispatch 000294). A comment in `scripts/lib/lsp-common.ps1` now
-says Windows PowerShell 5.1 reads a settings file without a byte order mark in the system ANSI code page
-(Windows-1252 on a US or Western-European system), as the documentation does. No `userConfig` knob, status
-token, CLI flag, reason code or exit code is added or changed.
+MINOR: **On Windows PowerShell 5.1 a managed scan refuses a repository settings file 5.1 reads in the ANSI code
+page, a lone surrogate makes the merged settings write fail, and the suite's daemon census no longer races slow
+WMI** (dispatch 000309, leg B1e -- owner rulings RV-02, design (a), and D2 on review findings B1d-RV-02 and
+B1d-RV2-01; B1d-RV-05; and the dispatch 000293 test). **The repository's settings file on 5.1:** Windows
+PowerShell 5.1 reads a settings file that has no byte order mark in the system ANSI code page (Windows-1252 on a
+US or Western-European system) -- PSScriptAnalyzer and the daemon's check alike -- so a character outside ASCII
+that a repository wrote in UTF-8 reached a 5.1 analysis as other characters: a Kelvin-sign `IncludeRules` entry
+selected nothing and a managed scan CERTIFIED without that rule (measured through the real daemon). When the
+daemon runs under 5.1 and the settings file it resolved has no byte order mark and holds a byte above 0x7F, it
+now records so in its application evidence (`settings.ansiDecoded`, an optional field of the still-unreleased
+receipt schema version 2, present only then), every scan warns on stderr, naming the fix (save the file with a
+byte order mark), and a managed scan is NOT CERTIFIED with the new reason code `policy-settings-ansi-decoded`.
+PSES is handed the file as before, so on 5.1 the edit hook and an unmanaged scan still read such a file in the
+ANSI code page; and the refusal also covers a file saved without a mark in the ANSI code page itself, which 5.1
+reads as written (measured: a managed scan that certified before is refused now). Under PowerShell 7 nothing
+changes (measured through the real daemon). **A lone surrogate** (pre-existing under PowerShell 7 since dispatch
+000294): a lone UTF-16 surrogate in a repository settings string -- the `` `u{D800} `` escape, PowerShell 7 only --
+was written to the merged file as U+FFFD, so once merged an `ExcludeRules` entry or a `CustomRulePath` holding one
+could name something a repository created under that spelling, and a managed scan CERTIFIED while the settings
+the repository declared did not govern (a decoy rule directory; an excluded custom rule's findings hidden --
+measured through the real daemon). The merged text is now encoded strictly: such a merge writes no merged file,
+the daemon records `merge-write-failed`, a managed scan is NOT CERTIFIED with `policy-merge-write-failed`, and an
+unmanaged scan falls back to the repository's own file, read as written. Every valid text, a surrogate pair
+included, is written byte for byte as before, so no pinned text or merged file name changes. **The census:**
+`Get-IntegrationDaemonLeak` (`tests/Integration.Common.ps1`) looked up each `pwsh` and `powershell` process's
+command line in its own `Win32_Process` query, and dispatch 000293's fake daemon slept 60 seconds and exited.
+When this host's WMI took about 3.6 s a query, one census took 72 to 98 s, reached the fake after it had gone,
+and the test read 0 for 1. On Windows the census now makes ONE query for both process names, and the fake lives
+until its `AfterAll` stops it -- it reads its stdin to the end, which only the test host holds open, so a host
+that dies first takes it along. Reproduced deterministically, by holding a census's first `Win32_Process` answer
+90 s, never by waiting for slow WMI: RED at be1f38e and GREEN now, under Windows PowerShell 5.1 and PowerShell 7;
+a new test pins the one query. The dispatch 000293 control test now also removes the `not-a-suite-root-` data
+root it makes under the OS temp root, which nothing removed. **Documentation:** `docs/repository-scanning.md`
+describes both refusals, and its "It does NOT prove" entry for a repository settings file saved without a byte
+order mark now says only what remains (PowerShell 7 reads one saved in the ANSI code page as UTF-8); the comment
+in `scripts/lib/lsp-common.ps1`, `docs/DEV_NOTES.md` and two test files say Windows PowerShell 5.1 reads a
+settings file without a byte order mark in the system ANSI code page (Windows-1252 on a US or Western-European
+system), as the documentation does. No `userConfig` knob, status token or CLI flag is added; one managed-scan
+reason code is (`policy-settings-ansi-decoded`), exit codes are unchanged (a managed scan that is not certified
+exits `4`, as before), and `doctor -Json`'s `orgPolicy` keys keep their names, order and types.
 
 PATCH: **The merged settings file reads the same on Windows PowerShell 5.1 as on PowerShell 7** (dispatch
 000308, leg B1d -- owner ruling RR-02 on review findings B1c-RR-02 and B1c-RX-12, and B1c's found-on-the-way
