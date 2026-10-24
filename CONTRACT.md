@@ -469,6 +469,15 @@ cold. None is a contract change; each is banked here deliberately.
   and one stderr warning line from `lsp-scan.ps1`. **No knob, no status token and no CLI flag is added**; exit
   codes are unchanged, and `doctor -Json`'s `orgPolicy` keys keep their names, order and types. Recorded here as a
   **note, not an amendment**.
+- **A settings file PowerShell 7 reads as UTF-8 though its bytes are not UTF-8 (NOT a Tier-1 frozen surface) --
+  dispatch 000310.** On a PowerShell 7 host a managed scan refuses a resolved settings file with no byte order mark
+  whose bytes are not valid UTF-8, and every scan warns -- a behavior change recorded in the CHANGELOG, by the
+  owner's ruling B1e-RV-01. Windows PowerShell 5.1 is unchanged. Additive and outside the frozen surface: one
+  managed-scan reason code (`policy-settings-not-utf8`), one optional field on the daemon's application evidence in
+  the still-unreleased receipt schema version 2 (`settings.notUtf8`) and one stderr warning line from
+  `lsp-scan.ps1`. **No knob, no status token and no CLI flag is added**; exit codes are unchanged, and
+  `doctor -Json`'s `orgPolicy` keys keep their names, order and types. Recorded here as a **note, not an
+  amendment**.
 
 ---
 
