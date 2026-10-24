@@ -459,6 +459,16 @@ cold. None is a contract change; each is banked here deliberately.
   receipt schema version 2 (`requiredRules.cannotRun`) and one stderr warning line from `lsp-scan.ps1`.
   **No knob, no status token and no CLI flag is added**; exit codes are unchanged, and `doctor -Json`'s
   `orgPolicy` keys keep their names, order and types. Recorded here as a **note, not an amendment**.
+- **A settings file Windows PowerShell 5.1 reads in the ANSI code page, and a lone surrogate in the merge (NOT a
+  Tier-1 frozen surface) -- dispatch 000309.** On a Windows PowerShell 5.1 host a managed scan refuses a resolved
+  settings file with no byte order mark that holds a byte above 0x7F, and every scan warns; a `RequiredRules`
+  merge whose text holds a lone UTF-16 surrogate writes no merged file (`merge-write-failed`, which a managed scan
+  refuses as before) -- behavior changes recorded in the CHANGELOG, by the owner's rulings RV-02 and D2. Additive
+  and outside the frozen surface: one managed-scan reason code (`policy-settings-ansi-decoded`), one optional field
+  on the daemon's application evidence in the still-unreleased receipt schema version 2 (`settings.ansiDecoded`)
+  and one stderr warning line from `lsp-scan.ps1`. **No knob, no status token and no CLI flag is added**; exit
+  codes are unchanged, and `doctor -Json`'s `orgPolicy` keys keep their names, order and types. Recorded here as a
+  **note, not an amendment**.
 
 ---
 

@@ -204,7 +204,8 @@ and never parse it a second way. Things that bite when you change this path:
   ASCII) and a non-ASCII text gets a name an earlier daemon's BOM-less file never had. Never add the mark
   unconditionally -- it renames every merged file -- and never test "outside ASCII" with `-match`, whose
   IgnoreCase lets U+212A through as `k`; compare each character's code. A repository's OWN settings file is
-  read as each host reads it: saved without a BOM, 5.1 reads it as Windows-1252, merged or not.
+  read as each host reads it: saved without a BOM, 5.1 reads it in the system ANSI code page (Windows-1252 on a
+  US or Western-European system), merged or not.
 - **No file, no proof.** A managed verdict over zero files is `analysis-empty`, never certified: O03
   certifies only on evidence the policy was applied, and an empty target produces none.
 - **A rule code is a rule name, and the identity folds ASCII `A`-`Z` only.** `Test-OrgPolicyRuleCode`

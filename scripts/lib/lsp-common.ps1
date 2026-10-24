@@ -1869,6 +1869,37 @@ function Get-PssaSettingsEntryProblem {
     return ($Key + ' is not a key PSScriptAnalyzer accepts')
 }
 
+function Get-PssaSettingsFileEncoding {
+    # How a settings file's bytes open (dispatch 000309, B1e; owner ruling RV-02, design a): 'bom' when they start
+    # with a byte order mark PowerShell honors (UTF-8, UTF-16 little- or big-endian -- the first also opens UTF-32
+    # little-endian -- or UTF-32 big-endian), 'ascii' when no byte is above 0x7F, else 'unmarked-non-ascii': the
+    # file Windows PowerShell 5.1 reads in the system ANSI code page and PowerShell 7 as UTF-8. '' when it cannot be
+    # read. Pure over the bytes on disk; never throws.
+    param([string]$Path)
+    try {
+        $b = [System.IO.File]::ReadAllBytes($Path)
+        if ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF) { return 'bom' }
+        if ($b.Length -ge 2 -and (($b[0] -eq 0xFF -and $b[1] -eq 0xFE) -or ($b[0] -eq 0xFE -and $b[1] -eq 0xFF))) { return 'bom' }
+        if ($b.Length -ge 4 -and $b[0] -eq 0 -and $b[1] -eq 0 -and $b[2] -eq 0xFE -and $b[3] -eq 0xFF) { return 'bom' }
+        foreach ($x in $b) { if ($x -gt 0x7F) { return 'unmarked-non-ascii' } }
+        return 'ascii'
+    } catch { return '' }
+}
+
+function Test-PssaSettingsAnsiDecoded {
+    # Whether THIS host reads the settings file at $Path in the system ANSI code page (dispatch 000309, B1e; owner
+    # ruling RV-02, design a, on review finding B1d-RV-02): only Windows PowerShell 5.1 does, and only for a file
+    # that has no byte order mark and holds a byte above 0x7F (Get-PssaSettingsFileEncoding) -- so a character
+    # outside ASCII a repository wrote in UTF-8 reaches the analysis as other characters there. PowerShell 7 reads
+    # every such file as UTF-8, so this is never true under it. The daemon records the answer
+    # (settings.ansiDecoded) and a managed scan refuses it (policy-settings-ansi-decoded); what PSES is handed does
+    # not change.
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    if ($PSVersionTable.PSEdition -eq 'Core') { return $false }
+    return ((Get-PssaSettingsFileEncoding -Path $Path) -ceq 'unmarked-non-ascii')
+}
+
 function Read-PssaSettingsFile {
     # Read the PSScriptAnalyzer settings file at $Path the way PSScriptAnalyzer reads it, as DATA, and
     # say whether PSScriptAnalyzer -- run by PSES as this plugin runs it -- would accept it. Never throws.
@@ -2328,22 +2359,32 @@ function ConvertTo-MergedPssaSettingsBytes {
     # (EF BB BF) exactly when it holds a character outside ASCII.
     #
     # WHY THE MARK (owner ruling RR-02; review findings B1c-RR-02 and B1c-RX-12). Windows PowerShell 5.1 reads a
-    # settings file that has no byte order mark as Windows-1252 -- PSScriptAnalyzer, and the daemon's own check,
-    # parse it with the host's parser, which falls back to the system code page there, where PowerShell 7 falls
-    # back to UTF-8 -- so a non-ASCII character a repository wrote in a rule list reached a 5.1 analysis as two
-    # or three other characters once merged: an IncludeRules entry spelling PSMisleadingBacktick with the Kelvin
-    # sign selected nothing (a managed scan certified without that rule), the same entry in ExcludeRules stopped
-    # excluding, and a CustomRulePath directory named with an accent read as a path that does not exist (a false
-    # policy-settings-rejected). With the mark both hosts read the file as UTF-8 (measured, both hosts, through
-    # the real daemon).
+    # settings file that has no byte order mark in the system ANSI code page (Windows-1252 on a US or
+    # Western-European system) -- PSScriptAnalyzer, and the daemon's own check, parse it with the host's parser,
+    # which falls back to the system code page there, where PowerShell 7 falls back to UTF-8 -- so a non-ASCII
+    # character a repository wrote in a rule list reached a 5.1 analysis as two or three other characters once
+    # merged: an IncludeRules entry spelling PSMisleadingBacktick with the Kelvin sign selected nothing (a managed
+    # scan certified without that rule), the same entry in ExcludeRules stopped excluding, and a CustomRulePath
+    # directory named with an accent read as a path that does not exist (a false policy-settings-rejected). With
+    # the mark both hosts read the file as UTF-8 (measured, both hosts, through the real daemon).
     #
     # WHY ONLY THEN. An all-ASCII text reads the same on both hosts with the mark or without it (measured), so it
     # is written exactly as before: its bytes, and so its content-addressed name, are unchanged -- and every
     # merged text B1b and B1c pinned is ASCII. Each character is compared by its code (above 0x7F), never by a
     # case-insensitive match, which lets the Kelvin sign through as a 'k'.
+    #
+    # A LONE SURROGATE IS REFUSED, NEVER WRITTEN AS U+FFFD (dispatch 000309, B1e; owner ruling D2 on review finding
+    # B1d-RV2-01). The text is encoded strictly: a lone UTF-16 surrogate -- which PowerShell 7 reads into a settings
+    # string from the `u{D800} escape -- makes GetBytes throw (EncoderFallbackException) instead of being written as
+    # EF BF BD, so Write-MergedPssaSettingsFile returns '' and the daemon records merge-write-failed: a managed scan
+    # refuses (policy-merge-write-failed) and an unmanaged one falls back to the repository's own file. Written as
+    # U+FFFD, an entry that matched nothing in the repository's file could name something a repository can create
+    # under that spelling -- a CustomRulePath directory, a custom rule -- and a managed scan certified while the
+    # declared settings did not govern (measured through the real daemon). Every valid text, a surrogate pair
+    # included, is encoded byte for byte as before.
     param([string]$Text)
     if ($null -eq $Text) { $Text = '' }
-    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
     $body = $utf8.GetBytes($Text)
     $outside = $false
     foreach ($ch in $Text.ToCharArray()) {
@@ -2367,7 +2408,8 @@ function Write-MergedPssaSettingsFile {
     # I/O half of the requiredRules merge: serialize $Settings (Merge-RequiredRulesSettings's
     # return value) as a .psd1 under $DataRoot and return its absolute path, or '' on any
     # failure (fail-open -- the caller falls back to the untouched pre-change path exactly as it
-    # would for a $null merge result). NEVER writes into the repo-local settings file itself:
+    # would for a $null merge result) -- a text holding a lone UTF-16 surrogate, whose bytes
+    # cannot be made, among them (dispatch 000309). NEVER writes into the repo-local settings file itself:
     # this is always a NEW file under the plugin's own per-session data root, so a live edit can
     # never corrupt a file the user or the repo owns.
     #

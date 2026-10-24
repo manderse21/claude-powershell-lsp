@@ -295,6 +295,11 @@ if ($cannotRunLine -ne '') {
     [Console]::Error.WriteLine('lsp-scan: warning: a rule the policy requires cannot run under the settings PSES was handed (' + $cannotRunLine +
         '), so these findings do not show it ran. See docs/repository-scanning.md.')
 }
+# A settings file Windows PowerShell 5.1 read in the system ANSI code page (dispatch 000309, B1e; owner ruling RV-02,
+# design a) is named on stderr by every scan, managed or not, with the fix; a managed scan is NOT CERTIFIED over it
+# (policy-settings-ansi-decoded).
+$ansiDecodedLine = Get-ScanSettingsAnsiDecodedWarning -Files @($fileEvidence)
+if ($ansiDecodedLine -ne '') { [Console]::Error.WriteLine($ansiDecodedLine) }
 
 # --- the managed verdict (dispatch 000305) -----------------------------------------------------------
 # Unmanaged: Managed=$false and nothing changes. Managed: certified only on a usable declared policy AND

@@ -117,6 +117,7 @@ function Get-PolicyReasonTable {
     $t['policy-disagreement'] = [ordered]@{ Stage = 'application'; Meaning = 'a party applied a policy whose identity differs from the declared one' }
     $t['policy-evidence-missing'] = [ordered]@{ Stage = 'application'; Meaning = 'no application evidence for this file, so whether the policy was applied is unprovable' }
     $t['policy-settings-rejected'] = [ordered]@{ Stage = 'application'; Meaning = 'PSScriptAnalyzer would reject or could not read a settings file this analysis rests on (the repository''s, or the merged one), so the analysis did not run on the settings as declared' }
+    $t['policy-settings-ansi-decoded'] = [ordered]@{ Stage = 'application'; Meaning = 'the repository''s settings file has no byte order mark and holds a byte above 0x7F, which Windows PowerShell 5.1 reads in the system ANSI code page, so the analysis may not have run on the settings as the repository wrote them' }
     $t['policy-required-rule-cannot-run'] = [ordered]@{ Stage = 'application'; Meaning = 'a rule the policy requires cannot run under the merged settings handed to PSES, by the daemon''s static check (requiredRules.cannotRun)' }
     $t['policy-suppression-pass-failed'] = [ordered]@{ Stage = 'application'; Meaning = 'the ProhibitedSuppressions pass could not run' }
     # certification -- the managed scan's other preconditions (until A3 binds the declared environment)
@@ -435,7 +436,11 @@ function New-PolicyApplicationEvidence {
     #                  was sent (delivered); and, since dispatch 000306, validation -- what the daemon
     #                  found when it checked the settings files in play against what PSScriptAnalyzer
     #                  accepts, before PSES saw any (Get-PolicySettingsValidationStates) -- with
-    #                  validationDetail, '' or one ASCII line naming which file and its first problem.
+    #                  validationDetail, '' or one ASCII line naming which file and its first problem; and,
+    #                  since dispatch 000309, ansiDecoded = $true -- the key is written ONLY then -- when the
+    #                  daemon, under Windows PowerShell 5.1, read the settings file it resolved in the
+    #                  system ANSI code page (Test-PssaSettingsAnsiDecoded), so every other record is what
+    #                  it was.
     # Every value is passed in; nothing here reads a file, so the record says only what the daemon
     # observed. An omitted validation reads 'pending' -- not checked -- never 'valid' or 'none'.
     param(
@@ -454,11 +459,12 @@ function New-PolicyApplicationEvidence {
         [string]$SettingsSha256 = '',
         [bool]$Delivered = $false,
         [string]$SettingsValidation = 'pending',
-        [string]$SettingsValidationDetail = ''
+        [string]$SettingsValidationDetail = '',
+        [bool]$SettingsAnsiDecoded = $false
     )
     if ((Get-PolicyRequiredRuleStates) -notcontains $RequiredState) { $RequiredState = 'pending' }
     if ((Get-PolicySettingsValidationStates) -cnotcontains $SettingsValidation) { $SettingsValidation = 'pending' }
-    return [ordered]@{
+    $rec = [ordered]@{
         resolution    = (New-PolicyResolutionSummary -Resolution $Resolution -Path $Path)
         requiredRules = [ordered]@{
             state                = $RequiredState
@@ -472,6 +478,8 @@ function New-PolicyApplicationEvidence {
             validation = $SettingsValidation; validationDetail = (Format-PssaSettingsText $SettingsValidationDetail 200)
         }
     }
+    if ($SettingsAnsiDecoded) { $rec.settings['ansiDecoded'] = $true }
+    return $rec
 }
 
 function New-PolicyStartupEvidence {
@@ -503,6 +511,8 @@ function Copy-PolicyApplicationEvidence {
         validation       = [string](Get-PolicyField -Object $st -Name 'validation')
         validationDetail = [string](Get-PolicyField -Object $st -Name 'validationDetail')
     }
+    # settings.ansiDecoded (dispatch 000309) rides along exactly when the record carries it.
+    if ((Get-PolicyField -Object $st -Name 'ansiDecoded') -eq $true) { $settings['ansiDecoded'] = $true }
     return [ordered]@{
         resolution    = (Get-PolicyField -Object $Evidence -Name 'resolution')
         requiredRules = (Get-PolicyField -Object $Evidence -Name 'requiredRules')
@@ -659,7 +669,9 @@ function Test-ScanPolicyCertification {
     #               by the daemon's static check (policy-required-rule-cannot-run, dispatch 000307
     #               correction round 1); PSScriptAnalyzer accepts every settings file the
     #               analysis rests on, the repository's and the merged one, by the daemon's own check
-    #               before PSES saw them (policy-settings-rejected, dispatch 000306); the daemon's
+    #               before PSES saw them (policy-settings-rejected, dispatch 000306), and the daemon did
+    #               not read the repository's under Windows PowerShell 5.1 in the system ANSI code page
+    #               (policy-settings-ansi-decoded, dispatch 000309); the daemon's
     #               observed analysis configuration is the declared one (config-observed-mismatch); the
     #               engine versions were observed (engine-unknown).
     # When the policy needs no merged settings, the daemon reporting 'not-required' is a pass: an
@@ -781,6 +793,14 @@ function Test-ScanPolicyCertification {
                         'unparsable' { $r.Add('policy-settings-rejected') }
                         default { $r.Add('policy-evidence-missing') }
                     }
+                    # A SETTINGS FILE WINDOWS POWERSHELL 5.1 READ IN THE ANSI CODE PAGE IS REFUSED (dispatch 000309,
+                    # B1e; owner ruling RV-02, design a, on review finding B1d-RV-02). The daemon records
+                    # settings.ansiDecoded when, under 5.1, the settings file it resolved has no byte order mark and
+                    # holds a byte above 0x7F: the analysis then rests on that file as 5.1 read it in the ANSI code
+                    # page, not as the repository wrote it -- a Kelvin-sign IncludeRules entry selected nothing and a
+                    # managed scan certified without that rule. Refused whatever the policy requires; an unmanaged
+                    # scan only warns (lsp-scan.ps1).
+                    if ((Get-PolicyField -Object (Get-PolicyField -Object $daemon -Name 'settings') -Name 'ansiDecoded') -eq $true) { $r.Add('policy-settings-ansi-decoded') }
                 }
             }
         }
@@ -916,6 +936,25 @@ function Get-ScanRequiredRulesCannotRun {
     }
     if ($out.Count -eq 0) { return '' }
     return (Format-PssaSettingsText ($out.ToArray() -join '; ') 400)
+}
+
+function Get-ScanSettingsAnsiDecodedWarning {
+    # What every scan warns about, managed or not (dispatch 000309, B1e; owner ruling RV-02, design a): the one stderr
+    # line, naming the fix, when a daemon record among $Files says Windows PowerShell 5.1 read the settings file it
+    # resolved in the system ANSI code page (settings.ansiDecoded), or '' when none does. Pure over the receipts the
+    # scan already holds. A managed scan is also refused over such a record (policy-settings-ansi-decoded,
+    # Test-ScanPolicyCertification).
+    param([object[]]$Files = @())
+    foreach ($f in @($Files)) {
+        if ($null -eq $f) { continue }
+        $pol = Get-PolicyField -Object (Get-PolicyField -Object $f -Name 'Receipt') -Name 'policy'
+        $st = Get-PolicyField -Object (Get-PolicyField -Object $pol -Name 'daemon') -Name 'settings'
+        if ((Get-PolicyField -Object $st -Name 'ansiDecoded') -eq $true) {
+            return ('lsp-scan: warning: Windows PowerShell 5.1 read the repository''s settings file in the system ANSI code page (it has no byte order mark and holds a byte above 0x7F), ' +
+                'so these findings may not rest on the settings as the repository wrote them. Save it with a byte order mark. See docs/repository-scanning.md.')
+        }
+    }
+    return ''
 }
 
 # --- doctor ----------------------------------------------------------------------
