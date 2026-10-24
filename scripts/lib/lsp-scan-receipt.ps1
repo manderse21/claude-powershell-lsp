@@ -741,6 +741,12 @@ function Get-ScanReceiptPolicyEvidenceProblems {
             if ((Test-ScanReceiptHasField -Object $st -Name 'ansiDecoded') -and -not ((Get-ScanReceiptField $st 'ansiDecoded') -is [bool])) {
                 $p.Add('policy.daemon.settings.ansiDecoded is not a boolean')
             }
+            # notUtf8 (dispatch 000310): optional -- a daemon writes it, true, only when PowerShell 7 read as UTF-8 a
+            # settings file it resolved that has no byte order mark and whose bytes are not valid UTF-8 -- and a
+            # boolean when present.
+            if ((Test-ScanReceiptHasField -Object $st -Name 'notUtf8') -and -not ((Get-ScanReceiptField $st 'notUtf8') -is [bool])) {
+                $p.Add('policy.daemon.settings.notUtf8 is not a boolean')
+            }
         }
     }
     return @($p.ToArray())

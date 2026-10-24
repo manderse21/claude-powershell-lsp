@@ -9,14 +9,16 @@
 # on review finding B1d-RV-01 (a string holding a typographic single quote re-parsed once merged). Dispatch 000309,
 # B1e, correction round 1: owner ruling RV-02, design a, on review finding B1d-RV-02 (a repository's own settings
 # file saved without a byte order mark is read by Windows PowerShell 5.1 in the system ANSI code page), and owner
-# ruling D2 on review finding B1d-RV2-01 (a lone UTF-16 surrogate reached the merged file as U+FFFD).
+# ruling D2 on review finding B1d-RV2-01 (a lone UTF-16 surrogate reached the merged file as U+FFFD). Dispatch 000310,
+# B1f: owner ruling B1e-RV-01, the PowerShell 7 mirror of RV-02 (a repository's own settings file with no byte order
+# mark whose bytes are not valid UTF-8 is read by PowerShell 7 as UTF-8, each such byte sequence as U+FFFD).
 #
 # Windows PowerShell 5.1 reads a settings file that has no byte order mark in the system ANSI code page
 # (Windows-1252 on a US or Western-European system); PowerShell 7 reads it as UTF-8. The merged file is now written
 # with the UTF-8 byte order mark exactly when it holds a character outside ASCII (ConvertTo-MergedPssaSettingsBytes),
 # so every all-ASCII merged file keeps its bytes and its content-addressed name.
 #
-# EIGHT LAYERS:
+# NINE LAYERS:
 #   1. The bytes (pure): the mark exactly when a character is outside ASCII.
 #   2. The writer: a non-ASCII merged file opens with the mark, is named by the SHA-256 of the bytes written, is
 #      read back by THIS host as written, and never reuses a file an earlier daemon wrote without the mark; every
@@ -39,6 +41,13 @@
 #      string or a quoted Rules key makes the merged write fail -- the daemon then records merge-write-failed -- where
 #      it was written as U+FFFD; a valid surrogate pair and the ASCII and apostrophe controls are written byte for byte
 #      as at 978bd5e (the SHA-256 that tree wrote, on both hosts, is pinned).
+#   9. A repository's own settings file on PowerShell 7 (dispatch 000310, owner ruling B1e-RV-01): one with no byte
+#      order mark whose bytes are not valid UTF-8 is read there as UTF-8, each such byte sequence as U+FFFD. The
+#      classifier (Test-PssaSettingsFileNotUtf8, the same on every host), the PowerShell 7-only trigger
+#      (Test-PssaSettingsNotUtf8), the daemon's record of it (settings.notUtf8, written only when it applies; what PSES
+#      is handed is unchanged), the scan's copy, the managed refusal (policy-settings-not-utf8), every scan's warning
+#      line, and the receipt's type check and schema. Under Windows PowerShell 5.1 the trigger never acts, and layer 7
+#      is unchanged there; under PowerShell 7 layer 7's daemon record of its ANSI-saved file now carries the key too.
 #
 # Run against f0a8ec0 (the base) -- its scripts/ and its docs/scan-receipt.schema.json -- the bytes' and the
 # writer's own tests (layers 1 and 2: the mark, the name, no reuse) and 'B1d-RX09:' fail on both hosts; the
@@ -58,6 +67,13 @@
 # in the ANSI code page; every other daemon-record case, and every one under PowerShell 7, passes on both trees --
 # there they assert that nothing is recorded. The 'B1e-D2:' tests fail there on both hosts (each lone surrogate was
 # written as EF BF BD and the write succeeded); the 'B1e-D2 control:' tests pass on both trees and both hosts.
+#
+# Run against d2778db (B1e merged) -- its scripts/ and docs/ -- the 'B1f-RV01:' tests fail on both hosts: the
+# classifier, the trigger, the warning line and the record's parameter do not exist there, the scan's copy drops the
+# key, the managed verdict certifies over a record that carries settings.notUtf8, the receipt check passes a value
+# that is not a boolean, and the schema has no such field. The daemon-record cases fail there under PowerShell 7
+# exactly for the Windows-1252 file (with and without the policy), as do the two layer-7 cases of B1e's ANSI-saved
+# file; every other daemon-record case, and every one under Windows PowerShell 5.1, passes on both trees.
 #
 # ASCII-only (PS 5.1 em-dash trap; each non-ASCII character is built with [char]); StrictMode-safe.
 
@@ -692,9 +708,12 @@ Describe 'A repository settings file Windows PowerShell 5.1 reads in the system 
         }
     ) {
         $want = ($script:AnOn51 -and $On51)
+        # Dispatch 000310 (B1f, owner ruling B1e-RV-01): the file saved in the ANSI code page has no byte order mark and
+        # its bytes are not valid UTF-8, so under PowerShell 7 its record now carries settings.notUtf8 as well.
+        $wantNotUtf8 = ((-not $script:AnOn51) -and $Shape -eq 'ansi')
         $d = Invoke-AnDaemon -Bytes (Get-AnBytes $Shape) -WithPolicy $WithPolicy
         $st = $d.Record.settings
-        ((@($st.Keys) | ForEach-Object { [string]$_ }) -join ',') | Should -BeExactly ('path,source,sha256,delivered,validation,validationDetail' + $(if ($want) { ',ansiDecoded' } else { '' })) -Because 'the key is written only when it applies, so every other record is what it was'
+        ((@($st.Keys) | ForEach-Object { [string]$_ }) -join ',') | Should -BeExactly ('path,source,sha256,delivered,validation,validationDetail' + $(if ($want) { ',ansiDecoded' } else { '' }) + $(if ($wantNotUtf8) { ',notUtf8' } else { '' })) -Because 'the key is written only when it applies, so every other record is what it was'
         if ($want) {
             $st['ansiDecoded'] | Should -BeOfType [bool]
             $st['ansiDecoded'] | Should -BeTrue
@@ -848,5 +867,272 @@ Describe 'A lone UTF-16 surrogate makes the merged write fail (dispatch 000309 B
         $p | Should -Not -BeNullOrEmpty
         (Get-Sha256HexFromBytes -Bytes ([System.IO.File]::ReadAllBytes($p))) | Should -BeExactly $Sha
         [System.IO.Path]::GetFileName($p) | Should -BeExactly ('merged-settings-' + $Sha.Substring(0, 16) + '.psd1')
+    }
+}
+
+Describe 'A repository settings file PowerShell 7 reads as UTF-8 though its bytes are not UTF-8 (dispatch 000310 B1f, owner ruling B1e-RV-01)' {
+
+    BeforeAll {
+        $script:NuOnCore = ($PSVersionTable.PSEdition -eq 'Core')
+        function Get-NuBytes {
+            # The bytes of one repository settings file, as $Shape says. Each of the six shapes whose bytes are not
+            # UTF-8 has no byte order mark and carries them in an IncludeRules entry: 'cp1252' an accented letter saved
+            # in Windows-1252 (Latin-1 agrees on U+00E9, the byte E9); 'lone-continuation' the byte 80; 'overlong' C0 AF
+            # (an overlong solidus); 'encoded-surrogate' ED A0 80 (U+D800 as UTF-8); 'above-max' F4 90 80 80 (above
+            # U+10FFFF); 'truncated' a file that ends inside a three-byte sequence (E2 82). 'utf8' holds the Kelvin
+            # sign and 'utf8-fffd' a U+FFFD the repository wrote, both as valid UTF-8 without a mark; 'ascii' is all
+            # ASCII; each '-bom' or UTF-16/32 shape opens with its mark.
+            param([string]$Shape)
+            $head = [System.Text.Encoding]::ASCII.GetBytes("@{ IncludeRules = @('PSAvoidUsingCmdletAliases', 'PSCaf")
+            $tail = [System.Text.Encoding]::ASCII.GetBytes("') }`n")
+            $kelvin = "@{ IncludeRules = @('PSAvoidUsingCmdletAliases', '" + $script:EnKelvinTick + "') }`n"
+            $mid = $null
+            $enc = $null
+            switch ($Shape) {
+                'cp1252' { $mid = @(0xE9) }
+                'lone-continuation' { $mid = @(0x80) }
+                'overlong' { $mid = @(0xC0, 0xAF) }
+                'encoded-surrogate' { $mid = @(0xED, 0xA0, 0x80) }
+                'above-max' { $mid = @(0xF4, 0x90, 0x80, 0x80) }
+                'truncated' { return , [byte[]](@([System.Text.Encoding]::ASCII.GetBytes("@{ IncludeRules = @('PSAvoidUsingCmdletAliases') }`n")) + @(0xE2, 0x82)) }
+                'utf8' { return , $script:EnUtf8.GetBytes($kelvin) }
+                'utf8-fffd' { return , $script:EnUtf8.GetBytes("@{ IncludeRules = @('PSAvoidUsingCmdletAliases', 'PSCaf" + [string][char]0xFFFD + "') }`n") }
+                'ascii' { return , $script:EnUtf8.GetBytes("@{ IncludeRules = @('PSAvoidUsingCmdletAliases', 'PSMisleadingBacktick') }`n") }
+                'utf8-bom' { $enc = $script:EnUtf8Bom }
+                'utf16le' { $enc = New-Object System.Text.UnicodeEncoding($false, $true) }
+                'utf16be' { $enc = New-Object System.Text.UnicodeEncoding($true, $true) }
+                'utf32le' { $enc = New-Object System.Text.UTF32Encoding($false, $true) }
+                'utf32be' { $enc = New-Object System.Text.UTF32Encoding($true, $true) }
+            }
+            if ($null -ne $mid) { return , [byte[]](@($head) + @($mid) + @($tail)) }
+            if ($null -eq $enc) { throw ('no such shape: ' + $Shape) }
+            return , [byte[]](@($enc.GetPreamble()) + @($enc.GetBytes($kelvin)))
+        }
+        function New-NuRepoFile {
+            # A PSScriptAnalyzerSettings.psd1 holding exactly $Bytes, in a fresh directory under $TestDrive.
+            param([byte[]]$Bytes)
+            $d = Join-Path $TestDrive ('nu-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+            $p = Join-Path $d 'PSScriptAnalyzerSettings.psd1'
+            [System.IO.File]::WriteAllBytes($p, $Bytes)
+            return $p
+        }
+
+        # The daemon's OWN Initialize-PssaSettings, lifted from scripts/pses-daemon.ps1 by AST with PSES stubbed, as the
+        # B1e layer above does.
+        $daemonAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:EnScripts 'pses-daemon.ps1'), [ref]$null, [ref]$null)
+        $fn = $daemonAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Initialize-PssaSettings' }, $true)
+        if ($null -eq $fn) { throw 'pses-daemon.ps1 has no Initialize-PssaSettings' }
+        . ([scriptblock]::Create([string]$fn.Extent.Text))
+        function Write-DLog { param([string]$m) [void]$script:NuLog.Add($m) }
+        function Send-Lsp { param($obj) [void]$script:NuSent.Add($obj) }
+        function Get-DaemonPsesVersionTag { return 'v4.6.0' }
+        $script:NuPolicy = New-EnFile "@{ RequiredRules = @('PSAvoidGlobalVars') }`n" -Name 'org.psd1'
+        function Invoke-NuDaemon {
+            # One session start of the daemon's settings resolution over a repository whose settings file holds $Bytes,
+            # with the RequiredRules policy or with none: the daemon's record, its log and every path it handed PSES.
+            param([byte[]]$Bytes, [bool]$WithPolicy)
+            $settings = New-NuRepoFile $Bytes
+            $repo = Split-Path -Parent $settings
+            [System.IO.File]::WriteAllText((Join-Path $repo 'thing.ps1'), "gci`n")
+            $script:OrgPolicyPath = $(if ($WithPolicy) { $script:NuPolicy } else { '' })
+            $script:SettingsPath = ''
+            $script:Ruleset = 'pses-default'
+            $script:DataRoot = New-EnDataRoot
+            New-Item -ItemType Directory -Force -Path $script:DataRoot | Out-Null
+            $script:settingsResolved = $false
+            $script:settingsPathInUse = ''
+            $script:NuLog = New-Object System.Collections.ArrayList
+            $script:NuSent = New-Object System.Collections.ArrayList
+            Initialize-PssaSettings -FilePath (Join-Path $repo 'thing.ps1') -ProjectRoot $repo
+            $handed = @(@($script:NuSent) | ForEach-Object { [string]$_.params.settings.powershell.scriptAnalysis.settingsPath })
+            return @{ Record = $script:policyApplication; Log = @($script:NuLog); Handed = $handed; Settings = $settings }
+        }
+
+        $script:NuReq = Resolve-EffectivePolicy -Path (New-EnFile "@{ RequiredRules = @('PSAvoidGlobalVars') }" -Name 'org.psd1') -Source 'cli'
+        $script:NuExc = Resolve-EffectivePolicy -Path (New-EnFile "@{ ExcludeRules = @('PSUseApprovedVerbs') }" -Name 'org.psd1') -Source 'cli'
+        function New-NuEvFile {
+            # One file's evidence as the scan reads it back -- both parties agreeing on $Declared, the settings valid --
+            # with settings.notUtf8 = $true added by hand when asked, so the verdict is judged on the receipt alone.
+            param($Declared, [bool]$NotUtf8)
+            $needs = ([string]$Declared.obligations.mergedSettings -eq 'required')
+            $sha = ('c' * 64)
+            $daemon = New-PolicyApplicationEvidence -RequiredState $(if ($needs) { 'activated' } else { 'not-required' }) -RequiredCount 1 `
+                -GuardVerifiedFor 'v4.6.0' -GuardObserved 'v4.6.0' -GuardResult 'pass' -MergedPath 'm' -MergedSha256 $(if ($needs) { $sha } else { '' }) `
+                -SettingsPath 'm' -SettingsSource $(if ($needs) { 'merged' } else { 'resolved' }) -SettingsSha256 $sha -Delivered $true -SettingsValidation 'valid'
+            $daemon.resolution = [ordered]@{ path = 'p'; configured = $true; usable = $true; reason = ''; effectiveSha256 = [string]$Declared.identity.sha256 }
+            if ($NotUtf8) { $daemon.settings['notUtf8'] = $true }
+            $client = New-PolicyAdjudicationEvidence -Mode 'closed'
+            $client.resolution = [ordered]@{ path = 'p'; configured = $true; usable = $true; reason = ''; effectiveSha256 = [string]$Declared.identity.sha256 }
+            $receipt = [ordered]@{
+                engine = [ordered]@{ pses = '4.6.0'; pssa = '1.25.0' }
+                config = [ordered]@{ state = 'unbound'; observed = [ordered]@{ severityThreshold = 'Hint'; ruleInclude = ''; ruleExclude = ''; perFileCap = 0 } }
+                policy = [ordered]@{ state = 'observed'; client = $client; daemon = $daemon }
+            }
+            return [pscustomobject]@{ File = 'C:\x.ps1'; Completeness = 'complete'; Pass = 'pssa'; Receipt = (($receipt | ConvertTo-Json -Depth 8) | ConvertFrom-Json) }
+        }
+    }
+
+    It 'B1f-RV01: the classifier is <Want> for a settings file <Name> (true only with no byte order mark and bytes that are not valid UTF-8)' -ForEach @(
+        @{ Shape = 'cp1252'; Name = 'saved in Windows-1252 without a byte order mark (the byte E9)'; Want = $true }
+        @{ Shape = 'lone-continuation'; Name = 'without a mark, holding a lone continuation byte (80)'; Want = $true }
+        @{ Shape = 'overlong'; Name = 'without a mark, holding an overlong sequence (C0 AF)'; Want = $true }
+        @{ Shape = 'encoded-surrogate'; Name = 'without a mark, holding a surrogate encoded as UTF-8 (ED A0 80)'; Want = $true }
+        @{ Shape = 'above-max'; Name = 'without a mark, holding a sequence above U+10FFFF (F4 90 80 80)'; Want = $true }
+        @{ Shape = 'truncated'; Name = 'without a mark, ending inside a sequence (E2 82)'; Want = $true }
+        @{ Shape = 'utf8'; Name = 'saved as UTF-8 without a byte order mark, holding the Kelvin sign'; Want = $false }
+        @{ Shape = 'utf8-fffd'; Name = 'saved as UTF-8 without a byte order mark, holding a U+FFFD it wrote'; Want = $false }
+        @{ Shape = 'utf8-bom'; Name = 'saved as UTF-8 with a byte order mark'; Want = $false }
+        @{ Shape = 'utf16le'; Name = 'saved as UTF-16 little-endian with a byte order mark'; Want = $false }
+        @{ Shape = 'utf16be'; Name = 'saved as UTF-16 big-endian with a byte order mark'; Want = $false }
+        @{ Shape = 'utf32le'; Name = 'saved as UTF-32 little-endian with a byte order mark'; Want = $false }
+        @{ Shape = 'utf32be'; Name = 'saved as UTF-32 big-endian with a byte order mark'; Want = $false }
+        @{ Shape = 'ascii'; Name = 'all ASCII, without a byte order mark'; Want = $false }
+    ) {
+        Test-PssaSettingsFileNotUtf8 -Path (New-NuRepoFile (Get-NuBytes $Shape)) | Should -Be $Want
+    }
+
+    It 'B1f-RV01: the classifier is $false for a file that cannot be read and for a blank path, without throwing' {
+        Test-PssaSettingsFileNotUtf8 -Path (Join-Path $TestDrive ('nu-missing-' + [guid]::NewGuid().ToString('N') + '.psd1')) | Should -BeFalse
+        Test-PssaSettingsFileNotUtf8 -Path '' | Should -BeFalse
+    }
+
+    It 'B1f-RV01: a settings file <Name> is one this host reads as UTF-8 though it is not only under PowerShell 7 (<OnCore> there), never under Windows PowerShell 5.1' -ForEach @(
+        @{ Shape = 'cp1252'; Name = 'saved in Windows-1252 without a byte order mark'; OnCore = $true }
+        @{ Shape = 'lone-continuation'; Name = 'without a mark, holding a lone continuation byte'; OnCore = $true }
+        @{ Shape = 'encoded-surrogate'; Name = 'without a mark, holding a surrogate encoded as UTF-8'; OnCore = $true }
+        @{ Shape = 'utf8'; Name = 'saved as UTF-8 without a byte order mark, holding the Kelvin sign'; OnCore = $false }
+        @{ Shape = 'utf8-fffd'; Name = 'saved as UTF-8 without a byte order mark, holding a U+FFFD it wrote'; OnCore = $false }
+        @{ Shape = 'utf8-bom'; Name = 'saved as UTF-8 with a byte order mark'; OnCore = $false }
+        @{ Shape = 'utf16le'; Name = 'saved as UTF-16 little-endian with a byte order mark'; OnCore = $false }
+        @{ Shape = 'utf32be'; Name = 'saved as UTF-32 big-endian with a byte order mark'; OnCore = $false }
+        @{ Shape = 'ascii'; Name = 'all ASCII, without a byte order mark'; OnCore = $false }
+    ) {
+        Test-PssaSettingsNotUtf8 -Path (New-NuRepoFile (Get-NuBytes $Shape)) | Should -Be ($script:NuOnCore -and $OnCore)
+        Test-PssaSettingsNotUtf8 -Path '' | Should -BeFalse -Because 'no settings file is resolved'
+    }
+
+    It 'B1f-RV01 control: this host reads U+FFFD into the entry of the Windows-1252 file exactly when the trigger says it reads it as UTF-8, and reads the valid UTF-8 file as written' {
+        $ansi = New-NuRepoFile (Get-NuBytes 'cp1252')
+        $read = @((Read-PssaSettingsFile -Path $ansi).Entries['IncludeRules']) -join '|'
+        $read.Contains([string][char]0xFFFD) | Should -Be (Test-PssaSettingsNotUtf8 -Path $ansi) -Because ('read: ' + (Get-EnShown $read))
+        $read.Contains([string][char]0xFFFD) | Should -Be $script:NuOnCore -Because 'PowerShell 7 reads the byte E9 as U+FFFD; Windows PowerShell 5.1 reads it in the ANSI code page'
+        $valid = New-NuRepoFile (Get-NuBytes 'utf8')
+        $readValid = @((Read-PssaSettingsFile -Path $valid).Entries['IncludeRules']) -join '|'
+        if ($script:NuOnCore) { $readValid | Should -BeExactly ('PSAvoidUsingCmdletAliases|' + $script:EnKelvinTick) -Because ('read: ' + (Get-EnShown $readValid)) }
+        Test-PssaSettingsNotUtf8 -Path $valid | Should -BeFalse
+    }
+
+    It 'B1f-RV01: the daemon records settings.notUtf8 for <Name>, <Policy>, exactly when this host reads it as UTF-8 though it is not (<OnCore> under PowerShell 7, never under Windows PowerShell 5.1), and hands PSES the same file either way' -ForEach @(
+        foreach ($s in @(
+                @{ Shape = 'cp1252'; Name = 'a repository file saved in Windows-1252 without a byte order mark'; OnCore = $true }
+                @{ Shape = 'utf8'; Name = 'one saved as UTF-8 without a mark holding the Kelvin sign'; OnCore = $false }
+                @{ Shape = 'utf8-bom'; Name = 'one saved with a byte order mark'; OnCore = $false }
+                @{ Shape = 'ascii'; Name = 'an all-ASCII one without a mark'; OnCore = $false })) {
+            foreach ($p in @(@{ Policy = 'with no policy'; WithPolicy = $false }, @{ Policy = 'with RequiredRules merged'; WithPolicy = $true })) {
+                @{ Shape = $s.Shape; Name = $s.Name; OnCore = $s.OnCore; Policy = $p.Policy; WithPolicy = $p.WithPolicy }
+            }
+        }
+    ) {
+        $want = ($script:NuOnCore -and $OnCore)
+        # Under Windows PowerShell 5.1 the two files without a mark that hold a byte above 0x7F carry B1e's key instead.
+        $wantAnsi = ((-not $script:NuOnCore) -and ($Shape -eq 'cp1252' -or $Shape -eq 'utf8'))
+        $d = Invoke-NuDaemon -Bytes (Get-NuBytes $Shape) -WithPolicy $WithPolicy
+        $st = $d.Record.settings
+        ((@($st.Keys) | ForEach-Object { [string]$_ }) -join ',') | Should -BeExactly ('path,source,sha256,delivered,validation,validationDetail' + $(if ($wantAnsi) { ',ansiDecoded' } else { '' }) + $(if ($want) { ',notUtf8' } else { '' })) -Because 'the key is written only when it applies, so every other record is what it was'
+        if ($want) {
+            $st['notUtf8'] | Should -BeOfType [bool]
+            $st['notUtf8'] | Should -BeTrue
+        }
+        @($d.Log | Where-Object { $_ -match 'its bytes are not valid UTF-8' }).Count | Should -Be $(if ($want) { 1 } else { 0 })
+        [string]$st['validation'] | Should -BeExactly 'valid' -Because 'the record changes no verdict'
+        @($d.Handed).Count | Should -Be 1
+        [string]$st['path'] | Should -BeExactly $d.Handed[0]
+        if ($WithPolicy) {
+            [string]$d.Record.requiredRules.state | Should -BeExactly 'activated'
+            [string]$st['source'] | Should -BeExactly 'merged'
+            [System.IO.Path]::GetFileName($d.Handed[0]) | Should -Match '\Amerged-settings-[0-9a-f]{16}\.psd1\z'
+        } else {
+            [string]$st['source'] | Should -BeExactly 'resolved'
+            $d.Handed[0] | Should -BeExactly $d.Settings -Because 'PSES is handed the repository file itself, as it was'
+        }
+    }
+
+    It 'B1f-RV01: the evidence builder writes settings.notUtf8 = $true only when told to, after any ansiDecoded, and a record without it is byte for byte what it was' {
+        $plain = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid'
+        $off = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid' -SettingsNotUtf8 $false
+        $on = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid' -SettingsNotUtf8 $true
+        $both = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid' -SettingsAnsiDecoded $true -SettingsNotUtf8 $true
+        (@($plain.settings.Keys) -join ',') | Should -BeExactly 'path,source,sha256,delivered,validation,validationDetail'
+        ($off | ConvertTo-Json -Depth 8 -Compress) | Should -BeExactly ($plain | ConvertTo-Json -Depth 8 -Compress)
+        (@($on.settings.Keys) -join ',') | Should -BeExactly 'path,source,sha256,delivered,validation,validationDetail,notUtf8'
+        $on.settings['notUtf8'] | Should -BeOfType [bool]
+        $on.settings['notUtf8'] | Should -BeTrue
+        (@($both.settings.Keys) -join ',') | Should -BeExactly 'path,source,sha256,delivered,validation,validationDetail,ansiDecoded,notUtf8' -Because 'a fixed order, though one daemon never writes both'
+    }
+
+    It 'B1f-RV01: the scan''s copy of a daemon record carries settings.notUtf8 exactly when the record does, read in memory or from its JSON' {
+        $on = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid' -SettingsNotUtf8 $true
+        $off = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid'
+        foreach ($rec in @($on, (($on | ConvertTo-Json -Depth 8) | ConvertFrom-Json))) {
+            $c = Copy-PolicyApplicationEvidence -Evidence $rec -SettingsSha256 ('a' * 64)
+            (@($c.settings.Keys) -join ',') | Should -BeExactly 'path,source,sha256,delivered,validation,validationDetail,notUtf8'
+            $c.settings['notUtf8'] | Should -BeTrue
+        }
+        foreach ($rec in @($off, (($off | ConvertTo-Json -Depth 8) | ConvertFrom-Json))) {
+            (@((Copy-PolicyApplicationEvidence -Evidence $rec -SettingsSha256 ('a' * 64)).settings.Keys) -join ',') | Should -BeExactly 'path,source,sha256,delivered,validation,validationDetail'
+        }
+    }
+
+    It 'B1f-RV01: a managed verdict over a daemon record carrying settings.notUtf8 is NOT CERTIFIED, with the application-stage code policy-settings-not-utf8 -- RequiredRules activated or none required; the same record without it certifies; an unmanaged verdict refuses nothing' {
+        foreach ($decl in @($script:NuReq, $script:NuExc)) {
+            foreach ($nu in @($false, $true)) {
+                $f = New-NuEvFile -Declared $decl -NotUtf8 $nu
+                $c = Test-ScanPolicyCertification -Mode 'closed' -Declared $decl -Files @($f)
+                if ($nu) {
+                    $c.Certified | Should -BeFalse -Because 'PowerShell 7 read a settings file whose bytes are not UTF-8 as UTF-8'
+                    (@($c.Files[0].Reasons) -join ',') | Should -BeExactly 'policy-settings-not-utf8'
+                    @($c.Reasons).Count | Should -Be 0 -Because 'a per-file reason: each file''s daemon record says it'
+                } else {
+                    $c.Certified | Should -BeTrue -Because ('CONTROL: ' + (@($c.AllReasons) -join ','))
+                }
+                (Test-ScanPolicyCertification -Mode 'open' -Declared $decl -Files @($f)).Managed | Should -BeFalse -Because 'an unmanaged verdict refuses nothing'
+            }
+        }
+        $t = Get-PolicyReasonTable
+        $t.Contains('policy-settings-not-utf8') | Should -BeTrue
+        [string]$t['policy-settings-not-utf8'].Stage | Should -BeExactly 'application'
+        [string]$t['policy-settings-ansi-decoded'].Meaning | Should -Match 'Windows PowerShell 5\.1' -Because 'B1e''s code keeps its 5.1 meaning'
+    }
+
+    It 'B1f-RV01: every scan''s warning is one line naming the fix when any file''s daemon record carries settings.notUtf8, and none otherwise; lsp-scan.ps1 asks for it once' {
+        $none = New-NuEvFile -Declared $script:NuReq -NotUtf8 $false
+        $one = New-NuEvFile -Declared $script:NuReq -NotUtf8 $true
+        Get-ScanSettingsNotUtf8Warning -Files @($none, $null) | Should -BeExactly ''
+        Get-ScanSettingsNotUtf8Warning -Files @() | Should -BeExactly ''
+        Get-ScanSettingsNotUtf8Warning -Files @($none, $one, $one) | Should -BeExactly ('lsp-scan: warning: PowerShell 7 read the repository''s settings file as UTF-8, but it has no byte order mark and its bytes are not valid UTF-8, so each byte sequence in it that is not UTF-8 reached the analysis as U+FFFD and these findings may not rest on the settings as the repository wrote them. Save it as UTF-8. See docs/repository-scanning.md.')
+        Get-ScanSettingsAnsiDecodedWarning -Files @($one) | Should -BeExactly '' -Because 'B1e''s 5.1 warning is not printed for this record'
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:EnScripts 'lsp-scan.ps1'), [ref]$null, [ref]$null)
+        @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-ScanSettingsNotUtf8Warning' }, $true)).Count | Should -Be 1
+    }
+
+    It 'B1f-RV01: the receipt types settings.notUtf8 -- $true is well formed, a value that is not a boolean is not, and a record without it is still well formed' {
+        $daemon = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid'
+        $policy = (([ordered]@{ client = (New-PolicyAdjudicationEvidence); daemon = $daemon }) | ConvertTo-Json -Depth 8) | ConvertFrom-Json
+        @(Get-ScanReceiptPolicyEvidenceProblems -Policy $policy).Count | Should -Be 0 -Because 'CONTROL: a record without the key, as every daemon before dispatch 000310 writes'
+        $policy.daemon.settings | Add-Member -NotePropertyName 'notUtf8' -NotePropertyValue $true
+        @(Get-ScanReceiptPolicyEvidenceProblems -Policy $policy).Count | Should -Be 0
+        foreach ($bad in @('true', 1, $null)) {
+            $policy.daemon.settings.notUtf8 = $bad
+            @(Get-ScanReceiptPolicyEvidenceProblems -Policy $policy) | Should -Contain 'policy.daemon.settings.notUtf8 is not a boolean' -Because ('a ' + $(if ($null -eq $bad) { 'null' } else { $bad.GetType().Name }) + ' is not a boolean')
+        }
+    }
+
+    It 'B1f-RV01: docs/scan-receipt.schema.json declares settings.notUtf8 as an optional boolean' {
+        $schema = [System.IO.File]::ReadAllText((Join-Path $script:EnRepo 'docs/scan-receipt.schema.json')) | ConvertFrom-Json
+        $st = $schema.properties.policy.properties.daemon.oneOf[1].properties.settings
+        [string]$st.properties.notUtf8.type | Should -BeExactly 'boolean'
+        @($st.required) | Should -Not -Contain 'notUtf8'
+        [string]$st.properties.notUtf8.description | Should -Match 'policy-settings-not-utf8'
     }
 }
