@@ -8,14 +8,15 @@
 # review finding B1c-RX-09 (the receipt schema's cannotRun description). Correction round 1: owner ruling RV-01
 # on review finding B1d-RV-01 (a string holding a typographic single quote re-parsed once merged). Dispatch 000309,
 # B1e, correction round 1: owner ruling RV-02, design a, on review finding B1d-RV-02 (a repository's own settings
-# file saved without a byte order mark is read by Windows PowerShell 5.1 in the system ANSI code page).
+# file saved without a byte order mark is read by Windows PowerShell 5.1 in the system ANSI code page), and owner
+# ruling D2 on review finding B1d-RV2-01 (a lone UTF-16 surrogate reached the merged file as U+FFFD).
 #
 # Windows PowerShell 5.1 reads a settings file that has no byte order mark as Windows-1252; PowerShell 7 reads
 # it as UTF-8. The merged file is now written with the UTF-8 byte order mark exactly when it holds a character
 # outside ASCII (ConvertTo-MergedPssaSettingsBytes), so every all-ASCII merged file keeps its bytes and its
 # content-addressed name.
 #
-# SEVEN LAYERS:
+# EIGHT LAYERS:
 #   1. The bytes (pure): the mark exactly when a character is outside ASCII.
 #   2. The writer: a non-ASCII merged file opens with the mark, is named by the SHA-256 of the bytes written, is
 #      read back by THIS host as written, and never reuses a file an earlier daemon wrote without the mark; every
@@ -33,6 +34,11 @@
 #      record of it (settings.ansiDecoded, written only when it applies; what PSES is handed is unchanged), the
 #      scan's copy, the managed refusal (policy-settings-ansi-decoded), every scan's warning line, and the receipt's
 #      type check and schema.
+#   8. A lone UTF-16 surrogate (dispatch 000309, owner ruling D2): the merged text is encoded strictly, so a lone
+#      high or low surrogate in an ExcludeRules entry, an IncludeRules entry, a CustomRulePath, a Rules argument
+#      string or a quoted Rules key makes the merged write fail -- the daemon then records merge-write-failed -- where
+#      it was written as U+FFFD; a valid surrogate pair and the ASCII and apostrophe controls are written byte for byte
+#      as at 978bd5e (the SHA-256 that tree wrote, on both hosts, is pinned).
 #
 # Run against f0a8ec0 (the base) -- its scripts/ and its docs/scan-receipt.schema.json -- the bytes' and the
 # writer's own tests (layers 1 and 2: the mark, the name, no reuse) and 'B1d-RX09:' fail on both hosts; the
@@ -50,7 +56,8 @@
 # verdict certifies over a record that carries settings.ansiDecoded, and the receipt check passes a value that is
 # not a boolean. The daemon-record cases fail there under Windows PowerShell 5.1 exactly for the two files 5.1 reads
 # in the ANSI code page; every other daemon-record case, and every one under PowerShell 7, passes on both trees --
-# there they assert that nothing is recorded.
+# there they assert that nothing is recorded. The 'B1e-D2:' tests fail there on both hosts (each lone surrogate was
+# written as EF BF BD and the write succeeded); the 'B1e-D2 control:' tests pass on both trees and both hosts.
 #
 # ASCII-only (PS 5.1 em-dash trap; each non-ASCII character is built with [char]); StrictMode-safe.
 
@@ -778,5 +785,68 @@ Describe 'A repository settings file Windows PowerShell 5.1 reads in the system 
         [string]$st.properties.ansiDecoded.type | Should -BeExactly 'boolean'
         @($st.required) | Should -Not -Contain 'ansiDecoded'
         [string]$st.properties.ansiDecoded.description | Should -Match 'policy-settings-ansi-decoded'
+    }
+}
+
+Describe 'A lone UTF-16 surrogate makes the merged write fail (dispatch 000309 B1e, owner ruling D2 on review finding B1d-RV2-01)' {
+
+    BeforeAll {
+        function Get-D2Settings {
+            # A merged settings table holding $Text where $Where says: the five places a repository's text reaches the
+            # merged file -- an entry of either rule list, a CustomRulePath, a string a Rules entry gives a rule, and a
+            # Rules key that is not a plain identifier (so it is written quoted).
+            param([string]$Where, [string]$Text)
+            switch ($Where) {
+                'an ExcludeRules entry' { return @{ ExcludeRules = @('PSAvoidUsingWriteHost' + $Text) } }
+                'an IncludeRules entry' { return @{ IncludeRules = @('PSAvoidGlobalVars', ('PSAvoidUsingCmdletAliases' + $Text)) } }
+                'a CustomRulePath' { return @{ CustomRulePath = @('C:\b1e\rules-' + $Text + '\B1e.Rules.psm1'); IncludeDefaultRules = $true; IncludeRules = @('PSAvoidGlobalVars') } }
+                'a Rules argument string' { return @{ IncludeRules = @('PSAvoidGlobalVars', 'PSProvideCommentHelp'); Rules = @{ PSProvideCommentHelp = @{ Enable = $true; Placement = ('before' + $Text) } } } }
+                'a quoted Rules key' { return @{ IncludeRules = @('PSAvoidGlobalVars'); Rules = @{ ('B1e.Rules\Measure' + $Text + 'Thing') = @{ Enable = $true } } } }
+            }
+            throw ('no such position: ' + $Where)
+        }
+    }
+
+    It 'B1e-D2: a lone <Kind> surrogate (<Code>) in <Where> makes the merged write fail -- no path is returned and nothing is left in the merged settings directory' -ForEach @(
+        foreach ($k in @(@{ Kind = 'high'; Code = 'U+D800'; Value = 0xD800 }, @{ Kind = 'low'; Code = 'U+DC00'; Value = 0xDC00 })) {
+            foreach ($w in @('an ExcludeRules entry', 'an IncludeRules entry', 'a CustomRulePath', 'a Rules argument string', 'a quoted Rules key')) {
+                @{ Kind = $k.Kind; Code = $k.Code; Value = $k.Value; Where = $w }
+            }
+        }
+    ) {
+        $data = New-EnDataRoot
+        Write-MergedPssaSettingsFile -Settings (Get-D2Settings -Where $Where -Text ([string][char]$Value)) -DataRoot $data | Should -BeExactly '' -Because 'the text cannot be encoded as it is, and is never written as U+FFFD instead'
+        @(Get-ChildItem -LiteralPath (Get-MergedPssaSettingsDir -DataRoot $data) -Force -ErrorAction SilentlyContinue).Count | Should -Be 0 -Because 'no merged file and no temp file is left behind'
+    }
+
+    It 'B1e-D2: the merged bytes of a text holding a lone surrogate cannot be made -- the encoder throws, for a high and a low one, at the end of a string or before another character; a valid surrogate pair encodes' {
+        foreach ($t in @(("@{ ExcludeRules = @('A" + [string][char]0xD800 + "') }`n"), ("@{ ExcludeRules = @('A" + [string][char]0xDC00 + "B') }`n"), ('x' + [string][char]0xDBFF), ([string][char]0xDFFF + 'x'))) {
+            { ConvertTo-MergedPssaSettingsBytes -Text $t } | Should -Throw
+        }
+        { ConvertTo-MergedPssaSettingsBytes -Text ("@{ ExcludeRules = @('A" + [string][char]0xD83D + [string][char]0xDE00 + "') }`n") } | Should -Not -Throw -Because 'CONTROL: a valid surrogate pair is one character, U+1F600'
+    }
+
+    It 'B1e-D2 control: <Control> in <Where> is written byte for byte as at 978bd5e (the SHA-256 that tree wrote, on both hosts)' -ForEach @(
+        @{ Control = 'a valid surrogate pair (U+1F600)'; Text = 'pair'; Where = 'an ExcludeRules entry'; Sha = '339bf82cabdb2d6771ec37519a729ccfc16f4f60e2ee7de1bae6b87967efd0ee' }
+        @{ Control = 'a valid surrogate pair (U+1F600)'; Text = 'pair'; Where = 'an IncludeRules entry'; Sha = 'be49d715bfba577475765ce08f6bc9000e694accf005fb3f44a267e691f0250e' }
+        @{ Control = 'a valid surrogate pair (U+1F600)'; Text = 'pair'; Where = 'a CustomRulePath'; Sha = 'c008ad2ccd3c8ff136716b001db377c09c05e1d281a6eee1421f21b9921b47b8' }
+        @{ Control = 'a valid surrogate pair (U+1F600)'; Text = 'pair'; Where = 'a Rules argument string'; Sha = '721eda8388e02ab536b1e91639e9ec6738c77c242d3bcc0e12a6a2ab212b22ff' }
+        @{ Control = 'a valid surrogate pair (U+1F600)'; Text = 'pair'; Where = 'a quoted Rules key'; Sha = 'bf3ff348e5e05076a5a5eddb1e5f559cf82742ba84fae87fa05ca8825499d790' }
+        @{ Control = 'ASCII'; Text = 'ascii'; Where = 'an ExcludeRules entry'; Sha = '0cfc858e3bad2114c4afb4441945c87729a105497868cb66f6e18b11f65808a9' }
+        @{ Control = 'ASCII'; Text = 'ascii'; Where = 'an IncludeRules entry'; Sha = '5d1890f7438f1d4790c8b19385b55915a1c08063f71bbe7666d0ecde1951b207' }
+        @{ Control = 'ASCII'; Text = 'ascii'; Where = 'a CustomRulePath'; Sha = '63591c67d3965326f96043d6fc793ff31353a330d7973d30ae4bef774633aaa3' }
+        @{ Control = 'ASCII'; Text = 'ascii'; Where = 'a Rules argument string'; Sha = '5437e840c9e60de51772bf7a51c00522efff5170b500c01340b545ee337c2f42' }
+        @{ Control = 'ASCII'; Text = 'ascii'; Where = 'a quoted Rules key'; Sha = 'f3cdb1c2acf29b1876a7e8531705974f04799496d9cac5623bb20bfdeae0a593' }
+        @{ Control = 'an apostrophe (U+0027)'; Text = 'apostrophe'; Where = 'an ExcludeRules entry'; Sha = 'fc8f4a977f8c16dc9ce9d72430999f60496e6cee33fa18e9aa458ef84ec8cddb' }
+        @{ Control = 'an apostrophe (U+0027)'; Text = 'apostrophe'; Where = 'an IncludeRules entry'; Sha = 'b1c332b5bdce39512b9aa573391a074a8a013c8b90a57beb5e3dcc06a82981ee' }
+        @{ Control = 'an apostrophe (U+0027)'; Text = 'apostrophe'; Where = 'a CustomRulePath'; Sha = '18e863514612dded7574cd458066957c86e2d9a077212724901fc8c613d331b8' }
+        @{ Control = 'an apostrophe (U+0027)'; Text = 'apostrophe'; Where = 'a Rules argument string'; Sha = '54379d7d86c77575fc0735e20ba09937aa4b8a242db49d7336230c226634fb2b' }
+        @{ Control = 'an apostrophe (U+0027)'; Text = 'apostrophe'; Where = 'a quoted Rules key'; Sha = '8946f2de64993500ee36562025c7eb8d088530b987dd55de4bb3c654211507d1' }
+    ) {
+        $t = switch ($Text) { 'pair' { [string][char]0xD83D + [string][char]0xDE00 } 'ascii' { '' } 'apostrophe' { [string][char]39 } }
+        $p = Write-MergedPssaSettingsFile -Settings (Get-D2Settings -Where $Where -Text $t) -DataRoot (New-EnDataRoot)
+        $p | Should -Not -BeNullOrEmpty
+        (Get-Sha256HexFromBytes -Bytes ([System.IO.File]::ReadAllBytes($p))) | Should -BeExactly $Sha
+        [System.IO.Path]::GetFileName($p) | Should -BeExactly ('merged-settings-' + $Sha.Substring(0, 16) + '.psd1')
     }
 }

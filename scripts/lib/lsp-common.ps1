@@ -2372,9 +2372,19 @@ function ConvertTo-MergedPssaSettingsBytes {
     # is written exactly as before: its bytes, and so its content-addressed name, are unchanged -- and every
     # merged text B1b and B1c pinned is ASCII. Each character is compared by its code (above 0x7F), never by a
     # case-insensitive match, which lets the Kelvin sign through as a 'k'.
+    #
+    # A LONE SURROGATE IS REFUSED, NEVER WRITTEN AS U+FFFD (dispatch 000309, B1e; owner ruling D2 on review finding
+    # B1d-RV2-01). The text is encoded strictly: a lone UTF-16 surrogate -- which PowerShell 7 reads into a settings
+    # string from the `u{D800} escape -- makes GetBytes throw (EncoderFallbackException) instead of being written as
+    # EF BF BD, so Write-MergedPssaSettingsFile returns '' and the daemon records merge-write-failed: a managed scan
+    # refuses (policy-merge-write-failed) and an unmanaged one falls back to the repository's own file. Written as
+    # U+FFFD, an entry that matched nothing in the repository's file could name something a repository can create
+    # under that spelling -- a CustomRulePath directory, a custom rule -- and a managed scan certified while the
+    # declared settings did not govern (measured through the real daemon). Every valid text, a surrogate pair
+    # included, is encoded byte for byte as before.
     param([string]$Text)
     if ($null -eq $Text) { $Text = '' }
-    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
     $body = $utf8.GetBytes($Text)
     $outside = $false
     foreach ($ch in $Text.ToCharArray()) {
@@ -2398,7 +2408,8 @@ function Write-MergedPssaSettingsFile {
     # I/O half of the requiredRules merge: serialize $Settings (Merge-RequiredRulesSettings's
     # return value) as a .psd1 under $DataRoot and return its absolute path, or '' on any
     # failure (fail-open -- the caller falls back to the untouched pre-change path exactly as it
-    # would for a $null merge result). NEVER writes into the repo-local settings file itself:
+    # would for a $null merge result) -- a text holding a lone UTF-16 surrogate, whose bytes
+    # cannot be made, among them (dispatch 000309). NEVER writes into the repo-local settings file itself:
     # this is always a NEW file under the plugin's own per-session data root, so a live edit can
     # never corrupt a file the user or the repo owns.
     #
