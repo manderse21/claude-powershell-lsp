@@ -16,7 +16,8 @@
 #   controls    an all-ASCII repository file, and no repository file at all, managed: the merged file must be
 #               byte for byte what it was.
 #   boundary    the Kelvin IncludeRules entry in a repository file saved WITHOUT a BOM, managed and with no
-#               policy: Windows PowerShell 5.1 reads such a file itself as Windows-1252, merged or not.
+#               policy: Windows PowerShell 5.1 reads such a file itself in the system ANSI code page
+#               (Windows-1252 on a US or Western-European system), merged or not.
 #   B1d-RV-01   (correction round 1) ONE repository ExcludeRules entry holding U+2019 twice -- 'PSAvoidUsingWriteHost'
 #               + U+2019 + ',' + U+2019 + 'PSAvoidUsingCmdletAliases', which excludes nothing alone -- managed and with
 #               no policy, a control; and a repository CustomRulePath whose directory is named O + U+2019 + Brien,

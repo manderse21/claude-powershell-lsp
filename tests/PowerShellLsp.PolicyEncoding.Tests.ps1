@@ -11,10 +11,10 @@
 # file saved without a byte order mark is read by Windows PowerShell 5.1 in the system ANSI code page), and owner
 # ruling D2 on review finding B1d-RV2-01 (a lone UTF-16 surrogate reached the merged file as U+FFFD).
 #
-# Windows PowerShell 5.1 reads a settings file that has no byte order mark as Windows-1252; PowerShell 7 reads
-# it as UTF-8. The merged file is now written with the UTF-8 byte order mark exactly when it holds a character
-# outside ASCII (ConvertTo-MergedPssaSettingsBytes), so every all-ASCII merged file keeps its bytes and its
-# content-addressed name.
+# Windows PowerShell 5.1 reads a settings file that has no byte order mark in the system ANSI code page
+# (Windows-1252 on a US or Western-European system); PowerShell 7 reads it as UTF-8. The merged file is now written
+# with the UTF-8 byte order mark exactly when it holds a character outside ASCII (ConvertTo-MergedPssaSettingsBytes),
+# so every all-ASCII merged file keeps its bytes and its content-addressed name.
 #
 # EIGHT LAYERS:
 #   1. The bytes (pure): the mark exactly when a character is outside ASCII.
@@ -208,7 +208,7 @@ Describe 'The merged settings file as written (dispatch 000308 B1d)' {
         $p = Write-MergedPssaSettingsFile -Settings $script:WrKelvin -DataRoot (New-EnDataRoot)
         $p | Should -Not -BeNullOrEmpty
         $bytes = [System.IO.File]::ReadAllBytes($p)
-        Test-EnBom $bytes | Should -BeTrue -Because 'without the mark Windows PowerShell 5.1 reads the file as Windows-1252'
+        Test-EnBom $bytes | Should -BeTrue -Because 'without the mark Windows PowerShell 5.1 reads the file in the system ANSI code page (Windows-1252 on a US or Western-European system)'
         $sha = Get-Sha256HexFromBytes -Bytes $bytes
         [System.IO.Path]::GetFileName($p) | Should -BeExactly ('merged-settings-' + $sha.Substring(0, 16) + '.psd1')
         $script:EnUtf8.GetString($bytes, 3, $bytes.Length - 3) | Should -BeExactly (ConvertTo-MergedPssaSettingsText -Settings $script:WrKelvin)
@@ -248,7 +248,7 @@ Describe 'The merged settings file as written (dispatch 000308 B1d)' {
         [System.IO.File]::WriteAllBytes($old, $oldBytes)
         $p = Write-MergedPssaSettingsFile -Settings $script:WrKelvin -DataRoot $data
         $p | Should -Not -BeNullOrEmpty
-        $p | Should -Not -BeExactly $old -Because 'a file without the mark is read as Windows-1252 on a 5.1 host; it must not be the one handed to PSES'
+        $p | Should -Not -BeExactly $old -Because 'a file without the mark is read in the system ANSI code page (Windows-1252 on a US or Western-European system) on a 5.1 host; it must not be the one handed to PSES'
         Test-EnBom ([System.IO.File]::ReadAllBytes($p)) | Should -BeTrue
         (Get-Sha256HexFromBytes -Bytes ([System.IO.File]::ReadAllBytes($old))) | Should -BeExactly (Get-Sha256HexFromBytes -Bytes $oldBytes) -Because 'an earlier daemon may still be using its file'
     }
