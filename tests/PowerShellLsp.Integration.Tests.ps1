@@ -3478,10 +3478,14 @@ Describe 'Integration: Get-IntegrationDaemonLeak recognizes a daemon by DATA ROO
             'while ($in.Read($buf, 0, $buf.Length) -gt 0) { }'
         )
         $script:Db_Procs = New-Object System.Collections.ArrayList
+        $script:Db_OtherRoots = New-Object System.Collections.ArrayList
 
         function Start-DbFakeDaemon {
             param([string]$SessionId, [string]$DataRoot)
             New-Item -ItemType Directory -Force -Path $DataRoot | Out-Null
+            # A data root made outside this Describe's own psls-000293fake-* directory -- the control's
+            # not-a-suite-root-* under the OS temp root -- is recorded, so AfterAll removes it (dispatch 000309, B1e).
+            if (-not $DataRoot.StartsWith($script:Db_FakeDir, [System.StringComparison]::OrdinalIgnoreCase)) { [void]$script:Db_OtherRoots.Add($DataRoot) }
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = 'pwsh'; $psi.UseShellExecute = $false
             $psi.RedirectStandardInput = $true
@@ -3505,6 +3509,11 @@ Describe 'Integration: Get-IntegrationDaemonLeak recognizes a daemon by DATA ROO
         # header for why a Stop-Process with no subsequent wait cannot be followed by a single
         # removal attempt.
         Remove-PslsRootWithRetry -Path $script:Db_FakeDir
+        # THE CONTROL'S DATA ROOT IS REMOVED TOO (dispatch 000309, B1e). It sits directly under the OS temp
+        # root, named not-a-suite-root-<8 hex> -- no psls* name, so no census or janitor ever sees it -- and
+        # nothing removed it: fifty had accumulated in one host's default TEMP by 2026-10-23. The fake that
+        # was handed it is stopped above.
+        foreach ($root in @($script:Db_OtherRoots)) { Remove-PslsRootWithRetry -Path $root }
     }
 
     It 'finds a daemon whose SessionId prefix (th225unr-) was never in the old allowlist, via its DataRoot' {
@@ -3545,6 +3554,21 @@ Describe 'Integration: Get-IntegrationDaemonLeak recognizes a daemon by DATA ROO
         $found.Count | Should -Be 1 -Because 'the one query still finds the suite daemon by its DataRoot'
         $found[0].SessionId | Should -BeExactly $sid
         Should -Invoke Get-CimInstance -Times 1 -Exactly -Scope It -Because 'one census is one Win32_Process query, however many PowerShell processes are running'
+    }
+}
+
+Describe 'Integration: the dispatch 000293 Describe leaves no data root behind under the OS temp root (dispatch 000309, B1e)' -Skip:$script:SkipIntegration {
+    # The Describe above records every data root it makes outside its own psls-000293fake-* directory -- its
+    # control's not-a-suite-root-* under the OS temp root, which no census or janitor ever sees -- and removes
+    # each in its AfterAll. This runs after that AfterAll, so each recorded directory must be gone; without the
+    # removal it stays, one more after every run.
+    It 'every data root the dispatch 000293 Describe made outside its own directory is gone once that Describe has ended' {
+        if ($null -eq $script:Db_OtherRoots) {
+            Set-ItResult -Skipped -Because 'the dispatch 000293 Describe did not run in this invocation'
+            return
+        }
+        @($script:Db_OtherRoots).Count | Should -Be 1 -Because 'its control makes exactly one such data root'
+        foreach ($d in @($script:Db_OtherRoots)) { Test-Path -LiteralPath $d | Should -BeFalse -Because ($d + ' must be removed by that Describe''s AfterAll') }
     }
 }
 
