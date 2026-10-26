@@ -48,6 +48,31 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **On PowerShell 7 a managed scan refuses a repository settings file without a byte order mark whose bytes
+are not valid UTF-8** (dispatch 000310, leg B1f -- owner ruling B1e-RV-01, the PowerShell 7 mirror of B1e's RV-02;
+pre-existing). PowerShell 7 reads a settings file that has no byte order mark as UTF-8 -- PSScriptAnalyzer and the
+daemon's check alike -- and puts U+FFFD in place of each byte sequence that is not UTF-8, so a file saved in an ANSI
+code page with a character outside ASCII in it reached the analysis as other text: a `CustomRulePath` under a
+directory named with an accented letter, saved in Windows-1252, named the directory spelled with U+FFFD in that
+letter's place, which a repository can create beside its own, and a managed scan CERTIFIED with that directory's
+rule while the repository's own custom rule never ran (measured through the real daemon, as review d65845eb did).
+When the daemon runs under PowerShell 7 and the settings file it resolved has no byte order mark and a strict UTF-8
+decode of its bytes fails, it now records so in its application evidence (`settings.notUtf8`, an optional field of
+the still-unreleased receipt schema version 2, present only then), every scan warns on stderr, naming the fix (save
+the file as UTF-8), and a managed scan is NOT CERTIFIED with the new reason code `policy-settings-not-utf8`. PSES is
+handed the file as before, so under PowerShell 7 the edit hook and an unmanaged scan still read such a file with
+U+FFFD in place of each such sequence; a file without a mark whose bytes are valid UTF-8 is read and recorded as
+before (measured: the same decoy case saved as UTF-8 runs the repository's own rule and certifies). Windows
+PowerShell 5.1, where B1e's `policy-settings-ansi-decoded` already refuses such a file, is unchanged (measured
+through the real daemon). **Found, not changed:** a file WITH a byte order mark whose bytes after it are not valid
+in the encoding the mark names is read with U+FFFD on both hosts, and neither refusal covers it (measured: the same
+decoy case saved in Windows-1252 after a UTF-8 byte order mark certifies under Windows PowerShell 5.1 and
+PowerShell 7); `docs/repository-scanning.md` says so, and it is surfaced to the owner. **Documentation:**
+`docs/repository-scanning.md` describes the refusal and the reason code, and its "It does NOT prove" entry for a
+repository settings file now names only that boundary. No `userConfig` knob, status token or CLI flag is added; one
+managed-scan reason code is (`policy-settings-not-utf8`), exit codes are unchanged (a managed scan that is not
+certified exits `4`, as before), and `doctor -Json`'s `orgPolicy` keys keep their names, order and types.
+
 MINOR: **On Windows PowerShell 5.1 a managed scan refuses a repository settings file 5.1 reads in the ANSI code
 page, a lone surrogate makes the merged settings write fail, and the suite's daemon census no longer races slow
 WMI** (dispatch 000309, leg B1e -- owner rulings RV-02, design (a), and D2 on review findings B1d-RV-02 and

@@ -1900,6 +1900,35 @@ function Test-PssaSettingsAnsiDecoded {
     return ((Get-PssaSettingsFileEncoding -Path $Path) -ceq 'unmarked-non-ascii')
 }
 
+function Test-PssaSettingsFileNotUtf8 {
+    # Whether a settings file has no byte order mark and its bytes are not valid UTF-8 (dispatch 000310, B1f; owner
+    # ruling B1e-RV-01): Get-PssaSettingsFileEncoding reads it as 'unmarked-non-ascii' and a strict UTF-8 decode of its
+    # bytes fails -- a file saved in an ANSI code page with a character outside ASCII in it is one. $false for a file
+    # with a byte order mark, an all-ASCII one, one whose bytes are valid UTF-8, and one that cannot be read. Pure over
+    # the bytes on disk, the same on every host; never throws.
+    param([string]$Path)
+    if ((Get-PssaSettingsFileEncoding -Path $Path) -cne 'unmarked-non-ascii') { return $false }
+    $b = $null
+    try { $b = [System.IO.File]::ReadAllBytes($Path) } catch { return $false }
+    try { [void](New-Object System.Text.UTF8Encoding($false, $true)).GetString($b) } catch { return $true }
+    return $false
+}
+
+function Test-PssaSettingsNotUtf8 {
+    # Whether THIS host reads the settings file at $Path as UTF-8 though its bytes are not UTF-8 (dispatch 000310, B1f;
+    # owner ruling B1e-RV-01, the PowerShell 7 mirror of RV-02): only PowerShell 7 does -- it reads a file that has no
+    # byte order mark as UTF-8 -- and only for a file Test-PssaSettingsFileNotUtf8 names. Each byte sequence in it that
+    # is not UTF-8 then reaches the analysis as U+FFFD, so a CustomRulePath saved in an ANSI code page can name a
+    # directory a repository created with U+FFFD in its name. Windows PowerShell 5.1 reads every such file in the
+    # system ANSI code page (Test-PssaSettingsAnsiDecoded), so this is never true under it. The daemon records the
+    # answer (settings.notUtf8) and a managed scan refuses it (policy-settings-not-utf8); what PSES is handed does not
+    # change.
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    if ($PSVersionTable.PSEdition -ne 'Core') { return $false }
+    return (Test-PssaSettingsFileNotUtf8 -Path $Path)
+}
+
 function Read-PssaSettingsFile {
     # Read the PSScriptAnalyzer settings file at $Path the way PSScriptAnalyzer reads it, as DATA, and
     # say whether PSScriptAnalyzer -- run by PSES as this plugin runs it -- would accept it. Never throws.

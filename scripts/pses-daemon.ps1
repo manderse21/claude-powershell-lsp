@@ -995,6 +995,19 @@ function Initialize-PssaSettings {
         Write-DLog ('PSSA settings: ' + $resolved + ' has no byte order mark and holds a byte above 0x7F; Windows PowerShell 5.1 reads it in the system ANSI code page')
     }
 
+    # A SETTINGS FILE THIS HOST READS AS UTF-8 THOUGH IT IS NOT UTF-8 IS RECORDED (dispatch 000310, B1f; owner ruling
+    # B1e-RV-01, the PowerShell 7 mirror of RV-02). PowerShell 7 reads a settings file that has no byte order mark as
+    # UTF-8 -- PSScriptAnalyzer and Read-PssaSettingsFile alike -- so each byte sequence in it that is not UTF-8 (a file
+    # saved in an ANSI code page) reaches the analysis as U+FFFD: a CustomRulePath named a decoy directory spelled with
+    # U+FFFD, and a managed scan certified while the repository's own custom rule never ran (measured through the real
+    # daemon). It is recorded (settings.notUtf8), every scan warns, and a managed scan refuses it
+    # (policy-settings-not-utf8); what PSES is handed is unchanged. Under Windows PowerShell 5.1 the record above applies.
+    $notUtf8 = $false
+    if (-not [string]::IsNullOrWhiteSpace($resolved) -and (Test-PssaSettingsNotUtf8 -Path $resolved)) {
+        $notUtf8 = $true
+        Write-DLog ('PSSA settings: ' + $resolved + ' has no byte order mark and its bytes are not valid UTF-8; PowerShell 7 reads each byte sequence in it that is not UTF-8 as U+FFFD')
+    }
+
     # requiredRules (P1-5 remainder, R23=D, dispatch 000294): the ONE place the daemon's
     # session-start threading is touched, and ONLY when $OrgPolicyPath is set AND org policy
     # names at least one RequiredRules entry. Computed BEFORE the empty-$resolved check below on
@@ -1126,7 +1139,8 @@ function Initialize-PssaSettings {
             -MergedPath $mergedPath -MergedSha256 $mergedSha -RequiredCannotRun $cannotRun `
             -SettingsPath $script:settingsPathInUse -SettingsSource $(if ($delivered) { $source } else { 'none' }) `
             -SettingsSha256 (Get-PolicyFileSha256 -Path $script:settingsPathInUse) -Delivered $delivered `
-            -SettingsValidation $validation -SettingsValidationDetail $validationDetail -SettingsAnsiDecoded $ansiDecoded
+            -SettingsValidation $validation -SettingsValidationDetail $validationDetail -SettingsAnsiDecoded $ansiDecoded `
+            -SettingsNotUtf8 $notUtf8
     }
 }
 

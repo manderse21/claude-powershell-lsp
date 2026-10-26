@@ -300,6 +300,11 @@ if ($cannotRunLine -ne '') {
 # (policy-settings-ansi-decoded).
 $ansiDecodedLine = Get-ScanSettingsAnsiDecodedWarning -Files @($fileEvidence)
 if ($ansiDecodedLine -ne '') { [Console]::Error.WriteLine($ansiDecodedLine) }
+# A settings file PowerShell 7 read as UTF-8 though it has no byte order mark and its bytes are not valid UTF-8
+# (dispatch 000310, B1f; owner ruling B1e-RV-01) is named on stderr by every scan, managed or not, with the fix; a
+# managed scan is NOT CERTIFIED over it (policy-settings-not-utf8).
+$notUtf8Line = Get-ScanSettingsNotUtf8Warning -Files @($fileEvidence)
+if ($notUtf8Line -ne '') { [Console]::Error.WriteLine($notUtf8Line) }
 
 # --- the managed verdict (dispatch 000305) -----------------------------------------------------------
 # Unmanaged: Managed=$false and nothing changes. Managed: certified only on a usable declared policy AND

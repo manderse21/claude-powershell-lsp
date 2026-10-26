@@ -172,6 +172,10 @@
                     "ansiDecoded": {
                       "description": "Present, and true, only when the daemon ran under Windows PowerShell 5.1 and the settings file it resolved has no byte order mark and holds a byte above 0x7F, which 5.1 reads in the system ANSI code page (dispatch 000309, owner ruling RV-02): a managed scan refuses it (policy-settings-ansi-decoded) and every scan warns. Optional: absent otherwise, and from a daemon before dispatch 000309.",
                       "type": "boolean"
+                    },
+                    "notUtf8": {
+                      "description": "Present, and true, only when the daemon ran under PowerShell 7 and the settings file it resolved has no byte order mark and its bytes are not valid UTF-8 (a strict UTF-8 decode fails), which PowerShell 7 reads as UTF-8 with U+FFFD for each byte sequence that is not (dispatch 000310, owner ruling B1e-RV-01): a managed scan refuses it (policy-settings-not-utf8) and every scan warns. Optional: absent otherwise, and from a daemon before dispatch 000310.",
+                      "type": "boolean"
                     }
                   }
                 }
