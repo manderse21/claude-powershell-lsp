@@ -119,6 +119,7 @@ function Get-PolicyReasonTable {
     $t['policy-settings-rejected'] = [ordered]@{ Stage = 'application'; Meaning = 'PSScriptAnalyzer would reject or could not read a settings file this analysis rests on (the repository''s, or the merged one), so the analysis did not run on the settings as declared' }
     $t['policy-settings-ansi-decoded'] = [ordered]@{ Stage = 'application'; Meaning = 'the repository''s settings file has no byte order mark and holds a byte above 0x7F, which Windows PowerShell 5.1 reads in the system ANSI code page, so the analysis may not have run on the settings as the repository wrote them' }
     $t['policy-settings-not-utf8'] = [ordered]@{ Stage = 'application'; Meaning = 'the repository''s settings file has no byte order mark and its bytes are not valid UTF-8, which PowerShell 7 reads as UTF-8 with U+FFFD for each byte sequence that is not, so the analysis may not have run on the settings as the repository wrote them' }
+    $t['policy-settings-bom-invalid'] = [ordered]@{ Stage = 'application'; Meaning = 'the repository''s settings file has a byte order mark and its bytes after the mark are not valid in the encoding the mark names, which Windows PowerShell 5.1 and PowerShell 7 alike do not read as written, so the analysis may not have run on the settings as the repository wrote them' }
     $t['policy-required-rule-cannot-run'] = [ordered]@{ Stage = 'application'; Meaning = 'a rule the policy requires cannot run under the merged settings handed to PSES, by the daemon''s static check (requiredRules.cannotRun)' }
     $t['policy-suppression-pass-failed'] = [ordered]@{ Stage = 'application'; Meaning = 'the ProhibitedSuppressions pass could not run' }
     # certification -- the managed scan's other preconditions (until A3 binds the declared environment)
@@ -443,7 +444,10 @@ function New-PolicyApplicationEvidence {
     #                  system ANSI code page (Test-PssaSettingsAnsiDecoded), so every other record is what
     #                  it was; and, since dispatch 000310, notUtf8 = $true -- likewise written ONLY then --
     #                  when the daemon, under PowerShell 7, read as UTF-8 a settings file it resolved that
-    #                  has no byte order mark and whose bytes are not valid UTF-8 (Test-PssaSettingsNotUtf8).
+    #                  has no byte order mark and whose bytes are not valid UTF-8 (Test-PssaSettingsNotUtf8);
+    #                  and, since dispatch 000311, bomInvalid = $true -- likewise written ONLY then -- when the
+    #                  settings file it resolved has a byte order mark and its bytes after the mark are not
+    #                  valid in the encoding the mark names, under either host (Test-PssaSettingsFileBomInvalid).
     # Every value is passed in; nothing here reads a file, so the record says only what the daemon
     # observed. An omitted validation reads 'pending' -- not checked -- never 'valid' or 'none'.
     param(
@@ -464,7 +468,8 @@ function New-PolicyApplicationEvidence {
         [string]$SettingsValidation = 'pending',
         [string]$SettingsValidationDetail = '',
         [bool]$SettingsAnsiDecoded = $false,
-        [bool]$SettingsNotUtf8 = $false
+        [bool]$SettingsNotUtf8 = $false,
+        [bool]$SettingsBomInvalid = $false
     )
     if ((Get-PolicyRequiredRuleStates) -notcontains $RequiredState) { $RequiredState = 'pending' }
     if ((Get-PolicySettingsValidationStates) -cnotcontains $SettingsValidation) { $SettingsValidation = 'pending' }
@@ -484,6 +489,7 @@ function New-PolicyApplicationEvidence {
     }
     if ($SettingsAnsiDecoded) { $rec.settings['ansiDecoded'] = $true }
     if ($SettingsNotUtf8) { $rec.settings['notUtf8'] = $true }
+    if ($SettingsBomInvalid) { $rec.settings['bomInvalid'] = $true }
     return $rec
 }
 
@@ -516,10 +522,11 @@ function Copy-PolicyApplicationEvidence {
         validation       = [string](Get-PolicyField -Object $st -Name 'validation')
         validationDetail = [string](Get-PolicyField -Object $st -Name 'validationDetail')
     }
-    # settings.ansiDecoded (dispatch 000309) and settings.notUtf8 (dispatch 000310) ride along exactly when the
-    # record carries them.
+    # settings.ansiDecoded (dispatch 000309), settings.notUtf8 (dispatch 000310) and settings.bomInvalid (dispatch
+    # 000311) ride along exactly when the record carries them.
     if ((Get-PolicyField -Object $st -Name 'ansiDecoded') -eq $true) { $settings['ansiDecoded'] = $true }
     if ((Get-PolicyField -Object $st -Name 'notUtf8') -eq $true) { $settings['notUtf8'] = $true }
+    if ((Get-PolicyField -Object $st -Name 'bomInvalid') -eq $true) { $settings['bomInvalid'] = $true }
     return [ordered]@{
         resolution    = (Get-PolicyField -Object $Evidence -Name 'resolution')
         requiredRules = (Get-PolicyField -Object $Evidence -Name 'requiredRules')
@@ -680,7 +687,9 @@ function Test-ScanPolicyCertification {
     #               not read the repository's under Windows PowerShell 5.1 in the system ANSI code page
     #               (policy-settings-ansi-decoded, dispatch 000309), nor under PowerShell 7 as UTF-8 when
     #               it has no byte order mark and its bytes are not valid UTF-8 (policy-settings-not-utf8,
-    #               dispatch 000310); the daemon's
+    #               dispatch 000310), and the repository's is not one whose bytes after its byte order mark
+    #               are not valid in the encoding the mark names, under either host
+    #               (policy-settings-bom-invalid, dispatch 000311); the daemon's
     #               observed analysis configuration is the declared one (config-observed-mismatch); the
     #               engine versions were observed (engine-unknown).
     # When the policy needs no merged settings, the daemon reporting 'not-required' is a pass: an
@@ -818,6 +827,15 @@ function Test-ScanPolicyCertification {
                     # scan certified while the repository's own rule never ran. Refused whatever the policy requires; an
                     # unmanaged scan only warns (lsp-scan.ps1).
                     if ((Get-PolicyField -Object (Get-PolicyField -Object $daemon -Name 'settings') -Name 'notUtf8') -eq $true) { $r.Add('policy-settings-not-utf8') }
+                    # A SETTINGS FILE WHOSE BYTES AFTER ITS BYTE ORDER MARK DO NOT DECODE IS REFUSED (dispatch 000311,
+                    # B1g; owner ruling B1f-REV-06, option a). The daemon records settings.bomInvalid when the settings
+                    # file it resolved has a byte order mark and a strict decode of the bytes after it, in the encoding
+                    # the mark names, fails: under Windows PowerShell 5.1 and PowerShell 7 alike each byte sequence that
+                    # is not valid there reached the analysis as U+FFFD, or not at all -- a CustomRulePath saved in
+                    # Windows-1252 after a UTF-8 mark, or holding a lone surrogate after a UTF-16 mark, named a decoy
+                    # directory spelled with U+FFFD, and a managed scan certified while the repository's own rule never
+                    # ran. Refused whatever the policy requires; an unmanaged scan only warns (lsp-scan.ps1).
+                    if ((Get-PolicyField -Object (Get-PolicyField -Object $daemon -Name 'settings') -Name 'bomInvalid') -eq $true) { $r.Add('policy-settings-bom-invalid') }
                 }
             }
         }
@@ -988,7 +1006,27 @@ function Get-ScanSettingsNotUtf8Warning {
         if ((Get-PolicyField -Object $st -Name 'notUtf8') -eq $true) {
             return ('lsp-scan: warning: PowerShell 7 read the repository''s settings file as UTF-8, but it has no byte order mark and its bytes are not valid UTF-8, ' +
                 'so each byte sequence in it that is not UTF-8 reached the analysis as U+FFFD and these findings may not rest on the settings as the repository wrote them. ' +
-                'Save it as UTF-8. See docs/repository-scanning.md.')
+                'Save it as UTF-8 with a byte order mark. See docs/repository-scanning.md.')
+        }
+    }
+    return ''
+}
+
+function Get-ScanSettingsBomInvalidWarning {
+    # What every scan warns about, managed or not (dispatch 000311, B1g; owner ruling B1f-REV-06, option a): the one
+    # stderr line, naming the fix, when a daemon record among $Files says the settings file it resolved has a byte order
+    # mark and its bytes after the mark are not valid in the encoding the mark names (settings.bomInvalid), or '' when
+    # none does. Pure over the receipts the scan already holds. A managed scan is also refused over such a record
+    # (policy-settings-bom-invalid, Test-ScanPolicyCertification).
+    param([object[]]$Files = @())
+    foreach ($f in @($Files)) {
+        if ($null -eq $f) { continue }
+        $pol = Get-PolicyField -Object (Get-PolicyField -Object $f -Name 'Receipt') -Name 'policy'
+        $st = Get-PolicyField -Object (Get-PolicyField -Object $pol -Name 'daemon') -Name 'settings'
+        if ((Get-PolicyField -Object $st -Name 'bomInvalid') -eq $true) {
+            return ('lsp-scan: warning: the repository''s settings file has a byte order mark, but its bytes after the mark are not valid in the encoding the mark names, ' +
+                'so these findings may not rest on the settings as the repository wrote them. ' +
+                'Save it as UTF-8 with a byte order mark. See docs/repository-scanning.md.')
         }
     }
     return ''

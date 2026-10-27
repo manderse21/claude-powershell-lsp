@@ -11,14 +11,17 @@
 # file saved without a byte order mark is read by Windows PowerShell 5.1 in the system ANSI code page), and owner
 # ruling D2 on review finding B1d-RV2-01 (a lone UTF-16 surrogate reached the merged file as U+FFFD). Dispatch 000310,
 # B1f: owner ruling B1e-RV-01, the PowerShell 7 mirror of RV-02 (a repository's own settings file with no byte order
-# mark whose bytes are not valid UTF-8 is read by PowerShell 7 as UTF-8, each such byte sequence as U+FFFD).
+# mark whose bytes are not valid UTF-8 is read by PowerShell 7 as UTF-8, each such byte sequence as U+FFFD). Dispatch
+# 000311, B1g: owner ruling B1f-REV-06, option a (a repository's own settings file WITH a byte order mark whose bytes
+# after the mark are not valid in the encoding the mark names is read by both hosts with U+FFFD in place of each such
+# byte sequence), and review finding B1f-REV-08 (the PowerShell 7 warning names the fix both refusals share).
 #
 # Windows PowerShell 5.1 reads a settings file that has no byte order mark in the system ANSI code page
 # (Windows-1252 on a US or Western-European system); PowerShell 7 reads it as UTF-8. The merged file is now written
 # with the UTF-8 byte order mark exactly when it holds a character outside ASCII (ConvertTo-MergedPssaSettingsBytes),
 # so every all-ASCII merged file keeps its bytes and its content-addressed name.
 #
-# NINE LAYERS:
+# TEN LAYERS:
 #   1. The bytes (pure): the mark exactly when a character is outside ASCII.
 #   2. The writer: a non-ASCII merged file opens with the mark, is named by the SHA-256 of the bytes written, is
 #      read back by THIS host as written, and never reuses a file an earlier daemon wrote without the mark; every
@@ -48,6 +51,13 @@
 #      is handed is unchanged), the scan's copy, the managed refusal (policy-settings-not-utf8), every scan's warning
 #      line, and the receipt's type check and schema. Under Windows PowerShell 5.1 the trigger never acts, and layer 7
 #      is unchanged there; under PowerShell 7 layer 7's daemon record of its ANSI-saved file now carries the key too.
+#      Its warning line names the fix as 'Save it as UTF-8 with a byte order mark.' since dispatch 000311 (B1f-REV-08).
+#  10. A repository's own settings file WITH a byte order mark (dispatch 000311, owner ruling B1f-REV-06, option a): one
+#      whose bytes after the mark are not valid in the encoding the mark names is read by both hosts with U+FFFD in
+#      place of each such byte sequence. The classifier (Test-PssaSettingsFileBomInvalid, the same on every host and
+#      the trigger on both), the daemon's record of it (settings.bomInvalid, written only when it applies; what PSES is
+#      handed is unchanged), the scan's copy, the managed refusal (policy-settings-bom-invalid), every scan's warning
+#      line, and the receipt's type check and schema.
 #
 # Run against f0a8ec0 (the base) -- its scripts/ and its docs/scan-receipt.schema.json -- the bytes' and the
 # writer's own tests (layers 1 and 2: the mark, the name, no reuse) and 'B1d-RX09:' fail on both hosts; the
@@ -74,6 +84,14 @@
 # that is not a boolean, and the schema has no such field. The daemon-record cases fail there under PowerShell 7
 # exactly for the Windows-1252 file (with and without the policy), as do the two layer-7 cases of B1e's ANSI-saved
 # file; every other daemon-record case, and every one under Windows PowerShell 5.1, passes on both trees.
+#
+# Run against fc2c8f7 (B1f merged) -- its scripts/ and docs/ -- the 'B1g-REV06:' tests and the 'B1g-REV06 control:'
+# fail on both hosts: the classifier, the warning line and the record's parameter do not exist there, the scan's copy
+# drops the key, the managed verdict certifies over a record that carries settings.bomInvalid, the receipt check
+# passes a value that is not a boolean, and the schema has no such field. The daemon-record cases fail there on both
+# hosts exactly for the two files whose bytes after the mark are not valid (with and without the policy); the other
+# eight record nothing and pass on both trees. Of the 'B1f-RV01:' tests exactly one fails there: the warning line,
+# whose literal now names the fix as 'Save it as UTF-8 with a byte order mark.' (B1f-REV-08).
 #
 # ASCII-only (PS 5.1 em-dash trap; each non-ASCII character is built with [char]); StrictMode-safe.
 
@@ -1110,7 +1128,7 @@ Describe 'A repository settings file PowerShell 7 reads as UTF-8 though its byte
         $one = New-NuEvFile -Declared $script:NuReq -NotUtf8 $true
         Get-ScanSettingsNotUtf8Warning -Files @($none, $null) | Should -BeExactly ''
         Get-ScanSettingsNotUtf8Warning -Files @() | Should -BeExactly ''
-        Get-ScanSettingsNotUtf8Warning -Files @($none, $one, $one) | Should -BeExactly ('lsp-scan: warning: PowerShell 7 read the repository''s settings file as UTF-8, but it has no byte order mark and its bytes are not valid UTF-8, so each byte sequence in it that is not UTF-8 reached the analysis as U+FFFD and these findings may not rest on the settings as the repository wrote them. Save it as UTF-8. See docs/repository-scanning.md.')
+        Get-ScanSettingsNotUtf8Warning -Files @($none, $one, $one) | Should -BeExactly ('lsp-scan: warning: PowerShell 7 read the repository''s settings file as UTF-8, but it has no byte order mark and its bytes are not valid UTF-8, so each byte sequence in it that is not UTF-8 reached the analysis as U+FFFD and these findings may not rest on the settings as the repository wrote them. Save it as UTF-8 with a byte order mark. See docs/repository-scanning.md.')
         Get-ScanSettingsAnsiDecodedWarning -Files @($one) | Should -BeExactly '' -Because 'B1e''s 5.1 warning is not printed for this record'
         $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:EnScripts 'lsp-scan.ps1'), [ref]$null, [ref]$null)
         @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-ScanSettingsNotUtf8Warning' }, $true)).Count | Should -Be 1
@@ -1134,5 +1152,300 @@ Describe 'A repository settings file PowerShell 7 reads as UTF-8 though its byte
         [string]$st.properties.notUtf8.type | Should -BeExactly 'boolean'
         @($st.required) | Should -Not -Contain 'notUtf8'
         [string]$st.properties.notUtf8.description | Should -Match 'policy-settings-not-utf8'
+    }
+}
+
+Describe 'A repository settings file whose bytes after its byte order mark do not decode, on both hosts (dispatch 000311 B1g, owner ruling B1f-REV-06, option a)' {
+
+    BeforeAll {
+        $script:BgOnCore = ($PSVersionTable.PSEdition -eq 'Core')
+        function Get-BgBytes {
+            # The bytes of one repository settings file, as $Shape says: '<mark>-<what>'. The mark is u8 (EF BB BF), u16le
+            # (FF FE), u16be (FE FF), u32le (FF FE 00 00), u32be (00 00 FE FF) or none. Each in-entry shape carries an
+            # IncludeRules entry 'PSCaf' + X: for an invalid X, bytes that are not valid in the encoding the mark names --
+            # u8 E9 (Windows-1252), 80 (a lone continuation byte), C0AF (overlong), EDA080 (a surrogate encoded as UTF-8),
+            # F4908080 (above U+10FFFF); u16 D800 or DC00 (a lone surrogate); u32 110000 (above U+10FFFF) or D800 (a
+            # surrogate code point) -- and for a valid one the Kelvin sign, a U+FFFD the repository wrote, or a character
+            # beyond the BMP. An 'eof-' shape ends the file inside a character after a table that is valid: u8 E2 82, u16
+            # a high surrogate or one byte, u32 three bytes or one. 'mark-only' is the mark alone; 'u32le-utf16' is a
+            # UTF-32 little-endian mark followed by UTF-16 little-endian text (StreamReader reads FF FE 00 00 as UTF-32);
+            # 'u16le-short' is FF FE 00, three bytes, which StreamReader reads as UTF-16 with one byte left over.
+            param([string]$Shape)
+            $u8 = New-Object System.Text.UTF8Encoding($false)
+            $encs = @{
+                'u8'    = @{ Mark = @(0xEF, 0xBB, 0xBF); Enc = $u8 }
+                'u16le' = @{ Mark = @(0xFF, 0xFE); Enc = (New-Object System.Text.UnicodeEncoding($false, $false)) }
+                'u16be' = @{ Mark = @(0xFE, 0xFF); Enc = (New-Object System.Text.UnicodeEncoding($true, $false)) }
+                'u32le' = @{ Mark = @(0xFF, 0xFE, 0x00, 0x00); Enc = (New-Object System.Text.UTF32Encoding($false, $false)) }
+                'u32be' = @{ Mark = @(0x00, 0x00, 0xFE, 0xFF); Enc = (New-Object System.Text.UTF32Encoding($true, $false)) }
+                'none'  = @{ Mark = @(); Enc = $u8 }
+            }
+            $bad = @{
+                'u8-E9' = @(0xE9); 'u8-80' = @(0x80); 'u8-C0AF' = @(0xC0, 0xAF); 'u8-EDA080' = @(0xED, 0xA0, 0x80); 'u8-F4908080' = @(0xF4, 0x90, 0x80, 0x80)
+                'u16le-D800' = @(0x00, 0xD8); 'u16le-DC00' = @(0x00, 0xDC); 'u16be-D800' = @(0xD8, 0x00)
+                'u32le-110000' = @(0x00, 0x00, 0x11, 0x00); 'u32le-D800' = @(0x00, 0xD8, 0x00, 0x00); 'u32be-110000' = @(0x00, 0x11, 0x00, 0x00)
+                'none-E9' = @(0xE9); 'none-80' = @(0x80)
+            }
+            $eof = @{ 'u8-eof' = @(0xE2, 0x82); 'u16le-eof-high' = @(0x00, 0xD8); 'u16le-eof-odd' = @(0x41); 'u16be-eof-odd' = @(0x41)
+                'u32le-eof-3' = @(0x41, 0x00, 0x00); 'u32be-eof-1' = @(0x00); 'none-eof' = @(0xE2, 0x82)
+            }
+            $valid = @{ 'kelvin' = [string][char]0x212A; 'fffd' = [string][char]0xFFFD; 'supplementary' = ([string][char]0xD83D + [string][char]0xDE00) }
+            $pre = "@{ IncludeRules = @('PSAvoidUsingCmdletAliases', 'PSCaf"
+            $post = "') }`n"
+            $plain = "@{ IncludeRules = @('PSAvoidUsingCmdletAliases') }`n"
+            if ($Shape -eq 'u32le-utf16') { return , [byte[]](@(0xFF, 0xFE, 0x00, 0x00) + @((New-Object System.Text.UnicodeEncoding($false, $false)).GetBytes($plain))) }
+            if ($Shape -eq 'u16le-short') { return , [byte[]]@(0xFF, 0xFE, 0x00) }
+            $mark = $Shape.Substring(0, $Shape.IndexOf('-'))
+            $what = $Shape.Substring($Shape.IndexOf('-') + 1)
+            if (-not $encs.ContainsKey($mark)) { throw ('no such shape: ' + $Shape) }
+            $e = $encs[$mark]
+            $m = [byte[]]@($e.Mark)
+            if ($what -eq 'mark-only') { return , $m }
+            if ($what -eq 'ascii') { return , [byte[]](@($m) + @($e.Enc.GetBytes($plain))) }
+            if ($bad.ContainsKey($Shape)) { return , [byte[]](@($m) + @($e.Enc.GetBytes($pre)) + @($bad[$Shape]) + @($e.Enc.GetBytes($post))) }
+            if ($eof.ContainsKey($Shape)) { return , [byte[]](@($m) + @($e.Enc.GetBytes($plain)) + @($eof[$Shape])) }
+            if ($valid.ContainsKey($what)) { return , [byte[]](@($m) + @($e.Enc.GetBytes($pre + $valid[$what] + $post))) }
+            throw ('no such shape: ' + $Shape)
+        }
+        function New-BgRepoFile {
+            # A PSScriptAnalyzerSettings.psd1 holding exactly $Bytes, in a fresh directory under $TestDrive.
+            param([byte[]]$Bytes)
+            $d = Join-Path $TestDrive ('bg-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+            $p = Join-Path $d 'PSScriptAnalyzerSettings.psd1'
+            [System.IO.File]::WriteAllBytes($p, $Bytes)
+            return $p
+        }
+
+        # The daemon's OWN Initialize-PssaSettings, lifted from scripts/pses-daemon.ps1 by AST with PSES stubbed, as the
+        # B1e and B1f layers above do.
+        $daemonAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:EnScripts 'pses-daemon.ps1'), [ref]$null, [ref]$null)
+        $fn = $daemonAst.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Initialize-PssaSettings' }, $true)
+        if ($null -eq $fn) { throw 'pses-daemon.ps1 has no Initialize-PssaSettings' }
+        . ([scriptblock]::Create([string]$fn.Extent.Text))
+        function Write-DLog { param([string]$m) [void]$script:BgLog.Add($m) }
+        function Send-Lsp { param($obj) [void]$script:BgSent.Add($obj) }
+        function Get-DaemonPsesVersionTag { return 'v4.6.0' }
+        $script:BgPolicy = New-EnFile "@{ RequiredRules = @('PSAvoidGlobalVars') }`n" -Name 'org.psd1'
+        function Invoke-BgDaemon {
+            # One session start of the daemon's settings resolution over a repository whose settings file holds $Bytes,
+            # with the RequiredRules policy or with none: the daemon's record, its log and every path it handed PSES.
+            param([byte[]]$Bytes, [bool]$WithPolicy)
+            $settings = New-BgRepoFile $Bytes
+            $repo = Split-Path -Parent $settings
+            [System.IO.File]::WriteAllText((Join-Path $repo 'thing.ps1'), "gci`n")
+            $script:OrgPolicyPath = $(if ($WithPolicy) { $script:BgPolicy } else { '' })
+            $script:SettingsPath = ''
+            $script:Ruleset = 'pses-default'
+            $script:DataRoot = New-EnDataRoot
+            New-Item -ItemType Directory -Force -Path $script:DataRoot | Out-Null
+            $script:settingsResolved = $false
+            $script:settingsPathInUse = ''
+            $script:BgLog = New-Object System.Collections.ArrayList
+            $script:BgSent = New-Object System.Collections.ArrayList
+            Initialize-PssaSettings -FilePath (Join-Path $repo 'thing.ps1') -ProjectRoot $repo
+            $handed = @(@($script:BgSent) | ForEach-Object { [string]$_.params.settings.powershell.scriptAnalysis.settingsPath })
+            return @{ Record = $script:policyApplication; Log = @($script:BgLog); Handed = $handed; Settings = $settings }
+        }
+
+        $script:BgReq = Resolve-EffectivePolicy -Path (New-EnFile "@{ RequiredRules = @('PSAvoidGlobalVars') }" -Name 'org.psd1') -Source 'cli'
+        $script:BgExc = Resolve-EffectivePolicy -Path (New-EnFile "@{ ExcludeRules = @('PSUseApprovedVerbs') }" -Name 'org.psd1') -Source 'cli'
+        function New-BgEvFile {
+            # One file's evidence as the scan reads it back -- both parties agreeing on $Declared, the settings valid --
+            # with settings.bomInvalid = $true added by hand when asked, so the verdict is judged on the receipt alone.
+            param($Declared, [bool]$BomInvalid)
+            $needs = ([string]$Declared.obligations.mergedSettings -eq 'required')
+            $sha = ('c' * 64)
+            $daemon = New-PolicyApplicationEvidence -RequiredState $(if ($needs) { 'activated' } else { 'not-required' }) -RequiredCount 1 `
+                -GuardVerifiedFor 'v4.6.0' -GuardObserved 'v4.6.0' -GuardResult 'pass' -MergedPath 'm' -MergedSha256 $(if ($needs) { $sha } else { '' }) `
+                -SettingsPath 'm' -SettingsSource $(if ($needs) { 'merged' } else { 'resolved' }) -SettingsSha256 $sha -Delivered $true -SettingsValidation 'valid'
+            $daemon.resolution = [ordered]@{ path = 'p'; configured = $true; usable = $true; reason = ''; effectiveSha256 = [string]$Declared.identity.sha256 }
+            if ($BomInvalid) { $daemon.settings['bomInvalid'] = $true }
+            $client = New-PolicyAdjudicationEvidence -Mode 'closed'
+            $client.resolution = [ordered]@{ path = 'p'; configured = $true; usable = $true; reason = ''; effectiveSha256 = [string]$Declared.identity.sha256 }
+            $receipt = [ordered]@{
+                engine = [ordered]@{ pses = '4.6.0'; pssa = '1.25.0' }
+                config = [ordered]@{ state = 'unbound'; observed = [ordered]@{ severityThreshold = 'Hint'; ruleInclude = ''; ruleExclude = ''; perFileCap = 0 } }
+                policy = [ordered]@{ state = 'observed'; client = $client; daemon = $daemon }
+            }
+            return [pscustomobject]@{ File = 'C:\x.ps1'; Completeness = 'complete'; Pass = 'pssa'; Receipt = (($receipt | ConvertTo-Json -Depth 8) | ConvertFrom-Json) }
+        }
+    }
+
+    It 'B1g-REV06: the classifier is <Want> for a settings file <Name> (true only with a byte order mark followed by bytes that are not valid in the encoding it names)' -ForEach @(
+        @{ Shape = 'u8-E9'; Name = 'with a UTF-8 mark, then the byte E9 (Windows-1252)'; Want = $true }
+        @{ Shape = 'u8-80'; Name = 'with a UTF-8 mark, then a lone continuation byte (80)'; Want = $true }
+        @{ Shape = 'u8-C0AF'; Name = 'with a UTF-8 mark, then an overlong sequence (C0 AF)'; Want = $true }
+        @{ Shape = 'u8-EDA080'; Name = 'with a UTF-8 mark, then a surrogate encoded as UTF-8 (ED A0 80)'; Want = $true }
+        @{ Shape = 'u8-F4908080'; Name = 'with a UTF-8 mark, then a sequence above U+10FFFF (F4 90 80 80)'; Want = $true }
+        @{ Shape = 'u8-eof'; Name = 'with a UTF-8 mark, ending inside a sequence (E2 82)'; Want = $true }
+        @{ Shape = 'u16le-D800'; Name = 'with a UTF-16 little-endian mark, then a lone high surrogate'; Want = $true }
+        @{ Shape = 'u16le-DC00'; Name = 'with a UTF-16 little-endian mark, then a lone low surrogate'; Want = $true }
+        @{ Shape = 'u16le-eof-high'; Name = 'with a UTF-16 little-endian mark, ending after a high surrogate'; Want = $true }
+        @{ Shape = 'u16le-eof-odd'; Name = 'with a UTF-16 little-endian mark, ending one byte into a unit'; Want = $true }
+        @{ Shape = 'u16le-short'; Name = 'of the three bytes FF FE 00 (read as UTF-16 little-endian, one byte over)'; Want = $true }
+        @{ Shape = 'u16be-D800'; Name = 'with a UTF-16 big-endian mark, then a lone high surrogate'; Want = $true }
+        @{ Shape = 'u16be-eof-odd'; Name = 'with a UTF-16 big-endian mark, ending one byte into a unit'; Want = $true }
+        @{ Shape = 'u32le-110000'; Name = 'with a UTF-32 little-endian mark, then a unit above U+10FFFF'; Want = $true }
+        @{ Shape = 'u32le-D800'; Name = 'with a UTF-32 little-endian mark, then a surrogate code point'; Want = $true }
+        @{ Shape = 'u32le-eof-3'; Name = 'with a UTF-32 little-endian mark, ending three bytes into a unit'; Want = $true }
+        @{ Shape = 'u32le-utf16'; Name = 'with a UTF-32 little-endian mark, then UTF-16 little-endian text'; Want = $true }
+        @{ Shape = 'u32be-110000'; Name = 'with a UTF-32 big-endian mark, then a unit above U+10FFFF'; Want = $true }
+        @{ Shape = 'u32be-eof-1'; Name = 'with a UTF-32 big-endian mark, ending one byte into a unit'; Want = $true }
+        @{ Shape = 'u8-kelvin'; Name = 'saved as UTF-8 with a mark, holding the Kelvin sign'; Want = $false }
+        @{ Shape = 'u8-fffd'; Name = 'saved as UTF-8 with a mark, holding a U+FFFD it wrote'; Want = $false }
+        @{ Shape = 'u8-supplementary'; Name = 'saved as UTF-8 with a mark, holding a character beyond the BMP'; Want = $false }
+        @{ Shape = 'u8-ascii'; Name = 'saved as UTF-8 with a mark, all ASCII'; Want = $false }
+        @{ Shape = 'u8-mark-only'; Name = 'that is a UTF-8 mark alone'; Want = $false }
+        @{ Shape = 'u16le-kelvin'; Name = 'saved as UTF-16 little-endian with a mark, holding the Kelvin sign'; Want = $false }
+        @{ Shape = 'u16le-supplementary'; Name = 'saved as UTF-16 little-endian with a mark, holding a surrogate pair'; Want = $false }
+        @{ Shape = 'u16be-kelvin'; Name = 'saved as UTF-16 big-endian with a mark, holding the Kelvin sign'; Want = $false }
+        @{ Shape = 'u32le-kelvin'; Name = 'saved as UTF-32 little-endian with a mark, holding the Kelvin sign'; Want = $false }
+        @{ Shape = 'u32le-mark-only'; Name = 'that is a UTF-32 little-endian mark alone'; Want = $false }
+        @{ Shape = 'u32be-kelvin'; Name = 'saved as UTF-32 big-endian with a mark, holding the Kelvin sign'; Want = $false }
+        @{ Shape = 'none-E9'; Name = 'without a mark, holding the byte E9 (Windows-1252)'; Want = $false }
+        @{ Shape = 'none-80'; Name = 'without a mark, holding a lone continuation byte'; Want = $false }
+        @{ Shape = 'none-eof'; Name = 'without a mark, ending inside a sequence'; Want = $false }
+        @{ Shape = 'none-kelvin'; Name = 'saved as UTF-8 without a mark, holding the Kelvin sign'; Want = $false }
+        @{ Shape = 'none-ascii'; Name = 'all ASCII, without a mark'; Want = $false }
+    ) {
+        Test-PssaSettingsFileBomInvalid -Path (New-BgRepoFile (Get-BgBytes $Shape)) | Should -Be $Want
+    }
+
+    It 'B1g-REV06: the classifier is $false for a file that cannot be read and for a blank path, without throwing' {
+        Test-PssaSettingsFileBomInvalid -Path (Join-Path $TestDrive ('bg-missing-' + [guid]::NewGuid().ToString('N') + '.psd1')) | Should -BeFalse
+        Test-PssaSettingsFileBomInvalid -Path '' | Should -BeFalse
+    }
+
+    It 'B1g-REV06 control: this host reads U+FFFD into the entry of each marked file whose bytes after the mark are not valid, exactly where the classifier says so, and reads each valid one as written' {
+        foreach ($s in @('u8-E9', 'u8-80', 'u8-C0AF', 'u8-EDA080', 'u8-F4908080', 'u16le-D800', 'u16le-DC00', 'u16be-D800', 'u32le-110000', 'u32le-D800', 'u32be-110000')) {
+            $p = New-BgRepoFile (Get-BgBytes $s)
+            $read = @((Read-PssaSettingsFile -Path $p).Entries['IncludeRules']) -join '|'
+            $read.Contains([string][char]0xFFFD) | Should -BeTrue -Because ($s + ' read: ' + (Get-EnShown $read))
+            Test-PssaSettingsFileBomInvalid -Path $p | Should -BeTrue -Because $s
+        }
+        foreach ($s in @('u8-kelvin', 'u16le-kelvin', 'u16be-kelvin', 'u32le-kelvin', 'u32be-kelvin')) {
+            $p = New-BgRepoFile (Get-BgBytes $s)
+            $read = @((Read-PssaSettingsFile -Path $p).Entries['IncludeRules']) -join '|'
+            $read | Should -BeExactly ('PSAvoidUsingCmdletAliases|PSCaf' + [string][char]0x212A) -Because ($s + ' read: ' + (Get-EnShown $read))
+            Test-PssaSettingsFileBomInvalid -Path $p | Should -BeFalse -Because $s
+        }
+    }
+
+    It 'B1g-REV06: the daemon records settings.bomInvalid for <Name>, <Policy>, on every host exactly when its bytes after the mark are not valid (<Want>), and hands PSES the same file either way' -ForEach @(
+        foreach ($s in @(
+                @{ Shape = 'u8-E9'; Name = 'a repository file with a UTF-8 mark followed by the byte E9'; Want = $true }
+                @{ Shape = 'u16le-D800'; Name = 'one with a UTF-16 little-endian mark followed by a lone surrogate'; Want = $true }
+                @{ Shape = 'u8-kelvin'; Name = 'one saved as UTF-8 with a mark'; Want = $false }
+                @{ Shape = 'u16le-kelvin'; Name = 'one saved as UTF-16 little-endian with a mark'; Want = $false }
+                @{ Shape = 'none-E9'; Name = 'one saved in Windows-1252 without a mark'; Want = $false }
+                @{ Shape = 'none-ascii'; Name = 'an all-ASCII one without a mark'; Want = $false })) {
+            foreach ($p in @(@{ Policy = 'with no policy'; WithPolicy = $false }, @{ Policy = 'with RequiredRules merged'; WithPolicy = $true })) {
+                @{ Shape = $s.Shape; Name = $s.Name; Want = $s.Want; Policy = $p.Policy; WithPolicy = $p.WithPolicy }
+            }
+        }
+    ) {
+        # The Windows-1252 file without a mark carries B1e's key under Windows PowerShell 5.1 and B1f's under PowerShell 7.
+        $wantAnsi = ((-not $script:BgOnCore) -and $Shape -eq 'none-E9')
+        $wantNotUtf8 = ($script:BgOnCore -and $Shape -eq 'none-E9')
+        $d = Invoke-BgDaemon -Bytes (Get-BgBytes $Shape) -WithPolicy $WithPolicy
+        $st = $d.Record.settings
+        ((@($st.Keys) | ForEach-Object { [string]$_ }) -join ',') | Should -BeExactly ('path,source,sha256,delivered,validation,validationDetail' + $(if ($wantAnsi) { ',ansiDecoded' } else { '' }) + $(if ($wantNotUtf8) { ',notUtf8' } else { '' }) + $(if ($Want) { ',bomInvalid' } else { '' })) -Because 'the key is written only when it applies, so every other record is what it was'
+        if ($Want) {
+            $st['bomInvalid'] | Should -BeOfType [bool]
+            $st['bomInvalid'] | Should -BeTrue
+        }
+        @($d.Log | Where-Object { $_ -match 'its bytes after the mark are not valid' }).Count | Should -Be $(if ($Want) { 1 } else { 0 })
+        [string]$st['validation'] | Should -BeExactly 'valid' -Because 'the record changes no verdict'
+        @($d.Handed).Count | Should -Be 1
+        [string]$st['path'] | Should -BeExactly $d.Handed[0]
+        if ($WithPolicy) {
+            [string]$d.Record.requiredRules.state | Should -BeExactly 'activated'
+            [string]$st['source'] | Should -BeExactly 'merged'
+            [System.IO.Path]::GetFileName($d.Handed[0]) | Should -Match '\Amerged-settings-[0-9a-f]{16}\.psd1\z'
+        } else {
+            [string]$st['source'] | Should -BeExactly 'resolved'
+            $d.Handed[0] | Should -BeExactly $d.Settings -Because 'PSES is handed the repository file itself, as it was'
+        }
+    }
+
+    It 'B1g-REV06: the evidence builder writes settings.bomInvalid = $true only when told to, after any ansiDecoded and notUtf8, and a record without it is byte for byte what it was' {
+        $plain = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid'
+        $off = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid' -SettingsBomInvalid $false
+        $on = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid' -SettingsBomInvalid $true
+        $all = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid' -SettingsAnsiDecoded $true -SettingsNotUtf8 $true -SettingsBomInvalid $true
+        (@($plain.settings.Keys) -join ',') | Should -BeExactly 'path,source,sha256,delivered,validation,validationDetail'
+        ($off | ConvertTo-Json -Depth 8 -Compress) | Should -BeExactly ($plain | ConvertTo-Json -Depth 8 -Compress)
+        (@($on.settings.Keys) -join ',') | Should -BeExactly 'path,source,sha256,delivered,validation,validationDetail,bomInvalid'
+        $on.settings['bomInvalid'] | Should -BeOfType [bool]
+        $on.settings['bomInvalid'] | Should -BeTrue
+        (@($all.settings.Keys) -join ',') | Should -BeExactly 'path,source,sha256,delivered,validation,validationDetail,ansiDecoded,notUtf8,bomInvalid' -Because 'a fixed order, though one daemon never writes more than one'
+    }
+
+    It 'B1g-REV06: the scan''s copy of a daemon record carries settings.bomInvalid exactly when the record does, read in memory or from its JSON' {
+        $on = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid' -SettingsBomInvalid $true
+        $off = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid'
+        foreach ($rec in @($on, (($on | ConvertTo-Json -Depth 8) | ConvertFrom-Json))) {
+            $c = Copy-PolicyApplicationEvidence -Evidence $rec -SettingsSha256 ('a' * 64)
+            (@($c.settings.Keys) -join ',') | Should -BeExactly 'path,source,sha256,delivered,validation,validationDetail,bomInvalid'
+            $c.settings['bomInvalid'] | Should -BeTrue
+        }
+        foreach ($rec in @($off, (($off | ConvertTo-Json -Depth 8) | ConvertFrom-Json))) {
+            (@((Copy-PolicyApplicationEvidence -Evidence $rec -SettingsSha256 ('a' * 64)).settings.Keys) -join ',') | Should -BeExactly 'path,source,sha256,delivered,validation,validationDetail'
+        }
+    }
+
+    It 'B1g-REV06: a managed verdict over a daemon record carrying settings.bomInvalid is NOT CERTIFIED, with the application-stage code policy-settings-bom-invalid -- RequiredRules activated or none required; the same record without it certifies; an unmanaged verdict refuses nothing' {
+        foreach ($decl in @($script:BgReq, $script:BgExc)) {
+            foreach ($bi in @($false, $true)) {
+                $f = New-BgEvFile -Declared $decl -BomInvalid $bi
+                $c = Test-ScanPolicyCertification -Mode 'closed' -Declared $decl -Files @($f)
+                if ($bi) {
+                    $c.Certified | Should -BeFalse -Because 'the settings file''s bytes after its byte order mark are not valid in the encoding the mark names'
+                    (@($c.Files[0].Reasons) -join ',') | Should -BeExactly 'policy-settings-bom-invalid'
+                    @($c.Reasons).Count | Should -Be 0 -Because 'a per-file reason: each file''s daemon record says it'
+                } else {
+                    $c.Certified | Should -BeTrue -Because ('CONTROL: ' + (@($c.AllReasons) -join ','))
+                }
+                (Test-ScanPolicyCertification -Mode 'open' -Declared $decl -Files @($f)).Managed | Should -BeFalse -Because 'an unmanaged verdict refuses nothing'
+            }
+        }
+        $t = Get-PolicyReasonTable
+        $t.Contains('policy-settings-bom-invalid') | Should -BeTrue
+        [string]$t['policy-settings-bom-invalid'].Stage | Should -BeExactly 'application'
+        [string]$t['policy-settings-ansi-decoded'].Meaning | Should -Match 'Windows PowerShell 5\.1' -Because 'B1e''s code keeps its 5.1 meaning'
+        [string]$t['policy-settings-not-utf8'].Meaning | Should -Match 'PowerShell 7 reads' -Because 'B1f''s code keeps its PowerShell 7 meaning'
+    }
+
+    It 'B1g-REV06: every scan''s warning is one line naming the fix when any file''s daemon record carries settings.bomInvalid, and none otherwise; lsp-scan.ps1 asks for it once' {
+        $none = New-BgEvFile -Declared $script:BgReq -BomInvalid $false
+        $one = New-BgEvFile -Declared $script:BgReq -BomInvalid $true
+        Get-ScanSettingsBomInvalidWarning -Files @($none, $null) | Should -BeExactly ''
+        Get-ScanSettingsBomInvalidWarning -Files @() | Should -BeExactly ''
+        Get-ScanSettingsBomInvalidWarning -Files @($none, $one, $one) | Should -BeExactly ('lsp-scan: warning: the repository''s settings file has a byte order mark, but its bytes after the mark are not valid in the encoding the mark names, so these findings may not rest on the settings as the repository wrote them. Save it as UTF-8 with a byte order mark. See docs/repository-scanning.md.')
+        Get-ScanSettingsAnsiDecodedWarning -Files @($one) | Should -BeExactly '' -Because 'B1e''s 5.1 warning is not printed for this record'
+        Get-ScanSettingsNotUtf8Warning -Files @($one) | Should -BeExactly '' -Because 'B1f''s PowerShell 7 warning is not printed for this record'
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:EnScripts 'lsp-scan.ps1'), [ref]$null, [ref]$null)
+        @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-ScanSettingsBomInvalidWarning' }, $true)).Count | Should -Be 1
+    }
+
+    It 'B1g-REV06: the receipt types settings.bomInvalid -- $true is well formed, a value that is not a boolean is not, and a record without it is still well formed' {
+        $daemon = New-PolicyApplicationEvidence -RequiredState 'not-required' -SettingsValidation 'valid'
+        $policy = (([ordered]@{ client = (New-PolicyAdjudicationEvidence); daemon = $daemon }) | ConvertTo-Json -Depth 8) | ConvertFrom-Json
+        @(Get-ScanReceiptPolicyEvidenceProblems -Policy $policy).Count | Should -Be 0 -Because 'CONTROL: a record without the key, as every daemon before dispatch 000311 writes'
+        $policy.daemon.settings | Add-Member -NotePropertyName 'bomInvalid' -NotePropertyValue $true
+        @(Get-ScanReceiptPolicyEvidenceProblems -Policy $policy).Count | Should -Be 0
+        foreach ($bad in @('true', 1, $null)) {
+            $policy.daemon.settings.bomInvalid = $bad
+            @(Get-ScanReceiptPolicyEvidenceProblems -Policy $policy) | Should -Contain 'policy.daemon.settings.bomInvalid is not a boolean' -Because ('a ' + $(if ($null -eq $bad) { 'null' } else { $bad.GetType().Name }) + ' is not a boolean')
+        }
+    }
+
+    It 'B1g-REV06: docs/scan-receipt.schema.json declares settings.bomInvalid as an optional boolean' {
+        $schema = [System.IO.File]::ReadAllText((Join-Path $script:EnRepo 'docs/scan-receipt.schema.json')) | ConvertFrom-Json
+        $st = $schema.properties.policy.properties.daemon.oneOf[1].properties.settings
+        [string]$st.properties.bomInvalid.type | Should -BeExactly 'boolean'
+        @($st.required) | Should -Not -Contain 'bomInvalid'
+        [string]$st.properties.bomInvalid.description | Should -Match 'policy-settings-bom-invalid'
     }
 }
