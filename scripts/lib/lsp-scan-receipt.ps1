@@ -747,6 +747,12 @@ function Get-ScanReceiptPolicyEvidenceProblems {
             if ((Test-ScanReceiptHasField -Object $st -Name 'notUtf8') -and -not ((Get-ScanReceiptField $st 'notUtf8') -is [bool])) {
                 $p.Add('policy.daemon.settings.notUtf8 is not a boolean')
             }
+            # bomInvalid (dispatch 000311): optional -- a daemon writes it, true, only when the settings file it resolved
+            # has a byte order mark and its bytes after the mark are not valid in the encoding the mark names -- and a
+            # boolean when present.
+            if ((Test-ScanReceiptHasField -Object $st -Name 'bomInvalid') -and -not ((Get-ScanReceiptField $st 'bomInvalid') -is [bool])) {
+                $p.Add('policy.daemon.settings.bomInvalid is not a boolean')
+            }
         }
     }
     return @($p.ToArray())

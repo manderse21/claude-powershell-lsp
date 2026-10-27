@@ -176,6 +176,10 @@
                     "notUtf8": {
                       "description": "Present, and true, only when the daemon ran under PowerShell 7 and the settings file it resolved has no byte order mark and its bytes are not valid UTF-8 (a strict UTF-8 decode fails), which PowerShell 7 reads as UTF-8 with U+FFFD for each byte sequence that is not (dispatch 000310, owner ruling B1e-RV-01): a managed scan refuses it (policy-settings-not-utf8) and every scan warns. Optional: absent otherwise, and from a daemon before dispatch 000310.",
                       "type": "boolean"
+                    },
+                    "bomInvalid": {
+                      "description": "Present, and true, only when the settings file the daemon resolved has a byte order mark (UTF-8, UTF-16 little- or big-endian, UTF-32 little- or big-endian) and a strict decode of its bytes after the mark, in the encoding the mark names, fails, which Windows PowerShell 5.1 and PowerShell 7 alike do not read as written (dispatch 000311, owner ruling B1f-REV-06): a managed scan refuses it (policy-settings-bom-invalid) and every scan warns. Optional: absent otherwise, and from a daemon before dispatch 000311.",
+                      "type": "boolean"
                     }
                   }
                 }

@@ -48,6 +48,34 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **Both hosts refuse a repository settings file whose bytes after its byte order mark do not decode, and
+the PowerShell 7 warning names the one fix for every refusal** (dispatch 000311, leg B1g -- owner ruling
+B1f-REV-06, option (a), and review finding B1f-REV-08; pre-existing). Windows PowerShell 5.1 and PowerShell 7
+alike read a settings file that has a byte order mark in the encoding the mark names -- PSScriptAnalyzer and the
+daemon's check alike -- and put U+FFFD in place of each byte sequence that is not valid in it, so such a file
+reached the analysis as other text: a `CustomRulePath` under a directory named with an accented letter, saved in
+Windows-1252 after a UTF-8 byte order mark, or holding in that letter's place a lone surrogate after a UTF-16 mark
+or a unit above U+10FFFF after a UTF-32 mark, named the directory spelled with U+FFFD, which a repository can
+create beside its own, and a managed scan CERTIFIED with that directory's rule while the repository's own custom
+rule never ran (measured through the real daemon on both hosts, after each of the five marks). When the settings
+file the daemon resolved has a byte order mark (UTF-8, UTF-16 little- or big-endian, UTF-32 little- or
+big-endian) and a strict decode of its bytes after the mark, in the encoding the mark names, fails, the daemon now
+records so in its application evidence under either host (`settings.bomInvalid`, an optional field of the
+still-unreleased receipt schema version 2, present only then), every scan warns on stderr, naming the fix (save
+the file as UTF-8 with a byte order mark), and a managed scan is NOT CERTIFIED with the new reason code
+`policy-settings-bom-invalid`. PSES is handed the file as before, so the edit hook and an unmanaged scan still
+read such a file as before; a file whose bytes after its mark are valid is read and recorded as before (measured:
+the same decoy case saved validly after each mark runs the repository's own rule and certifies, on both hosts).
+**One fix:** the PowerShell 7 warning for a file without a mark whose bytes are not valid UTF-8 (dispatch 000310)
+now names the fix as "Save it as UTF-8 with a byte order mark." -- saved as UTF-8 without one, such a file is
+still refused on Windows PowerShell 5.1 by `policy-settings-ansi-decoded` -- and the reason table names it the
+same way; Windows PowerShell 5.1's warning is unchanged. **Documentation:** `docs/repository-scanning.md`
+describes the refusal and the reason code, and its "It does NOT prove" entry for a repository settings file now
+says what remains: a settings file is read as its bytes say, not as its author meant. No `userConfig` knob, status
+token or CLI flag is added; one managed-scan reason code is (`policy-settings-bom-invalid`), exit codes are
+unchanged (a managed scan that is not certified exits `4`, as before), and `doctor -Json`'s `orgPolicy` keys keep
+their names, order and types.
+
 MINOR: **On PowerShell 7 a managed scan refuses a repository settings file without a byte order mark whose bytes
 are not valid UTF-8** (dispatch 000310, leg B1f -- owner ruling B1e-RV-01, the PowerShell 7 mirror of B1e's RV-02;
 pre-existing). PowerShell 7 reads a settings file that has no byte order mark as UTF-8 -- PSScriptAnalyzer and the

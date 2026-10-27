@@ -127,7 +127,8 @@ scan exits `4` with `executionSuccessful=false`:
 | `policy-activation-not-delivered` | the merged settings were not pushed to PSES, or the settings file changed after they were |
 | `policy-settings-rejected` | PSScriptAnalyzer would reject, or could not read, a settings file the analysis rests on -- the repository's, or the merged one ([below](#settings-files-the-analysis-rests-on-dispatch-000306)) |
 | `policy-settings-ansi-decoded` | the daemon ran under Windows PowerShell 5.1, and the settings file it resolved has no byte order mark and holds a byte above 0x7F, which 5.1 reads in the system ANSI code page -- so the analysis may not rest on the settings as the repository wrote them ([below](#settings-files-the-analysis-rests-on-dispatch-000306)); save the file with a byte order mark |
-| `policy-settings-not-utf8` | the daemon ran under PowerShell 7, and the settings file it resolved has no byte order mark and its bytes are not valid UTF-8 (a strict UTF-8 decode fails), which PowerShell 7 reads as UTF-8 with U+FFFD for each byte sequence that is not -- so the analysis may not rest on the settings as the repository wrote them ([below](#settings-files-the-analysis-rests-on-dispatch-000306)); save the file as UTF-8 |
+| `policy-settings-not-utf8` | the daemon ran under PowerShell 7, and the settings file it resolved has no byte order mark and its bytes are not valid UTF-8 (a strict UTF-8 decode fails), which PowerShell 7 reads as UTF-8 with U+FFFD for each byte sequence that is not -- so the analysis may not rest on the settings as the repository wrote them ([below](#settings-files-the-analysis-rests-on-dispatch-000306)); save the file as UTF-8 with a byte order mark |
+| `policy-settings-bom-invalid` | the settings file the daemon resolved has a byte order mark (UTF-8, UTF-16 or UTF-32) and its bytes after the mark are not valid in the encoding the mark names (a strict decode in that encoding fails), which Windows PowerShell 5.1 and PowerShell 7 alike do not read as written -- so the analysis may not rest on the settings as the repository wrote them ([below](#settings-files-the-analysis-rests-on-dispatch-000306)); save the file as UTF-8 with a byte order mark |
 | `policy-required-rule-cannot-run` | a rule the policy requires cannot run under the merged settings handed to PSES, by the daemon's static check (`requiredRules.cannotRun`): a code with no rule behind it (decided only while the settings carry no `CustomRulePath`; see below), one a repository pattern beside a `CustomRulePath` still excludes, or a configurable rule whose entry in the merged `Rules` does not set `Enable = $true` |
 | `policy-suppression-pass-failed` | the `ProhibitedSuppressions` re-surfacing pass could not run |
 | `config-observed-mismatch` | the daemon reports an analysis configuration other than the scan's declared one |
@@ -172,8 +173,10 @@ Windows PowerShell 5.1 the settings file the daemon resolved is not one 5.1 read
 that the merged file holds the merge's text exactly, a text that cannot be written as UTF-8 never being written
 ([below](#settings-files-the-analysis-rests-on-dispatch-000306)); and -- since dispatch 000310 -- that under
 PowerShell 7 the settings file the daemon resolved is not one without a byte order mark whose bytes are not valid
-UTF-8 ([below](#settings-files-the-analysis-rests-on-dispatch-000306)). What the merged settings do for a
-required rule is this: it is named in `IncludeRules` when the merged file has one -- by the name
+UTF-8 ([below](#settings-files-the-analysis-rests-on-dispatch-000306)); and -- since dispatch 000311 -- that under
+either host the settings file the daemon resolved is not one with a byte order mark whose bytes after the mark are
+not valid in the encoding the mark names ([below](#settings-files-the-analysis-rests-on-dispatch-000306)). What
+the merged settings do for a required rule is this: it is named in `IncludeRules` when the merged file has one -- by the name
 PSScriptAnalyzer matches, the bare `Measure-Name` for a custom rule written `Module\Measure-Name` in
 `RequiredRules` (dispatch 000307, review finding B1b-OOB2-R02); it is taken out of a repository's
 `ExcludeRules` wherever an entry names it the way PSScriptAnalyzer reads that entry -- by name in any
@@ -202,21 +205,21 @@ It does NOT prove:
   the modules it loads, or that a required code names any rule at all: there any code that is not a
   built-in rule name, a misspelled built-in name included, is treated as a possible custom rule and is not
   refused (leg A3);
-- that a settings file WITH a byte order mark is read as its author wrote it when its bytes after the mark are not
-  valid in the encoding the mark names: both hosts read each such byte sequence as U+FFFD, and neither refusal
-  [below](#settings-files-the-analysis-rests-on-dispatch-000306) covers a file with a mark (measured through the real
-  daemon, dispatch 000310: a `CustomRulePath` saved in Windows-1252 after a UTF-8 byte order mark named a directory
-  spelled with U+FFFD that the repository created beside its own, and a managed scan certified under Windows
-  PowerShell 5.1 and PowerShell 7 while the repository's own custom rule never ran; surfaced to the owner, not yet
-  ruled). A settings file WITHOUT a mark is refused where a host does not read it as its bytes say: under Windows
-  PowerShell 5.1 when it holds a byte above 0x7F -- 5.1 reads one in the system ANSI code page (Windows-1252 on a
-  US or Western-European system), PSScriptAnalyzer itself, so an `IncludeRules` entry spelling
-  `PSMisleadingBacktick` with the Kelvin sign selected nothing while a managed scan certified
-  (`policy-settings-ansi-decoded`, dispatch 000309) -- and under PowerShell 7 when its bytes are not valid UTF-8
-  (`policy-settings-not-utf8`, dispatch 000310). Both are decided from the file's bytes, not from what its author
-  meant: under PowerShell 7 a file without a mark whose bytes are valid UTF-8 is read as UTF-8 and never refused,
-  whatever code page its author saved it in. Save a settings file that holds a character outside ASCII as UTF-8
-  with a byte order mark: both hosts read it as written;
+- that a settings file is read as its author meant it, rather than as its bytes say. A settings file is refused
+  wherever a host does not read it as its bytes say [below](#settings-files-the-analysis-rests-on-dispatch-000306):
+  one WITH a byte order mark, under either host, when its bytes after the mark are not valid in the encoding the
+  mark names (`policy-settings-bom-invalid`, dispatch 000311; before it, a `CustomRulePath` saved in Windows-1252
+  after a UTF-8 byte order mark named a directory spelled with U+FFFD that the repository created beside its own,
+  and a managed scan certified under Windows PowerShell 5.1 and PowerShell 7 while the repository's own custom rule
+  never ran); one WITHOUT a mark under Windows PowerShell 5.1 when it holds a byte above 0x7F -- 5.1 reads one in
+  the system ANSI code page (Windows-1252 on a US or Western-European system), PSScriptAnalyzer itself, so an
+  `IncludeRules` entry spelling `PSMisleadingBacktick` with the Kelvin sign selected nothing while a managed scan
+  certified (`policy-settings-ansi-decoded`, dispatch 000309) -- and under PowerShell 7 when its bytes are not
+  valid UTF-8 (`policy-settings-not-utf8`, dispatch 000310). Each is decided from the file's bytes, not from what
+  its author meant: a file whose bytes are valid in the encoding it is read in -- with a mark, the encoding the
+  mark names; without one, under PowerShell 7, UTF-8 -- is read that way and never refused, whatever encoding its
+  author saved it in. Save a settings file that holds a character outside ASCII as UTF-8 with a byte order mark:
+  both hosts read it as written;
 - that a required rule that needs settings the repository does not give it could run
   (`PSUseCompatibleCommands` and `PSUseCompatibleTypes` need `TargetProfiles`, and without them find
   nothing -- [configuration](configuration.md#requiredrules----forcing-a-rule-onto-the-analysis-surface-dispatch-000294));
@@ -372,8 +375,9 @@ ran it). When the daemon runs under Windows PowerShell 5.1 and the settings file
 Windows PowerShell 5.1 read the repository's settings file in the system ANSI code page (...). Save it with a byte
 order mark. ...`), and a managed scan is NOT CERTIFIED with `policy-settings-ansi-decoded`. Nothing else changes:
 PSES is handed the file it was handed before, so on 5.1 the edit hook -- which says nothing about it -- and an
-unmanaged scan still read such a file in the ANSI code page, and a file with a mark, or all ASCII, is read and
-recorded as before. **The refusal is decided from the file's bytes, not from what its author meant**, so it also
+unmanaged scan still read such a file in the ANSI code page, and a file with a mark whose bytes are valid in its
+encoding, or all ASCII, is read and recorded as before (one whose bytes after the mark are not is refused since
+dispatch 000311, below). **The refusal is decided from the file's bytes, not from what its author meant**, so it also
 refuses a file saved without a mark in the ANSI code page itself, which 5.1 reads as written (measured: a
 `CustomRulePath` under a directory named with an accent, saved in Windows-1252, certified under 5.1 before and is
 refused now). Saving the file with a byte order mark, the fix the warning names, lets both hosts read it as written
@@ -392,15 +396,42 @@ custom rule never ran (measured through the real daemon; with no such directory 
 settings file it resolved has no byte order mark and its bytes are not valid UTF-8 -- a strict UTF-8 decode of the
 whole file fails, wherever the bytes are, a comment included -- it records so (`policy.daemon.settings.notUtf8`,
 present only then), every scan says so on stderr (`lsp-scan: warning: PowerShell 7 read the repository's settings
-file as UTF-8, but it has no byte order mark and its bytes are not valid UTF-8, (...). Save it as UTF-8. ...`), and
-a managed scan is NOT CERTIFIED with `policy-settings-not-utf8` (measured through the real daemon: that decoy case,
-the same file without the decoy, and an `ExcludeRules` and an `IncludeRules` entry saved the same way). Nothing
+file as UTF-8, but it has no byte order mark and its bytes are not valid UTF-8, (...). Save it as UTF-8 with a byte
+order mark. ...`), and a managed scan is NOT CERTIFIED with `policy-settings-not-utf8` (measured through the real
+daemon: that decoy case, the same file without the decoy, and an `ExcludeRules` and an `IncludeRules` entry saved
+the same way). Nothing
 else changes: PSES is handed the file it was handed before, so under PowerShell 7 the edit hook -- which says
 nothing about it -- and an unmanaged scan still read such a file with U+FFFD in place of each such sequence; a file
 without a mark whose bytes are valid UTF-8 -- a character outside ASCII saved as UTF-8, or a U+FFFD the repository
 wrote itself -- is read and recorded as before (measured: the decoy case saved as UTF-8 runs the repository's own
 rule and certifies); and Windows PowerShell 5.1, which reads such a file in the system ANSI code page and refuses it
 with `policy-settings-ansi-decoded` (above), is unchanged (measured: every row, on both trees).
+
+**A settings file whose bytes after its byte order mark do not decode is refused** (dispatch 000311, leg B1g;
+owner ruling B1f-REV-06, option (a)). Windows PowerShell 5.1 and PowerShell 7 alike read a settings file that has a
+byte order mark in the encoding the mark names -- PSScriptAnalyzer and the daemon's check alike -- and put U+FFFD in
+place of each byte sequence that is not valid in it (Windows PowerShell 5.1 drops one cut off at the end of the file
+instead), so such a file reached the analysis as other text, merged or not: a `CustomRulePath` under a directory
+named with an accented letter, saved in Windows-1252 after a UTF-8 mark, or holding in that letter's place a lone
+surrogate after a UTF-16 mark or a unit above U+10FFFF after a UTF-32 mark, named the directory spelled with U+FFFD,
+which a repository can create beside its own, and a managed scan certified with that directory's rule while the
+repository's own custom rule never ran (measured through the real daemon on both hosts, after each of the five
+marks; with no such directory the scan was refused, `policy-settings-rejected`). When the settings file the daemon
+resolved has a byte order mark -- UTF-8 (EF BB BF), UTF-16 little-endian (FF FE) or big-endian (FE FF), UTF-32
+little-endian (FF FE 00 00) or big-endian (00 00 FE FF), told apart as both hosts' reader tells them apart -- and a
+strict decode of its bytes after the mark, in that encoding, fails wherever the bytes are, the end of the file
+included, the daemon records so (`policy.daemon.settings.bomInvalid`, present only then) under either host, every
+scan says so on stderr (`lsp-scan: warning: the repository's settings file has a byte order mark, but its bytes
+after the mark are not valid in the encoding the mark names, (...). Save it as UTF-8 with a byte order mark.
+...`), and a managed scan is NOT CERTIFIED with `policy-settings-bom-invalid` (measured through the real daemon on
+both hosts: the decoy case after each mark, the same file without the decoy, and an `ExcludeRules` and an
+`IncludeRules` entry saved the same way). Nothing else changes: PSES is handed the file it was handed before, so
+the edit hook -- which says nothing about it -- and an unmanaged scan still read such a file as before; a file whose
+bytes after its mark are valid in the encoding the mark names -- a character outside ASCII saved as UTF-8, UTF-16 or
+UTF-32 with its mark -- is read and recorded as before (measured: the decoy case saved validly after each of the
+five marks runs the repository's own rule and certifies, on both hosts); and the two refusals above, for a file
+without a mark, are unchanged. Saving the file as UTF-8 with a byte order mark -- the fix this warning and, since
+this leg, the PowerShell 7 warning above name (review finding B1f-REV-08) -- clears all three refusals.
 
 **What the check cannot see.** It reads the settings file and lists the directories a `CustomRulePath`
 reaches, but loads nothing: **a rule source PSScriptAnalyzer cannot load or run, or that holds no rule**,

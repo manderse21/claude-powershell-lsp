@@ -1929,6 +1929,35 @@ function Test-PssaSettingsNotUtf8 {
     return (Test-PssaSettingsFileNotUtf8 -Path $Path)
 }
 
+function Test-PssaSettingsFileBomInvalid {
+    # Whether a settings file has a byte order mark and its bytes after the mark are not valid in the encoding the mark
+    # names (dispatch 000311, B1g; owner ruling B1f-REV-06, option a). The mark is told apart as .NET's StreamReader
+    # tells it apart -- the reader under Parser.ParseFile, and so under PSScriptAnalyzer and Read-PssaSettingsFile, on
+    # Windows PowerShell 5.1 and PowerShell 7 alike: EF BB BF UTF-8, FF FE 00 00 UTF-32 little-endian, any other FF FE
+    # UTF-16 little-endian, FE FF UTF-16 big-endian, 00 00 FE FF UTF-32 big-endian -- and the bytes after it are
+    # decoded strictly in that encoding. Where that decode fails (a byte or sequence the encoding does not allow, a lone
+    # surrogate, a unit above U+10FFFF, a file that ends inside a character) neither host reads the file as its bytes
+    # say: each reads U+FFFD in place of such a sequence -- Windows PowerShell 5.1 drops one cut off at the end of the
+    # file instead -- so a CustomRulePath can name a directory a repository created with U+FFFD in its name. $true then
+    # on every host, which is why there is no host-gated trigger beside it. $false for a file without a mark (B1e's and
+    # B1f's classifiers), one whose bytes after the mark are valid, and one that cannot be read. Pure over the bytes on
+    # disk; never throws.
+    param([string]$Path)
+    if ((Get-PssaSettingsFileEncoding -Path $Path) -cne 'bom') { return $false }
+    $b = $null
+    try { $b = [System.IO.File]::ReadAllBytes($Path) } catch { return $false }
+    $strict = $null
+    $skip = 0
+    if ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF) { $strict = New-Object System.Text.UTF8Encoding($false, $true); $skip = 3 }
+    elseif ($b.Length -ge 4 -and $b[0] -eq 0xFF -and $b[1] -eq 0xFE -and $b[2] -eq 0 -and $b[3] -eq 0) { $strict = New-Object System.Text.UTF32Encoding($false, $false, $true); $skip = 4 }
+    elseif ($b.Length -ge 2 -and $b[0] -eq 0xFF -and $b[1] -eq 0xFE) { $strict = New-Object System.Text.UnicodeEncoding($false, $false, $true); $skip = 2 }
+    elseif ($b.Length -ge 2 -and $b[0] -eq 0xFE -and $b[1] -eq 0xFF) { $strict = New-Object System.Text.UnicodeEncoding($true, $false, $true); $skip = 2 }
+    elseif ($b.Length -ge 4 -and $b[0] -eq 0 -and $b[1] -eq 0 -and $b[2] -eq 0xFE -and $b[3] -eq 0xFF) { $strict = New-Object System.Text.UTF32Encoding($true, $false, $true); $skip = 4 }
+    else { return $false }
+    try { [void]$strict.GetString($b, $skip, $b.Length - $skip) } catch { return $true }
+    return $false
+}
+
 function Read-PssaSettingsFile {
     # Read the PSScriptAnalyzer settings file at $Path the way PSScriptAnalyzer reads it, as DATA, and
     # say whether PSScriptAnalyzer -- run by PSES as this plugin runs it -- would accept it. Never throws.

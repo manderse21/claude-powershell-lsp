@@ -305,6 +305,11 @@ if ($ansiDecodedLine -ne '') { [Console]::Error.WriteLine($ansiDecodedLine) }
 # managed scan is NOT CERTIFIED over it (policy-settings-not-utf8).
 $notUtf8Line = Get-ScanSettingsNotUtf8Warning -Files @($fileEvidence)
 if ($notUtf8Line -ne '') { [Console]::Error.WriteLine($notUtf8Line) }
+# A settings file whose bytes after its byte order mark are not valid in the encoding the mark names (dispatch 000311,
+# B1g; owner ruling B1f-REV-06, option a) is named on stderr by every scan, managed or not, with the fix, under either
+# host; a managed scan is NOT CERTIFIED over it (policy-settings-bom-invalid).
+$bomInvalidLine = Get-ScanSettingsBomInvalidWarning -Files @($fileEvidence)
+if ($bomInvalidLine -ne '') { [Console]::Error.WriteLine($bomInvalidLine) }
 
 # --- the managed verdict (dispatch 000305) -----------------------------------------------------------
 # Unmanaged: Managed=$false and nothing changes. Managed: certified only on a usable declared policy AND

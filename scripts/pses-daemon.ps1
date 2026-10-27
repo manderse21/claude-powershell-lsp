@@ -1008,6 +1008,20 @@ function Initialize-PssaSettings {
         Write-DLog ('PSSA settings: ' + $resolved + ' has no byte order mark and its bytes are not valid UTF-8; PowerShell 7 reads each byte sequence in it that is not UTF-8 as U+FFFD')
     }
 
+    # A SETTINGS FILE WHOSE BYTES AFTER ITS BYTE ORDER MARK DO NOT DECODE IS RECORDED (dispatch 000311, B1g; owner ruling
+    # B1f-REV-06, option a). Windows PowerShell 5.1 and PowerShell 7 alike read a settings file that has a byte order
+    # mark in the encoding the mark names -- PSScriptAnalyzer and Read-PssaSettingsFile alike -- and put U+FFFD in place
+    # of each byte sequence that is not valid in it: a CustomRulePath saved in Windows-1252 after a UTF-8 mark, or
+    # holding a lone surrogate after a UTF-16 mark, named a decoy directory spelled with U+FFFD, and a managed scan
+    # certified while the repository's own custom rule never ran (measured through the real daemon on both hosts). It is
+    # recorded (settings.bomInvalid), every scan warns, and a managed scan refuses it (policy-settings-bom-invalid); what
+    # PSES is handed is unchanged. The two records above are for a file without a mark, so a daemon writes at most one.
+    $bomInvalid = $false
+    if (-not [string]::IsNullOrWhiteSpace($resolved) -and (Test-PssaSettingsFileBomInvalid -Path $resolved)) {
+        $bomInvalid = $true
+        Write-DLog ('PSSA settings: ' + $resolved + ' has a byte order mark, but its bytes after the mark are not valid in the encoding the mark names, so they are not read as written')
+    }
+
     # requiredRules (P1-5 remainder, R23=D, dispatch 000294): the ONE place the daemon's
     # session-start threading is touched, and ONLY when $OrgPolicyPath is set AND org policy
     # names at least one RequiredRules entry. Computed BEFORE the empty-$resolved check below on
@@ -1140,7 +1154,7 @@ function Initialize-PssaSettings {
             -SettingsPath $script:settingsPathInUse -SettingsSource $(if ($delivered) { $source } else { 'none' }) `
             -SettingsSha256 (Get-PolicyFileSha256 -Path $script:settingsPathInUse) -Delivered $delivered `
             -SettingsValidation $validation -SettingsValidationDetail $validationDetail -SettingsAnsiDecoded $ansiDecoded `
-            -SettingsNotUtf8 $notUtf8
+            -SettingsNotUtf8 $notUtf8 -SettingsBomInvalid $bomInvalid
     }
 }
 

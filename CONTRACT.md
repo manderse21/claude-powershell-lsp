@@ -478,6 +478,16 @@ cold. None is a contract change; each is banked here deliberately.
   `lsp-scan.ps1`. **No knob, no status token and no CLI flag is added**; exit codes are unchanged, and
   `doctor -Json`'s `orgPolicy` keys keep their names, order and types. Recorded here as a **note, not an
   amendment**.
+- **A settings file whose bytes after its byte order mark do not decode (NOT a Tier-1 frozen surface) -- dispatch
+  000311.** On a Windows PowerShell 5.1 or PowerShell 7 host a managed scan refuses a resolved settings file with a
+  byte order mark whose bytes after the mark are not valid in the encoding the mark names, and every scan warns --
+  a behavior change recorded in the CHANGELOG, by the owner's ruling B1f-REV-06; the PowerShell 7 warning of
+  dispatch 000310 now names the same fix (review finding B1f-REV-08). Additive and outside the frozen surface: one
+  managed-scan reason code (`policy-settings-bom-invalid`), one optional field on the daemon's application evidence
+  in the still-unreleased receipt schema version 2 (`settings.bomInvalid`) and one stderr warning line from
+  `lsp-scan.ps1`. **No knob, no status token and no CLI flag is added**; exit codes are unchanged, and
+  `doctor -Json`'s `orgPolicy` keys keep their names, order and types. Recorded here as a **note, not an
+  amendment**.
 
 ---
 
