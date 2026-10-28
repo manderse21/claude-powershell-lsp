@@ -2120,8 +2120,24 @@ Describe 'regen-rule-rationales.ps1 -Check -- the shipped table matches the deri
     # shipped file. Proven RED in-session: perturbing one rationale text, and dropping one owned
     # entry, each produced exit 1 with a precise diff; restoring produced exit 0 and the identical
     # SHA-256. So the shipped table can never drift silently from the pin.
+    # OFFLINE BY CONSTRUCTION (dispatch 000312, F3; review finding B1g-REV311-12). Both child calls run
+    # against the suite's own seeded data root -- PSLS_TEST_DATA_DIR when the run pins one, else the
+    # integration suite's psls-pester-data -- never the default data root under TEMP, which no suite
+    # provisions: with CLAUDE_PLUGIN_DATA unset, ensure-pssa.ps1 vendored PSScriptAnalyzer there from the
+    # network on every full run (measured, dispatch 000311). CLAUDE_PLUGIN_DATA is set for each child call
+    # only and put back, so no other test sees it change.
     BeforeAll {
-        & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:ScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+        $script:RegenData = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) {
+            $env:PSLS_TEST_DATA_DIR
+        } else {
+            Join-Path ([System.IO.Path]::GetTempPath()) 'psls-pester-data'
+        }
+        New-Item -ItemType Directory -Force -Path $script:RegenData | Out-Null
+        $prevData = $env:CLAUDE_PLUGIN_DATA
+        try {
+            $env:CLAUDE_PLUGIN_DATA = $script:RegenData
+            & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:ScriptsDir 'ensure-pssa.ps1') 2>&1 | Out-Null
+        } finally { $env:CLAUDE_PLUGIN_DATA = $prevData }
         $script:RegenScript = Join-Path $script:ScriptsDir 'regen-rule-rationales.ps1'
     }
     It 'the regen script ships and carries a -Check switch' {
@@ -2129,8 +2145,12 @@ Describe 'regen-rule-rationales.ps1 -Check -- the shipped table matches the deri
         (Get-Content -Raw -LiteralPath $script:RegenScript) | Should -Match '\[switch\]\s*\$Check'
     }
     It '-Check exits 0 against the shipped table (derived == shipped, offline at the pin)' {
-        $out = & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:RegenScript -Check 2>&1
-        $code = $LASTEXITCODE
+        $prevData = $env:CLAUDE_PLUGIN_DATA
+        try {
+            $env:CLAUDE_PLUGIN_DATA = $script:RegenData
+            $out = & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:RegenScript -Check 2>&1
+            $code = $LASTEXITCODE
+        } finally { $env:CLAUDE_PLUGIN_DATA = $prevData }
         if ($code -ne 0) { Write-Host ($out | Out-String) }
         $code | Should -Be 0
     }
