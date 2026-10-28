@@ -30,6 +30,16 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **A full suite run no longer vendors PSScriptAnalyzer into the default data root** (test-only; dispatch
+000312, leg B1h -- review finding B1g-REV311-12). The `regen-rule-rationales.ps1 -Check` tests in
+`tests/PowerShellLsp.Unit.Tests.ps1` ran `ensure-pssa.ps1` and the check with `CLAUDE_PLUGIN_DATA` unset, so every
+full run provisioned the default data root under TEMP, which no suite seeds: from the network (measured under
+PowerShell 7, dispatch 000311), or, with no network, a download that fails -- or, under Windows PowerShell 5.1
+during Modern Standby, one that stalled a run until it was stopped (dispatch 000311). Both child calls now run
+against the suite's own seeded data root -- `PSLS_TEST_DATA_DIR` when the run pins one, else the integration
+suite's `psls-pester-data` -- with `CLAUDE_PLUGIN_DATA` set for each call only and put back, so no other test sees
+it change. No shipped file changes.
+
 MINOR: **Both hosts refuse a repository settings file whose bytes after its byte order mark do not decode, and
 the PowerShell 7 warning names the one fix for every refusal** (dispatch 000311, leg B1g -- owner ruling
 B1f-REV-06, option (a), and review finding B1f-REV-08; pre-existing). Windows PowerShell 5.1 and PowerShell 7
