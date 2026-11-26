@@ -26,6 +26,10 @@ There is no compile step: the plugin is PowerShell scripts plus a manifest. The 
 runtime dependencies (PSES, PSScriptAnalyzer) are downloaded, pinned, and hash-verified on
 first use; the test runner reuses a vendored copy via `PSLS_TEST_DATA_DIR` when present.
 
+## Tests for new functionality
+
+When a pull request adds a major feature, include automated tests for its new behavior in the same pull request. Add the cases to the appropriate Pester suite under `tests/`.
+
 ## Run the test suite
 
 ```
