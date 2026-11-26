@@ -25,6 +25,10 @@ esac
 
 mkdir -p "$CLAUDE_CONFIG_DIR"
 echo "--- installing @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} ---"
+lock_dir="$(mktemp -d)"
+printf '{"name":"compat-client","version":"1.0.0","private":true,"dependencies":{"@anthropic-ai/claude-code":"%s"}}\n' "$CLAUDE_CODE_VERSION" > "$lock_dir/package.json"
+(cd "$lock_dir" && npm install --package-lock-only --ignore-scripts --no-audit --no-fund)
+echo "COMPAT_LOCK_$CLAUDE_CODE_VERSION=$(base64 -w0 "$lock_dir/package-lock.json")"
 npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
 # Assert the client that actually got installed is the one asked for. npm can satisfy a request
