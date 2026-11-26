@@ -25,11 +25,17 @@ esac
 
 mkdir -p "$CLAUDE_CONFIG_DIR"
 echo "--- installing @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} ---"
-lock_dir="$(mktemp -d)"
-printf '{"name":"compat-client","version":"1.0.0","private":true,"dependencies":{"@anthropic-ai/claude-code":"%s"}}\n' "$CLAUDE_CODE_VERSION" > "$lock_dir/package.json"
-(cd "$lock_dir" && npm install --package-lock-only --ignore-scripts --no-audit --no-fund)
-echo "COMPAT_LOCK_$CLAUDE_CODE_VERSION=$(base64 -w0 "$lock_dir/package-lock.json")"
-npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+if [[ ! "$CLAUDE_CODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "expected a numeric Claude Code release version" >&2
+    exit 3
+fi
+client_dir="$(mktemp -d)"
+trap 'rm -rf -- "$client_dir"' EXIT
+cp ".github/compat/$CLAUDE_CODE_VERSION/package-lock.json" "$client_dir/package-lock.json"
+printf '{"name":"compat-client","version":"1.0.0","private":true,"dependencies":{"@anthropic-ai/claude-code":"%s"}}\n' "$CLAUDE_CODE_VERSION" > "$client_dir/package.json"
+(cd "$client_dir" && npm ci --no-audit --no-fund)
+export PATH="$client_dir/node_modules/.bin:$PATH"
+
 
 # Assert the client that actually got installed is the one asked for. npm can satisfy a request
 # from a cache or a mirror, and a leg that reports on a version it did not run is worse than no
