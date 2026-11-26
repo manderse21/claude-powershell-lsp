@@ -225,6 +225,29 @@ jobs:
           done
           echo "OK: all required CI legs are green for $TARGET."
 
+      - name: Verify static analysis completed for the release commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ steps.resolve.outputs.target }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          workflow="powershell-lsp-code-scanning.yml"
+          deadline=$((SECONDS + 1800))
+          while (( SECONDS < deadline )); do
+            run=$(gh api -X GET "repos/$REPO/actions/workflows/$workflow/runs" \
+              -f branch=main -f event=push -f head_sha="$TARGET" -F per_page=1 \
+              --jq '.workflow_runs[0] | if . == null then "pending" else (.conclusion // .status) end')
+            case "$run" in
+              success) exit 0 ;;
+              pending|queued|in_progress|waiting|requested) sleep 20 ;;
+              *) echo "::error::Static scan for $TARGET returned $run"; exit 1 ;;
+            esac
+          done
+          echo "::error::Timed out waiting for static analysis of $TARGET"
+          exit 1
+
       - name: "Gate 5 -- tree-vs-published parity (the marketplace-resolved manifest is not behind the release)"
         shell: pwsh
         run: |
