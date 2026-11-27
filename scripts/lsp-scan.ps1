@@ -228,16 +228,25 @@ $policyReported = ($managed -or $null -ne $declaredPolicy)
 if ($files.Count -eq 0) {
     # A directory the listing could not read (dispatch 000313) may hold the very files this branch did not
     # find: it is named as not analyzed and the scan exits 4; with none, this branch is exactly as before.
-    if ($unlisted.Count -gt 0) {
-        $emptyCert = Test-ScanPolicyCertification -Mode ([string]$policyModeInfo.resolved) -Declared $declaredPolicy -Ambient $ambientOptions -Files $unlistedEvidence
-    } else {
-        $emptyCert = Test-ScanPolicyCertification -Mode ([string]$policyModeInfo.resolved) -Declared $declaredPolicy -Ambient $ambientOptions
+    $emptyCert = Test-ScanPolicyCertification -Mode ([string]$policyModeInfo.resolved) -Declared $declaredPolicy -Ambient $ambientOptions
+    if ($unlisted.Count -gt 0 -and [bool]$emptyCert.Managed) {
+        # Nothing was analyzed (analysis-empty, the verdict without the directories) AND each directory is an
+        # entry with no receipt (analysis-incomplete): the managed verdict names both (review finding R6).
+        $dirCert = Test-ScanPolicyCertification -Mode ([string]$policyModeInfo.resolved) -Declared $declaredPolicy -Ambient $ambientOptions -Files $unlistedEvidence
+        $emptyCert = [pscustomobject]@{
+            Mode       = $emptyCert.Mode
+            Managed    = $true
+            Certified  = $false
+            Reasons    = @(@(@($emptyCert.Reasons) + @($dirCert.Reasons)) | Sort-Object -Unique)
+            Files      = @($dirCert.Files)
+            AllReasons = @(@(@($emptyCert.AllReasons) + @($dirCert.AllReasons)) | Sort-Object -Unique)
+        }
     }
     $emptyOk = ((-not [bool]$emptyCert.Managed) -or [bool]$emptyCert.Certified) -and ($unlisted.Count -eq 0)
     $emptyPolicy = $null
     if ($policyReported) {
         $emptyFiles = @(@($emptyCert.Files) | ForEach-Object {
-                [ordered]@{ uri = ((Get-ScanRelativeUri -FilePath ([string]$_.File) -Root $root) + '/'); reasons = @($_.Reasons) }
+                [ordered]@{ uri = (Get-ScanDirectoryDisplayName -Path ([string]$_.File) -Root $root); reasons = @($_.Reasons) }
             } | Sort-Object { [string]$_['uri'] })
         if ($emptyFiles.Count -gt $script:ScanNotAnalyzedNameCap) { $emptyFiles = @($emptyFiles[0..($script:ScanNotAnalyzedNameCap - 1)]) }
         if ($emptyFiles.Count -gt 0) {
@@ -383,8 +392,8 @@ if ($policyReported) {
     $unlistedSet = @{}
     foreach ($u in $unlisted) { $unlistedSet[[string]$u] = $true }
     $policyFiles = @(@($policyCert.Files) | ForEach-Object {
-            $uri = Get-ScanRelativeUri -FilePath ([string]$_.File) -Root $root
-            if ($unlistedSet.ContainsKey([string]$_.File)) { $uri = $uri + '/' }
+            $uri = $(if ($unlistedSet.ContainsKey([string]$_.File)) { Get-ScanDirectoryDisplayName -Path ([string]$_.File) -Root $root }
+                else { Get-ScanRelativeUri -FilePath ([string]$_.File) -Root $root })
             [ordered]@{ uri = $uri; reasons = @($_.Reasons) }
         } | Sort-Object { [string]$_['uri'] })
     if ($policyFiles.Count -gt $script:ScanNotAnalyzedNameCap) { $policyFiles = @($policyFiles[0..($script:ScanNotAnalyzedNameCap - 1)]) }

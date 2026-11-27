@@ -43,10 +43,14 @@ for how it works.
   calls it, and without both the endpoint and `-Send` nothing leaves the machine.
 - **No network access at all after first-run bootstrap.** The ONLY outbound network the
   plugin makes is the one-time download of its two pinned dependencies (below). Once those
-  are vendored and marker-gated, every later session is fully offline. The one exception
-  is opt-in twice and never automatic: `scripts/export-otel.ps1 -Send` POSTs allow-listed
-  metrics to the collector an administrator names in `POWERSHELL_LSP_OTEL_ENDPOINT`; no hook
-  calls it, and without both the endpoint and `-Send` nothing leaves the machine.
+  are vendored and marker-gated, every later session is fully offline. Two exceptions run
+  only when someone invokes them, never from a hook: `/powershell-lsp:doctor` and
+  `/powershell-lsp:status` (`scripts/doctor.ps1`) open a TCP connection to port 443 on the
+  two download hosts to report whether they are reachable, and send nothing over it; and the
+  one exception that sends data is opt-in twice and never automatic: `scripts/export-otel.ps1
+  -Send` POSTs allow-listed metrics to the collector an administrator names in
+  `POWERSHELL_LSP_OTEL_ENDPOINT`; no hook calls it, and without both the endpoint and `-Send`
+  nothing leaves the machine.
 - **No security-control circumvention.** The plugin never disables, weakens, or works
   around ExecutionPolicy, Constrained Language Mode, WDAC/App Control, Defender ASR, or
   Smart App Control. When one of those blocks a component, the plugin **detects and

@@ -87,38 +87,74 @@ function Get-ScanTargets {
 
 function Get-ScanUnlistedDirectories {
     # The directories below $Root that a listing could not read, from the error records the listing
-    # silenced (dispatch 000313, ruling ER1-R4). Pure over those records, except that it asks the file
-    # system whether each target is a directory. A record counts only when its target is a path BELOW
-    # the root that names a directory: on Windows PowerShell 5.1 and PowerShell 7 alike an access-denied
-    # subdirectory is reported as DirUnauthorizedAccessError with the directory's path as its target
-    # (measured, dispatch 000313). The root itself is left out -- an unreadable root keeps its previous
-    # behavior, an empty target -- and so is a record about anything that is not a directory, whose
-    # handling is likewise unchanged. Returns sorted, distinct full paths; never throws.
+    # silenced (dispatch 000313, ruling ER1-R4). Pure over those records, except that it may ask the file
+    # system whether a target is a directory. A record counts only when its target is a path BELOW the
+    # root that names a directory:
+    #   * Get-ChildItem reports a directory it failed to enumerate under an error id that starts 'Dir'
+    #     (DirUnauthorizedAccessError, DirIOError, DirArgumentError), with that directory as the target --
+    #     on Windows PowerShell 5.1 and PowerShell 7 alike an access-denied subdirectory is
+    #     DirUnauthorizedAccessError (measured, dispatch 000313). Such a record is trusted as it stands,
+    #     because the host may be unable to address the path to check it: under Windows PowerShell 5.1 a
+    #     directory whose path is longer than MAX_PATH, or whose name ends in a dot or a space, is reported
+    #     as DirIOError while Test-Path says it is not there (independent review finding R1, measured);
+    #   * any other record counts only when its target is a directory this host can see (Test-Path).
+    # The root itself is left out -- an unreadable root keeps its previous behavior, an empty target --
+    # and so is a record about anything that is not a directory, whose handling is likewise unchanged.
+    # A root of '/' trims to '', and every absolute target is then below it (review finding R7).
+    # Returns sorted, distinct full paths, as the listing reported them; never throws.
     param([object[]]$ListErrors = @(), [string]$Root = '')
+    if ([string]::IsNullOrWhiteSpace($Root)) { return @() }
     $sep = [System.IO.Path]::DirectorySeparatorChar
     $alt = [System.IO.Path]::AltDirectorySeparatorChar
     $cmp = $(if (Test-OnWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal })
     $rootTrim = ([string]$Root).TrimEnd($sep, $alt)
+    $prefix = $rootTrim + $sep
     $found = New-Object System.Collections.ArrayList
     foreach ($e in @($ListErrors)) {
         if ($null -eq $e) { continue }
         $target = ''
+        $errorId = ''
         try {
             $t = $e.TargetObject
             if ($t -is [System.IO.FileSystemInfo]) { $target = [string]$t.FullName } elseif ($t -is [string]) { $target = [string]$t }
+            $errorId = [string]$e.FullyQualifiedErrorId
         } catch { $target = '' }
         if ([string]::IsNullOrWhiteSpace($target)) { continue }
         $target = $target.TrimEnd($sep, $alt)
-        if ([string]::IsNullOrWhiteSpace($rootTrim) -or [string]::Equals($target, $rootTrim, $cmp)) { continue }
-        if (-not $target.StartsWith($rootTrim + $sep, $cmp)) { continue }
-        $isDir = $false
-        try { $isDir = Test-Path -LiteralPath $target -PathType Container } catch { $isDir = $false }
+        if ([string]::Equals($target, $rootTrim, $cmp)) { continue }
+        if (-not $target.StartsWith($prefix, $cmp)) { continue }
+        $isDir = ($errorId -match '^Dir[A-Za-z]*Error,')
+        if (-not $isDir) {
+            try { $isDir = Test-Path -LiteralPath $target -PathType Container } catch { $isDir = $false }
+        }
         if (-not $isDir) { continue }
         $seen = $false
         foreach ($d in $found) { if ([string]::Equals([string]$d, $target, $cmp)) { $seen = $true; break } }
         if (-not $seen) { [void]$found.Add($target) }
     }
     return @(@($found) | Sort-Object)
+}
+
+function Get-ScanDirectoryDisplayName {
+    # A directory below the scan root as the scan names it (dispatch 000313): root-relative, forward
+    # slashes, and a trailing '/' so no surface can take it for a file. Cut from the path exactly as the
+    # listing reported it and never normalized, so a name that ends in a dot or a space keeps it and a
+    # path longer than MAX_PATH needs no full-path call Windows PowerShell 5.1 cannot make; a path that is
+    # not below the root falls back to Get-ScanRelativeUri. Never throws.
+    param([string]$Path, [string]$Root)
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $alt = [System.IO.Path]::AltDirectorySeparatorChar
+    $cmp = $(if (Test-OnWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal })
+    $prefix = ([string]$Root).TrimEnd($sep, $alt) + $sep
+    $p = ([string]$Path).TrimEnd($sep, $alt)
+    $rel = ''
+    if (-not [string]::IsNullOrWhiteSpace($Root) -and $p.Length -gt $prefix.Length -and $p.StartsWith($prefix, $cmp)) {
+        $rel = $p.Substring($prefix.Length) -replace '\\', '/'
+    } else {
+        $rel = Get-ScanRelativeUri -FilePath $Path -Root $Root
+    }
+    if (-not $rel.EndsWith('/')) { $rel = $rel + '/' }
+    return $rel
 }
 
 function Get-ScanNestedSettingsFiles {
@@ -330,8 +366,7 @@ function Get-ScanNotAnalyzedNames {
             if ([string](Get-Prop $entry 'Kind') -eq 'directory') { $kind = 'directory' }
         }
         if ([string]::IsNullOrWhiteSpace($path)) { continue }
-        $name = Get-ScanRelativeUri -FilePath $path -Root $Root
-        if ($kind -eq 'directory' -and -not $name.EndsWith('/')) { $name = $name + '/' }
+        $name = $(if ($kind -eq 'directory') { Get-ScanDirectoryDisplayName -Path $path -Root $Root } else { Get-ScanRelativeUri -FilePath $path -Root $Root })
         [void]$items.Add([pscustomobject]@{ Name = $name; ElapsedMs = $elapsed; Reasons = $why; Kind = $kind })
     }
     $sorted = @(@($items) | Sort-Object -Property Name)
@@ -549,11 +584,11 @@ function Format-ScanTextReport {
             if ([string]::IsNullOrWhiteSpace($p)) { $p = [string](Get-Prop $entry 'File') }
             $why = @(@(Get-Prop $entry 'Reasons') | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
             $partial = ([string](Get-Prop $entry 'Completeness') -eq 'partial')
-            $line = '  ' + (Get-ScanRelativeUri -FilePath $p -Root $Root)
             if ([string](Get-Prop $entry 'Kind') -eq 'directory') {
-                [void]$sb.AppendLine($line + '/ (directory could not be listed; reasons: ' + ($why -join ', ') + ')')
+                [void]$sb.AppendLine('  ' + (Get-ScanDirectoryDisplayName -Path $p -Root $Root) + ' (directory could not be listed; reasons: ' + ($why -join ', ') + ')')
                 continue
             }
+            $line = '  ' + (Get-ScanRelativeUri -FilePath $p -Root $Root)
             if ($partial) {
                 $line = $line + ' (valid receipt, PARTIAL analysis'
                 if ($why.Count -gt 0) { $line = $line + '; reasons: ' + ($why -join ', ') }

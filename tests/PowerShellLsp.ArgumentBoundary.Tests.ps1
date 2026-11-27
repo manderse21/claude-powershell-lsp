@@ -219,7 +219,7 @@ BeforeAll {
     }
 }
 
-Describe 'ConvertTo-ProcessArgumentString builds a command line by the Windows rules (dispatch 000313, ER1-R2)' {
+Describe 'ConvertTo-ProcessArgumentString builds a command line by the Windows rules (dispatch 000313, ruling ER1-R2, T1)' {
     It 'emits a value with no white space and no double quote verbatim' {
         ConvertTo-ProcessArgumentString -Arguments @('-NoLogo', 'C:\plain\path\', '/tmp/x', "it's", 'a\b\\c') |
             Should -BeExactly "-NoLogo C:\plain\path\ /tmp/x it's a\b\\c"
@@ -437,6 +437,11 @@ Describe 'A real daemon starts from a spaced install path with a spaced data roo
             Start-Sleep -Milliseconds 100
         }
         Get-Process -Id $daemonPid -ErrorAction SilentlyContinue | Should -BeNullOrEmpty -Because 'the daemon this test started must be gone'
+        # Off Windows the stopped daemon cannot unlink the socket file backing its pipe; it is this test's to remove.
+        if (-not (Test-OnWindows)) {
+            $sock = Get-DaemonPipeSocketPath -PipeName (Get-DaemonPipeName -SessionId $script:AbRdSid)
+            if (Test-Path -LiteralPath $sock) { Remove-Item -LiteralPath $sock -Force -ErrorAction SilentlyContinue }
+        }
     }
 }
 

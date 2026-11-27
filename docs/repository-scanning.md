@@ -94,11 +94,16 @@ not be listed; reasons: directory-unreadable)`), in the text report, and in a SA
 notification (`powershell-lsp: could not list <dir>/ ...`, with `properties.reasons`
 `directory-unreadable`). The scan exits `4` with `executionSuccessful=false`, and a managed scan is NOT
 CERTIFIED with `analysis-incomplete`, the directory listed among its files exactly as a file with no
-receipt is (under a usable policy it also carries `policy-evidence-missing`). `directory-unreadable` is a
+receipt is (under a usable policy it also carries `policy-evidence-missing`); when the target holds no
+readable PowerShell file at all, the verdict names `analysis-empty` beside them. `directory-unreadable` is a
 reason for display beside such a path, not a receipt reason, so it is not in the receipt reason table.
 Before dispatch 000313 such a directory simply vanished from coverage: the scan exited `0` and a managed
 scan certified the files it happened to see. A tree whose directories are all readable scans exactly as
 before.
+
+A directory the host cannot address is one it could not list. Under Windows PowerShell 5.1 a directory
+whose path is longer than 260 characters, or whose name ends in a dot or a space, cannot be enumerated, and
+the scan names it the same way (measured); PowerShell 7 lists such a directory and scans what it holds.
 
 Two cases keep their earlier behavior, measured on Windows PowerShell 5.1 and PowerShell 7:
 

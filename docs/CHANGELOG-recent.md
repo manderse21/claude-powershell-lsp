@@ -88,7 +88,10 @@ CERTIFIED the files it happened to see (measured on Windows PowerShell 5.1 and P
 denying the user ListDirectory). Every such directory is now NOT analyzed and travels the existing not-analyzed
 channel -- named on stderr, in the text report and in a SARIF not-analyzed notification, with
 `executionSuccessful=false` and exit `4` -- beside the one new display reason `directory-unreadable`, and a managed
-scan is NOT CERTIFIED with the existing `analysis-incomplete`. `directory-unreadable` is not a receipt reason:
+scan is NOT CERTIFIED with the existing `analysis-incomplete` (and `analysis-empty` beside it when no readable
+PowerShell file was found). Under Windows PowerShell 5.1 a directory the host cannot address -- a path longer than
+260 characters, or a name ending in a dot or a space -- is one it could not list, and is named the same way (found
+by the leg's independent review, measured). `directory-unreadable` is not a receipt reason:
 `scripts/lib/lsp-policy.ps1` and `docs/scan-receipt.schema.json` are unchanged, and no exit code, status token,
 knob or CLI flag is added. A tree whose directories are all readable scans exactly as before. The scan root itself,
 and a listing failure on something that is not a directory, keep their previous behavior (measured; see
@@ -102,10 +105,13 @@ slash commands and listed three while `commands/` ships four; it now says four a
 row derived from `commands/query.md`, and `tests/doc-claims.psd1` registers the count twice -- the number the
 sentence states and the rows the table lists -- against the files in `commands/`, so the two cannot disagree again
 (a new `FileCount` derivation and two document-side capture modes in the doc-claims guard). TRUST.md's "No
-telemetry, no exfiltration" and "No network access at all after first-run bootstrap" bullets now carry their one
-exception: `scripts/export-otel.ps1 -Send`, opt-in twice and never automatic, POSTs allow-listed metrics to the
-collector an administrator names in `POWERSHELL_LSP_OTEL_ENDPOINT`; no hook calls it, and without both the endpoint
-and `-Send` nothing leaves the machine. No other sentence in either file changed.
+telemetry, no exfiltration" and "No network access at all after first-run bootstrap" bullets now name the exporter:
+`scripts/export-otel.ps1 -Send`, opt-in twice and never automatic, POSTs allow-listed metrics to the collector an
+administrator names in `POWERSHELL_LSP_OTEL_ENDPOINT`; no hook calls it, and without both the endpoint and `-Send`
+nothing leaves the machine. The network bullet also names the doctor: `/powershell-lsp:doctor` and
+`/powershell-lsp:status` open a TCP connection to port 443 on the two download hosts to report whether they are
+reachable, and send nothing over it (found by the leg's independent review). No other sentence in either file
+changed.
 
 PATCH: **A full suite run no longer vendors PSScriptAnalyzer into the default data root** (test-only; dispatch
 000312, leg B1h -- review finding B1g-REV311-12). The `regen-rule-rationales.ps1 -Check` tests in
