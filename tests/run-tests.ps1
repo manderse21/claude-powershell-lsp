@@ -1,8 +1,12 @@
 #Requires -Version 5.1
 # Test runner for the powershell-lsp Pester suite. Ensures Pester 5 is available
 # (CurrentUser scope only -- never machine-global), runs every *.Tests.ps1 in
-# this directory, and exits non-zero on any failure. Used locally (both hosts)
-# and by CI.
+# this directory, and exits with a verdict, never a count (dispatch 000313):
+#   0  Pester reports the run passed AND at least one test was executed;
+#   1  any failed test, failed block (BeforeAll/AfterAll) or failed container;
+#   2  no test was executed -- nothing was selected, or everything selected was
+#      skipped (or inconclusive).
+# Used locally (both hosts) and by CI.
 param(
     [switch] $CI,
     # Optional Pester FullName filter (Describe/It wildcard). Empty = run everything
@@ -54,4 +58,21 @@ if ($CI) {
 
 $result = Invoke-Pester -Configuration $config
 Write-Host ('Pester: ' + $result.PassedCount + ' passed, ' + $result.FailedCount + ' failed, ' + $result.SkippedCount + ' skipped')
-exit $result.FailedCount
+# What the line above cannot show (dispatch 000313, ruling ER1-R3): how many tests were discovered and
+# left unrun by the filter, the BeforeAll/AfterAll blocks and the test files that failed outside any
+# test, and which Pester and which host produced the run.
+$pesterVersion = [string](Get-Module Pester | Sort-Object Version -Descending | Select-Object -First 1).Version
+Write-Host ('Pester run: ' + $result.TotalCount + ' discovered, ' + $result.NotRunCount + ' not run, ' +
+    $result.FailedBlocksCount + ' failed blocks, ' + $result.FailedContainersCount + ' failed containers; Pester ' +
+    $pesterVersion + ' on PowerShell ' + $PSVersionTable.PSEdition + ' ' + $PSVersionTable.PSVersion)
+
+# THE VERDICT IS THE EXIT CODE, AND IT IS NEVER A COUNT (dispatch 000313, ruling ER1-R3). This runner used
+# to exit with the failed-test count, so a -FullNameFilter that selected nothing exited 0, a test file
+# that failed at discovery or a BeforeAll that threw exited 0 (neither is a failed TEST), and on Linux
+# and macOS 256 failed tests exited 0 (an exit status is one byte there). A test counts as executed when
+# it reached a verdict, passed or failed; a skipped or inconclusive test did not.
+if ($null -eq $result) { exit 1 }
+if (([int]$result.FailedCount + [int]$result.FailedBlocksCount + [int]$result.FailedContainersCount) -gt 0) { exit 1 }
+if (([int]$result.PassedCount + [int]$result.FailedCount) -eq 0) { exit 2 }
+if ([string]$result.Result -ne 'Passed') { exit 1 }
+exit 0
