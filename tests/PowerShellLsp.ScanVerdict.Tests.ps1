@@ -34,13 +34,14 @@
 #      session-start and a real daemon behind the real CLI are exercised in
 #      PowerShellLsp.SarifScan.Tests.ps1 and PowerShellLsp.ScanReadOnly.Tests.ps1.)
 #   5. THE ORACLE AND THE EXCLUSION GUARD. tests/assert-expected-red.ps1 is proven to accept the
-#      declared failures and nothing else, and the RED tags are proven to sit exactly on the tests
-#      tests/fixtures/scan-verdict/expected-red.psd1 declares.
+#      declared failures and nothing else (and an empty manifest as nothing expected RED), and the RED
+#      tags are proven to sit exactly on the tests tests/fixtures/scan-verdict/expected-red.psd1 declares.
 #
 # CLASSIFICATION. A1 committed every F1 verdict that failed at its head as a RED test tagged
 # 'ScanRed-A2', excluded by default. A2 turned all of them green and REMOVED the tag and the manifest
 # entries in the same change (the manifest's rule): every test in this file now runs in the normal
-# suite. The ScanRed-A3 tests that remain live in PowerShellLsp.ScanReadOnly.Tests.ps1.
+# suite. Dispatch 000314 did the same for the last ScanRed-A3 tests (PowerShellLsp.ScanReadOnly.Tests.ps1),
+# so the manifest is empty and the normal runner excludes no test.
 #
 # THE S1/S9 PAIR is the heart of the census: under the pre-A2 protocol the two children produced
 # byte-identical output at the scanner boundary. S1 is still receipt-less and is NOT analyzed; S9 now
@@ -1018,6 +1019,40 @@ Describe 'Synth' {
         $r.ExitCode | Should -Be 1 -Because ('oracle output: ' + $r.Out + $r.Err)
         $r.Out | Should -Match 'REJECT: MISSING: Synth\.gone'
     }
+
+    # THE EMPTY MANIFEST (dispatch 000314). Once the last owner tag is retired the manifest names no file,
+    # no tag and no entry. Before 000314 the oracle refused that as a usage error ('manifest declares no
+    # tags', exit 2); now it is an explicit accept that says nothing is expected RED. Partly empty
+    # manifests keep their rejections.
+    It 'ACCEPTS an empty manifest -- no file, no tag, no entry -- and says that nothing is expected RED (dispatch 000314)' {
+        $dir = Join-Path $script:OrRoot 'empty'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $mPath = Join-Path $dir 'expected-red.psd1'
+        [System.IO.File]::WriteAllText($mPath, "@{`n    Files = @()`n    Tags = @{}`n    Expected = @()`n}`n", (New-Object System.Text.UTF8Encoding($false)))
+        $ev = Join-Path $dir 'evidence.json'
+        $r = Invoke-SvChildProcess -HostExe $script:OrHost -CapMs 300000 `
+            -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:OrOracle, '-ManifestPath', $mPath, '-TestsDir', $dir, '-EvidencePath', $ev)
+        $r.ExitCode | Should -Be 0 -Because ('oracle output: ' + $r.Out + $r.Err)
+        $r.Out | Should -Match 'ACCEPTED'
+        $r.Out | Should -Match 'nothing is expected RED'
+        $e = [System.IO.File]::ReadAllText($ev) | ConvertFrom-Json
+        [string]$e.verdict | Should -BeExactly 'ACCEPTED'
+        [bool]$e.emptyManifest | Should -BeTrue
+        [int]$e.declared | Should -Be 0
+    }
+
+    It 'REJECTS a manifest that names a tag no test carries, even with no entry left (zero discovery)' {
+        $body = $script:OrRedBody -replace "-Tag 'SynthRed'", ''
+        $r = Invoke-OrScenario -Name 'zero-noentry' -Body $body -Expected ''
+        $r.ExitCode | Should -Be 1 -Because ('oracle output: ' + $r.Out + $r.Err)
+        $r.Out | Should -Match 'REJECT: ZERO DISCOVERY'
+    }
+
+    It 'refuses a half-retired manifest -- a file named, no tag -- as a usage error' {
+        $r = Invoke-OrScenario -Name 'half' -Body $script:OrRedBody -Expected '' -Tags '@{}'
+        $r.ExitCode | Should -Be 2 -Because ('oracle output: ' + $r.Out + $r.Err)
+        $r.Err | Should -Match 'manifest declares no tags'
+    }
 }
 
 Describe 'Temporary RED exclusions are exactly the manifest (dispatch 000302 A1)' {
@@ -1026,68 +1061,97 @@ Describe 'Temporary RED exclusions are exactly the manifest (dispatch 000302 A1)
     # silently exclude every test inside it), only on the tests the manifest declares, only as
     # literals, and the runner must exclude exactly the manifest's tags. The oracle proves the
     # declared tests still FAIL; this proves nothing else is hiding behind the same tags.
+    # A RED tag is a tag the manifest declares OR any tag of the ScanRed- family. Since dispatch 000314
+    # retired the last one (ScanRed-A3) the manifest declares nothing, so a ScanRed tag put back on any
+    # test -- a retired one or a new one the manifest does not name -- fails here.
 
     BeforeAll {
         $script:ExManifestPath = Join-Path $PSScriptRoot 'fixtures/scan-verdict/expected-red.psd1'
         $script:ExManifest = Import-PowerShellDataFile -LiteralPath $script:ExManifestPath
         $script:ExTags = @($script:ExManifest.Tags.Keys | ForEach-Object { [string]$_ } | Sort-Object)
 
-        # Every tag use under tests/, recursively -- a *.Tests.ps1 anywhere below tests/ is discovered.
-        $script:ExUses = New-Object System.Collections.ArrayList
-        $script:ExParseErrors = New-Object System.Collections.ArrayList
-        foreach ($f in @(Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -File -Filter '*.Tests.ps1')) {
-            $tok = $null; $errs = $null
-            $ast = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tok, [ref]$errs)
-            foreach ($e in @($errs)) { [void]$script:ExParseErrors.Add($f.Name + ': ' + $e.Message) }
-            $cmds = @($ast.FindAll({
-                        param($n)
-                        $n -is [System.Management.Automation.Language.CommandAst] -and
-                        (@('Describe', 'Context', 'It') -contains [string]$n.GetCommandName())
-                    }, $true))
-            foreach ($c in $cmds) {
-                $els = $c.CommandElements
-                for ($i = 1; $i -lt $els.Count; $i++) {
-                    $el = $els[$i]
-                    if (-not ($el -is [System.Management.Automation.Language.CommandParameterAst])) { continue }
-                    if ([string]$el.ParameterName -ne 'Tag') { continue }
-                    $valueAst = if ($null -ne $el.Argument) { $el.Argument } elseif (($i + 1) -lt $els.Count) { $els[$i + 1] } else { $null }
-                    $strings = @()
-                    $dynamic = $true
-                    if ($null -ne $valueAst) {
-                        $consts = @($valueAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true))
-                        $vars = @($valueAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true))
-                        $strings = @($consts | ForEach-Object { [string]$_.Value })
-                        $dynamic = ($vars.Count -gt 0 -or $consts.Count -eq 0)
+        function Test-ExRedTag {
+            param([string]$Tag)
+            return (($script:ExTags -contains $Tag) -or ($Tag -match '^ScanRed-'))
+        }
+
+        function Get-ExTagUses {
+            # THE TAG CENSUS: every -Tag on a Describe, Context or It in the given files, with its literal
+            # values and whether any value is computed at run time. Returns @{ Uses; ParseErrors; Files }.
+            param([string[]]$Path)
+            $uses = New-Object System.Collections.ArrayList
+            $parseErrors = New-Object System.Collections.ArrayList
+            foreach ($file in @($Path)) {
+                $name = Split-Path -Leaf $file
+                $tok = $null; $errs = $null
+                $ast = [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tok, [ref]$errs)
+                foreach ($e in @($errs)) { [void]$parseErrors.Add($name + ': ' + $e.Message) }
+                $cmds = @($ast.FindAll({
+                            param($n)
+                            $n -is [System.Management.Automation.Language.CommandAst] -and
+                            (@('Describe', 'Context', 'It') -contains [string]$n.GetCommandName())
+                        }, $true))
+                foreach ($c in $cmds) {
+                    $els = $c.CommandElements
+                    for ($i = 1; $i -lt $els.Count; $i++) {
+                        $el = $els[$i]
+                        if (-not ($el -is [System.Management.Automation.Language.CommandParameterAst])) { continue }
+                        if ([string]$el.ParameterName -ne 'Tag') { continue }
+                        $valueAst = if ($null -ne $el.Argument) { $el.Argument } elseif (($i + 1) -lt $els.Count) { $els[$i + 1] } else { $null }
+                        $strings = @()
+                        $dynamic = $true
+                        if ($null -ne $valueAst) {
+                            $consts = @($valueAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true))
+                            $vars = @($valueAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true))
+                            $strings = @($consts | ForEach-Object { [string]$_.Value })
+                            $dynamic = ($vars.Count -gt 0 -or $consts.Count -eq 0)
+                        }
+                        $title = ''
+                        for ($j = 1; $j -lt $els.Count; $j++) {
+                            if ($els[$j] -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $title = [string]$els[$j].Value; break }
+                        }
+                        [void]$uses.Add([pscustomobject]@{
+                                File    = $name
+                                Kind    = [string]$c.GetCommandName()
+                                Title   = $title
+                                Tags    = $strings
+                                Dynamic = $dynamic
+                                Line    = $c.Extent.StartLineNumber
+                            })
                     }
-                    $title = ''
-                    for ($j = 1; $j -lt $els.Count; $j++) {
-                        if ($els[$j] -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $title = [string]$els[$j].Value; break }
-                    }
-                    [void]$script:ExUses.Add([pscustomobject]@{
-                            File    = $f.Name
-                            Kind    = [string]$c.GetCommandName()
-                            Title   = $title
-                            Tags    = $strings
-                            Dynamic = $dynamic
-                            Line    = $c.Extent.StartLineNumber
-                        })
                 }
             }
+            return @{ Uses = $uses; ParseErrors = $parseErrors; Files = @($Path).Count }
         }
+
+        # Every tag use under tests/, recursively -- a *.Tests.ps1 anywhere below tests/ is discovered.
+        $census = Get-ExTagUses -Path @(Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -File -Filter '*.Tests.ps1' | ForEach-Object { $_.FullName })
+        $script:ExUses = $census.Uses
+        $script:ExParseErrors = $census.ParseErrors
+        $script:ExFileCount = $census.Files
     }
 
-    It 'the manifest declares the one remaining owner tag (ScanRed-A3) and a non-empty expected set' {
-        # ScanRed-A2 was retired by dispatch 000304 together with its last entry, as the manifest's
-        # own rule requires; a tag with no entries may not linger in the manifest or the runner.
-        ($script:ExTags -join ',') | Should -BeExactly 'ScanRed-A3'
-        @($script:ExManifest.Expected).Count | Should -BeGreaterThan 0
-        foreach ($t in $script:ExTags) { [string]$script:ExManifest.Tags[$t] | Should -Match '^A[23] -- ' }
-        @($script:ExManifest.Expected | Where-Object { [string]$_.Tag -eq 'ScanRed-A2' }).Count | Should -Be 0
+    It 'the manifest declares no owner tag, no entry and no file -- every temporary RED exclusion is retired (dispatch 000314)' {
+        # ScanRed-A2 was retired by dispatch 000304 and ScanRed-A3 by dispatch 000314, each together
+        # with its last entry, as the manifest's own rule requires; a tag with no entries may not linger
+        # in the manifest or the runner.
+        ($script:ExTags -join ',') | Should -BeExactly ''
+        @($script:ExManifest.Expected | Where-Object { $null -ne $_ }).Count | Should -Be 0
+        @($script:ExManifest.Files | Where-Object { $null -ne $_ }).Count | Should -Be 0
     }
 
     It 'every test file parses (the census reads real code)' {
         ($script:ExParseErrors.ToArray() -join '; ') | Should -BeExactly ''
-        @($script:ExUses).Count | Should -BeGreaterThan 0 -Because 'the census must find the RED tags it guards'
+        $script:ExFileCount | Should -BeGreaterThan 10 -Because 'the census must read the suite'
+        # The census must still FIND a tag where one is. While RED tags sat in the suite their presence
+        # proved it; since dispatch 000314 the suite carries none, so the same census reads a synthetic
+        # file holding one on a Describe and one on an It.
+        $synth = Join-Path $TestDrive 'Synthetic.Tests.ps1'
+        [System.IO.File]::WriteAllText($synth, ("Describe 'd' -Tag 'ScanRed-Q1' {`n    It 'i' -Tag 'ScanRed-Z9' { }`n    It 'j' -Tag 'plain' { }`n}`n"),
+            (New-Object System.Text.UTF8Encoding($false)))
+        $c = Get-ExTagUses -Path @($synth)
+        (@($c.Uses | ForEach-Object { $_.Kind + ':' + (@($_.Tags) -join '+') }) -join ',') | Should -BeExactly 'Describe:ScanRed-Q1,It:ScanRed-Z9,It:plain'
+        (@($c.Uses | Where-Object { @($_.Tags | Where-Object { Test-ExRedTag $_ }).Count -gt 0 }).Count) | Should -Be 2
     }
 
     It 'no tag anywhere is computed at run time -- an exclusion must be readable from the source' {
@@ -1098,22 +1162,24 @@ Describe 'Temporary RED exclusions are exactly the manifest (dispatch 000302 A1)
     It 'a RED tag sits only on It blocks, never on a Describe or Context' {
         $bad = @($script:ExUses | Where-Object {
                 $u = $_
-                $_.Kind -ne 'It' -and @($u.Tags | Where-Object { $script:ExTags -contains $_ }).Count -gt 0
+                $_.Kind -ne 'It' -and @($u.Tags | Where-Object { Test-ExRedTag $_ }).Count -gt 0
             } | ForEach-Object { $_.File + ':' + $_.Line + ' ' + $_.Kind })
         ($bad -join '; ') | Should -BeExactly ''
     }
 
     It 'no retired RED tag survives anywhere in the suite' {
-        # A ScanRed-A2 tag left on an It would no longer be excluded by the runner (its default no
-        # longer names it) -- harmless at run time, but a lie about ownership. Fail on any.
-        $stale = @($script:ExUses | Where-Object { @($_.Tags) -contains 'ScanRed-A2' } | ForEach-Object { $_.File + ':' + $_.Line })
+        # A ScanRed tag the manifest does not declare -- ScanRed-A2 or ScanRed-A3 put back, or a new one --
+        # is not excluded by the runner (its default names none) -- harmless at run time, but a lie about
+        # ownership. Fail on any.
+        $stale = @($script:ExUses | Where-Object { @($_.Tags | Where-Object { $_ -match '^ScanRed-' -and $script:ExTags -notcontains $_ }).Count -gt 0 } |
+                ForEach-Object { $_.File + ':' + $_.Line })
         ($stale -join '; ') | Should -BeExactly ''
     }
 
     It 'every RED-tagged It is declared in the manifest, and every declared It exists with its tag' {
         $inSource = @($script:ExUses | ForEach-Object {
                 $u = $_
-                foreach ($t in @($u.Tags | Where-Object { $script:ExTags -contains $_ })) { $u.File + '|' + $t + '|' + $u.Title }
+                foreach ($t in @($u.Tags | Where-Object { Test-ExRedTag $_ })) { $u.File + '|' + $t + '|' + $u.Title }
             } | Sort-Object -Unique)
         $declared = @($script:ExManifest.Expected | ForEach-Object { [string]$_.File + '|' + [string]$_.Tag + '|' + [string]$_.Name } | Sort-Object -Unique)
         $extra = @($inSource | Where-Object { $declared -notcontains $_ })
