@@ -273,8 +273,9 @@ Describe 'A scan names a directory the host cannot address (dispatch 000313, T3;
         $script:DpData = if (-not [string]::IsNullOrWhiteSpace($env:PSLS_TEST_DATA_DIR)) { $env:PSLS_TEST_DATA_DIR } else { Join-Path ([System.IO.Path]::GetTempPath()) 'psls-sarifscan-test-data' }
         New-Item -ItemType Directory -Force -Path $script:DpData | Out-Null
         $script:DpRoot = Join-Path $TestDrive 'deep'
-        # Only Windows PowerShell 5.1 cannot address a path past MAX_PATH; every other host here lists it.
-        $script:DpUnaddressable = ((Test-OnWindows) -and $PSVersionTable.PSVersion.Major -lt 6)
+        # Set below, once the tree exists, by measuring whether THIS host can list it.
+        $script:DpUnaddressable = $false
+        $script:DpProbe = ''
         $script:DpBuilt = $null
         $script:DpRun = $null
         if ($script:DpPwsh.Count -gt 0) {
@@ -294,6 +295,15 @@ Describe 'A scan names a directory the host cannot address (dispatch 000313, T3;
             $b = Invoke-SvChildProcess -HostExe $pwshExe -CapMs 60000 -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', $build) `
                 -ExtraEnv @{ PSLS_UL_DEEP = $script:DpRoot }
             $script:DpBuilt = [string]$b.Out
+            # Whether this host can list the tree is measured with the very call the scan makes, not assumed from the
+            # host version: Windows PowerShell 5.1 cannot list past MAX_PATH where the system does not allow long paths,
+            # and lists the whole tree where it does (a CI image can differ from a workstation). Each branch of the
+            # assertion below then holds the scan to what this host actually could and could not list.
+            $probeErrors = $null
+            $probeFiles = @(Get-ChildItem -LiteralPath $script:DpRoot -File -Recurse -ErrorAction SilentlyContinue -ErrorVariable probeErrors)
+            $dirErrors = @(@($probeErrors) | Where-Object { $null -ne $_ -and [string]$_.FullyQualifiedErrorId -match '^Dir[A-Za-z]*Error,' })
+            $script:DpUnaddressable = ($dirErrors.Count -gt 0)
+            $script:DpProbe = ('this host listed ' + $probeFiles.Count + ' file(s) and reported ' + $dirErrors.Count + ' unlistable director(ies)')
             $out = Join-Path $TestDrive 'deep-out.sarif'
             $a = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:DpScan, $script:DpRoot, '-Format', 'sarif', '-OutputPath', $out)
             $run = Invoke-SvChildProcess -HostExe $script:DpHost -CapMs 300000 -ArgumentList $a -ExtraEnv @{ CLAUDE_PLUGIN_DATA = $script:DpData } `
@@ -328,14 +338,14 @@ Describe 'A scan names a directory the host cannot address (dispatch 000313, T3;
         $named = @($r.Notes | Where-Object { (@($_.properties.reasons) -join ',') -eq 'directory-unreadable' })
         @($r.Uris | Where-Object { $_ -eq 'a.ps1' }).Count | Should -Be 1 -Because 'the readable file is analyzed either way'
         if ($script:DpUnaddressable) {
-            $r.Exit | Should -Be 4 -Because ('a directory Windows PowerShell 5.1 could not list must not read clean; stderr: ' + $r.Err)
+            $r.Exit | Should -Be 4 -Because ('a directory this host could not list must not read clean (' + $script:DpProbe + '); stderr: ' + $r.Err)
             $r.Exec | Should -BeFalse
             $named.Count | Should -Be 1 -Because ('notifications: ' + ((@($r.Notes) | ForEach-Object { [string]$_.message.text }) -join ' / '))
             [string]$named[0].locations[0].physicalLocation.artifactLocation.uri | Should -BeLike ('d0' + ('x' * 40) + '/*/')
             $r.Err | Should -Match 'directory\(ies\) could NOT be listed'
             @($r.Uris | Where-Object { $_ -like '*b.ps1' }).Count | Should -Be 0
         } else {
-            $named.Count | Should -Be 0 -Because 'this host lists the whole tree, so no directory is unread'
+            $named.Count | Should -Be 0 -Because ('this host lists the whole tree, so no directory is unread (' + $script:DpProbe + ')')
             $listed = @($r.Uris | Where-Object { $_ -like '*/b.ps1' }).Count + @($r.Notes | Where-Object { [string]$_.message.text -like '*b.ps1*' }).Count
             $listed | Should -BeGreaterThan 0 -Because 'the deepest file was listed: analyzed, or named as a file not analyzed'
         }
