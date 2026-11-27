@@ -47,6 +47,13 @@ function Get-ScanTargets {
     # relative URIs). A directory recurses by default; pass -Recurse:$false for top-level only.
     # Only .ps1/.psm1/.psd1 are returned; every other file is counted in Skipped and otherwise
     # ignored (the documented behavior: analyze the types the tool handles, skip the rest).
+    #
+    # Unlisted (dispatch 000313, ruling ER1-R4): every directory BELOW the scan root that the listing
+    # could not read, sorted. The listing still silences its errors -- one unreadable directory must not
+    # stop the rest of the tree being scanned -- but it no longer drops them: the caller names each such
+    # directory as not analyzed (directory-unreadable), because whatever it holds was never seen. The scan
+    # root itself, and a listing error about something that is not a directory, are not reported here;
+    # both keep their previous behavior (see Get-ScanUnlistedDirectories).
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [bool]$Recurse = $true
@@ -54,7 +61,7 @@ function Get-ScanTargets {
     $exts = Get-ScanPowerShellExtensions
     $full = $Path
     try { $full = [System.IO.Path]::GetFullPath($Path) } catch { $full = $Path }
-    $result = @{ Files = @(); Skipped = 0; Root = $full }
+    $result = @{ Files = @(); Skipped = 0; Root = $full; Unlisted = @() }
     if (Test-Path -LiteralPath $full -PathType Leaf) {
         $result['Root'] = [System.IO.Path]::GetDirectoryName($full)
         $ext = [System.IO.Path]::GetExtension($full).ToLowerInvariant()
@@ -62,7 +69,8 @@ function Get-ScanTargets {
         return $result
     }
     if (Test-Path -LiteralPath $full -PathType Container) {
-        $all = @(Get-ChildItem -LiteralPath $full -File -Recurse:$Recurse -ErrorAction SilentlyContinue)
+        $listErrors = $null
+        $all = @(Get-ChildItem -LiteralPath $full -File -Recurse:$Recurse -ErrorAction SilentlyContinue -ErrorVariable listErrors)
         $ps = New-Object System.Collections.ArrayList
         $skip = 0
         foreach ($f in $all) {
@@ -71,9 +79,46 @@ function Get-ScanTargets {
         }
         $result['Files'] = @(@($ps) | Sort-Object)
         $result['Skipped'] = $skip
+        $result['Unlisted'] = @(Get-ScanUnlistedDirectories -ListErrors @($listErrors) -Root $full)
         return $result
     }
     return $result   # path does not exist -> empty set; the caller surfaces a loud error
+}
+
+function Get-ScanUnlistedDirectories {
+    # The directories below $Root that a listing could not read, from the error records the listing
+    # silenced (dispatch 000313, ruling ER1-R4). Pure over those records, except that it asks the file
+    # system whether each target is a directory. A record counts only when its target is a path BELOW
+    # the root that names a directory: on Windows PowerShell 5.1 and PowerShell 7 alike an access-denied
+    # subdirectory is reported as DirUnauthorizedAccessError with the directory's path as its target
+    # (measured, dispatch 000313). The root itself is left out -- an unreadable root keeps its previous
+    # behavior, an empty target -- and so is a record about anything that is not a directory, whose
+    # handling is likewise unchanged. Returns sorted, distinct full paths; never throws.
+    param([object[]]$ListErrors = @(), [string]$Root = '')
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $alt = [System.IO.Path]::AltDirectorySeparatorChar
+    $cmp = $(if (Test-OnWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal })
+    $rootTrim = ([string]$Root).TrimEnd($sep, $alt)
+    $found = New-Object System.Collections.ArrayList
+    foreach ($e in @($ListErrors)) {
+        if ($null -eq $e) { continue }
+        $target = ''
+        try {
+            $t = $e.TargetObject
+            if ($t -is [System.IO.FileSystemInfo]) { $target = [string]$t.FullName } elseif ($t -is [string]) { $target = [string]$t }
+        } catch { $target = '' }
+        if ([string]::IsNullOrWhiteSpace($target)) { continue }
+        $target = $target.TrimEnd($sep, $alt)
+        if ([string]::IsNullOrWhiteSpace($rootTrim) -or [string]::Equals($target, $rootTrim, $cmp)) { continue }
+        if (-not $target.StartsWith($rootTrim + $sep, $cmp)) { continue }
+        $isDir = $false
+        try { $isDir = Test-Path -LiteralPath $target -PathType Container } catch { $isDir = $false }
+        if (-not $isDir) { continue }
+        $seen = $false
+        foreach ($d in $found) { if ([string]::Equals([string]$d, $target, $cmp)) { $seen = $true; break } }
+        if (-not $seen) { [void]$found.Add($target) }
+    }
+    return @(@($found) | Sort-Object)
 }
 
 function Get-ScanNestedSettingsFiles {
@@ -255,9 +300,12 @@ function Get-ScanNotAnalyzedNames {
     # .ElapsedMs and, since dispatch 000304, .Reasons (the receipt reason codes; absent -> none).
     # Returns @{
     #   Names    = <string[]> (<= Cap, sorted, forward-slash relative) -- the unchanged 000131 surface;
-    #   Items    = <object[]> of @{ Name = <rel>; ElapsedMs = <int|$null>; Reasons = <string[]> }, in the
-    #              same order as Names;
-    #   Total    = <int>; Overflow = <int> }.
+    #   Items    = <object[]> of @{ Name = <rel>; ElapsedMs = <int|$null>; Reasons = <string[]>;
+    #              Kind = 'file' | 'directory' }, in the same order as Names;
+    #   Total    = <int>; Overflow = <int>;
+    #   DirectoryTotal = <int> -- how many of Total are directories the scan could not list }.
+    # An entry whose .Kind is 'directory' (dispatch 000313: a directory below the scan root the listing
+    # could not read) is named with a trailing '/', so no surface can mistake it for a file.
     # $Cap <= 0 means no cap (enumerate all). Blank/null entries are dropped; never throws on empty.
     param(
         [object[]]$NotAnalyzed,
@@ -270,6 +318,7 @@ function Get-ScanNotAnalyzedNames {
         $path = ''
         $elapsed = $null
         $why = @()
+        $kind = 'file'
         if ($entry -is [string]) {
             $path = [string]$entry
         } else {
@@ -278,18 +327,22 @@ function Get-ScanNotAnalyzedNames {
             $ev = Get-Prop $entry 'ElapsedMs'
             if ($null -ne $ev -and "$ev" -ne '') { $elapsed = [int]$ev }
             $why = @(@(Get-Prop $entry 'Reasons') | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
+            if ([string](Get-Prop $entry 'Kind') -eq 'directory') { $kind = 'directory' }
         }
         if ([string]::IsNullOrWhiteSpace($path)) { continue }
-        [void]$items.Add([pscustomobject]@{ Name = (Get-ScanRelativeUri -FilePath $path -Root $Root); ElapsedMs = $elapsed; Reasons = $why })
+        $name = Get-ScanRelativeUri -FilePath $path -Root $Root
+        if ($kind -eq 'directory' -and -not $name.EndsWith('/')) { $name = $name + '/' }
+        [void]$items.Add([pscustomobject]@{ Name = $name; ElapsedMs = $elapsed; Reasons = $why; Kind = $kind })
     }
     $sorted = @(@($items) | Sort-Object -Property Name)
     $total = $sorted.Count
     $shown = if ($Cap -gt 0 -and $total -gt $Cap) { @($sorted[0..($Cap - 1)]) } else { @($sorted) }
     return @{
-        Names    = @(@($shown) | ForEach-Object { [string]$_.Name })
-        Items    = @($shown)
-        Total    = $total
-        Overflow = ($total - @($shown).Count)
+        Names          = @(@($shown) | ForEach-Object { [string]$_.Name })
+        Items          = @($shown)
+        Total          = $total
+        Overflow       = ($total - @($shown).Count)
+        DirectoryTotal = @($sorted | Where-Object { [string]$_.Kind -eq 'directory' }).Count
     }
 }
 
@@ -374,7 +427,11 @@ function New-SarifReport {
             # that echoes message.text names the cause, and in a property bag, so a reader can parse
             # them. A bare-path entry carries none, and its text is byte-identical to before.
             $tail = if ($why.Count -gt 0) { ' (scan INCOMPLETE for this file; reasons: ' + ($why -join ', ') + ').' } else { ' (scan INCOMPLETE for this file).' }
-            $text = if ($null -ne $elapsed) {
+            $text = if ([string]$it.Kind -eq 'directory') {
+                # A directory below the scan root the listing could not read (dispatch 000313): whatever it
+                # holds was never seen, so the notification says so rather than naming it like a file.
+                'powershell-lsp: could not list ' + $rel + ' (scan INCOMPLETE: nothing under this directory was analyzed; reasons: ' + ($why -join ', ') + ').'
+            } elseif ($null -ne $elapsed) {
                 'powershell-lsp: could not analyze ' + $rel + ' after ' + [int]$elapsed + 'ms' + $tail
             } else {
                 'powershell-lsp: could not analyze ' + $rel + $tail
@@ -480,7 +537,12 @@ function Format-ScanTextReport {
         $FilesScanned + ' PowerShell file(s) scanned, ' + $Skipped + ' non-PowerShell file(s) skipped.')
     $na = @(@($NotAnalyzed) | Where-Object { $null -ne $_ -and -not ($_ -is [string] -and [string]::IsNullOrWhiteSpace($_)) })
     if ($na.Count -gt 0) {
-        [void]$sb.AppendLine('WARNING: ' + $na.Count + ' file(s) could NOT be analyzed (no COMPLETE completion receipt -- not a clean result):')
+        # A directory the listing could not read (dispatch 000313) is counted apart from the files, so the
+        # header stays exactly what it was when there is none.
+        $dirCount = @($na | Where-Object { -not ($_ -is [string]) -and [string](Get-Prop $_ 'Kind') -eq 'directory' }).Count
+        $head = 'WARNING: ' + ($na.Count - $dirCount) + ' file(s) could NOT be analyzed'
+        if ($dirCount -gt 0) { $head = $head + ' and ' + $dirCount + ' directory(ies) could NOT be listed' }
+        [void]$sb.AppendLine($head + ' (no COMPLETE completion receipt -- not a clean result):')
         foreach ($entry in $na) {
             if ($entry -is [string]) { [void]$sb.AppendLine('  ' + (Get-ScanRelativeUri -FilePath $entry -Root $Root)); continue }
             $p = [string](Get-Prop $entry 'Path')
@@ -488,6 +550,10 @@ function Format-ScanTextReport {
             $why = @(@(Get-Prop $entry 'Reasons') | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
             $partial = ([string](Get-Prop $entry 'Completeness') -eq 'partial')
             $line = '  ' + (Get-ScanRelativeUri -FilePath $p -Root $Root)
+            if ([string](Get-Prop $entry 'Kind') -eq 'directory') {
+                [void]$sb.AppendLine($line + '/ (directory could not be listed; reasons: ' + ($why -join ', ') + ')')
+                continue
+            }
             if ($partial) {
                 $line = $line + ' (valid receipt, PARTIAL analysis'
                 if ($why.Count -gt 0) { $line = $line + '; reasons: ' + ($why -join ', ') }

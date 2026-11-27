@@ -33,7 +33,9 @@ Only `.ps1` / `.psm1` / `.psd1` are scanned; a directory recurses by default (`-
 to the top level). Severity maps honestly to SARIF's four levels (Error -> `error`, Warning ->
 `warning`, Information and Hint -> `note`; nothing maps to `none`, and an unknown severity maps to
 `warning` so a finding is never silently dropped). Exit codes: `0` completed, `2` `-FailOn`
-threshold met, `3` usage error, `4` scan incomplete (an unanalyzed file is never reported clean) --
+threshold met, `3` usage error, `4` scan incomplete (an unanalyzed file, or a directory below the scan
+root that the scan could not list, is never reported clean --
+[below](#a-directory-the-scan-could-not-list-dispatch-000313)) --
 or, for a managed scan (`-PolicyMode closed`), NOT CERTIFIED: the scan cannot vouch that the declared
 policy was applied ([below](#policy-the-full-main-pass-and-managed-scans)).
 
@@ -73,12 +75,39 @@ additive, scan-only field:
 | `incomplete` | the pass did not settle | `failed` (`analysis-not-settled`) | no |
 | `unavailable` | PSES could not start, or managed policy refused | `failed` | no |
 | (none) | no receipt, an unreadable one, or one for another request, file or bytes | `failed` | no |
+| (none) | nothing: a directory below the scan root that the scan could not list (`directory-unreadable`) | -- | no -- the directory is named, exit 4 |
 
 Every file that is not complete is named in the INCOMPLETE report with machine reason codes -- on
 stderr, in text mode, and in the SARIF `invocations[].toolExecutionNotifications[]` entry for the
 file (in the message text and in a `properties.reasons` array). The full code list, with what each
-means, is the reason table in `scripts/lib/lsp-scan-receipt.ps1`. Findings from a file that is not
-complete are still reported; they are simply never presented as a complete result.
+means, is the reason table in `scripts/lib/lsp-scan-receipt.ps1`; the one reason outside it is
+`directory-unreadable` (next). Findings from a file that is not complete are still reported; they are
+simply never presented as a complete result.
+
+### A directory the scan could not list (dispatch 000313)
+
+A directory below the scan root that the listing cannot read -- one the current user is denied
+listing -- is **not analyzed**: whatever it holds was never seen (owner ruling ER1-R4). It is named
+the way an unanalyzed file is, with a trailing `/` and the reason `directory-unreadable`: on stderr
+(`... and N directory(ies) could NOT be listed -- scan is INCOMPLETE`, then `  <dir>/ (directory could
+not be listed; reasons: directory-unreadable)`), in the text report, and in a SARIF not-analyzed
+notification (`powershell-lsp: could not list <dir>/ ...`, with `properties.reasons`
+`directory-unreadable`). The scan exits `4` with `executionSuccessful=false`, and a managed scan is NOT
+CERTIFIED with `analysis-incomplete`, the directory listed among its files exactly as a file with no
+receipt is (under a usable policy it also carries `policy-evidence-missing`). `directory-unreadable` is a
+reason for display beside such a path, not a receipt reason, so it is not in the receipt reason table.
+Before dispatch 000313 such a directory simply vanished from coverage: the scan exited `0` and a managed
+scan certified the files it happened to see. A tree whose directories are all readable scans exactly as
+before.
+
+Two cases keep their earlier behavior, measured on Windows PowerShell 5.1 and PowerShell 7:
+
+- **The scan root itself.** A root the user cannot list reads as a target that holds no PowerShell file:
+  an unmanaged scan says so on stderr and exits `0` with `executionSuccessful=true`, and a managed scan is
+  NOT CERTIFIED with `analysis-empty`. Point a gate at a directory it can list.
+- **Something that is not a directory.** A file the user cannot read is still listed; its own analysis
+  then fails and it is named not analyzed with its receipt reasons (`source-vanished` among them), exit
+  `4`. No listing failure on something that is not a directory was observed.
 
 **What a receipt does not certify.** The configuration the daemon was launched with is recorded as
 *observed* and the receipt marks it **unbound**: binding a declared scan environment is separate,

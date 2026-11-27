@@ -28,7 +28,9 @@
 #      Since dispatch 000305 also: a MANAGED scan (-PolicyMode closed) that is NOT CERTIFIED -- no usable
 #      declared policy, or missing / disagreeing evidence that it was applied (reason codes on stderr,
 #      in the text report and in the SARIF). The same exit, because both mean the scan cannot vouch
-#      for its result.
+#      for its result. Since dispatch 000313 also: a directory below the scan root that the listing
+#      could not read -- named as not analyzed with the reason directory-unreadable, because whatever
+#      it holds was never seen.
 #
 # POLICY (dispatch 000305, B1; owner ruling O03). -OrgPolicyPath now drives the MAIN analysis -- the
 # daemon's RequiredRules merge and the per-file client's ExcludeRules / SeverityOverrides /
@@ -122,6 +124,32 @@ function Write-ScanPolicyVerdict {
     }
 }
 
+function Write-ScanNotAnalyzed {
+    # The INCOMPLETE block on stderr -- what lands in the CI step log. Names the files (dispatch 000131),
+    # not just the count, bounded to the shared cap, each with its elapsed ms and reason codes; and, since
+    # dispatch 000313, each directory below the scan root that the listing could not read. The leading
+    # count line is preserved verbatim when no directory is involved, so anything grepping
+    # "file(s) could NOT be analyzed" keeps working.
+    param([object[]]$NotAnalyzed, [string]$Root)
+    $na = Get-ScanNotAnalyzedNames -NotAnalyzed @($NotAnalyzed) -Root $Root
+    $head = 'lsp-scan: ' + ($na.Total - $na.DirectoryTotal) + ' file(s) could NOT be analyzed'
+    if ($na.DirectoryTotal -gt 0) { $head = $head + ' and ' + $na.DirectoryTotal + ' directory(ies) could NOT be listed' }
+    [Console]::Error.WriteLine($head + ' -- scan is INCOMPLETE (executionSuccessful=false):')
+    foreach ($it in $na.Items) {
+        $line = '  ' + [string]$it.Name
+        if ([string]$it.Kind -eq 'directory') {
+            $line = $line + ' (directory could not be listed; reasons: ' + (@($it.Reasons) -join ', ') + ')'
+        } else {
+            $bits = @()
+            if ($null -ne $it.ElapsedMs) { $bits += ([string][int]$it.ElapsedMs + 'ms') }
+            if (@($it.Reasons).Count -gt 0) { $bits += ('reasons: ' + (@($it.Reasons) -join ', ')) }
+            if ($bits.Count -gt 0) { $line = $line + ' (' + ($bits -join '; ') + ')' }
+        }
+        [Console]::Error.WriteLine($line)
+    }
+    if ($na.Overflow -gt 0) { [Console]::Error.WriteLine('  ... and ' + $na.Overflow + ' more (' + $na.Total + ' total).') }
+}
+
 function Write-ScanOutput {
     param([string]$Text, [string]$OutFile)
     if (-not [string]::IsNullOrWhiteSpace($OutFile)) {
@@ -154,6 +182,15 @@ $targets = Get-ScanTargets -Path $full -Recurse (-not $NoRecurse)
 $files = @($targets['Files'])
 $root = [string]$targets['Root']
 $skipped = [int]$targets['Skipped']
+# A directory below the scan root that the listing could not read (dispatch 000313, ruling ER1-R4) is NOT
+# analyzed: it travels the not-analyzed channel with the display reason directory-unreadable, and it joins
+# the managed verdict's per-file evidence as an entry with no receipt, which the existing verdict reads as
+# analysis-incomplete. directory-unreadable is not a receipt reason; no exit code, status token, knob or
+# CLI flag is added.
+$unlisted = @(@($targets['Unlisted']) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+$unlistedRecords = @($unlisted | ForEach-Object {
+        [pscustomobject]@{ Path = [string]$_; ElapsedMs = $null; Reasons = @('directory-unreadable'); Completeness = ''; Kind = 'directory' } })
+$unlistedEvidence = @($unlisted | ForEach-Object { [pscustomobject]@{ File = [string]$_; Completeness = ''; Pass = ''; Receipt = $null } })
 
 # --- policy: the mode, the declared policy, and what reaches the children (dispatch 000305) ---------
 # Resolved ONCE through the seam (Resolve-EffectivePolicy -> Import-OrgPolicy: the same reader, the same
@@ -189,17 +226,38 @@ $policyReported = ($managed -or $null -ne $declaredPolicy)
 # a file (no usable declared policy, ambient configuration) -- exit 4, so a managed gate pointed at the
 # wrong directory cannot read CERTIFIED.
 if ($files.Count -eq 0) {
-    $emptyCert = Test-ScanPolicyCertification -Mode ([string]$policyModeInfo.resolved) -Declared $declaredPolicy -Ambient $ambientOptions
-    $emptyOk = (-not [bool]$emptyCert.Managed) -or [bool]$emptyCert.Certified
+    # A directory the listing could not read (dispatch 000313) may hold the very files this branch did not
+    # find: it is named as not analyzed and the scan exits 4; with none, this branch is exactly as before.
+    if ($unlisted.Count -gt 0) {
+        $emptyCert = Test-ScanPolicyCertification -Mode ([string]$policyModeInfo.resolved) -Declared $declaredPolicy -Ambient $ambientOptions -Files $unlistedEvidence
+    } else {
+        $emptyCert = Test-ScanPolicyCertification -Mode ([string]$policyModeInfo.resolved) -Declared $declaredPolicy -Ambient $ambientOptions
+    }
+    $emptyOk = ((-not [bool]$emptyCert.Managed) -or [bool]$emptyCert.Certified) -and ($unlisted.Count -eq 0)
     $emptyPolicy = $null
-    if ($policyReported) { $emptyPolicy = New-ScanPolicyReport -ModeInfo $policyModeInfo -Declared $declaredPolicy -Certification $emptyCert -Ambient $ambientOptions }
+    if ($policyReported) {
+        $emptyFiles = @(@($emptyCert.Files) | ForEach-Object {
+                [ordered]@{ uri = ((Get-ScanRelativeUri -FilePath ([string]$_.File) -Root $root) + '/'); reasons = @($_.Reasons) }
+            } | Sort-Object { [string]$_['uri'] })
+        if ($emptyFiles.Count -gt $script:ScanNotAnalyzedNameCap) { $emptyFiles = @($emptyFiles[0..($script:ScanNotAnalyzedNameCap - 1)]) }
+        if ($emptyFiles.Count -gt 0) {
+            $emptyPolicy = New-ScanPolicyReport -ModeInfo $policyModeInfo -Declared $declaredPolicy -Certification $emptyCert -Ambient $ambientOptions -Files $emptyFiles
+        } else {
+            $emptyPolicy = New-ScanPolicyReport -ModeInfo $policyModeInfo -Declared $declaredPolicy -Certification $emptyCert -Ambient $ambientOptions
+        }
+    }
     if ($Format -eq 'sarif') {
-        $report = New-SarifReport -Findings @() -Root $root -ToolVersion (Get-PluginVersion) -ExecutionSuccessful $emptyOk -PolicyReport $emptyPolicy
+        $report = New-SarifReport -Findings @() -Root $root -ToolVersion (Get-PluginVersion) -ExecutionSuccessful $emptyOk `
+            -NotAnalyzed $unlistedRecords -PolicyReport $emptyPolicy
         Write-ScanOutput -Text ($report | ConvertTo-Json -Depth 16) -OutFile $OutputPath
     } else {
-        Write-ScanOutput -Text (Format-ScanTextReport -Findings @() -Root $root -Skipped $skipped -FilesScanned 0 -NotAnalyzed @() -PolicyReport $emptyPolicy) -OutFile $OutputPath
+        Write-ScanOutput -Text (Format-ScanTextReport -Findings @() -Root $root -Skipped $skipped -FilesScanned 0 -NotAnalyzed $unlistedRecords -PolicyReport $emptyPolicy) -OutFile $OutputPath
     }
-    [Console]::Error.WriteLine('lsp-scan: no PowerShell files (.ps1/.psm1/.psd1) under ' + $full + ' (' + $skipped + ' other file(s) skipped).')
+    if ($unlisted.Count -gt 0) {
+        Write-ScanNotAnalyzed -NotAnalyzed $unlistedRecords -Root $root
+    } else {
+        [Console]::Error.WriteLine('lsp-scan: no PowerShell files (.ps1/.psm1/.psd1) under ' + $full + ' (' + $skipped + ' other file(s) skipped).')
+    }
     Write-ScanPolicyVerdict -Certification $emptyCert -ModeInfo $policyModeInfo -Declared $declaredPolicy -FileCount 0
     if (-not $emptyOk) { exit 4 }
     exit 0
@@ -252,6 +310,8 @@ try {
 } finally {
     Stop-ScanDaemon -ScriptsDir $PSScriptRoot -DataRoot $dataRoot -SessionId $sessionId -HostExe $hostExe -DaemonInfo $daemon
 }
+# Each directory the listing could not read joins the not-analyzed set after the files (dispatch 000313).
+foreach ($u in $unlistedRecords) { [void]$notAnalyzed.Add($u) }
 
 # prohibitedSuppressions, repo/CI path (P1-5 remainder, R23=D member A, dispatch 000294), restricted
 # to files this scan already resolved. The policy is the one resolved ONCE above (dispatch 000305) --
@@ -316,12 +376,16 @@ if ($bomInvalidLine -ne '') { [Console]::Error.WriteLine($bomInvalidLine) }
 # agreeing application evidence for every file (Test-ScanPolicyCertification); otherwise the scan is NOT
 # CERTIFIED -- executionSuccessful=false and exit 4, with every reason named.
 $policyCert = Test-ScanPolicyCertification -Mode ([string]$policyModeInfo.resolved) -Declared $declaredPolicy `
-    -Ambient $ambientOptions -SuppressionPass $suppressionPass -Files @($fileEvidence) -NestedSettings $nestedSettings
+    -Ambient $ambientOptions -SuppressionPass $suppressionPass -Files (@($fileEvidence) + @($unlistedEvidence)) -NestedSettings $nestedSettings
 $certOk = (-not [bool]$policyCert.Managed) -or [bool]$policyCert.Certified
 $policyReport = $null
 if ($policyReported) {
+    $unlistedSet = @{}
+    foreach ($u in $unlisted) { $unlistedSet[[string]$u] = $true }
     $policyFiles = @(@($policyCert.Files) | ForEach-Object {
-            [ordered]@{ uri = (Get-ScanRelativeUri -FilePath ([string]$_.File) -Root $root); reasons = @($_.Reasons) }
+            $uri = Get-ScanRelativeUri -FilePath ([string]$_.File) -Root $root
+            if ($unlistedSet.ContainsKey([string]$_.File)) { $uri = $uri + '/' }
+            [ordered]@{ uri = $uri; reasons = @($_.Reasons) }
         } | Sort-Object { [string]$_['uri'] })
     if ($policyFiles.Count -gt $script:ScanNotAnalyzedNameCap) { $policyFiles = @($policyFiles[0..($script:ScanNotAnalyzedNameCap - 1)]) }
     $policyReport = New-ScanPolicyReport -ModeInfo $policyModeInfo -Declared $declaredPolicy -Certification $policyCert `
@@ -344,19 +408,8 @@ Write-ScanPolicyVerdict -Certification $policyCert -ModeInfo $policyModeInfo -De
 if (@($notAnalyzed).Count -gt 0) {
     # Name the files, not just the count (dispatch 000131): the SARIF carries them too, but the
     # stderr is what lands in the CI step log, so a future INCOMPLETE is diagnosable from the run
-    # output alone. Bounded to the shared cap (the leading count line is preserved verbatim so
-    # anything grepping "file(s) could NOT be analyzed" keeps working).
-    $na = Get-ScanNotAnalyzedNames -NotAnalyzed @($notAnalyzed) -Root $root
-    [Console]::Error.WriteLine('lsp-scan: ' + $na.Total + ' file(s) could NOT be analyzed -- scan is INCOMPLETE (executionSuccessful=false):')
-    foreach ($it in $na.Items) {
-        $line = '  ' + [string]$it.Name
-        $bits = @()
-        if ($null -ne $it.ElapsedMs) { $bits += ([string][int]$it.ElapsedMs + 'ms') }
-        if (@($it.Reasons).Count -gt 0) { $bits += ('reasons: ' + (@($it.Reasons) -join ', ')) }
-        if ($bits.Count -gt 0) { $line = $line + ' (' + ($bits -join '; ') + ')' }
-        [Console]::Error.WriteLine($line)
-    }
-    if ($na.Overflow -gt 0) { [Console]::Error.WriteLine('  ... and ' + $na.Overflow + ' more (' + $na.Total + ' total).') }
+    # output alone (Write-ScanNotAnalyzed, above).
+    Write-ScanNotAnalyzed -NotAnalyzed @($notAnalyzed) -Root $root
     exit 4
 }
 # A managed scan that is not certified cannot vouch for its result either (dispatch 000305).
