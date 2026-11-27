@@ -115,8 +115,8 @@ Two cases keep their earlier behavior, measured on Windows PowerShell 5.1 and Po
   `4`. No listing failure on something that is not a directory was observed.
 
 **What a receipt does not certify.** The configuration the daemon was launched with is recorded as
-*observed* and the receipt marks it **unbound**: binding a declared scan environment is separate,
-later work (A3). Since schema version 2 (dispatch 000305) a receipt also carries the policy
+*observed* and the receipt marks it **unbound**. Since dispatch 000314 a scan declares eight of its
+children's knobs (below), but binding that declaration into the receipt is separate, later work (A3). Since schema version 2 (dispatch 000305) a receipt also carries the policy
 application evidence each party recorded -- `policy.state` `observed` -- but that is evidence, never a
 verdict: a receipt that claims its policy `verified` or `certified` is malformed, and only a managed
 scan certifies, from that evidence (next section). Engine versions are the ones the daemon reads from the PSES and
@@ -261,12 +261,35 @@ It does NOT prove:
   the plugin and its evidence. Run release gates on a protected runner whose policy someone other than
   the change's author controls.
 
-Until the declared child configuration lands (leg A3), a managed scan run with ambient plugin options set
-is refused rather than certified around them.
+A managed scan run with ambient plugin options that change analysis set is refused (`config-ambient`) rather
+than certified around them. The declared child configuration (next paragraphs, dispatch 000314) keeps eight of
+those options from reaching the analysis at all, but the refusal is unchanged (owner ruling ER2-R4): whether a
+managed scan may certify around an ambient value of one of them is a later decision.
 
 **A scan never formats.** Every scan child gets `formatOnEdit=off` under exactly one spelling --
 every other spelling the option resolver accepts is removed from its environment first -- so a
 `formatOnEdit=apply` inherited from the caller cannot rewrite the files being scanned.
+
+**A scan declares its children's configuration (dispatch 000314).** Eight plugin options reach every scan child
+-- the session-start that launches the scan's daemon, the client run per file, and session-end -- only as the
+scan declares them, never from the environment the scan was started in: `perFileCap=0` (every finding),
+`severityThreshold=Hint` (every severity), `scopeToEdit=false` (the whole file), `timeoutMs=18000`,
+`profile=safe` (which maps nothing), and `ps_host` set to the host the scan runs its children on; `ruleInclude`
+and `ruleExclude` are removed and not set, so a scan runs the whole rule set its settings select. So the same
+repository scans the same way on two machines whatever those eight hold in the caller's environment -- before,
+an ambient rule list or profile narrowed or widened the finding set, and an ambient `ps_host` moved the scan onto
+another analysis host. Every spelling the option resolver could read is removed first, under the rules of either
+PowerShell: the resolver compares names with a culture-aware comparison, and the two runtimes read different
+characters as letters or as nothing (measured: PowerShell 7 reads a name holding a zero-width space, a circled or
+combining letter as the option; Windows PowerShell 5.1 reads a thorn as `th`), so a name that either runtime
+reads as one of the eight is removed whichever one runs the scan. Interactive sessions are unaffected: the
+declaration edits only each scan child's environment block.
+
+The other options that change analysis still reach a scan's children from its environment, measured under both
+spellings: `settingsPath`, `editContextLines`, `orgPolicy` when the scan declares no policy (a declared
+`-OrgPolicyPath` replaces it, as before), and `ruleset`, `moduleAwareness` and `referenceSurfacing` set directly.
+A managed scan refuses them as ambient (`config-ambient`); an unmanaged scan honors them. Whether an ordinary
+scan should keep honoring them is a later decision.
 
 **This repository scans itself.** `.github/workflows/powershell-lsp-code-scanning.yml` uploads
 SARIF to GitHub code scanning on every push to `main`, weekly, and on demand -- a separate

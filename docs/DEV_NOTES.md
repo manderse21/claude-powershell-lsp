@@ -125,15 +125,19 @@ by default, so CI stays green while the failures stay recorded. Three things kee
   process and passes only if each listed test fails with its declared assertion and every other
   test in those files passes. A setup crash, zero discovery, an unexpected pass, an unrelated
   failure, or an extra tagged test is a rejection. Run it under **both** hosts.
-- **The guard.** `PowerShellLsp.ScanVerdict.Tests.ps1` fails if a RED tag sits on a `Describe` or
-  `Context` (that would hide every test inside it), on a test the list does not name, or as a
-  computed value -- or if the runner's default and the list disagree.
+- **The guard.** `PowerShellLsp.ScanVerdict.Tests.ps1` fails if a RED tag -- one the list declares,
+  or any `ScanRed-*` tag -- sits on a `Describe` or `Context` (that would hide every test inside it),
+  on a test the list does not name, or as a computed value -- or if the runner's default and the
+  list disagree.
 
 When a fix lands, its tests turn green and the oracle rejects them as unexpected passes. That is the
 signal: remove the tag from the `It`, remove the entry from the list, and drop the tag from the
 runner default once it has no entries left. Never widen a declared message to fit a different
 failure. Dispatch 000304 (A2) did exactly that for all 39 `ScanRed-A2` tests and retired the tag;
-only `ScanRed-A3` remains.
+dispatch 000314 (ER2) did it for the 15 `ScanRed-A3` tests. **No test is excluded today**: the list
+declares no file, tag or entry, the runner's default exclusion is empty, and the oracle accepts that
+empty list explicitly ("nothing is expected RED") instead of rejecting it as zero discovery. A later
+leg that measures a defect RED adds a new owner tag the same way, and the guard holds it to the list.
 
 ## A scanned file is analyzed only on a COMPLETE receipt
 
