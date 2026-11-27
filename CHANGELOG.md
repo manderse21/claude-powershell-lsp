@@ -30,6 +30,65 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+PATCH: **The daemon starts from an install path, data root or host path that holds a space** (dispatch 000313, leg
+ER1 -- enterprise-review finding ER-F05, owner ruling ER1-R2; pre-existing). `Start-PsesDaemonDetached` handed
+`Start-Process` its argument vector as an array, which `Start-Process` joins with single spaces and quotes nothing
+(measured on Windows PowerShell 5.1 and PowerShell 7.6), so a plugin tree, data root or host path holding a space
+arrived as two or more arguments: the child host reported that the first half of the path is not a script file,
+the daemon never started, and the launcher still reported the launch fired -- for the SessionStart hook and the
+PostToolUse auto-relaunch alike. A rule list, settings path or org-policy path holding a space split the same way.
+One routine, `ConvertTo-ProcessArgumentString`, now builds every command line string the plugin hands a child, by
+the Windows command line rules (a value is quoted when it is empty or holds white space or a double quote; a
+backslash run is doubled before a double quote and before the closing quote; a double quote is escaped), and both
+arms of the detached launch and the Windows PowerShell 5.1 arm of `Add-ProcessArguments` use it -- the latter's
+hand quoting lost a value ending in a backslash inside quotes, a backslash run before a double quote, and an empty
+value. The daemon's argument vector is unchanged element for element, a value holding no white space and no double
+quote is emitted verbatim (so the default launch's command line is byte-identical), the PowerShell 7
+`ArgumentList` arm is unchanged, and no hook gains a wait, a probe or a process.
+`tests/PowerShellLsp.ArgumentBoundary.Tests.ps1` compares the argument vector a stand-in daemon actually received
+with the one the launcher intended, for each plugin-tree and data-root shape, and starts one real daemon from a
+spaced install path with a spaced data root.
+
+PATCH: **The test runner's exit code is the suite's verdict, never a count** (test-only; dispatch 000313, leg ER1
+-- enterprise-review finding ER-F08, owner ruling ER1-R3). `tests/run-tests.ps1` exited with Pester's failed-test
+count, so a `-FullNameFilter` that selected nothing, a test file that failed at discovery and a run whose every
+selected test was skipped all exited `0`, and on Linux and macOS 256 failed tests exited `0` (an exit status is one
+byte there). It now exits `0` only when Pester reports the run passed and at least one test was executed (reached
+a passed or failed verdict), `1` for any failed test, failed `BeforeAll`/`AfterAll` block or failed container, and
+`2` when no test was executed. The `Pester: N passed, N failed, N skipped` line is unchanged; one line after it
+reports how many tests were discovered and how many were not run, the failed blocks and failed containers, the
+Pester version and the host edition and version. The runner's parameters and defaults -- the `ScanRed-A3`
+exclusion included -- are unchanged, and no workflow changed. `tests/PowerShellLsp.RunnerVerdict.Tests.ps1` runs a
+copy of the runner over seven fixture suites in a child process; `docs/corpus.md` no longer tells a reader to check
+the selected count by hand. No shipped file changes.
+
+MINOR: **A scan names a directory it could not list instead of reading clean** (dispatch 000313, leg ER1 --
+enterprise-review finding ER-F07, owner ruling ER1-R4; pre-existing). `Get-ScanTargets` listed the scan tree with
+its errors silenced and returned only what it could read, so a directory below the scan root that the current user
+cannot list vanished from coverage: the scan exited `0` with `executionSuccessful=true`, and a managed scan
+CERTIFIED the files it happened to see (measured on Windows PowerShell 5.1 and PowerShell 7 with an access rule
+denying the user ListDirectory). Every such directory is now NOT analyzed and travels the existing not-analyzed
+channel -- named on stderr, in the text report and in a SARIF not-analyzed notification, with
+`executionSuccessful=false` and exit `4` -- beside the one new display reason `directory-unreadable`, and a managed
+scan is NOT CERTIFIED with the existing `analysis-incomplete`. `directory-unreadable` is not a receipt reason:
+`scripts/lib/lsp-policy.ps1` and `docs/scan-receipt.schema.json` are unchanged, and no exit code, status token,
+knob or CLI flag is added. A tree whose directories are all readable scans exactly as before. The scan root itself,
+and a listing failure on something that is not a directory, keep their previous behavior (measured; see
+`docs/repository-scanning.md`). `tests/PowerShellLsp.ScanUnlisted.Tests.ps1` proves it through
+`scripts/lsp-scan.ps1` with a real denial -- an access rule on Windows, mode 000 elsewhere, skipped with its reason
+when the process is root.
+
+PATCH: **README lists the four shipped slash commands, and TRUST.md names the one opt-in exception to "nothing
+leaves the machine"** (docs; dispatch 000313, leg ER1 -- owner ruling ER1-R5). README's Commands section said three
+slash commands and listed three while `commands/` ships four; it now says four and carries a `/powershell-lsp:query`
+row derived from `commands/query.md`, and `tests/doc-claims.psd1` registers the count twice -- the number the
+sentence states and the rows the table lists -- against the files in `commands/`, so the two cannot disagree again
+(a new `FileCount` derivation and two document-side capture modes in the doc-claims guard). TRUST.md's "No
+telemetry, no exfiltration" and "No network access at all after first-run bootstrap" bullets now carry their one
+exception: `scripts/export-otel.ps1 -Send`, opt-in twice and never automatic, POSTs allow-listed metrics to the
+collector an administrator names in `POWERSHELL_LSP_OTEL_ENDPOINT`; no hook calls it, and without both the endpoint
+and `-Send` nothing leaves the machine. No other sentence in either file changed.
+
 PATCH: **A full suite run no longer vendors PSScriptAnalyzer into the default data root** (test-only; dispatch
 000312, leg B1h -- review finding B1g-REV311-12). The `regen-rule-rationales.ps1 -Check` tests in
 `tests/PowerShellLsp.Unit.Tests.ps1` ran `ensure-pssa.ps1` and the check with `CLAUDE_PLUGIN_DATA` unset, so every
