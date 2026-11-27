@@ -3735,18 +3735,65 @@ function Set-ContainedFileMode {
     return (Set-OwnerOnlyMode -Path $Path -Kind 'File')
 }
 
+function ConvertTo-ProcessArgumentString {
+    # THE ONE PLACE the plugin builds a command line STRING (dispatch 000313, ruling ER1-R2). Every
+    # value in $Arguments arrives in the child as exactly one argument, whatever characters it holds.
+    #
+    # WHY A STRING IS BUILT AT ALL. Two launch paths have no argument vector to hand over. Start-Process
+    # (the detached daemon launch, both arms of Start-PsesDaemonDetached) takes -ArgumentList and, given
+    # an ARRAY, joins it with single spaces and quotes nothing -- measured on Windows PowerShell 5.1 and
+    # on PowerShell 7.6 -- so a value holding a space arrived as two arguments; Windows PowerShell 5.1
+    # also refuses an array holding an empty element. ProcessStartInfo under Windows PowerShell 5.1
+    # (.NET Framework) has only the .Arguments string (no ArgumentList). Both are handed this one string.
+    #
+    # THE RULES are the Windows command line rules, which the C runtime and CommandLineToArgvW parse on
+    # Windows and which .NET applies to ProcessStartInfo.Arguments on Linux and macOS:
+    #   * a value is quoted when it is empty or holds white space or a double quote;
+    #   * inside quotes, a double quote is written \" and the run of backslashes before it is doubled;
+    #   * the run of backslashes before the CLOSING quote is doubled (C:\a b\ is written "C:\a b\\");
+    #   * a backslash anywhere else is literal and left alone.
+    # A value holding no white space and no double quote is emitted VERBATIM, so a vector with no such
+    # value -- the default daemon launch -- yields byte-for-byte the string Start-Process made of the
+    # array before this routine existed.
+    param([AllowNull()][AllowEmptyCollection()][string[]]$Arguments)
+    $parts = New-Object System.Collections.Generic.List[string]
+    # foreach over $null runs zero times, so a null vector yields '' (never a lone quoted empty value).
+    foreach ($item in $Arguments) {
+        $value = [string]$item
+        if ($value.Length -gt 0 -and $value -notmatch '[\s"]') { $parts.Add($value); continue }
+        $sb = New-Object System.Text.StringBuilder
+        [void]$sb.Append('"')
+        $backslashes = 0
+        foreach ($ch in $value.ToCharArray()) {
+            if ($ch -eq [char]92) { $backslashes++; continue }                     # 92 = backslash
+            if ($ch -eq [char]34) {                                                # 34 = double quote
+                [void]$sb.Append([char]92, (2 * $backslashes) + 1)
+                [void]$sb.Append([char]34)
+            } else {
+                if ($backslashes -gt 0) { [void]$sb.Append([char]92, $backslashes) }
+                [void]$sb.Append($ch)
+            }
+            $backslashes = 0
+        }
+        if ($backslashes -gt 0) { [void]$sb.Append([char]92, 2 * $backslashes) }
+        [void]$sb.Append('"')
+        $parts.Add($sb.ToString())
+    }
+    return ($parts -join ' ')
+}
+
 function Add-ProcessArguments {
     # Set process arguments cross-version. PowerShell 7+ (.NET Core) has
     # ProcessStartInfo.ArgumentList (correct auto-quoting); Windows PowerShell 5.1
-    # (.NET Framework) does NOT -- it only has the .Arguments string, which we
-    # quote by hand. pwsh keeps using ArgumentList (the proven path), unchanged.
+    # (.NET Framework) does NOT -- it only has the .Arguments string, built by the
+    # one quoting routine above (dispatch 000313: the hand quoting that was here lost
+    # a value ending in a backslash inside quotes, a backslash before a double quote,
+    # and an empty value). pwsh keeps using ArgumentList (the proven path), unchanged.
     param([System.Diagnostics.ProcessStartInfo]$Psi, [string[]]$Arguments)
     if ($PSVersionTable.PSVersion.Major -ge 6) {
         foreach ($a in $Arguments) { $Psi.ArgumentList.Add([string]$a) }
     } else {
-        $Psi.Arguments = (($Arguments | ForEach-Object {
-            if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { [string]$_ }
-        }) -join ' ')
+        $Psi.Arguments = ConvertTo-ProcessArgumentString -Arguments $Arguments
     }
 }
 
@@ -4114,11 +4161,16 @@ function Start-PsesDaemonDetached {
     # dispatch 000133) -- the in-agent daemon keeps the 5000 settle cap, so edit latency is unchanged.
     if ($MaxWaitMs -gt 0) { $daemonArgs += @('-MaxWaitMs', [string]$MaxWaitMs) }
     if (-not [string]::IsNullOrWhiteSpace($OrgPolicyPath)) { $daemonArgs += @('-OrgPolicyPath', $OrgPolicyPath) }
+    # ONE command line string for both arms (dispatch 000313, ER1-R2). Start-Process joins an
+    # -ArgumentList ARRAY with spaces and quotes nothing, so an install path, data root or host path
+    # holding a space used to split and the daemon never started while this returned $true. The vector
+    # above is unchanged element for element; only how it is handed to Start-Process changed.
+    $daemonCommandLine = ConvertTo-ProcessArgumentString -Arguments $daemonArgs
     try {
         if (Test-OnWindows) {
             # -WindowStyle Hidden routes through ShellExecute, which STRUCTURALLY does not pass
             # inheritable std handles to the child (Windows is already detached-safe).
-            Start-Process -FilePath $HostExe -ArgumentList $daemonArgs -WindowStyle Hidden | Out-Null
+            Start-Process -FilePath $HostExe -ArgumentList $daemonCommandLine -WindowStyle Hidden | Out-Null
         } else {
             # Non-Windows has no ShellExecute, so redirect all three std streams to per-launch
             # files (stamped, retired by the log sweep) so the daemon never holds the caller's
@@ -4127,7 +4179,7 @@ function Start-PsesDaemonDetached {
             $dlBase = Join-Path $logDir ('pses-daemon-launch-' + $stamp)
             $dlIn = $dlBase + '.in'; $dlOut = $dlBase + '.out'; $dlErr = $dlBase + '.err'
             New-Item -ItemType File -Force -Path $dlIn | Out-Null
-            Start-Process -FilePath $HostExe -ArgumentList $daemonArgs `
+            Start-Process -FilePath $HostExe -ArgumentList $daemonCommandLine `
                 -RedirectStandardInput $dlIn `
                 -RedirectStandardOutput $dlOut `
                 -RedirectStandardError $dlErr | Out-Null

@@ -179,13 +179,16 @@ pwsh -NoProfile -File tests/run-tests.ps1 -FullNameFilter '*Diagnostic-correctne
 ```
 
 The runner installs Pester 5 to the **CurrentUser** scope if it is missing -- never machine-global
--- and exits with the number of failed tests.
+-- and exits with a verdict, never a count: `0` when Pester reports the run passed and at least one
+test was executed, `1` for any failed test, failed `BeforeAll`/`AfterAll` block or failed test file,
+and `2` when no test was executed.
 
-**Check the selected count, not just the exit code.** The runner exits on the *failure* count, so a
-`-FullNameFilter` that matches nothing exits `0` and reads like a pass. Pester prints
-`Filters selected N tests to run` near the top of the output: confirm `N` is non-zero before you
-believe the result. Dropping the filter entirely runs the whole suite, which takes considerably
-longer but cannot be vacuous.
+**A filter that matches nothing cannot read as a pass.** A `-FullNameFilter` that selects no test
+exits `2`, as does a run in which every selected test was skipped. After its
+`Pester: N passed, N failed, N skipped` line the runner prints one more line -- how many tests were
+discovered and how many the filter left unrun, the failed blocks and failed containers, and the
+Pester version and host that produced the run. Dropping the filter entirely runs the whole suite,
+which takes considerably longer.
 
 The measured report is written as JSON:
 

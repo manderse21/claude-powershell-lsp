@@ -32,6 +32,16 @@
 #   FileRegexInt     { Path; Pattern }   Integer captured from another file in the repo. The
 #                                        capture must resolve to exactly ONE distinct value or the
 #                                        derivation throws.
+#   FileCount        { Path; Filter }    Count of files directly in a repo directory that match a
+#                                        wildcard (dispatch 000313). Zero files throws: a directory
+#                                        that holds nothing is a broken derivation, not a claim.
+#
+# CAPTURE MODES (optional Capture key; how the DOCUMENT side reads a number -- dispatch 000313):
+#   Integer     (the default)  capture group 1 is digits.
+#   NumberWord                 capture group 1 is an English number word, zero to twenty, or digits
+#                              -- for a count a sentence spells out ("Four slash commands").
+#   MatchCount                 the claimed number is HOW MANY TIMES the pattern matches -- for a
+#                              claim a document makes by listing things, one table row each.
 #
 # MATCHING IS WHITESPACE-NORMALIZED. Documents are read whole and every whitespace run collapsed to
 # a single space before matching, so a claim that WRAPS across lines still matches. The 000176
@@ -83,6 +93,24 @@
                 Pattern = 'CorpusReport\.known(?:Good|Bad) \| Should -BeGreaterOrEqual (\d+)'
             }
             Note       = 'Leg 2 put this number into the README. Guarding it immediately is the point: an unguarded published number is how this whole class starts. The derivation captures both the knownGood and knownBad floors and requires them to agree, so a future divergence fails loudly instead of picking one silently.'
+        }
+
+        @{
+            Name       = 'README slash-command count equals the number of shipped command files'
+            Document   = 'README.md'
+            Pattern    = '(\w+) slash commands, available once the plugin is enabled'
+            Capture    = 'NumberWord'
+            Derivation = @{ Kind = 'FileCount'; Path = 'commands'; Filter = '*.md' }
+            Note       = 'Dispatch 000313 (ER1-R5): the README said three and listed three while commands/ shipped four.'
+        }
+
+        @{
+            Name       = 'README Commands table lists one row per shipped command file'
+            Document   = 'README.md'
+            Pattern    = '\| `/powershell-lsp:[a-z]+[^`]*` \|'
+            Capture    = 'MatchCount'
+            Derivation = @{ Kind = 'FileCount'; Path = 'commands'; Filter = '*.md' }
+            Note       = 'Dispatch 000313: the count sentence alone would let a command ship without its row; this row-count claim fails when a command file is added and the table is not.'
         }
 
     )

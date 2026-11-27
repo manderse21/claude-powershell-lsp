@@ -488,6 +488,18 @@ cold. None is a contract change; each is banked here deliberately.
   `lsp-scan.ps1`. **No knob, no status token and no CLI flag is added**; exit codes are unchanged, and
   `doctor -Json`'s `orgPolicy` keys keep their names, order and types. Recorded here as a **note, not an
   amendment**.
+- **A directory the scan could not list (NOT a Tier-1 frozen surface) -- dispatch 000313.** `scripts/lsp-scan.ps1`
+  now names every directory below the scan root that its listing could not read as not analyzed -- on stderr, in
+  the text report and as a SARIF not-analyzed notification, with `executionSuccessful=false` and exit `4` -- and a
+  managed scan refuses it with the existing `analysis-incomplete`; before, such a directory vanished from coverage
+  and the scan read clean. A behavior change recorded in the CHANGELOG, by the owner's ruling ER1-R4. Additive and
+  outside the frozen surface: one display reason beside such a path (`directory-unreadable`), which is not a
+  receipt reason -- `scripts/lib/lsp-policy.ps1` and `docs/scan-receipt.schema.json` are unchanged. The scan root
+  itself, and a listing failure on something that is not a directory, keep their previous behavior. The same
+  dispatch makes every launch hand a child its arguments intact under spaced paths (ruling ER1-R2) with the
+  daemon's argument vector unchanged. **No knob, no status token, no CLI flag and no exit code is added**; the
+  scan's exit codes are unchanged (0 / 2 / 3 / 4), and `doctor -Json`'s `orgPolicy` keys keep their names, order
+  and types. Recorded here as a **note, not an amendment**.
 
 ---
 

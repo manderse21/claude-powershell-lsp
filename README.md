@@ -132,7 +132,7 @@ this repository uses to scan itself -- is in
 
 ### Commands
 
-Three slash commands, available once the plugin is enabled. Each **wraps a script that already
+Four slash commands, available once the plugin is enabled. Each **wraps a script that already
 ships** -- they add no analysis of their own:
 
 | Command | What it does |
@@ -140,6 +140,7 @@ ships** -- they add no analysis of their own:
 | `/powershell-lsp:doctor` | The full preflight health check with a named fix for anything wrong (`scripts/doctor.ps1`). Report-only. |
 | `/powershell-lsp:status` | The same checks rendered as one line each -- a health glance rather than a fix-list (`scripts/doctor.ps1 -Summary`). |
 | `/powershell-lsp:scan <path>` | Scans a file or directory with the same engine the edit hook uses (`scripts/lsp-scan.ps1`). This is the explicit whole-repository path. |
+| `/powershell-lsp:query <operation> <arguments>` | Asks the warm daemon a semantic question -- where a symbol is defined, where it is used, what it is, what a file declares, or where a name lives in the workspace (`scripts/lsp-query.ps1`). It forwards a request PowerShell Editor Services serves natively; it is not a text search. |
 
 `status` runs the identical checks as `doctor` and produces the identical statuses and exit code;
 only the presentation differs.
