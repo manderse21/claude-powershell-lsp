@@ -35,6 +35,7 @@ $DocClaimsCases = @(
             Name       = [string]$c.Name
             Document   = [string]$c.Document
             Pattern    = [string]$c.Pattern
+            Capture    = [string]$c.Capture
             Derivation = $c.Derivation
         }
     }
@@ -60,13 +61,43 @@ Describe 'Doc claims -- every published number matches what it describes' {
             return ([System.IO.File]::ReadAllText($Path) -replace '\s+', ' ')
         }
 
+        function Get-DcCaptureMode {
+            # A claim's capture mode (doc-claims.psd1, CAPTURE MODES). Absent means Integer.
+            param($Claim)
+            $mode = [string]$Claim.Capture
+            if ([string]::IsNullOrWhiteSpace($mode)) { return 'Integer' }
+            return $mode
+        }
+
+        function ConvertFrom-DcCapturedValue {
+            # One captured value as an integer. NumberWord reads zero to twenty (or digits) and
+            # THROWS on anything else, so an unreadable word fails the claim rather than becoming 0.
+            param([string] $Value, [string] $Capture)
+            if ($Capture -eq 'NumberWord') {
+                $words = @('zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+                    'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen',
+                    'nineteen', 'twenty')
+                $i = [array]::IndexOf($words, $Value.ToLowerInvariant())
+                if ($i -ge 0) { return $i }
+                if ($Value -match '^[0-9]+$') { return [int]$Value }
+                throw ("'" + $Value + "' is not a number word this guard reads (zero to twenty, or digits)")
+            }
+            return [int]$Value
+        }
+
         function Get-DcCapturedInts {
             # Every capture-group-1 integer the pattern finds, plus the distinct set. Returning
             # BOTH lets a caller tell "matched nothing" from "matched contradictory values" --
-            # two different failures that must not render alike.
-            param([string] $Text, [string] $Pattern)
+            # two different failures that must not render alike. MatchCount claims the number of
+            # matches itself; zero matches still reads as "matched nothing", never as a claim of 0.
+            param([string] $Text, [string] $Pattern, [string] $Capture = 'Integer')
             $m = @([regex]::Matches($Text, $Pattern))
-            $vals = @($m | ForEach-Object { [int]$_.Groups[1].Value } | Sort-Object -Unique)
+            if ($Capture -eq 'MatchCount') {
+                $vals = @()
+                if ($m.Count -gt 0) { $vals = @($m.Count) }
+                return @{ MatchCount = $m.Count; Distinct = $vals }
+            }
+            $vals = @($m | ForEach-Object { ConvertFrom-DcCapturedValue -Value $_.Groups[1].Value -Capture $Capture } | Sort-Object -Unique)
             return @{ MatchCount = $m.Count; Distinct = $vals }
         }
 
@@ -90,6 +121,13 @@ Describe 'Doc claims -- every published number matches what it describes' {
                     }
                     return [int]@($r.Distinct)[0]
                 }
+                'FileCount' {
+                    $dir = Join-Path $script:DcRoot ([string]$Derivation.Path)
+                    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { throw "derivation directory not found: $dir" }
+                    $n = @(Get-ChildItem -LiteralPath $dir -Filter ([string]$Derivation.Filter) -File).Count
+                    if ($n -lt 1) { throw ('derivation counted NO files matching ' + [string]$Derivation.Filter + ' in ' + $dir) }
+                    return $n
+                }
                 default { throw "unknown derivation kind '$($Derivation.Kind)'" }
             }
         }
@@ -107,7 +145,7 @@ Describe 'Doc claims -- every published number matches what it describes' {
             $verdict.Derived = Get-DocClaimDerivedInt -Derivation $Claim.Derivation
             $text = if ($UseDocText) { $DocText } else { Get-DcNormalizedText -Path $docPath }
             if ($null -eq $text) { $verdict.Reason = "document not found: $docPath"; return $verdict }
-            $r = Get-DcCapturedInts -Text $text -Pattern ([string]$Claim.Pattern)
+            $r = Get-DcCapturedInts -Text $text -Pattern ([string]$Claim.Pattern) -Capture (Get-DcCaptureMode $Claim)
             if ($r.MatchCount -lt 1) {
                 # NOT a pass. A pattern that finds nothing means the claim it guards was reworded
                 # or deleted, and the guard must say so rather than wave it through.
@@ -135,7 +173,8 @@ Describe 'Doc claims -- every published number matches what it describes' {
             [string]$c.Name | Should -Not -BeNullOrEmpty
             [string]$c.Document | Should -Not -BeNullOrEmpty
             [string]$c.Pattern | Should -Not -BeNullOrEmpty
-            [string]$c.Derivation.Kind | Should -BeIn @('CorpusSpecCount', 'FileRegexInt')
+            [string]$c.Derivation.Kind | Should -BeIn @('CorpusSpecCount', 'FileRegexInt', 'FileCount')
+            (Get-DcCaptureMode $c) | Should -BeIn @('Integer', 'NumberWord', 'MatchCount')
         }
     }
 
@@ -185,6 +224,32 @@ Describe 'Doc claims -- every published number matches what it describes' {
         $v = Get-DocClaimVerdict -Claim $claim -DocText 'nothing here states any guarded number' -UseDocText
         $v.Match | Should -BeFalse -Because 'a pattern matching nothing is a missing claim, not a satisfied one'
         $v.Reason | Should -Match 'matched NOTHING'
+    }
+
+    It 'RED CONTROL (dispatch 000313): a README that drops a command row, or misstates the count in words, is reported' {
+        # The document side of the two command claims, perturbed while the derivation still counts
+        # the real commands/ directory. Baseline first, so a failure below belongs to the perturbation.
+        $rows = @($script:DcClaims | Where-Object { (Get-DcCaptureMode $_) -eq 'MatchCount' })[0]
+        $word = @($script:DcClaims | Where-Object { (Get-DcCaptureMode $_) -eq 'NumberWord' })[0]
+        $rows | Should -Not -BeNullOrEmpty
+        $word | Should -Not -BeNullOrEmpty
+        $norm = Get-DcNormalizedText -Path (Join-Path $script:DcRoot 'README.md')
+        (Get-DocClaimVerdict -Claim $rows -DocText $norm -UseDocText).Match | Should -BeTrue
+        (Get-DocClaimVerdict -Claim $word -DocText $norm -UseDocText).Match | Should -BeTrue
+
+        $first = [regex]::Match($norm, [string]$rows.Pattern)
+        $first.Success | Should -BeTrue
+        $dropped = $norm.Remove($first.Index, $first.Length)
+        $v = Get-DocClaimVerdict -Claim $rows -DocText $dropped -UseDocText
+        $v.Match | Should -BeFalse -Because 'a table missing a command row must fail the row-count claim'
+        $v.Claimed | Should -Be ($v.Derived - 1)
+
+        $m = [regex]::Match($norm, [string]$word.Pattern)
+        $g = $m.Groups[1]
+        $misstated = $norm.Substring(0, $g.Index) + 'Twenty' + $norm.Substring($g.Index + $g.Length)
+        $v = Get-DocClaimVerdict -Claim $word -DocText $misstated -UseDocText
+        $v.Match | Should -BeFalse -Because 'a sentence stating the wrong count in words must fail the count claim'
+        $v.Claimed | Should -Be 20
     }
 }
 

@@ -37,10 +37,16 @@ for how it works.
   keyed to the session id.
 - **No telemetry, no exfiltration.** The plugin sends **nothing** off the machine. There
   is no analytics endpoint, no phone-home, no crash reporter. All state, logs, pids, and
-  the vendored analyzer live under `CLAUDE_PLUGIN_DATA` and stay there.
+  the vendored analyzer live under `CLAUDE_PLUGIN_DATA` and stay there. The one exception
+  is opt-in twice and never automatic: `scripts/export-otel.ps1 -Send` POSTs allow-listed
+  metrics to the collector an administrator names in `POWERSHELL_LSP_OTEL_ENDPOINT`; no hook
+  calls it, and without both the endpoint and `-Send` nothing leaves the machine.
 - **No network access at all after first-run bootstrap.** The ONLY outbound network the
   plugin makes is the one-time download of its two pinned dependencies (below). Once those
-  are vendored and marker-gated, every later session is fully offline.
+  are vendored and marker-gated, every later session is fully offline. The one exception
+  is opt-in twice and never automatic: `scripts/export-otel.ps1 -Send` POSTs allow-listed
+  metrics to the collector an administrator names in `POWERSHELL_LSP_OTEL_ENDPOINT`; no hook
+  calls it, and without both the endpoint and `-Send` nothing leaves the machine.
 - **No security-control circumvention.** The plugin never disables, weakens, or works
   around ExecutionPolicy, Constrained Language Mode, WDAC/App Control, Defender ASR, or
   Smart App Control. When one of those blocks a component, the plugin **detects and
