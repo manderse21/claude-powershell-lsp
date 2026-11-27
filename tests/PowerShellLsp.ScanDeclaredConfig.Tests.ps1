@@ -83,6 +83,20 @@ Describe 'The scan child declaration on a ProcessStartInfo (dispatch 000314, ER2
             return , $out
         }
 
+        function Get-DcVisible {
+            # A pattern or name in a visible, ASCII-only form -- [char]0 as '*', anything else outside printable
+            # ASCII as \uXXXX -- so it is compared ORDINALLY in effect: Pester's -BeExactly compares culture-aware,
+            # and measured on both hosts it takes 'rule' + [char]0 + 'include' for 'ruleinclude'.
+            param([string]$Text)
+            $sb = New-Object System.Text.StringBuilder
+            foreach ($ch in $Text.ToCharArray()) {
+                $n = [int]$ch
+                if ($n -eq 0) { [void]$sb.Append('*') }
+                elseif ($n -ge 0x20 -and $n -le 0x7E) { [void]$sb.Append($ch) }
+                else { [void]$sb.Append('\u' + $n.ToString('x4')) }
+            }
+            return $sb.ToString()
+        }
         function Get-DcAsciiSpellings {
             # The 'NAME=value' of every variable in the block whose name, underscores stripped and ASCII
             # lower-cased, is the knob -- an ordinal reading, independent of the routine under test.
@@ -98,47 +112,51 @@ Describe 'The scan child declaration on a ProcessStartInfo (dispatch 000314, ER2
         # (dispatch 000314): the ASCII ones by both; a thorn, an oe ligature and a repetition mark by
         # Windows PowerShell 5.1 only; the others by PowerShell 7 only.
         $zw = [string][char]0x200B
-        $script:DcHostile = [ordered]@{
-            'CLAUDE_PLUGIN_OPTION_perFileCap'                                 = '1'
-            'CLAUDE_PLUGIN_OPTION_PER_FILE_CAP'                               = '2'
-            ('CLAUDE_PLUGIN_OPTION_' + [char]::ConvertFromUtf32(0x1D429) + 'erFileCap') = '3'
-            'CLAUDE_PLUGIN_OPTION_severityThreshold'                          = 'Error'
-            'CLAUDE_PLUGIN_OPTION_SEVERITY_THRESHOLD'                         = 'Warning'
-            ('CLAUDE_PLUGIN_OPTION_severity' + [char]0x034F + 'Threshold')    = 'Information'
-            ('CLAUDE_PLUGIN_OPTION_severity' + [char]0x00FE + 'reshold')      = 'Error'
-            'CLAUDE_PLUGIN_OPTION_scopeToEdit'                                = 'true'
-            'CLAUDE_PLUGIN_OPTION_SCOPE_TO_EDIT'                              = 'yes'
-            ('CLAUDE_PLUGIN_OPTION_scope' + [char]0x2060 + 'ToEdit')          = 'on'
-            ('CLAUDE_PLUGIN_OPTION_scopet' + [char]0x0153 + 'dit')            = 'true'
-            'CLAUDE_PLUGIN_OPTION_timeoutMs'                                  = '1'
-            'CLAUDE_PLUGIN_OPTION_TIMEOUT_MS'                                 = '2'
-            ('CLAUDE_PLUGIN_OPTION_time' + [char]0x0001 + 'outMs')            = '3'
-            'CLAUDE_PLUGIN_OPTION_profile'                                    = 'strict'
-            'CLAUDE_PLUGIN_OPTION_PRO_FILE'                                   = 'recommended'
-            ('CLAUDE_PLUGIN_OPTION_prof' + [char]0x2071 + 'le')               = 'strict'
-            'CLAUDE_PLUGIN_OPTION_ps_host'                                    = 'powershell'
-            'CLAUDE_PLUGIN_OPTION_psHost'                                     = 'powershell'
-            ('CLAUDE_PLUGIN_OPTION_' + [char]0x24DF + 's_host')               = 'powershell'
-            'CLAUDE_PLUGIN_OPTION_ruleInclude'                                = 'PSAvoidUsingCmdletAliases'
-            'CLAUDE_PLUGIN_OPTION_RULE_INCLUDE'                               = 'PSAvoidUsingWriteHost'
-            ('CLAUDE_PLUGIN_OPTION_rule' + $zw + 'Include')                   = 'PSAvoidGlobalVars'
-            ('CLAUDE_PLUGIN_OPTION_' + [char]0x24E1 + 'uleInclude')           = 'PSAvoidUsingPositionalParameters'
-            'CLAUDE_PLUGIN_OPTION_ruleExclude'                                = 'PSUseApprovedVerbs'
-            'CLAUDE_PLUGIN_OPTION_RULE_EXCLUDE'                               = 'PSAvoidUsingWriteHost'
-            ('CLAUDE_PLUGIN_OPTION_rule' + [char]0x00AD + 'Exclude')          = 'PSAvoidGlobalVars'
-            ('CLAUDE_PLUGIN_OPTION_rule' + [char]0x200D + 'Exclude')          = 'PSAvoidUsingCmdletAliases'
-            ('CLAUDE_PLUGIN_OPTION_rule' + [char]0x309D + 'xclude')           = 'PSAvoidUsingPositionalParameters'
-            ('CLAUDE_PLUGIN_OPTION_rul' + [char]0x0364 + 'Include')           = 'PSAvoidUsingEmptyCatchBlock'
-        }
+        # An ORDINAL ordered dictionary, never a hash literal: a hash literal compares its keys culture-aware on
+        # Windows PowerShell 5.1, where several of these names are the SAME key (measured: duplicate-key error).
+        $script:DcHostile = New-Object System.Collections.Specialized.OrderedDictionary ([System.StringComparer]::Ordinal)
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_perFileCap', '1')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_PER_FILE_CAP', '2')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_' + [char]::ConvertFromUtf32(0x1D429) + 'erFileCap'), '3')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_severityThreshold', 'Error')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_SEVERITY_THRESHOLD', 'Warning')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_severity' + [char]0x034F + 'Threshold'), 'Information')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_severity' + [char]0x00FE + 'reshold'), 'Error')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_scopeToEdit', 'true')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_SCOPE_TO_EDIT', 'yes')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_scope' + [char]0x2060 + 'ToEdit'), 'on')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_scopet' + [char]0x0153 + 'dit'), 'true')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_timeoutMs', '1')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_TIMEOUT_MS', '2')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_time' + [char]0x0001 + 'outMs'), '3')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_profile', 'strict')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_PRO_FILE', 'recommended')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_prof' + [char]0x2071 + 'le'), 'strict')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_ps_host', 'powershell')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_psHost', 'powershell')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_' + [char]0x24DF + 's_host'), 'powershell')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_ruleInclude', 'PSAvoidUsingCmdletAliases')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_RULE_INCLUDE', 'PSAvoidUsingWriteHost')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_rule' + $zw + 'Include'), 'PSAvoidGlobalVars')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_' + [char]0x24E1 + 'uleInclude'), 'PSAvoidUsingPositionalParameters')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_ruleExclude', 'PSUseApprovedVerbs')
+        $script:DcHostile.Add('CLAUDE_PLUGIN_OPTION_RULE_EXCLUDE', 'PSAvoidUsingWriteHost')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_rule' + [char]0x00AD + 'Exclude'), 'PSAvoidGlobalVars')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_rule' + [char]0x200D + 'Exclude'), 'PSAvoidUsingCmdletAliases')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_rule' + [char]0x309D + 'xclude'), 'PSAvoidUsingPositionalParameters')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_rul' + [char]0x0364 + 'Include'), 'PSAvoidUsingEmptyCatchBlock')
     }
 
     It 'removes every staged spelling of the eight knobs and sets each declared value under exactly one spelling' {
         $psi = New-DcStartInfo -Vars $script:DcHostile
         Set-ScanChildDeclaredOptions -StartInfo $psi -HostExe 'pwsh'
         $block = Get-DcBlock -Psi $psi
-        $declaredNames = @('CLAUDE_PLUGIN_OPTION_perFileCap', 'CLAUDE_PLUGIN_OPTION_severityThreshold', 'CLAUDE_PLUGIN_OPTION_scopeToEdit',
-            'CLAUDE_PLUGIN_OPTION_timeoutMs', 'CLAUDE_PLUGIN_OPTION_profile', 'CLAUDE_PLUGIN_OPTION_ps_host')
-        $left = @(@($script:DcHostile.Keys) | Where-Object { $declaredNames -notcontains $_ -and $block.ContainsKey([string]$_) })
+        # Ordinal, never -contains: -contains is culture-aware and would take an exotic spelling for the declared name.
+        $declaredNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+        foreach ($n in @('CLAUDE_PLUGIN_OPTION_perFileCap', 'CLAUDE_PLUGIN_OPTION_severityThreshold', 'CLAUDE_PLUGIN_OPTION_scopeToEdit',
+                'CLAUDE_PLUGIN_OPTION_timeoutMs', 'CLAUDE_PLUGIN_OPTION_profile', 'CLAUDE_PLUGIN_OPTION_ps_host')) { [void]$declaredNames.Add($n) }
+        $script:DcHostile.Count | Should -Be 30 -Because 'every hostile spelling must be staged, none merged into another'
+        $left = @(@($script:DcHostile.Keys) | Where-Object { -not $declaredNames.Contains([string]$_) -and $block.ContainsKey([string]$_) })
         (@($left | ForEach-Object { ([string]$_).Length }) -join ',') | Should -BeExactly '' -Because 'no staged hostile spelling may survive in a scan child''s block'
         (@($block.Keys | Sort-Object { [string]$_ } -CaseSensitive | ForEach-Object { [string]$_ + '=' + $block[[string]$_] }) -join ';') |
             Should -BeExactly ('CLAUDE_PLUGIN_OPTION_perFileCap=0;CLAUDE_PLUGIN_OPTION_profile=safe;CLAUDE_PLUGIN_OPTION_ps_host=pwsh;' +
@@ -154,28 +172,20 @@ Describe 'The scan child declaration on a ProcessStartInfo (dispatch 000314, ER2
     }
 
     It 'leaves every other knob''s variables exactly as they were, under every spelling (ruling ER2-R3)' {
-        $others = [ordered]@{
-            'CLAUDE_PLUGIN_OPTION_settingsPath'       = 'C:\s.psd1'
-            'CLAUDE_PLUGIN_OPTION_SETTINGS_PATH'      = 'C:\t.psd1'
-            'CLAUDE_PLUGIN_OPTION_editContextLines'   = '7'
-            'CLAUDE_PLUGIN_OPTION_orgPolicy'          = 'C:\p.psd1'
-            'CLAUDE_PLUGIN_OPTION_ORG_POLICY'         = 'C:\q.psd1'
-            'CLAUDE_PLUGIN_OPTION_ruleset'            = 'base'
-            'CLAUDE_PLUGIN_OPTION_moduleAwareness'    = 'suggest'
-            'CLAUDE_PLUGIN_OPTION_referenceSurfacing' = 'counts'
-            'CLAUDE_PLUGIN_OPTION_formatOnEdit'       = 'apply'
-            'CLAUDE_PLUGIN_OPTION_maxWaitMs'          = '1'
-            'CLAUDE_PLUGIN_OPTION_MAX_WAIT_MS'        = '2'
-            'CLAUDE_PLUGIN_OPTION_keepLastN'          = '3'
-            'CLAUDE_PLUGIN_OPTION_nativeServe'        = 'shim'
-            'CLAUDE_PLUGIN_OPTION_enableStats'        = 'true'
-            'CLAUDE_PLUGIN_OPTION_debounceMs'         = '9'
-            'CLAUDE_PLUGIN_OPTION_idleTtlMin'         = '4'
-            'CLAUDE_PLUGIN_OPTION_ruleIncludes'       = 'near-miss'
-            'CLAUDE_PLUGIN_OPTION_timeout'            = 'near-miss'
-            'CLAUDE_PLUGIN_OPTION_rule-include'       = 'neither runtime reads an ASCII hyphen as nothing'
-            'CLAUDE_PLUGIN_OPTION_profile s'          = 'near-miss'
-        }
+        $others = New-Object System.Collections.Specialized.OrderedDictionary ([System.StringComparer]::Ordinal)
+        foreach ($pair in @(
+                @('CLAUDE_PLUGIN_OPTION_settingsPath', 'C:\s.psd1'), @('CLAUDE_PLUGIN_OPTION_SETTINGS_PATH', 'C:\t.psd1'),
+                @('CLAUDE_PLUGIN_OPTION_editContextLines', '7'), @('CLAUDE_PLUGIN_OPTION_orgPolicy', 'C:\p.psd1'),
+                @('CLAUDE_PLUGIN_OPTION_ORG_POLICY', 'C:\q.psd1'), @('CLAUDE_PLUGIN_OPTION_ruleset', 'base'),
+                @('CLAUDE_PLUGIN_OPTION_moduleAwareness', 'suggest'), @('CLAUDE_PLUGIN_OPTION_referenceSurfacing', 'counts'),
+                @('CLAUDE_PLUGIN_OPTION_formatOnEdit', 'apply'), @('CLAUDE_PLUGIN_OPTION_maxWaitMs', '1'),
+                @('CLAUDE_PLUGIN_OPTION_MAX_WAIT_MS', '2'), @('CLAUDE_PLUGIN_OPTION_keepLastN', '3'),
+                @('CLAUDE_PLUGIN_OPTION_nativeServe', 'shim'), @('CLAUDE_PLUGIN_OPTION_enableStats', 'true'),
+                @('CLAUDE_PLUGIN_OPTION_debounceMs', '9'), @('CLAUDE_PLUGIN_OPTION_idleTtlMin', '4'),
+                @('CLAUDE_PLUGIN_OPTION_ruleIncludes', 'near-miss'), @('CLAUDE_PLUGIN_OPTION_timeout', 'near-miss'),
+                @('CLAUDE_PLUGIN_OPTION_rule-include', 'neither runtime reads an ASCII hyphen as nothing'),
+                @('CLAUDE_PLUGIN_OPTION_profile s', 'near-miss'))) { $others.Add([string]$pair[0], [string]$pair[1]) }
+        $others.Count | Should -Be 20 -Because 'every pair must be staged'
         $psi = New-DcStartInfo -Vars $others
         $psi.EnvironmentVariables['PERFILECAP'] = 'not an option variable'
         $psi.EnvironmentVariables['POWERSHELL_LSP_CAPTURE_MODE'] = 'off'
@@ -205,16 +215,16 @@ Describe 'The scan child declaration on a ProcessStartInfo (dispatch 000314, ER2
 
     It 'the pattern reads a decomposable letter as itself and any other character as a wildcard, and keeps an ASCII separator' {
         $z = [string][char]0
-        (ConvertTo-ScanOptionPattern -Text ([string][char]0x24E1 + 'ule_Include')) | Should -BeExactly 'ruleinclude' -Because 'a circled letter decomposes to its letter'
-        (ConvertTo-ScanOptionPattern -Text ('per' + [char]0xFB01 + 'leCap')) | Should -BeExactly 'perfilecap' -Because 'a ligature decomposes to its letters'
-        (ConvertTo-ScanOptionPattern -Text ([char]::ConvertFromUtf32(0x1D42B) + 'uleInclude')) | Should -BeExactly 'ruleinclude'
-        (ConvertTo-ScanOptionPattern -Text ('rule' + [char]0x200B + [char]0x200D + 'Include')) | Should -BeExactly ('rule' + $z + 'include') -Because 'a run of other characters is one wildcard'
-        (ConvertTo-ScanOptionPattern -Text ('rul' + [char]0x0364 + 'Include')) | Should -BeExactly ('rul' + $z + 'include') -Because 'PowerShell 7 reads a combining small e as e'
-        (ConvertTo-ScanOptionPattern -Text ('severity' + [char]0x00FE + 'reshold')) | Should -BeExactly ('severity' + $z + 'reshold') -Because 'Windows PowerShell 5.1 reads a thorn as th'
-        (ConvertTo-ScanOptionPattern -Text ('time' + [char]0x0001 + 'out_MS')) | Should -BeExactly ('time' + $z + 'outms')
-        (ConvertTo-ScanOptionPattern -Text ('time' + [char]0xFFFE + 'outMs')) | Should -BeExactly ('time' + $z + 'outms') -Because 'a character Normalize throws on is a wildcard, never an error'
-        (ConvertTo-ScanOptionPattern -Text ('PS' + [char]0xD800 + '_HOST')) | Should -BeExactly ('ps' + $z + 'host') -Because 'a lone surrogate is a wildcard, never an error'
-        (ConvertTo-ScanOptionPattern -Text 'Rule-Include') | Should -BeExactly 'rule-include' -Because 'an ASCII hyphen is no spelling of the knob on either runtime (measured)'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ([string][char]0x24E1 + 'ule_Include'))) | Should -BeExactly 'ruleinclude' -Because 'a circled letter decomposes to its letter'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('per' + [char]0xFB01 + 'leCap'))) | Should -BeExactly 'perfilecap' -Because 'a ligature decomposes to its letters'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ([char]::ConvertFromUtf32(0x1D42B) + 'uleInclude'))) | Should -BeExactly 'ruleinclude'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('rule' + [char]0x200B + [char]0x200D + 'Include'))) | Should -BeExactly 'rule*include' -Because 'a run of other characters is one wildcard'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('rul' + [char]0x0364 + 'Include'))) | Should -BeExactly 'rul*include' -Because 'PowerShell 7 reads a combining small e as e'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('severity' + [char]0x00FE + 'reshold'))) | Should -BeExactly 'severity*reshold' -Because 'Windows PowerShell 5.1 reads a thorn as th'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('time' + [char]0x0001 + 'out_MS'))) | Should -BeExactly 'time*outms'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('time' + [char]0xFFFE + 'outMs'))) | Should -BeExactly 'time*outms' -Because 'a character Normalize throws on is a wildcard, never an error'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('PS' + [char]0xD800 + '_HOST'))) | Should -BeExactly 'ps*host' -Because 'a lone surrogate is a wildcard, never an error'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text 'Rule-Include')) | Should -BeExactly 'rule-include' -Because 'an ASCII hyphen is no spelling of the knob on either runtime (measured)'
         (Test-ScanOptionPatternMatch -Pattern ('rul' + $z + 'include') -Target 'ruleinclude') | Should -BeTrue
         (Test-ScanOptionPatternMatch -Pattern ('severity' + $z + 'reshold') -Target 'severitythreshold') | Should -BeTrue
         (Test-ScanOptionPatternMatch -Pattern ($z + 'e' + $z) -Target 'profile') | Should -BeTrue
