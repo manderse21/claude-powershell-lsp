@@ -693,50 +693,36 @@ function ConvertTo-ScanOptionPattern {
     # A knob's name as ANY host's option resolver may read it (dispatch 000314, ER2). Get-RawPluginOption
     # (scripts/lib/lsp-common.ps1) strips underscores, lower-cases, and compares with PowerShell -eq: a
     # case-insensitive comparison under the invariant culture, which reads some characters as nothing and
-    # others as letters -- and which ones depends on the runtime. Measured by the dispatch 000314 census of
-    # every code point: PowerShell 7 (ICU) reads a zero-width space or an ASCII control character as nothing,
-    # and a circled, negative-circled, mathematical or combining letter (U+0364 COMBINING LATIN SMALL LETTER
-    # E) as that letter; Windows PowerShell 5.1 (NLS) reads none of those so, but reads a thorn as 'th', an
-    # oe ligature as 'oe' and a Japanese repetition mark as the letter before it. A scan run by one host
-    # spawns its children on the other whenever both are installed (the children prefer pwsh), so replaying
-    # the resolver on the parent's runtime alone leaves such a name for the child to read.
-    # The pattern does not depend on the runtime. Each character is compatibility-decomposed (NFKD: a
-    # circled, mathematical, superscript or ligature letter becomes its plain letters); a printable ASCII
-    # character then stands for itself (A-Z lowered, the underscore dropped), and any other character -- one
-    # that does not decompose to ASCII, a combining mark, a control or format character, an unpaired
-    # surrogate, one the runtime cannot normalize -- stands for any run of letters, or none ([char]0 in the
-    # result, a run of them collapsed to one). So a name any runtime reads as a knob fits that knob's name.
-    # It can also fit a name no resolver reads, or an exotic name some runtime reads as another knob whose
-    # letters happen to fit around the wildcards; neither is a name a configuration writes (Claude Code
-    # exports ASCII names), and the census puts every character into every other knob's name without
-    # one of the declared knobs fitting it.
+    # others as letters -- and which ones depends on the runtime and on the Unicode data it carries. Measured
+    # by the dispatch 000314 census of every code point and by its review: PowerShell 7 (ICU) reads a
+    # zero-width space or an ASCII control character as nothing, and a circled, negative-circled,
+    # mathematical or combining letter (U+0364 COMBINING LATIN SMALL LETTER E) as that letter; Windows
+    # PowerShell 5.1 (NLS) reads none of those so, but reads a thorn as 'th', an oe ligature as 'oe', a
+    # Japanese repetition mark as the letter before it -- and U+A7F2 MODIFIER LETTER CAPITAL C, which
+    # PowerShell 7 reads (and decomposes) as c, as nothing. A scan run by one host spawns its children on the
+    # other whenever both are installed (they prefer pwsh; -PsHost chooses), so neither the resolver replayed
+    # on the scan's runtime nor that runtime's Unicode decomposition tells what a child reads.
+    # So the pattern assumes nothing about a character outside printable ASCII. A printable ASCII character
+    # stands for itself (A-Z lowered, the underscore dropped); every other character -- any letter, mark,
+    # symbol, control or format character, an unpaired surrogate -- stands for any run of characters, or
+    # none ([char]0 in the result, a run of them collapsed to one). A name any runtime reads as a knob
+    # therefore fits that knob's name, whatever that runtime's Unicode data. It can also fit a name no
+    # resolver reads, or an exotic name some runtime reads as another knob whose ASCII letters happen to fit
+    # around the wildcards; neither is a name a configuration writes (Claude Code exports ASCII names), and
+    # the census puts every character into every other knob's name without one of the declared knobs fitting.
     param([string]$Text)
     $sb = New-Object System.Text.StringBuilder
     $wild = $false
-    $i = 0
-    while ($i -lt $Text.Length) {
-        $unit = [string]$Text[$i]
-        if ([char]::IsHighSurrogate($Text[$i]) -and ($i + 1) -lt $Text.Length -and [char]::IsLowSurrogate($Text[$i + 1])) {
-            $unit = $Text.Substring($i, 2)
-        }
-        $i += $unit.Length
-        $decomposed = $null
-        if (-not ($unit.Length -eq 1 -and [char]::IsSurrogate($unit[0]))) {
-            # Measured: U+FFFE on PowerShell 7, and every noncharacter on Windows PowerShell 5.1, throw here.
-            try { $decomposed = $unit.Normalize([System.Text.NormalizationForm]::FormKD) } catch { $decomposed = $null }
-        }
-        if ($null -eq $decomposed) { $decomposed = [string][char]0xFFFD }
-        foreach ($ch in $decomposed.ToCharArray()) {
-            $n = [int]$ch
-            if ($n -eq 0x5F) { continue }
-            if ($n -ge 0x20 -and $n -le 0x7E) {
-                if ($n -ge 0x41 -and $n -le 0x5A) { $n = $n + 0x20 }
-                [void]$sb.Append([char]$n)
-                $wild = $false
-            } elseif (-not $wild) {
-                [void]$sb.Append([char]0)
-                $wild = $true
-            }
+    foreach ($ch in $Text.ToCharArray()) {
+        $n = [int]$ch
+        if ($n -eq 0x5F) { continue }
+        if ($n -ge 0x20 -and $n -le 0x7E) {
+            if ($n -ge 0x41 -and $n -le 0x5A) { $n = $n + 0x20 }
+            [void]$sb.Append([char]$n)
+            $wild = $false
+        } elseif (-not $wild) {
+            [void]$sb.Append([char]0)
+            $wild = $true
         }
     }
     return $sb.ToString()

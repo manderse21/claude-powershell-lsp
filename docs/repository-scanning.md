@@ -267,8 +267,12 @@ those options from reaching the analysis at all, but the refusal is unchanged (o
 managed scan may certify around an ambient value of one of them is a later decision.
 
 **A scan never formats.** Every scan child gets `formatOnEdit=off` under exactly one spelling --
-every other spelling the option resolver accepts is removed from its environment first -- so a
-`formatOnEdit=apply` inherited from the caller cannot rewrite the files being scanned.
+every other spelling the scan's own PowerShell reads is removed from its environment first -- so a
+`formatOnEdit=apply` inherited from the caller cannot rewrite the files being scanned. One gap remains,
+measured by dispatch 000314 and left for a later leg: a spelling only the OTHER PowerShell reads is not
+removed (for example a name holding a zero-width space, read by PowerShell 7 and not by Windows PowerShell 5.1),
+and when the scan and its children run on different PowerShells it can reach a child beside the scan's `off`.
+The same holds for a declared `-OrgPolicyPath`. Keep `CLAUDE_PLUGIN_OPTION_*` names plain ASCII.
 
 **A scan declares its children's configuration (dispatch 000314).** Eight plugin options reach every scan child
 -- the session-start that launches the scan's daemon, the client run per file, and session-end -- only as the
@@ -281,8 +285,10 @@ an ambient rule list or profile narrowed or widened the finding set, and an ambi
 another analysis host. Every spelling the option resolver could read is removed first, under the rules of either
 PowerShell: the resolver compares names with a culture-aware comparison, and the two runtimes read different
 characters as letters or as nothing (measured: PowerShell 7 reads a name holding a zero-width space, a circled or
-combining letter as the option; Windows PowerShell 5.1 reads a thorn as `th`), so a name that either runtime
-reads as one of the eight is removed whichever one runs the scan. Interactive sessions are unaffected: the
+combining letter as the option; Windows PowerShell 5.1 reads a thorn as `th` and U+A7F2, which PowerShell 7 reads
+as `c`, as nothing). So every character of a name outside printable ASCII is treated as unknown -- it may stand for
+any letters or none -- and a name that either runtime reads as one of the eight is removed whichever one runs the
+scan and its children. Interactive sessions are unaffected: the
 declaration edits only each scan child's environment block.
 
 The other options that change analysis still reach a scan's children from its environment, measured under both

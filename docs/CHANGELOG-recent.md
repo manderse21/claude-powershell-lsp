@@ -53,7 +53,7 @@ changes what a scan reports** (dispatch 000314, leg ER2 -- enterprise-review fin
 ER2-R3, ER2-R6; pre-existing, measured by dispatch 000302). A scan's children -- the session-start that launches its
 daemon, the client run per file, session-end -- inherited the environment the scan was started in, and the option
 resolver reads any `CLAUDE_PLUGIN_OPTION_*` name that normalizes to a knob, so an ambient `ruleInclude` or
-`ruleExclude` emptied the finding set, an ambient `profile` widened it, an ambient `ps_host` moved the scan onto
+`ruleExclude` narrowed the finding set (in dispatch 000302's fixture, to nothing), an ambient `profile` widened it, an ambient `ps_host` moved the scan onto
 another analysis host, and a cap, threshold, scoping value or client timeout under a second spelling reached a
 child beside the scan's own value and won at random: the same repository could scan differently on two machines.
 Every scan child now receives eight knobs only as the scan declares them -- `perFileCap=0`,
@@ -64,10 +64,11 @@ That removal is not a replay of the resolver on the scan's own runtime: the reso
 culture-aware comparison, and the two runtimes read different characters as letters or as nothing (measured over
 every code point: PowerShell 7 reads a name holding a zero-width space, a circled, combining or mathematical letter
 as the knob; Windows PowerShell 5.1 reads a thorn as `th`, an oe ligature as `oe` and a Japanese repetition mark as
-the letter before it), and a scan started by one runs its children on the other when both are installed. A name's
-characters that do not decompose to ASCII stand for any run of letters, and the name is removed when one of the
-eight knobs fits it; the census in the dispatch 000314 record finds no spelling either runtime reads that survives,
-and no spelling of another knob that is removed. Measured RED at the base by fifteen tests on both hosts and green
+the letter before it, and U+A7F2, which PowerShell 7 reads as `c`, as nothing), and a scan started by one runs its
+children on the other when both are installed. So a name's characters outside printable ASCII each stand for any run
+of letters, whatever either runtime's Unicode data makes of them, and the name is removed when one of the eight
+knobs fits it; the census in the dispatch 000314 record finds no single-character spelling either runtime reads that
+survives, and no spelling of another knob that is removed. Measured RED at the base by fifteen tests on both hosts and green
 after; `tests/PowerShellLsp.ScanDeclaredConfig.Tests.ps1` adds the routine's own cases, the cross-runtime spellings
 through real children, and an in-agent control: an interactive SessionStart and client launched from the same
 hostile environment resolve exactly what they did before. Unchanged: every other knob still reaches a scan child

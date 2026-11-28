@@ -14,10 +14,11 @@
 #      compares with PowerShell -eq, a culture-aware comparison whose ignorable and equivalent characters
 #      differ by runtime: measured, PowerShell 7 reads CLAUDE_PLUGIN_OPTION_ followed by a name holding a
 #      zero-width space, a circled or mathematical letter or a superscript i as the knob, and Windows
-#      PowerShell 5.1 does not; 5.1 reads a thorn as 'th', and PowerShell 7 does not. A scan run by Windows
-#      PowerShell 5.1 spawns PowerShell 7 children whenever both are installed, so a removal that replayed
-#      the resolver on the parent's runtime would leave such a name for the child to read. These cases tell
-#      the two apart on that pairing.
+#      PowerShell 5.1 does not; 5.1 reads a thorn as 'th' and U+A7F2 (which PowerShell 7 decomposes to C) as
+#      nothing, and PowerShell 7 does not. A scan run by Windows PowerShell 5.1 spawns PowerShell 7 children
+#      whenever both are installed, and a PowerShell 7 scan run with -PsHost powershell spawns 5.1 children,
+#      so a removal that replayed the resolver -- or the Unicode decomposition -- of the parent's runtime would
+#      leave such a name for the child to read. These cases run both pairings (the second on Windows only).
 #   3. THE IN-AGENT CONTROL. One fixed hostile environment; the scan declares its children's configuration
 #      from this very process; then an interactive SessionStart and an interactive client -- launched as
 #      plugin.json launches the hooks, inheriting the environment -- must resolve exactly the hostile values
@@ -54,6 +55,23 @@ $script:DcCrossRuntime = @(
         Suffix = ('severity' + [char]0x00FE + 'reshold'); Value = 'Error'; Field = 'severityThreshold'; Expect = 'Hint' }
 )
 
+# The reverse pairing (review R1): a scan on PowerShell 7 whose children run on Windows PowerShell 5.1
+# (lsp-scan.ps1 -PsHost powershell). Spellings Windows PowerShell 5.1 reads and PowerShell 7 does not: U+A7F2
+# (PowerShell 7 reads and decomposes it as C; 5.1 reads it as nothing), a thorn, an oe ligature, a repetition
+# mark. Windows only, where both hosts exist.
+$script:DcHas51 = $script:DcOnWindows -and ($null -ne (Get-Command 'powershell.exe' -ErrorAction SilentlyContinue))
+$script:DcCrossRuntime51 = @(
+    @{ Label = 'ruleExclude after U+A7F2'; Knob = 'ruleExclude'; Child = 'session-start'
+        Suffix = ([string][char]0xA7F2 + 'ruleExclude'); Value = 'PSUseApprovedVerbs'; Field = 'ruleExclude'; Expect = '' }
+    @{ Label = 'ps_host holding U+A7F2'; Knob = 'ps_host'; Child = 'session-start'
+        Suffix = ('ps' + [char]0xA7F2 + '_host'); Value = 'pwsh'; Field = 'ps_host'; Expect = 'powershell' }
+    @{ Label = 'severityThreshold with a thorn'; Knob = 'severityThreshold'; Child = 'session-start'
+        Suffix = ('severity' + [char]0x00FE + 'reshold'); Value = 'Error'; Field = 'severityThreshold'; Expect = 'Hint' }
+    @{ Label = 'ruleExclude with a repetition mark'; Knob = 'ruleExclude'; Child = 'session-start'
+        Suffix = ('rule' + [char]0x309D + 'xclude'); Value = 'PSUseApprovedVerbs'; Field = 'ruleExclude'; Expect = '' }
+    @{ Label = 'scopeToEdit with an oe ligature'; Knob = 'scopeToEdit'; Child = 'client'
+        Suffix = ('scopet' + [char]0x0153 + 'dit'); Value = 'true'; Field = 'scopeToEdit'; Expect = 'False' }
+)
 Describe 'The scan child declaration on a ProcessStartInfo (dispatch 000314, ER2)' {
 
     BeforeAll {
@@ -109,7 +127,7 @@ Describe 'The scan child declaration on a ProcessStartInfo (dispatch 000314, ER2
         }
 
         # Every spelling staged below is read as its knob by at least one runtime's resolver, measured
-        # (dispatch 000314): the ASCII ones by both; a thorn, an oe ligature and a repetition mark by
+        # (dispatch 000314): the ASCII ones by both; a thorn, an oe ligature, a repetition mark and U+A7F2 by
         # Windows PowerShell 5.1 only; the others by PowerShell 7 only.
         $zw = [string][char]0x200B
         # An ORDINAL ordered dictionary, never a hash literal: a hash literal compares its keys culture-aware on
@@ -145,6 +163,7 @@ Describe 'The scan child declaration on a ProcessStartInfo (dispatch 000314, ER2
         $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_rule' + [char]0x200D + 'Exclude'), 'PSAvoidUsingCmdletAliases')
         $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_rule' + [char]0x309D + 'xclude'), 'PSAvoidUsingPositionalParameters')
         $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_rul' + [char]0x0364 + 'Include'), 'PSAvoidUsingEmptyCatchBlock')
+        $script:DcHostile.Add(('CLAUDE_PLUGIN_OPTION_' + [char]0xA7F2 + 'ruleExclude'), 'PSAvoidUsingWriteHost')
     }
 
     It 'removes every staged spelling of the eight knobs and sets each declared value under exactly one spelling' {
@@ -155,7 +174,7 @@ Describe 'The scan child declaration on a ProcessStartInfo (dispatch 000314, ER2
         $declaredNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
         foreach ($n in @('CLAUDE_PLUGIN_OPTION_perFileCap', 'CLAUDE_PLUGIN_OPTION_severityThreshold', 'CLAUDE_PLUGIN_OPTION_scopeToEdit',
                 'CLAUDE_PLUGIN_OPTION_timeoutMs', 'CLAUDE_PLUGIN_OPTION_profile', 'CLAUDE_PLUGIN_OPTION_ps_host')) { [void]$declaredNames.Add($n) }
-        $script:DcHostile.Count | Should -Be 30 -Because 'every hostile spelling must be staged, none merged into another'
+        $script:DcHostile.Count | Should -Be 31 -Because 'every hostile spelling must be staged, none merged into another'
         $left = @(@($script:DcHostile.Keys) | Where-Object { -not $declaredNames.Contains([string]$_) -and $block.ContainsKey([string]$_) })
         (@($left | ForEach-Object { ([string]$_).Length }) -join ',') | Should -BeExactly '' -Because 'no staged hostile spelling may survive in a scan child''s block'
         (@($block.Keys | Sort-Object { [string]$_ } -CaseSensitive | ForEach-Object { [string]$_ + '=' + $block[[string]$_] }) -join ';') |
@@ -196,6 +215,29 @@ Describe 'The scan child declaration on a ProcessStartInfo (dispatch 000314, ER2
         [string]$psi.EnvironmentVariables['POWERSHELL_LSP_CAPTURE_MODE'] | Should -BeExactly 'off'
     }
 
+    It 'the declaration agrees with the copies the managed verdict keeps of it (review R3)' {
+        # scripts/lib/lsp-policy.ps1 (not edited by this dispatch) keeps its own copy of the values a scan
+        # declares: the daemon launch configuration a managed scan expects (Get-ScanDeclaredAnalysisConfiguration)
+        # and the values its ambient refusal does not report (Get-ScanAmbientAnalysisOptions). An edit to one copy
+        # alone would make a managed scan refuse every file, or report a declared value as ambient.
+        . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts/lib/lsp-policy.ps1')
+        $declared = Get-ScanChildDeclaredOptions -HostExe 'pwsh'
+        $want = Get-ScanDeclaredAnalysisConfiguration
+        @($want.Keys).Count | Should -BeGreaterThan 3 -Because 'the managed verdict must expect a launch configuration'
+        foreach ($k in @($want.Keys)) {
+            $declared.Contains([string]$k) | Should -BeTrue -Because ([string]$k + ' is in the launch configuration a managed scan expects')
+            $v = if ($null -eq $declared[[string]$k]) { '' } else { [string]$declared[[string]$k] }
+            $v | Should -BeExactly ([string]$want[$k]) -Because ([string]$k + ': the declared value is the one the managed verdict expects')
+        }
+        foreach ($k in @($declared.Keys)) {
+            # ps_host is not in the refusal's table: an ambient ps_host is refused whatever it holds (unchanged).
+            if ($null -eq $declared[[string]$k] -or [string]$k -eq 'ps_host') { continue }
+            $one = @{ ('CLAUDE_PLUGIN_OPTION_' + [string]$k) = [string]$declared[[string]$k] }
+            @(Get-ScanAmbientAnalysisOptions -Environment $one).Count | Should -Be 0 -Because ([string]$k + ' holds the declared value, which the refusal does not report')
+        }
+        @(Get-ScanAmbientAnalysisOptions -Environment @{ 'CLAUDE_PLUGIN_OPTION_perFileCap' = '1' }).Count | Should -Be 1 -Because 'another value is reported (the control)'
+    }
+
     It 'edits the child''s block only -- this process''s environment keeps every hostile value' {
         $names = @('CLAUDE_PLUGIN_OPTION_RULE_INCLUDE', ('CLAUDE_PLUGIN_OPTION_rule' + [char]0x200B + 'Exclude'), 'CLAUDE_PLUGIN_OPTION_profile')
         $saved = @{}
@@ -213,20 +255,22 @@ Describe 'The scan child declaration on a ProcessStartInfo (dispatch 000314, ER2
         }
     }
 
-    It 'the pattern reads a decomposable letter as itself and any other character as a wildcard, and keeps an ASCII separator' {
+    It 'the pattern keeps printable ASCII and reads every other character as a wildcard, whatever it decomposes to' {
         $z = [string][char]0
-        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ([string][char]0x24E1 + 'ule_Include'))) | Should -BeExactly 'ruleinclude' -Because 'a circled letter decomposes to its letter'
-        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('per' + [char]0xFB01 + 'leCap'))) | Should -BeExactly 'perfilecap' -Because 'a ligature decomposes to its letters'
-        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ([char]::ConvertFromUtf32(0x1D42B) + 'uleInclude'))) | Should -BeExactly 'ruleinclude'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ([string][char]0x24E1 + 'ule_Include'))) | Should -BeExactly '*uleinclude' -Because 'a circled letter is a wildcard, not its decomposition'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('per' + [char]0xFB01 + 'leCap'))) | Should -BeExactly 'per*lecap' -Because 'a ligature is a wildcard too'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ([char]::ConvertFromUtf32(0x1D42B) + 'uleInclude'))) | Should -BeExactly '*uleinclude' -Because 'a surrogate pair is one wildcard'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ([string][char]0xA7F2 + 'ruleExclude'))) | Should -BeExactly '*ruleexclude' -Because 'PowerShell 7 decomposes U+A7F2 to C, Windows PowerShell 5.1 reads it as nothing (review R1)'
         (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('rule' + [char]0x200B + [char]0x200D + 'Include'))) | Should -BeExactly 'rule*include' -Because 'a run of other characters is one wildcard'
         (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('rul' + [char]0x0364 + 'Include'))) | Should -BeExactly 'rul*include' -Because 'PowerShell 7 reads a combining small e as e'
         (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('severity' + [char]0x00FE + 'reshold'))) | Should -BeExactly 'severity*reshold' -Because 'Windows PowerShell 5.1 reads a thorn as th'
         (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('time' + [char]0x0001 + 'out_MS'))) | Should -BeExactly 'time*outms'
-        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('time' + [char]0xFFFE + 'outMs'))) | Should -BeExactly 'time*outms' -Because 'a character Normalize throws on is a wildcard, never an error'
+        (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('time' + [char]0xFFFE + 'outMs'))) | Should -BeExactly 'time*outms' -Because 'a noncharacter is a wildcard, never an error'
         (Get-DcVisible (ConvertTo-ScanOptionPattern -Text ('PS' + [char]0xD800 + '_HOST'))) | Should -BeExactly 'ps*host' -Because 'a lone surrogate is a wildcard, never an error'
         (Get-DcVisible (ConvertTo-ScanOptionPattern -Text 'Rule-Include')) | Should -BeExactly 'rule-include' -Because 'an ASCII hyphen is no spelling of the knob on either runtime (measured)'
         (Test-ScanOptionPatternMatch -Pattern ('rul' + $z + 'include') -Target 'ruleinclude') | Should -BeTrue
         (Test-ScanOptionPatternMatch -Pattern ('severity' + $z + 'reshold') -Target 'severitythreshold') | Should -BeTrue
+        (Test-ScanOptionPatternMatch -Pattern ($z + 'ruleexclude') -Target 'ruleexclude') | Should -BeTrue -Because 'a wildcard can stand for nothing'
         (Test-ScanOptionPatternMatch -Pattern ($z + 'e' + $z) -Target 'profile') | Should -BeTrue
         (Test-ScanOptionPatternMatch -Pattern 'rule-include' -Target 'ruleinclude') | Should -BeFalse
         (Test-ScanOptionPatternMatch -Pattern ('x' + $z) -Target 'ruleinclude') | Should -BeFalse
@@ -234,6 +278,7 @@ Describe 'The scan child declaration on a ProcessStartInfo (dispatch 000314, ER2
         (Test-ScanOptionPatternMatch -Pattern '' -Target 'profile') | Should -BeFalse
         (Test-ScanOptionSpelling -Name ('claude_plugin_option_' + [char]0x24DF + 'sHost') -Key @('ps_host')) | Should -BeTrue
         (Test-ScanOptionSpelling -Name ('CLAUDE_PLUGIN_OPTION_rule' + [char]0x309D + 'xclude') -Key @('ruleExclude')) | Should -BeTrue -Because 'Windows PowerShell 5.1 reads a repetition mark as the letter before it'
+        (Test-ScanOptionSpelling -Name ('CLAUDE_PLUGIN_OPTION_' + [char]0xA7F2 + 'ruleExclude') -Key @('ruleExclude')) | Should -BeTrue -Because 'Windows PowerShell 5.1 reads U+A7F2 as nothing (review R1)'
         (Test-ScanOptionSpelling -Name 'CLAUDE_PLUGIN_OPTIONS_psHost' -Key @('ps_host')) | Should -BeFalse -Because 'another prefix is no option variable'
         (Test-ScanOptionSpelling -Name 'CLAUDE_PLUGIN_OPTION_settingsPath' -Key @('perFileCap', 'ps_host')) | Should -BeFalse
     }
@@ -259,6 +304,39 @@ Describe 'A spelling only another runtime reads never reaches a scan child (disp
         $script:XrSavedEnv = Save-SvAmbientEnv
         $script:XrRoot = New-SvTempRoot -Tag 'xr' -MintingFile 'tests/PowerShellLsp.ScanDeclaredConfig.Tests.ps1'
         $script:XrScripts = New-SvFakeScriptsDir -Root $script:XrRoot -ClientFixture 'env-record-client.ps1'
+
+        function Assert-XrCase {
+            # One cross-runtime case: stage the hostile name, run the scan child on $HostExe, read its record.
+            param([string]$HostExe, [string]$Label, [string]$Knob, [string]$Child, [string]$Suffix, [string]$Value, [string]$Field, [string]$Expect)
+            $name = 'CLAUDE_PLUGIN_OPTION_' + $Suffix
+            $data = Join-Path $script:XrRoot ('data-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            $sid = 'xr-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+            Restore-SvAmbientEnv -Saved @{}
+            [System.Environment]::SetEnvironmentVariable($name, $Value)
+            try {
+                if ($Child -eq 'session-start') {
+                    $info = Start-ScanDaemon -ScriptsDir $script:XrScripts -DataRoot $data -SessionId $sid -HostExe $HostExe
+                    Stop-ScanDaemon -ScriptsDir $script:XrScripts -DataRoot $data -SessionId $sid -HostExe $HostExe -DaemonInfo $info
+                    $info | Should -Not -BeNullOrEmpty -Because 'the fake session-start must have reported ready'
+                    $file = Join-Path $data ('env-session-start-' + $sid + '.json')
+                } else {
+                    $src = Join-Path $data 'src'
+                    New-Item -ItemType Directory -Force -Path $src | Out-Null
+                    $target = Join-Path $src 'target.ps1'
+                    [System.IO.File]::WriteAllText($target, "Write-Output 'x'`n", (New-Object System.Text.UTF8Encoding($false)))
+                    [void](Invoke-ScanFileDiagnostics -ScriptsDir $script:XrScripts -DataRoot $data -SessionId $sid -HostExe $HostExe -FilePath $target -Cwd $src)
+                    $file = @(Get-ChildItem -LiteralPath $data -File -Filter 'env-client-*.json')[0].FullName
+                }
+            } finally {
+                Restore-SvAmbientEnv -Saved @{}
+            }
+            $rec = [System.IO.File]::ReadAllText($file) | ConvertFrom-Json
+            $seen = @(@($rec.env.PSObject.Properties) | Where-Object { [string]::Equals([string]$_.Name, $name, [System.StringComparison]::Ordinal) })
+            $seen.Count | Should -Be 0 -Because ('the hostile ' + $Knob + ' spelling must not reach a scan child (a child on the other PowerShell reads it as the knob)')
+            $hostileAnywhere = @(@($rec.env.PSObject.Properties) | Where-Object { [string]$_.Value -ceq $Value -and (Test-ScanOptionSpelling -Name ([string]$_.Name) -Key @($Knob)) })
+            $hostileAnywhere.Count | Should -Be 0 -Because ('the hostile ' + $Knob + ' value must reach a scan child under no spelling')
+            [string]$rec.resolved.$Field.value | Should -BeExactly $Expect
+        }
     }
 
     AfterAll {
@@ -266,35 +344,12 @@ Describe 'A spelling only another runtime reads never reaches a scan child (disp
         Remove-SvTempRoot -Path $script:XrRoot
     }
 
-    It '<Label>: the hostile value reaches the scan <Child> under no spelling' -ForEach $script:DcCrossRuntime {
-        $name = 'CLAUDE_PLUGIN_OPTION_' + $Suffix
-        $data = Join-Path $script:XrRoot ('data-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
-        $sid = 'xr-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-        Restore-SvAmbientEnv -Saved @{}
-        [System.Environment]::SetEnvironmentVariable($name, $Value)
-        try {
-            if ($Child -eq 'session-start') {
-                $info = Start-ScanDaemon -ScriptsDir $script:XrScripts -DataRoot $data -SessionId $sid -HostExe $script:XrHost
-                Stop-ScanDaemon -ScriptsDir $script:XrScripts -DataRoot $data -SessionId $sid -HostExe $script:XrHost -DaemonInfo $info
-                $info | Should -Not -BeNullOrEmpty -Because 'the fake session-start must have reported ready'
-                $file = Join-Path $data ('env-session-start-' + $sid + '.json')
-            } else {
-                $src = Join-Path $data 'src'
-                New-Item -ItemType Directory -Force -Path $src | Out-Null
-                $target = Join-Path $src 'target.ps1'
-                [System.IO.File]::WriteAllText($target, "Write-Output 'x'`n", (New-Object System.Text.UTF8Encoding($false)))
-                [void](Invoke-ScanFileDiagnostics -ScriptsDir $script:XrScripts -DataRoot $data -SessionId $sid -HostExe $script:XrHost -FilePath $target -Cwd $src)
-                $file = @(Get-ChildItem -LiteralPath $data -File -Filter 'env-client-*.json')[0].FullName
-            }
-        } finally {
-            Restore-SvAmbientEnv -Saved @{}
-        }
-        $rec = [System.IO.File]::ReadAllText($file) | ConvertFrom-Json
-        $seen = @(@($rec.env.PSObject.Properties) | Where-Object { [string]::Equals([string]$_.Name, $name, [System.StringComparison]::Ordinal) })
-        $seen.Count | Should -Be 0 -Because ('the hostile ' + $Knob + ' spelling must not reach a scan child (a child on PowerShell 7 reads it as the knob)')
-        $hostileAnywhere = @(@($rec.env.PSObject.Properties) | Where-Object { [string]$_.Value -ceq $Value -and (Test-ScanOptionSpelling -Name ([string]$_.Name) -Key @($Knob)) })
-        $hostileAnywhere.Count | Should -Be 0 -Because ('the hostile ' + $Knob + ' value must reach a scan child under no spelling')
-        [string]$rec.resolved.$Field.value | Should -BeExactly $Expect
+    It '<Label>: the hostile value reaches a PowerShell 7 scan <Child> under no spelling' -ForEach $script:DcCrossRuntime {
+        Assert-XrCase -HostExe $script:XrHost -Label $Label -Knob $Knob -Child $Child -Suffix $Suffix -Value $Value -Field $Field -Expect $Expect
+    }
+
+    It '<Label>: the hostile value reaches a Windows PowerShell 5.1 scan <Child> under no spelling' -ForEach $script:DcCrossRuntime51 -Skip:(-not $script:DcHas51) {
+        Assert-XrCase -HostExe 'powershell' -Label $Label -Knob $Knob -Child $Child -Suffix $Suffix -Value $Value -Field $Field -Expect $Expect
     }
 }
 
