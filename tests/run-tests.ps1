@@ -13,17 +13,16 @@ param(
     # (default, unchanged). Lets a dispatch custom_check re-run just one feature's tests
     # via the same command shape as the smoke_test, e.g. -FullNameFilter '*dispatch 000022*'.
     [string] $FullNameFilter = '',
-    # TEMPORARY RED EXCLUSIONS (dispatch 000302, A1). Each tag marks ONLY tests that were measured
-    # RED at the A1 head and are owned by the leg that fixes them -- never a block, never a guess:
-    #   ScanRed-A3 -- the A3 leg (declared read-only scan configuration)
-    # (ScanRed-A2 -- the typed scan completion receipt and formatter-off containment -- was retired
-    # by dispatch 000304 when its last RED test turned green.)
-    # tests/fixtures/scan-verdict/expected-red.psd1 is the one list of those tests;
+    # TEMPORARY RED EXCLUSIONS (dispatch 000302, A1). A tag here marks ONLY tests that were measured
+    # RED and are owned by the leg that fixes them -- never a block, never a guess. There are none:
+    # ScanRed-A2 (the typed scan completion receipt and formatter-off containment) was retired by
+    # dispatch 000304, and ScanRed-A3 (the scan's declared child configuration) by dispatch 000314,
+    # each when its last RED test turned green -- so by default no test is excluded.
+    # tests/fixtures/scan-verdict/expected-red.psd1 is the one list of such tests (empty now);
     # tests/assert-expected-red.ps1 proves they still fail exactly as declared, and the guard in
-    # PowerShellLsp.ScanVerdict.Tests.ps1 fails if this default and that list ever disagree. The
-    # owner removes its tag here when its last RED test turns green. Run them anyway with
-    # -ExcludeTag ''.
-    [string[]] $ExcludeTag = @('ScanRed-A3')
+    # PowerShellLsp.ScanVerdict.Tests.ps1 fails if this default and that list ever disagree, or if a
+    # ScanRed tag sits on a test the list does not name.
+    [string[]] $ExcludeTag = @()
 )
 $ErrorActionPreference = 'Stop'
 

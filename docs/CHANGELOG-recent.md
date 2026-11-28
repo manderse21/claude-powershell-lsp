@@ -48,6 +48,48 @@ A pin bump that changes observable diagnostics behavior ships as a MINOR; a pure
 security/patch re-pin with no behavior change ships as a PATCH.
 
 ## [Unreleased]
+MINOR: **A scan declares its children's configuration: an ambient rule list, profile or analysis host no longer
+changes what a scan reports** (dispatch 000314, leg ER2 -- enterprise-review finding ER-F02, owner rulings ER2-R2,
+ER2-R3, ER2-R6; pre-existing, measured by dispatch 000302). A scan's children -- the session-start that launches its
+daemon, the client run per file, session-end -- inherited the environment the scan was started in, and the option
+resolver reads any `CLAUDE_PLUGIN_OPTION_*` name that normalizes to a knob, so an ambient `ruleInclude` or
+`ruleExclude` narrowed the finding set (in dispatch 000302's fixture, to nothing), an ambient `profile` widened it, an ambient `ps_host` moved the scan onto
+another analysis host, and a cap, threshold, scoping value or client timeout under a second spelling reached a
+child beside the scan's own value and won at random: the same repository could scan differently on two machines.
+Every scan child now receives eight knobs only as the scan declares them -- `perFileCap=0`,
+`severityThreshold=Hint`, `scopeToEdit=false`, `timeoutMs=18000`, `profile=safe`, `ps_host` the host the scan runs
+its children on, and no `ruleInclude` or `ruleExclude` -- each under one spelling, after every spelling either
+PowerShell's resolver could read is removed (`Set-ScanChildDeclaredOptions`, `scripts/lib/lsp-scan-common.ps1`).
+That removal is not a replay of the resolver on the scan's own runtime: the resolver compares names with a
+culture-aware comparison, and the two runtimes read different characters as letters or as nothing (measured over
+every code point: PowerShell 7 reads a name holding a zero-width space, a circled, combining or mathematical letter
+as the knob; Windows PowerShell 5.1 reads a thorn as `th`, an oe ligature as `oe` and a Japanese repetition mark as
+the letter before it, and U+A7F2, which PowerShell 7 reads as `c`, as nothing), and a scan started by one runs its
+children on the other when both are installed. So a name's characters outside printable ASCII each stand for any run
+of letters, whatever either runtime's Unicode data makes of them, and the name is removed when one of the eight
+knobs fits it; the census in the dispatch 000314 record finds no single-character spelling either runtime reads that
+survives, and no single-character spelling of another knob that is removed. A name built from several such characters can
+fit a declared knob although a PowerShell reads it as another one (`rule` followed by circled s, e, t is `ruleset` to
+PowerShell 7) and is removed too: over-removal, of names no configuration writes. Measured RED at the base by fifteen tests on both hosts and green
+after; `tests/PowerShellLsp.ScanDeclaredConfig.Tests.ps1` adds the routine's own cases, the cross-runtime spellings
+through real children, and an in-agent control: an interactive SessionStart and client launched from the same
+hostile environment resolve exactly what they did before. Unchanged: every other knob still reaches a scan child
+(`settingsPath`, `editContextLines`, an undeclared `orgPolicy`, and `ruleset`, `moduleAwareness` and
+`referenceSurfacing` set directly -- measured, ruling ER2-R3), a managed scan still refuses an ambient analysis
+option (`config-ambient`, ruling ER2-R4), interactive sessions, the hooks, the daemon and the resolver.
+`scripts/lib/lsp-policy.ps1` and `docs/scan-receipt.schema.json` are unchanged, and no knob, status token, CLI flag
+or exit code is added. Binding the declared configuration into the scan receipt stays with leg A3.
+
+PATCH: **No test is excluded from the normal suite: the last temporary RED tag is retired** (test-only; dispatch
+000314, leg ER2 -- owner ruling ER2-R5). The fifteen `ScanRed-A3` tests in
+`tests/PowerShellLsp.ScanReadOnly.Tests.ps1` lost their tag, `tests/fixtures/scan-verdict/expected-red.psd1` lost
+their entries, the tag and its file, and `tests/run-tests.ps1` excludes no tag by default -- in the change that
+turned the tests green, as the manifest's own rule requires. `tests/assert-expected-red.ps1` accepts an empty
+manifest explicitly ("nothing is expected RED"; it used to refuse one as a usage error) and still rejects a
+manifest that names a tag no test carries. The guard in `tests/PowerShellLsp.ScanVerdict.Tests.ps1` now treats any
+`ScanRed-*` tag as RED, so a ScanRed tag put back on a test fails it although the manifest names none, and proves its
+tag census on a synthetic file now that the suite holds no tag. No shipped file changes.
+
 PATCH: **The daemon starts from an install path, data root or host path that holds a space** (dispatch 000313, leg
 ER1 -- enterprise-review finding ER-F05, owner ruling ER1-R2; pre-existing). `Start-PsesDaemonDetached` handed
 `Start-Process` its argument vector as an array, which `Start-Process` joins with single spaces and quotes nothing

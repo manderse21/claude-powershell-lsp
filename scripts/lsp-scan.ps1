@@ -203,8 +203,12 @@ if (-not [string]::IsNullOrWhiteSpace($OrgPolicyPath)) {
     $declaredPolicy = Resolve-EffectivePolicy -Path $OrgPolicyPath -Source 'cli'
     if (-not [bool]$declaredPolicy.usable) { [Console]::Error.WriteLine('lsp-scan: orgPolicy: ' + [string]$declaredPolicy.warning) }
 }
-# Until A3 binds a declared child configuration, an ambient analysis option is refused in managed mode
-# rather than certified around (Get-ScanAmbientAnalysisOptions); an unmanaged scan is unaffected.
+# An ambient analysis option is refused in managed mode rather than certified around
+# (Get-ScanAmbientAnalysisOptions); an unmanaged scan is unaffected. Since dispatch 000314 the scan
+# declares eight of those knobs in every child (Set-ScanChildDeclaredOptions), so their ambient values no
+# longer reach the analysis -- but the refusal stands unchanged (owner ruling ER2-R4): whether a managed
+# scan may certify around them is the owner's later call, and binding the declared configuration into
+# the receipt is still leg A3's.
 $ambientOptions = @()
 if ($managed) {
     $ambientOptions = @(Get-ScanAmbientAnalysisOptions -Environment ([System.Environment]::GetEnvironmentVariables()) `

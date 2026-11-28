@@ -611,7 +611,12 @@ Describe 'The typed scan spawner (dispatch 000304 A2)' -Skip:$script:RtUnsupport
                 $_ -match '^CLAUDE_PLUGIN_OPTION_' -and ((($_ -split '=')[0].Substring(21) -replace '_', '').ToLowerInvariant() -eq 'formatonedit')
             })
         ($fmt -join ';') | Should -BeExactly 'CLAUDE_PLUGIN_OPTION_formatOnEdit=off'
-        [string]$r.StdOut | Should -Match 'CLAUDE_PLUGIN_OPTION_profile=recommended' -Because 'only formatOnEdit is contained here; the rest of the declared environment is A3''s'
+        # Until dispatch 000314 the caller's profile reached the child here (the rest of the declared
+        # environment was A3's). Since then the scan declares its own profile in every child, over -ExtraEnv.
+        $prof = @(([string]$r.StdOut -split ';') | Where-Object {
+                $_ -match '^CLAUDE_PLUGIN_OPTION_' -and ((($_ -split '=')[0].Substring(21) -replace '_', '').ToLowerInvariant() -eq 'profile')
+            })
+        ($prof -join ';') | Should -BeExactly 'CLAUDE_PLUGIN_OPTION_profile=safe' -Because 'the scan declares its own profile in every child (dispatch 000314, ruling ER2-R2)'
     }
 
     It 'the compatibility wrapper Invoke-ScanHook keeps its contract: stdout text, and '''' plus the Killed flag on a cap kill' {

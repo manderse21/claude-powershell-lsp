@@ -631,7 +631,8 @@ function Format-ScanTextReport {
 
 function Set-ScanChildFormatterOff {
     # FORMATTER-OFF CONTAINMENT for a scan child (dispatch 000304, A2 -- the narrow slice moved here
-    # from A3; A3 still owns the complete declared environment). formatOnEdit=apply makes the client
+    # from A3; the eight analysis knobs followed in dispatch 000314, Set-ScanChildDeclaredOptions
+    # below). formatOnEdit=apply makes the client
     # ask the daemon to REWRITE the analyzed file and then drop the pre-rewrite findings, so a scan
     # that inherited it rewrote what it scanned and reported nothing (A1 measured it). Overriding the
     # one spelling the scan names is not enough: the option resolver (Get-RawPluginOption) accepts
@@ -685,6 +686,137 @@ function Set-ScanChildPolicy {
     }
     if (-not [string]::IsNullOrWhiteSpace($PolicyMode)) {
         $StartInfo.EnvironmentVariables['POWERSHELL_LSP_POLICY_MODE'] = $PolicyMode
+    }
+}
+
+function ConvertTo-ScanOptionPattern {
+    # A knob's name as ANY host's option resolver may read it (dispatch 000314, ER2). Get-RawPluginOption
+    # (scripts/lib/lsp-common.ps1) strips underscores, lower-cases, and compares with PowerShell -eq: a
+    # case-insensitive comparison under the invariant culture, which reads some characters as nothing and
+    # others as letters -- and which ones depends on the runtime and on the Unicode data it carries. Measured
+    # by the dispatch 000314 census of every code point and by its review: PowerShell 7 (ICU) reads a
+    # zero-width space or an ASCII control character as nothing, and a circled, negative-circled,
+    # mathematical or combining letter (U+0364 COMBINING LATIN SMALL LETTER E) as that letter; Windows
+    # PowerShell 5.1 (NLS) reads none of those so, but reads a thorn as 'th', an oe ligature as 'oe', a
+    # Japanese repetition mark as the letter before it -- and U+A7F2 MODIFIER LETTER CAPITAL C, which
+    # PowerShell 7 reads (and decomposes) as c, as nothing. A scan run by one host spawns its children on the
+    # other whenever both are installed (they prefer pwsh; -PsHost chooses), so neither the resolver replayed
+    # on the scan's runtime nor that runtime's Unicode decomposition tells what a child reads.
+    # So the pattern assumes nothing about a character outside printable ASCII. A printable ASCII character
+    # stands for itself (A-Z lowered, the underscore dropped); every other character -- any letter, mark,
+    # symbol, control or format character, an unpaired surrogate -- stands for any run of characters, or
+    # none ([char]0 in the result, a run of them collapsed to one). A name any runtime reads as a knob
+    # therefore fits that knob's name, whatever that runtime's Unicode data. It can also fit a name no
+    # resolver reads, or an exotic name some runtime reads as another knob whose ASCII letters happen to fit
+    # around the wildcards; neither is a name a configuration writes (Claude Code exports ASCII names), and
+    # the census puts every character into every other knob's name without one of the declared knobs fitting.
+    param([string]$Text)
+    $sb = New-Object System.Text.StringBuilder
+    $wild = $false
+    foreach ($ch in $Text.ToCharArray()) {
+        $n = [int]$ch
+        if ($n -eq 0x5F) { continue }
+        if ($n -ge 0x20 -and $n -le 0x7E) {
+            if ($n -ge 0x41 -and $n -le 0x5A) { $n = $n + 0x20 }
+            [void]$sb.Append([char]$n)
+            $wild = $false
+        } elseif (-not $wild) {
+            [void]$sb.Append([char]0)
+            $wild = $true
+        }
+    }
+    return $sb.ToString()
+}
+
+function Test-ScanOptionPatternMatch {
+    # Does ALL of $Target fit $Pattern (ConvertTo-ScanOptionPattern; [char]0 = any run of characters, or
+    # none)? The greedy wildcard match: no regular expression, so no name, however long or crafted, can make
+    # it backtrack without bound -- at worst it is the product of the two lengths.
+    param([string]$Pattern, [string]$Target)
+    $t = 0; $p = 0; $star = -1; $mark = 0
+    while ($t -lt $Target.Length) {
+        if ($p -lt $Pattern.Length -and [int]$Pattern[$p] -eq 0) { $star = $p; $mark = $t; $p++; continue }
+        if ($p -lt $Pattern.Length -and [int]$Pattern[$p] -eq [int]$Target[$t]) { $p++; $t++; continue }
+        if ($star -ge 0) { $p = $star + 1; $mark++; $t = $mark; continue }
+        return $false
+    }
+    while ($p -lt $Pattern.Length -and [int]$Pattern[$p] -eq 0) { $p++ }
+    return ($p -eq $Pattern.Length)
+}
+
+function Test-ScanOptionSpelling {
+    # $true when the environment variable $Name is a spelling of any knob in $Key that a scan child could
+    # read: by the option resolver's own rule as THIS host evaluates it (Get-RawPluginOption), or because
+    # the knob's name fits the name's runtime-independent pattern (ConvertTo-ScanOptionPattern) -- the
+    # wider of the two, so a child on the other runtime reads nothing this misses. The CLAUDE_PLUGIN_OPTION_
+    # prefix is matched the way the resolver matches it (ordinal, case-insensitive); measured, no character
+    # outside ASCII passes for one of its letters that way on either runtime.
+    param([string]$Name, [string[]]$Key)
+    $prefix = 'CLAUDE_PLUGIN_OPTION_'
+    if ([string]::IsNullOrEmpty($Name) -or -not $Name.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    $rest = $Name.Substring($prefix.Length)
+    $byHost = ($rest -replace '_', '').ToLowerInvariant()
+    $pattern = ConvertTo-ScanOptionPattern -Text $rest
+    foreach ($k in @($Key)) {
+        $target = ([string]$k -replace '_', '').ToLowerInvariant()
+        if ($byHost -eq $target) { return $true }
+        if (Test-ScanOptionPatternMatch -Pattern $pattern -Target $target) { return $true }
+    }
+    return $false
+}
+
+function Get-ScanChildDeclaredOptions {
+    # THE DECLARED SCAN CHILD CONFIGURATION (dispatch 000314, ER2; owner ruling ER2-R2). A scan's children
+    # used to inherit the scan's environment, and the resolver reads any spelling that normalizes to a knob,
+    # so an ambient value narrowed or redirected what a scan analysed and the same repository could scan
+    # differently on two machines (enterprise-review finding ER-F02; dispatch 000302 measured it). These
+    # eight knobs now reach every scan child only as declared here, each value under exactly the spelling
+    # named; $null removes the knob and sets nothing, so the child resolves its own default:
+    #   perFileCap 0            every finding, never an "and N more" elision
+    #   severityThreshold Hint  every severity
+    #   scopeToEdit false       the whole file -- a scan carries no edit range
+    #   timeoutMs 18000         the client's wait, above the scan daemon's 15000 ms settle cap (Start-ScanDaemon)
+    #   profile safe            the scan's own profile, which maps nothing: ruleset, moduleAwareness,
+    #                           referenceSurfacing and editContextLines resolve only from their own variables
+    #   ps_host                 the host the scan resolved and spawns every child with
+    #   ruleInclude, ruleExclude  removed: a scan runs the whole rule set its settings select
+    # Every other knob still reaches a scan child from the scan's environment -- settingsPath,
+    # editContextLines, orgPolicy unless the scan declares one, and ruleset, moduleAwareness and
+    # referenceSurfacing set directly (ruling ER2-R3: measured and reported, not changed; the census is in the
+    # dispatch 000314 record). formatOnEdit and a declared orgPolicy keep their own routines above.
+    param([Parameter(Mandatory = $true)][string]$HostExe)
+    return [ordered]@{
+        perFileCap        = '0'
+        severityThreshold = 'Hint'
+        scopeToEdit       = 'false'
+        timeoutMs         = '18000'
+        profile           = 'safe'
+        ps_host           = $HostExe
+        ruleInclude       = $null
+        ruleExclude       = $null
+    }
+}
+
+function Set-ScanChildDeclaredOptions {
+    # Apply Get-ScanChildDeclaredOptions to ONE scan child's ProcessStartInfo (dispatch 000314, ER2):
+    # every variable that spells one of its knobs (Test-ScanOptionSpelling) is removed from the child's
+    # block, then each declared value is set under its one spelling. It edits that block only -- never this
+    # process's environment -- so an interactive hook started from the same shell resolves exactly what it
+    # did before (ruling ER2-R6). Invoke-ScanChildProcess applies it to every scan child (session-start, the
+    # client per file, session-end) after the caller's -ExtraEnv, so no caller puts another value on a
+    # declared knob.
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.ProcessStartInfo]$StartInfo,
+        [Parameter(Mandatory = $true)][string]$HostExe
+    )
+    $declared = Get-ScanChildDeclaredOptions -HostExe $HostExe
+    $keys = @($declared.Keys | ForEach-Object { [string]$_ })
+    foreach ($name in @($StartInfo.EnvironmentVariables.Keys)) {
+        $n = [string]$name
+        if (Test-ScanOptionSpelling -Name $n -Key $keys) { $StartInfo.EnvironmentVariables.Remove($n) }
+    }
+    foreach ($k in $keys) {
+        if ($null -ne $declared[$k]) { $StartInfo.EnvironmentVariables['CLAUDE_PLUGIN_OPTION_' + $k] = [string]$declared[$k] }
     }
 }
 
@@ -772,6 +904,8 @@ function Invoke-ScanChildProcess {
     Add-ProcessArguments $psi (@(@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($ExtraArgs)) | Where-Object { $_ })
     if (-not [string]::IsNullOrWhiteSpace($DataRoot)) { $psi.EnvironmentVariables['CLAUDE_PLUGIN_DATA'] = $DataRoot }
     if ($ExtraEnv) { foreach ($k in $ExtraEnv.Keys) { $psi.EnvironmentVariables[$k] = [string]$ExtraEnv[$k] } }
+    # The scan's declared child configuration (dispatch 000314): after -ExtraEnv, so it has the last word.
+    Set-ScanChildDeclaredOptions -StartInfo $psi -HostExe $HostExe
     Set-ScanChildFormatterOff -StartInfo $psi
     Set-ScanChildPolicy -StartInfo $psi -OrgPolicyPath $OrgPolicyPath -PolicyMode $PolicyMode
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -831,7 +965,8 @@ function Invoke-ScanHook {
     # in tests/fixtures/red-controls/, which must keep running verbatim. Same parameters and return as
     # before dispatch 000304 -- the stdout text, '' on a cap kill -- so every existing caller is
     # preserved; what changed underneath is that stderr is now drained, the kill reaches the tree on
-    # Windows PowerShell 5.1 too, and formatOnEdit is contained off in every child it starts.
+    # Windows PowerShell 5.1 too, formatOnEdit is contained off in every child it starts, and (dispatch
+    # 000314) every child it starts gets the scan's declared configuration.
     param(
         [string]$HostExe,
         [string]$ScriptPath,
@@ -863,7 +998,10 @@ function Start-ScanDaemon {
     # Bring up ONE warm daemon for the whole scan via the REAL SessionStart hook, exactly as
     # the corpus does: perFileCap=0 (capture every finding, never an "and N more" elision) and
     # severityThreshold=Hint (keep all severities) so the scan's output is the tool's full,
-    # faithful set, mapped honestly to SARIF afterward. Returns the daemon details object (the
+    # faithful set, mapped honestly to SARIF afterward. Since dispatch 000314 those two values -- with
+    # ps_host the scan's own host, profile safe, and no rule list -- arrive through the scan's declared
+    # child configuration (Set-ScanChildDeclaredOptions, applied by Invoke-ScanChildProcess to every
+    # child), never from the scan's environment. Returns the daemon details object (the
     # session file once it reports state 'ready'), or $null on timeout (the caller fails loud --
     # an unready daemon must never read as a clean scan).
     # MaxWaitMs (dispatch 000133, option B -- scan-specific settle cap): the SCAN's daemon gets a larger
@@ -888,7 +1026,6 @@ function Start-ScanDaemon {
     Invoke-ScanHook -HostExe $HostExe -ScriptPath (Join-Path $ScriptsDir 'session-start.ps1') `
         -StdinJson (@{ session_id = $SessionId } | ConvertTo-Json -Compress) `
         -ExtraArgs @('-PreferredHost', $HostExe, '-MaxWaitMs', [string]$MaxWaitMs) -CapMs 180000 -DataRoot $DataRoot `
-        -ExtraEnv @{ CLAUDE_PLUGIN_OPTION_perFileCap = '0'; CLAUDE_PLUGIN_OPTION_severityThreshold = 'Hint' } `
         -OrgPolicyPath $OrgPolicyPath -PolicyMode $PolicyMode | Out-Null
     $sf = Join-Path $DataRoot ('session/' + $SessionId + '.json')
     for ($i = 0; $i -lt 200; $i++) {
@@ -990,8 +1127,10 @@ function Invoke-ScanFileDiagnostics {
             cwd                 = $Cwd
             powershell_lsp_scan = (New-ScanRequestField -RequestId $requestId -ReceiptPath $receiptPath)
         } | ConvertTo-Json -Compress -Depth 4)
-    # scopeToEdit=false => whole-file (a scan carries no edit patch); timeoutMs raised so a first
-    # cold analysis on a slow leg still settles inside the client cap. NOTE (dispatch 000132): this
+    # scopeToEdit=false => whole-file (a scan carries no edit patch); timeoutMs=18000 so a first
+    # cold analysis on a slow leg still settles inside the client cap. Both now arrive through the scan's
+    # declared child configuration (Set-ScanChildDeclaredOptions, dispatch 000314), which removes every
+    # other spelling of them first. NOTE (dispatch 000132): this
     # client-side cap is NOT the binding per-file budget -- the daemon's own settle cap (MaxWaitMs,
     # pses-daemon.ps1, default 5000) is; see the 000132 outbox and the 000133 charter. The dogfood log
     # is the SAME structured-finding channel the corpus reads, pointed at a throwaway file (never the repo log).
@@ -1013,10 +1152,8 @@ function Invoke-ScanFileDiagnostics {
     # file that already existed and was already deleted immediately -- never where source text is
     # written, only what this one ephemeral round-trip carries before it is discarded.
     $extraEnv = @{
-        POWERSHELL_LSP_DOGFOOD_LOG       = $log
-        POWERSHELL_LSP_CAPTURE_MODE      = 'full'
-        CLAUDE_PLUGIN_OPTION_scopeToEdit = 'false'
-        CLAUDE_PLUGIN_OPTION_timeoutMs   = '18000'
+        POWERSHELL_LSP_DOGFOOD_LOG  = $log
+        POWERSHELL_LSP_CAPTURE_MODE = 'full'
     }
     # The bytes on disk BEFORE and AFTER the child: the receipt's daemon-consumed SHA-256 must equal
     # both, so a file that changed or vanished while it was being scanned can never be certified.

@@ -129,6 +129,7 @@ Describe 'tests/run-tests.ps1 keeps its parameters and their defaults (dispatch 
                 if ($null -ne $_.DefaultValue) { $default = $_.DefaultValue.Extent.Text }
                 $_.Name.VariablePath.UserPath + ':' + $_.StaticType.Name + ':' + $default
             })
-        ($shape -join ' | ') | Should -BeExactly "CI:SwitchParameter: | FullNameFilter:String:'' | ExcludeTag:String[]:@('ScanRed-A3')"
+        # -ExcludeTag defaulted to @('ScanRed-A3') until dispatch 000314 retired the last temporary RED tag.
+        ($shape -join ' | ') | Should -BeExactly "CI:SwitchParameter: | FullNameFilter:String:'' | ExcludeTag:String[]:@()"
     }
 }

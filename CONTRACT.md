@@ -500,6 +500,20 @@ cold. None is a contract change; each is banked here deliberately.
   daemon's argument vector unchanged. **No knob, no status token, no CLI flag and no exit code is added**; the
   scan's exit codes are unchanged (0 / 2 / 3 / 4), and `doctor -Json`'s `orgPolicy` keys keep their names, order
   and types. Recorded here as a **note, not an amendment**.
+- **A scan declares its children's configuration (NOT a Tier-1 frozen surface) -- dispatch 000314.**
+  `scripts/lsp-scan.ps1` no longer lets its children inherit eight `userConfig` knobs from the environment it
+  was started in: every child it spawns receives `perFileCap=0`, `severityThreshold=Hint`, `scopeToEdit=false`,
+  `timeoutMs=18000`, `profile=safe` and `ps_host` set to the host it runs its children on, and no `ruleInclude`
+  or `ruleExclude`, each under one spelling after every spelling the option resolver could read on either
+  PowerShell is removed (owner ruling ER2-R2). A behavior change of the scan, recorded in the CHANGELOG: an
+  ambient rule list, profile or analysis host no longer changes what a scan reports. The knobs themselves --
+  their names, values, defaults and meaning in an interactive session -- are unchanged: the declaration edits a
+  scan child's environment block only, and the hooks, the daemon and the option resolver read exactly what they
+  read before (ruling ER2-R6). A managed scan still refuses an ambient analysis option (`config-ambient`) as
+  before; `scripts/lib/lsp-policy.ps1` and `docs/scan-receipt.schema.json` are unchanged. **No knob, no status
+  token, no CLI flag and no exit code is added**; the scan's exit codes are unchanged (0 / 2 / 3 / 4), and
+  `doctor -Json`'s `orgPolicy` keys keep their names, order and types. Recorded here as a **note, not an
+  amendment**.
 
 ---
 

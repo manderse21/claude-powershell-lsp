@@ -25,8 +25,13 @@
 #     green complement, so a failure outside the declared set can never hide in this run either.
 # Every rejection is printed on its own line as 'REJECT: <KIND>: <detail>'.
 #
+# AN EMPTY MANIFEST (dispatch 000314) -- no file, no tag, no entry -- is accepted as it stands: nothing is
+# expected RED, so no test is run and the output says so. Only a wholly empty manifest takes that path: a
+# manifest that still names a tag is run as above, and rejected if no test carries the tag.
+#
 # Exit codes:
-#   0  ACCEPTED -- the excluded tests fail exactly as declared, and only they are excluded.
+#   0  ACCEPTED -- the excluded tests fail exactly as declared, and only they are excluded (or the
+#      manifest is empty: nothing is excluded).
 #   1  REJECTED -- see the REJECT lines.
 #   2  usage error -- no manifest, a malformed manifest, or no Pester 5 to run it with.
 #
@@ -67,14 +72,6 @@ foreach ($key in @('Files', 'Tags', 'Expected')) {
     if (-not $manifest.ContainsKey($key)) { Write-OracleUsageError ('manifest has no ' + $key + ' key') }
 }
 $tags = @($manifest.Tags.Keys | ForEach-Object { [string]$_ } | Sort-Object)
-if ($tags.Count -eq 0) { Write-OracleUsageError 'manifest declares no tags' }
-$files = @($manifest.Files | ForEach-Object { Join-Path $TestsDir ([string]$_) })
-foreach ($f in $files) { if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { Write-OracleUsageError ('test file not found: ' + $f) } }
-
-# Pester bounded to the 5.x major, exactly as tests/run-tests.ps1 bounds it (dispatch 000120).
-$p5 = Get-Module -ListAvailable Pester | Where-Object { $_.Version.Major -eq 5 } | Sort-Object Version -Descending | Select-Object -First 1
-if ($null -eq $p5) { Write-OracleUsageError 'Pester 5 is not installed (run tests/run-tests.ps1 once to bootstrap it)' }
-Import-Module Pester -MinimumVersion 5.0.0 -MaximumVersion 5.99.99 -Force
 
 $edition = [string]$PSVersionTable.PSEdition
 $headSha = 'unknown'
@@ -86,6 +83,47 @@ if ($null -ne (Get-Command git -ErrorAction SilentlyContinue)) {
         if ($s -match '^[0-9a-f]{40}$') { $headSha = $s }
     } catch { } finally { $ErrorActionPreference = $prev }
 }
+
+# AN EMPTY MANIFEST IS AN EXPLICIT ACCEPT (dispatch 000314). Once every owner has retired its tag -- in the
+# change that turned its last test green -- the manifest names no file, no tag and no entry: nothing is
+# expected RED and nothing is excluded, so there is nothing to run and nothing to reject. The oracle says
+# so and exits 0. A manifest that is only partly empty is not this case: one that names a tag still runs
+# below and is rejected if no test carries the tag (ZERO DISCOVERY), and one that names files or entries
+# but no tag is a usage error.
+$declaredEntries = @($manifest.Expected | Where-Object { $null -ne $_ })
+$namedFiles = @($manifest.Files | Where-Object { $null -ne $_ })
+if ($tags.Count -eq 0 -and $declaredEntries.Count -eq 0 -and $namedFiles.Count -eq 0) {
+    Write-Host ''
+    Write-Host 'assert-expected-red: ACCEPTED -- the manifest declares no file, no tag and no entry: nothing is expected RED, and no test was run'
+    Write-Host ('  host        : ' + $edition + ' ' + [string]$PSVersionTable.PSVersion)
+    Write-Host ('  head sha    : ' + $headSha)
+    Write-Host ('  manifest    : ' + $ManifestPath)
+    if (-not [string]::IsNullOrWhiteSpace($EvidencePath)) {
+        $evidence = [ordered]@{
+            verdict    = 'ACCEPTED'
+            emptyManifest = $true
+            edition    = $edition
+            psVersion  = [string]$PSVersionTable.PSVersion
+            headSha    = $headSha
+            tags       = @()
+            discovered = 0
+            tagged     = 0
+            declared   = 0
+            tests      = @()
+            rejects    = @()
+        }
+        [System.IO.File]::WriteAllText($EvidencePath, ($evidence | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
+    }
+    exit 0
+}
+if ($tags.Count -eq 0) { Write-OracleUsageError 'manifest declares no tags' }
+$files = @($manifest.Files | ForEach-Object { Join-Path $TestsDir ([string]$_) })
+foreach ($f in $files) { if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { Write-OracleUsageError ('test file not found: ' + $f) } }
+
+# Pester bounded to the 5.x major, exactly as tests/run-tests.ps1 bounds it (dispatch 000120).
+$p5 = Get-Module -ListAvailable Pester | Where-Object { $_.Version.Major -eq 5 } | Sort-Object Version -Descending | Select-Object -First 1
+if ($null -eq $p5) { Write-OracleUsageError 'Pester 5 is not installed (run tests/run-tests.ps1 once to bootstrap it)' }
+Import-Module Pester -MinimumVersion 5.0.0 -MaximumVersion 5.99.99 -Force
 
 $config = New-PesterConfiguration
 $config.Run.Path = $files
