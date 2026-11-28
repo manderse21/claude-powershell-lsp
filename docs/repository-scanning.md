@@ -288,11 +288,12 @@ characters as letters or as nothing (measured: PowerShell 7 reads a name holding
 combining letter as the option; Windows PowerShell 5.1 reads a thorn as `th` and U+A7F2, which PowerShell 7 reads
 as `c`, as nothing). So every character of a name outside printable ASCII is treated as unknown -- it may stand for
 any letters or none -- and a name that either runtime reads as one of the eight is removed whichever one runs the
-scan and its children. Interactive sessions are unaffected: the
+scan and its children. The price is over-removal of names no configuration writes: a name built from several such
+characters can fit one of the eight although a PowerShell reads it as another option, and is removed as well. Interactive sessions are unaffected: the
 declaration edits only each scan child's environment block.
 
 The other options that change analysis still reach a scan's children from its environment, measured under both
-spellings: `settingsPath`, `editContextLines`, `orgPolicy` when the scan declares no policy (a declared
+ASCII spellings: `settingsPath`, `editContextLines`, `orgPolicy` when the scan declares no policy (a declared
 `-OrgPolicyPath` replaces it, as before), and `ruleset`, `moduleAwareness` and `referenceSurfacing` set directly.
 A managed scan refuses them as ambient (`config-ambient`); an unmanaged scan honors them. Whether an ordinary
 scan should keep honoring them is a later decision.

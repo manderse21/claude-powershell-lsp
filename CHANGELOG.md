@@ -50,7 +50,9 @@ the letter before it, and U+A7F2, which PowerShell 7 reads as `c`, as nothing), 
 children on the other when both are installed. So a name's characters outside printable ASCII each stand for any run
 of letters, whatever either runtime's Unicode data makes of them, and the name is removed when one of the eight
 knobs fits it; the census in the dispatch 000314 record finds no single-character spelling either runtime reads that
-survives, and no spelling of another knob that is removed. Measured RED at the base by fifteen tests on both hosts and green
+survives, and no single-character spelling of another knob that is removed. A name built from several such characters can
+fit a declared knob although a PowerShell reads it as another one (`rule` followed by circled s, e, t is `ruleset` to
+PowerShell 7) and is removed too: over-removal, of names no configuration writes. Measured RED at the base by fifteen tests on both hosts and green
 after; `tests/PowerShellLsp.ScanDeclaredConfig.Tests.ps1` adds the routine's own cases, the cross-runtime spellings
 through real children, and an in-agent control: an interactive SessionStart and client launched from the same
 hostile environment resolve exactly what they did before. Unchanged: every other knob still reaches a scan child
